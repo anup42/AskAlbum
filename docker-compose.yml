@@ -1,0 +1,169 @@
+services:
+  gateway:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${ASKPHOTOS_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - frontend_dist:/srv/frontend:ro
+    depends_on:
+      - api
+    networks: [askphotos]
+
+  frontend-build:
+    build:
+      context: ./frontend
+      target: export
+    volumes:
+      - frontend_dist:/export
+    networks: [askphotos]
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/api.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - media_data:/data
+      - ./demo-assets:/demo-assets:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [askphotos]
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/api.Dockerfile
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app worker --loglevel=INFO --concurrency=2
+    env_file: .env
+    environment:
+      ASKPHOTOS_SKIP_MIGRATIONS: "1"
+    volumes:
+      - media_data:/data
+      - ./demo-assets:/demo-assets:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+      qwen:
+        condition: service_healthy
+    networks: [askphotos]
+
+  model-service:
+    build:
+      context: .
+      dockerfile: infra/model.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOME: /tmp
+    gpus: all
+    volumes:
+      - media_data:/data:ro
+      - ./demo-assets:/demo-assets:ro
+      - ${ASKPHOTOS_MODELS_DIR:-./models}:/models:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    networks: [askphotos]
+
+  qwen:
+    image: vllm/vllm-openai:v0.23.0
+    restart: unless-stopped
+    env_file: .env
+    gpus: all
+    ipc: host
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      VLLM_LOGGING_LEVEL: WARNING
+    volumes:
+      - ${ASKPHOTOS_MODELS_DIR:-./models}/qwen:/models/qwen:ro
+    command:
+      - --model
+      - /models/qwen
+      - --served-model-name
+      - ${ASKPHOTOS_QWEN_MODEL_NAME:-Qwen3-VL-8B-Instruct-FP8}
+      - --gpu-memory-utilization
+      - ${ASKPHOTOS_QWEN_GPU_MEMORY_UTILIZATION:-0.62}
+      - --max-model-len
+      - ${ASKPHOTOS_QWEN_MAX_MODEL_LEN:-8192}
+      - --limit-mm-per-prompt
+      - image=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 20s
+      timeout: 10s
+      retries: 60
+      start_period: 90s
+    networks: [askphotos]
+
+  db:
+    build:
+      context: .
+      dockerfile: infra/db.Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: askphotos
+      POSTGRES_USER: askphotos
+      POSTGRES_PASSWORD: ${ASKPHOTOS_POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U askphotos -d askphotos"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [askphotos]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [askphotos]
+
+networks:
+  askphotos:
+    driver: bridge
+
+volumes:
+  frontend_dist:
+  media_data:
+  postgres_data:
+  redis_data:
