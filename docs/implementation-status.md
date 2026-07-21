@@ -1165,7 +1165,7 @@ Next phase:
 
 ## Phase 6 — Gemma 4 planning, E2B/E4B selection, and verified download (22 July 2026)
 
-Status: **The constrained Gemma planning boundary and verified E2B/E4B model-management path are implemented. The Settings state defect is fixed. A pinned E2B pack was downloaded, independently SHA-256 verified, atomically activated, and used by LiteRT-LM on the connected device to compile a valid typed plan without deterministic fallback. E4B, multilingual real-model planning, visual verification, and answer composition remain NOT RUN.**
+Status: **The constrained Gemma planning boundary and verified E2B/E4B model-management path are implemented. The Settings state defect is fixed. A pinned E2B pack was downloaded, independently SHA-256 verified, atomically activated, and used by LiteRT-LM on the connected device to compile valid English, Hindi, and Hinglish typed plans without deterministic fallback. Engine load/generation/close timing, peak memory, and thermal status are measured. E4B, visual verification, and answer composition remain NOT RUN.**
 
 Files changed:
 
@@ -1177,11 +1177,13 @@ Files changed:
 - `android/app/src/main/java/com/askphotos/android/GemmaModelDownloader.kt`
 - `android/app/src/main/java/com/askphotos/android/GemmaPlanCodec.kt`
 - `android/app/src/main/java/com/askphotos/android/LiteRtLmQueryPlanner.kt`
+- `android/app/src/main/java/com/askphotos/android/DeterministicPlanOverlay.kt`
 - `android/app/src/main/java/com/askphotos/android/QueryCompiler.kt`
 - `android/app/src/main/java/com/askphotos/android/GalleryViewModel.kt`
 - `android/app/src/main/java/com/askphotos/android/MainActivity.kt`
 - Gemma catalog/codec/pack unit and instrumented security/UI tests
 - `android/app/src/androidTest/java/com/askphotos/android/RealGemmaPlannerAcceptanceTest.kt`
+- `tools/device/profile_instrumentation.py` and parser tests
 
 Architecture decisions:
 
@@ -1191,6 +1193,8 @@ Architecture decisions:
 - Settings persists E2B/E4B selection. E2B is the default; E4B requires the stronger runtime assessment. Signed `.agemma` SAF import remains available in both variants.
 - Gemma emits only the typed JSON plan. The codec rejects unknown fields, paths/URIs/SQL/result IDs, enforces bounds, and permits one repair call. Runtime work is serialized, uses GPU then CPU, and rolls back after a load failure.
 - The planner uses the model's declared 4,096-token context, disables thinking for this bounded compiler, and applies deterministic sampling. The same initialized engine is reused for the initial generation and the single repair, then closed.
+- Gemma supplies semantic intent and clauses; Kotlin overlays hard deterministic facts such as explicit/previous calendar years, known media scope, known place aliases, document fields, and requested ordering. The merged plan is validated again before execution. The LLM does not calculate exact dates.
+- Each planner trace records model load, bounded generation, close, total latency, backend, repair use, and whether the deterministic overlay changed the plan. The host profiler polls only process memory and thermal services, masks the device serial, and never captures prompts or media.
 - Settings publishes a selected-tier state before its potentially blocking WorkManager lookup and maintains one monitor job. This removes the stale E4B button state that the prior connected Compose test exposed.
 
 Commands and results:
@@ -1202,17 +1206,22 @@ adb -s <serial> install -r -t android\app\build\outputs\apk\androidTest\consumer
 adb -s <serial> shell am instrument -w -r -e class com.askphotos.android.GemmaSettingsUiTest,com.askphotos.android.GemmaPackSecurityTest,com.askphotos.android.AskPhotosSmokeTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
 adb -s <serial> shell sha256sum <app-private-active-e2b-model>
 adb -s <serial> shell am instrument -w -r -e class com.askphotos.android.RealGemmaPlannerAcceptanceTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+python tools/device/profile_instrumentation.py --serial <serial> --package com.askphotos.android --test-class com.askphotos.android.RealGemmaPlannerAcceptanceTest --output artifacts/device-runs/phase6_multilingual_profile_exact
 ```
 
 Results and device:
 
-- 47 JVM suites / 144 flavored tests: 0 failures and 0 errors.
+- 49 JVM suites / 152 flavored tests: 0 failures and 0 errors. Five Python device-harness tests also passed.
+- Offline and consumer lint both passed when run sequentially. A combined parallel lint invocation hit an Android lint worker bug in which one flavor referenced another flavor's already-removed kapt stub; no source diagnostic was reported, and the two isolated lint gates were green.
 - Offline and consumer debug APKs plus consumer Android-test APK assembled. Merged manifests show `INTERNET=false` for `offlineDemoDebug` and `INTERNET=true` for `consumerDebug`.
 - Final consumer APK build/install: success on the sole connected Samsung SM-F966B, Android 16. The serial is intentionally omitted.
 - Connected pack-security test, privacy/onboarding smoke, and grounded local Amsterdam search passed. The focused four-test instrumentation run completed in 4.252 seconds.
 - The Settings test now passes and verifies tagged E2B/E4B selectors, immediate selection state, and the capability-derived E4B download-button policy.
 - The active E2B artifact is 2,583,085,056 bytes. Device `sha256sum` returned `ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42`, exactly matching the immutable catalog.
-- The unchanged real-model assertion passed on the sole connected Samsung SM-F966B, Android 16: `used=true`, `backend=GPU`, `calls=2`, `repaired=true`, planner elapsed 14,091 ms, wall 14,490 ms, intent `FIND_MEDIA`, scope `IMAGES`, schema valid, fallback `null`. Instrumentation reported `OK (1 test)` in 14.504 seconds.
+- The final real-model suite passed on the sole connected Samsung SM-F966B, Android 16. English, Hindi, and Hinglish each reported `used=true`, `backend=GPU`, `calls=2`, `repaired=true`, `overlay=true`, intent `FIND_MEDIA`, scope `IMAGES`, valid schema, and fallback `null`. Exact 2024/previous-year ranges came from Kotlin and were asserted.
+- Final per-query wall time: English 13,558 ms; Hindi 13,579 ms; Hinglish 22,463 ms. Model load was 2,750–3,773 ms, close was 344–419 ms, and generation was 9,907–18,268 ms.
+- The exact-code profiled run sampled process memory 71 times: peak PSS 2,297,343 kB and peak RSS 2,428,572 kB. In-process PSS immediately after each explicit engine close was 284,474–288,418 kB; after instrumentation Android terminated the test process, so post-run process memory is correctly recorded as `null` rather than mislabelled as zero.
+- Thermal status was `0` before and after the 51.391-second profiled run. Diagnostics found no target `FATAL EXCEPTION`, ANR, `OutOfMemoryError`, or failed assertion. This is a bounded acceptance measurement, not a sustained thermal benchmark.
 - The first real-model attempt failed honestly because the 1,536-token engine context exhausted the repair response and produced malformed JSON. One repair cycle increased the engine to the model's 4,096-token context, disabled thinking, made sampling deterministic, and restated the bounded schema; the identical no-fallback acceptance assertion then passed.
 
 Artifacts:
@@ -1227,14 +1236,20 @@ Artifacts:
 - `artifacts/phase6-real-gemma-repair1-build.log`
 - `artifacts/phase6-real-gemma-planner-final-code.txt`
 - `artifacts/phase6-real-gemma-thermal-final.txt`
+- `artifacts/phase6-multilingual-final-build-green.log`
+- `artifacts/phase6-multilingual-lint-offline.log`
+- `artifacts/phase6-multilingual-lint-consumer.log`
+- `artifacts/device-runs/phase6_multilingual_profile_exact/`
+- `artifacts/phase6-multilingual-final-diagnostics/20260722_011748/`
 
 Failures and limitations:
 
-- Real E2B acceptance currently covers one English text-only plan. Hindi/Hinglish plan quality, one-image verification, grounded answer composition, repeated load/unload, and peak-memory measurement remain NOT RUN.
-- The instrumentation process exited before the post-run `dumpsys meminfo`, so no peak-RAM claim is made. The captured thermal service status was `0` (no throttling), but this is not a sustained thermal benchmark.
+- Real E2B planning acceptance covers three representative text-only queries, not the required 200–300-query multilingual evaluation set. All three needed the single allowed repair, so first-pass JSON reliability still needs improvement and measurement at scale.
+- One-image multimodal verification and evidence-only answer composition remain NOT RUN even though the E2B pack itself is multimodal.
+- The 51-second thermal result does not prove long-session or repeated-query thermal stability.
 - E4B was not downloaded or loaded. Its UI option is capability-gated, but quality/latency comparison remains an explicit honest skip.
 - The connected device changed during the work from the earlier SM-F731U to the sole authorized SM-F966B; the final install and tests above apply to SM-F966B.
 
 Next phase:
 
-- Continue Phase 6 narrowly with real E2B Hindi/Hinglish plan-quality cases and explicit load/unload memory evidence. Then begin Phase 7 as a separate slice: one-image structured visual verification and evidence-only answer composition. Keep E4B optional and test it only after a dedicated safe-load benchmark.
+- Begin Phase 7 as a separate narrow slice: one-image structured visual verification with bounded candidate inputs, followed by evidence-only answer composition and citation validation. Keep E4B optional and test it only after a dedicated safe-load benchmark.

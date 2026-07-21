@@ -53,7 +53,12 @@ class QueryCompiler(
         val place = listOf("singapore", "goa", "amsterdam", "netherlands", "california", "francisco", "marshall", "rockaway")
             .firstOrNull { candidate -> candidate in terms }
         val previousYear = Regex("\\b(last year|previous year|pichle saal)\\b").containsMatchIn(normalized) || "पिछले साल" in normalized
-        val timeFilter = if (previousYear) previousCalendarYear() else FilterExpression.True
+        val explicitYear = Regex("\\b(?:19|20)\\d{2}\\b").find(normalized)?.value?.toInt()
+        val timeFilter = when {
+            previousYear -> calendarYear(LocalDate.now(clock).year - 1)
+            explicitYear != null -> calendarYear(explicitYear)
+            else -> FilterExpression.True
+        }
         val requestedField = when {
             Regex("\\b(total|amount paid|grand total)\\b").containsMatchIn(normalized) -> "total"
             Regex("\\b(wifi password|wi fi password)\\b").containsMatchIn(normalized) -> "password"
@@ -86,9 +91,8 @@ class QueryCompiler(
         return validator.requireValid(plan, if (isFollowUp) activeResultIds else null)
     }
 
-    private fun previousCalendarYear(): FilterExpression.TimeRange {
+    private fun calendarYear(year: Int): FilterExpression.TimeRange {
         val zone = clock.zone
-        val year = LocalDate.now(clock).year - 1
         val start = LocalDate.of(year, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
         val end = LocalDate.of(year + 1, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
         return FilterExpression.TimeRange(start, end)

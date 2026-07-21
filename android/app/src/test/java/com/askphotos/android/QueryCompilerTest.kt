@@ -70,4 +70,13 @@ class QueryCompilerTest {
         assertEquals("गोवा", plan.semanticClauses.single().text)
         assertEquals("goa", plan.semanticClauses.single().canonicalText)
     }
+
+    @Test
+    fun explicitYearIsConvertedToAnExactCalendarRangeByKotlin() {
+        val fixed = QueryCompiler(clock = Clock.fixed(Instant.parse("2026-07-22T00:00:00Z"), ZoneOffset.UTC))
+
+        val plan = fixed.compile("Show beach sunset photos from 2024")
+
+        assertEquals(FilterExpression.TimeRange(1704067200000, 1735689599999), plan.filter)
+    }
 }

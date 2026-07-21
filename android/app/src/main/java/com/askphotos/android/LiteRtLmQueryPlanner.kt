@@ -21,6 +21,10 @@ data class PlannerExecutionTrace(
     val modelRevision: String? = null,
     val generationCalls: Int = 0,
     val repaired: Boolean = false,
+    val engineLoadMs: Long = 0,
+    val generationMs: Long = 0,
+    val engineCloseMs: Long = 0,
+    val deterministicOverlayApplied: Boolean = false,
     val elapsedMs: Long = 0,
     val fallbackReason: String? = null,
 )
@@ -47,6 +51,7 @@ class LiteRtLmQueryPlanner(
     private val resources: InferenceResourceManager = SerializedInferenceResourceManager(),
     private val fallback: QueryCompiler = QueryCompiler(),
     private val boundedCompiler: BoundedGemmaPlanCompiler = BoundedGemmaPlanCompiler(),
+    private val deterministicOverlay: DeterministicPlanOverlay = DeterministicPlanOverlay(),
 ) {
     suspend fun compile(query: String, activeResultIds: Set<String>?): GalleryQueryPlan =
         compileWithTrace(query, activeResultIds).plan
@@ -64,24 +69,36 @@ class LiteRtLmQueryPlanner(
                     require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
                     val initialized = createEngine(path)
                     var calls = 0
+                    var generationMs = 0L
+                    var closeMs = 0L
+                    var compiledPlan: GalleryQueryPlan? = null
                     try {
-                        val plan = boundedCompiler.compile(query, activeResultIds, plannerPrompt(query)) { prompt ->
+                        val generationStarted = android.os.SystemClock.elapsedRealtime()
+                        compiledPlan = boundedCompiler.compile(query, activeResultIds, plannerPrompt(query)) { prompt ->
                             calls++
                             generate(initialized.engine, prompt)
                         }
-                        PlannerExecutionTrace(
-                            plan = plan,
-                            usedGemma = true,
-                            backend = initialized.backend,
-                            modelTier = status.tier,
-                            modelRevision = status.packVersion,
-                            generationCalls = calls,
-                            repaired = calls > 1,
-                            elapsedMs = android.os.SystemClock.elapsedRealtime() - started,
-                        )
+                        generationMs = android.os.SystemClock.elapsedRealtime() - generationStarted
                     } finally {
+                        val closeStarted = android.os.SystemClock.elapsedRealtime()
                         initialized.engine.close()
+                        closeMs = android.os.SystemClock.elapsedRealtime() - closeStarted
                     }
+                    val overlay = deterministicOverlay.apply(query, requireNotNull(compiledPlan), activeResultIds)
+                    PlannerExecutionTrace(
+                        plan = overlay.plan,
+                        usedGemma = true,
+                        backend = initialized.backend,
+                        modelTier = status.tier,
+                        modelRevision = status.packVersion,
+                        generationCalls = calls,
+                        repaired = calls > 1,
+                        engineLoadMs = initialized.loadMs,
+                        generationMs = generationMs,
+                        engineCloseMs = closeMs,
+                        deterministicOverlayApplied = overlay.applied,
+                        elapsedMs = android.os.SystemClock.elapsedRealtime() - started,
+                    )
                 }
             }
         } catch (load: GemmaModelLoadFailure) {
@@ -104,14 +121,15 @@ class LiteRtLmQueryPlanner(
     }
 
     private fun createEngine(path: String): InitializedPlannerEngine {
+        val started = android.os.SystemClock.elapsedRealtime()
         val gpu = runCatching {
             initializeEngine(EngineConfig(modelPath = path, backend = Backend.GPU(), maxNumTokens = 4096))
-                .let { InitializedPlannerEngine(it, PlannerInferenceBackend.GPU) }
+                .let { InitializedPlannerEngine(it, PlannerInferenceBackend.GPU, android.os.SystemClock.elapsedRealtime() - started) }
         }
         return gpu.getOrElse { gpuFailure ->
             runCatching {
                 initializeEngine(EngineConfig(modelPath = path, backend = Backend.CPU(), maxNumTokens = 4096))
-                    .let { InitializedPlannerEngine(it, PlannerInferenceBackend.CPU) }
+                    .let { InitializedPlannerEngine(it, PlannerInferenceBackend.CPU, android.os.SystemClock.elapsedRealtime() - started) }
             }.getOrElse { cpuFailure ->
                 throw GemmaModelLoadFailure("Gemma failed on GPU and CPU", cpuFailure.also { it.addSuppressed(gpuFailure) })
             }
@@ -157,6 +175,10 @@ class LiteRtLmQueryPlanner(
     """.trimIndent()
 }
 
-private data class InitializedPlannerEngine(val engine: Engine, val backend: PlannerInferenceBackend)
+private data class InitializedPlannerEngine(
+    val engine: Engine,
+    val backend: PlannerInferenceBackend,
+    val loadMs: Long,
+)
 
 class GemmaModelLoadFailure(message: String, cause: Throwable) : IllegalStateException(message, cause)
