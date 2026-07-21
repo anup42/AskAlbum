@@ -58,7 +58,56 @@ data class PlannerInput(
     val availableCapabilities: Set<ModelCapability> = emptySet(),
 )
 data class VerificationInput(val plan: GalleryQueryPlan, val candidates: List<GalleryItem>)
-data class VerificationResult(val acceptedIds: Set<String>, val evidence: List<EvidenceRecord>)
+
+data class VerificationConditionSpec(
+    val id: String,
+    val text: String,
+    val polarity: Polarity,
+    val hardness: ConstraintStrength,
+    val subject: SemanticSubject,
+    val relationToPerson: String?,
+)
+
+data class VerificationConditionEvaluation(
+    val id: String,
+    val satisfied: Boolean,
+    val confidence: Float,
+)
+
+data class CandidateVerification(
+    val mediaId: String,
+    val conditions: List<VerificationConditionEvaluation>,
+    val overallMatch: Boolean,
+)
+
+enum class VerificationInferenceBackend { GPU, CPU, NOT_RUN }
+
+data class VerificationExecutionTrace(
+    val usedGemma: Boolean,
+    val backend: VerificationInferenceBackend,
+    val modelTier: GemmaModelTier? = null,
+    val modelRevision: String? = null,
+    val requestedCandidates: Int = 0,
+    val verifiedCandidates: Int = 0,
+    val generationCalls: Int = 0,
+    val repairedCandidates: Int = 0,
+    val engineLoadMs: Long = 0,
+    val generationMs: Long = 0,
+    val engineCloseMs: Long = 0,
+    val elapsedMs: Long = 0,
+    val fallbackReason: String? = null,
+)
+
+data class VerificationFailure(val mediaId: String?, val reason: String)
+
+data class VerificationResult(
+    val acceptedIds: Set<String>,
+    val evidence: List<EvidenceRecord>,
+    val applied: Boolean = false,
+    val evaluations: List<CandidateVerification> = emptyList(),
+    val failures: List<VerificationFailure> = emptyList(),
+    val trace: VerificationExecutionTrace? = null,
+)
 data class GroundedAnswerInput(val plan: GalleryQueryPlan, val hits: List<SearchHit>)
 data class ModelImage(
     val rgbBytes: ByteArray,

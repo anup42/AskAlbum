@@ -14,6 +14,9 @@ class AppServices(private val application: AskPhotosApplication) {
     val semanticVectorStore by lazy {
         SemanticVectorStore(application, retrievalModelPackManager, embeddingEngine)
     }
+    val visualVerifier: CandidateVerifier by lazy {
+        LiteRtGemmaVisualVerifier(application, modelPackManager, inferenceResources)
+    }
     val repository by lazy { GalleryRepository(application) }
 }
 

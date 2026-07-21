@@ -12,6 +12,7 @@ class GalleryRepository(context: Context) {
     private val services = (context.applicationContext as AskPhotosApplication).services
     private val planner = LiteRtLmQueryPlanner(services.modelPackManager, services.inferenceResources)
     private val semanticVectors = services.semanticVectorStore
+    private val visualVerifier = services.visualVerifier
     private val importer = MediaImporter(context.applicationContext)
 
     fun initialize(): IndexSummary {
@@ -147,10 +148,20 @@ class GalleryRepository(context: Context) {
             collapsed
         }
         val enriched = if (plan.intent == QueryIntent.ANSWER_FACT) diverse.map(::addDeterministicFactEvidence) else diverse
-        val hits = enriched
-            .take(plan.limit.coerceIn(1, 100))
+        val verification = visualVerifier.verifyWhenNeeded(plan, enriched)
+        val verifiedEvidence = verification.evidence.groupBy { it.mediaId }
+        val verified = if (verification.applied) {
+            enriched.asSequence()
+                .filter { it.item.id in verification.acceptedIds }
+                .map { hit -> hit.copy(evidence = hit.evidence + verifiedEvidence[hit.item.id].orEmpty()) }
+                .toList()
+        } else {
+            enriched
+        }
+        val hits = verified.take(plan.limit.coerceIn(1, 100))
 
-        val answer = buildAnswer(plan, hits, allItems, ranked.size)
+        val matchCount = if (verification.applied) verified.size else ranked.size
+        val answer = buildAnswer(plan, hits, allItems, matchCount, verification)
         val outcome = SearchOutcome(
             plan = plan,
             hits = hits,
@@ -235,24 +246,36 @@ class GalleryRepository(context: Context) {
         hits: List<SearchHit>,
         allItems: List<GalleryItem>,
         matchCount: Int,
+        verification: VerificationResult,
     ): SearchAnswer {
         val totalItems = allItems.size
         val readyItems = allItems.count { it.indexState == IndexState.READY }
         val usedSemanticRetrieval = hits.any { hit -> hit.evidence.any { it.sourceField == "image_text_embedding" } }
         val exactness = when {
             readyItems < totalItems -> ResultExactness.PARTIAL_INDEX
-            usedSemanticRetrieval -> ResultExactness.ESTIMATED_FROM_RETRIEVAL
+            usedSemanticRetrieval || verification.applied -> ResultExactness.ESTIMATED_FROM_RETRIEVAL
             else -> ResultExactness.COMPLETE_MODEL_SCAN
         }
+        val warnings = buildList {
+            if (verification.failures.isNotEmpty()) {
+                add("Visual verification had ${verification.failures.size} bounded failure(s); no failed candidate was accepted.")
+            }
+            verification.trace?.fallbackReason?.let { add("Visual verification unavailable: $it") }
+        }.distinct()
         val evidenceIds = hits.flatMap { it.evidence }.map { it.id }.distinct().take(12)
         if (hits.isEmpty()) {
             return SearchAnswer(
                 headline = "No supported matches found",
-                detail = "All ${if (plan.baseResultIds == null) totalItems else plan.baseResultIds.size} eligible local items were checked. ${if (readyItems < totalItems) "Some items are still indexing." else "Try a place, object, OCR word, or scene."}",
+                detail = if (verification.applied) {
+                    "No bounded candidate was proven to satisfy every required visual condition. Failed or unverified candidates are never returned as matches."
+                } else {
+                    "All ${if (plan.baseResultIds == null) totalItems else plan.baseResultIds.size} eligible local items were checked. ${if (readyItems < totalItems) "Some items are still indexing." else "Try a place, object, OCR word, or scene."}"
+                },
                 evidenceIds = emptyList(),
                 exactness = exactness,
                 indexedEligibleCount = readyItems,
                 totalEligibleCount = totalItems,
+                warnings = warnings,
             )
         }
 
@@ -269,6 +292,7 @@ class GalleryRepository(context: Context) {
                 exactness = exactness,
                 indexedEligibleCount = readyItems,
                 totalEligibleCount = totalItems,
+                warnings = warnings,
             )
             QueryIntent.EVENT_SUMMARY -> {
                 val locations = hits.groupingBy { it.item.location }.eachCount().entries
@@ -280,6 +304,7 @@ class GalleryRepository(context: Context) {
                     exactness = exactness,
                     indexedEligibleCount = readyItems,
                     totalEligibleCount = totalItems,
+                    warnings = warnings,
                 )
             }
             QueryIntent.ANSWER_FACT -> {
@@ -294,6 +319,7 @@ class GalleryRepository(context: Context) {
                     exactness = if (fact != null && selection.document.item.indexState == IndexState.READY) ResultExactness.EXACT else exactness,
                     indexedEligibleCount = readyItems,
                     totalEligibleCount = totalItems,
+                    warnings = warnings,
                 )
             }
             else -> SearchAnswer(
@@ -303,6 +329,7 @@ class GalleryRepository(context: Context) {
                 exactness = exactness,
                 indexedEligibleCount = readyItems,
                 totalEligibleCount = totalItems,
+                warnings = warnings,
             )
         }
     }

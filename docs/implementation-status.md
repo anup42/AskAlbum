@@ -1253,3 +1253,77 @@ Failures and limitations:
 Next phase:
 
 - Begin Phase 7 as a separate narrow slice: one-image structured visual verification with bounded candidate inputs, followed by evidence-only answer composition and citation validation. Keep E4B optional and test it only after a dedicated safe-load benchmark.
+
+## Phase 7A — bounded Gemma visual verification (22 July 2026)
+
+Status: **Implemented and verified on the connected physical device. The live query repository now invokes Gemma only for `REQUIRED` plans or hard relational/negative/fine-grained `AUTO` clauses, checks at most eight ranked image candidates one image at a time, and accepts only candidates whose Kotlin-owned hard conditions are all satisfied. The real E2B one-image relationship test passed on GPU with three evidence records. Evidence-only generative answer composition, progressive candidate UI, face/body overlays, and the full no-answer acceptance flow remain pending.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/GemmaVerificationCodec.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryImageLoader.kt`
+- `android/app/src/main/java/com/askphotos/android/LiteRtGemmaVisualVerifier.kt`
+- `android/app/src/main/java/com/askphotos/android/OnDeviceEngineContracts.kt`
+- `android/app/src/main/java/com/askphotos/android/AskPhotosApplication.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryRepository.kt`
+- `android/app/src/test/java/com/askphotos/android/GemmaVerificationCodecTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/RealGemmaVisualVerifierAcceptanceTest.kt`
+
+Architecture decisions:
+
+- Kotlin assigns condition IDs and the candidate media ID. Gemma never emits a media ID, path, URI, tool name, or arbitrary field.
+- The strict response schema is `conditions[{id,satisfied,confidence}]` plus `overallMatch`. The codec rejects missing, duplicate, or unknown condition IDs; missing or additional fields; non-finite/out-of-range confidence; and an `overallMatch` that disagrees with Kotlin's conjunction of all hard conditions.
+- Each image gets one deterministic multimodal generation and at most one repair over the same image. The engine is initialized once per bounded candidate batch, uses one image per conversation, and is explicitly closed.
+- The verifier tries GPU for both language and vision, then CPU. The central generative-model lease prevents simultaneous planner/verifier or background high-memory inference.
+- The candidate bound is eight. `NEVER` and ordinary soft semantic `AUTO` queries bypass Gemma. `REQUIRED`, hard, negative, person-relation, and fine-grained visual clauses activate it.
+- Image bytes are loaded only from validated app assets, app-private preview files, or Kotlin-owned `content://` records. Asset traversal, non-content URIs, and previews outside app-private roots are rejected. Inputs are downsampled to a 1,600-pixel edge and re-encoded below an 8 MiB bound.
+- Verification is fail-closed: a missing model, inaccessible image, schema failure after one repair, or inference failure accepts no affected candidate. Returned warnings are sanitized and do not contain URIs or filesystem paths.
+- Satisfied conditions create `visual_verification` evidence records whose producer includes the active Gemma tier and pack revision. Rejected-candidate evidence is not attached to displayed hits.
+- Any bounded visual-verification result is reported as retrieval-estimated rather than a complete gallery scan.
+
+Commands and results:
+
+```powershell
+.\gradlew.bat :app:testConsumerDebugUnitTest --tests com.askphotos.android.GemmaVerificationCodecTest
+.\gradlew.bat :app:compileConsumerDebugAndroidTestKotlin
+$env:ANDROID_HOME=<detected-sdk>; $env:ANDROID_SDK_ROOT=<detected-sdk>; powershell -ExecutionPolicy Bypass -File C:\Users\anupk\.codex\skills\android-build-install\scripts\build_install_android.ps1 -Root C:\Users\anupk\Documents\git\askphotos\android -Module :app -Variant ConsumerDebug -Serial <masked>
+.\gradlew.bat :app:connectedConsumerDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=com.askphotos.android.RealGemmaVisualVerifierAcceptanceTest"
+.\gradlew.bat :app:testOfflineDemoDebugUnitTest :app:testConsumerDebugUnitTest :app:lintOfflineDemoDebug :app:lintConsumerDebug
+python C:\Users\anupk\.codex\skills\android-device-diagnostics\scripts\android_diagnostics.py --serial <masked> --package com.askphotos.android --minutes 10 --max-lines 120 --out build\device-artifacts\phase7-visual --screenshot --include-global-errors
+adb -s <masked> shell dumpsys thermalservice
+```
+
+Unit/instrumented/device results:
+
+- Focused verifier codec/policy/path tests passed. The final two-flavor unit gate contains 51 XML suites / 164 flavored tests, with 0 failures, 0 errors, and 0 skipped. Offline and consumer lint both passed.
+- Consumer debug build/install succeeded on the sole connected Samsung SM-F966B, Android 16/API 36, arm64-v8a, SM8750. The device serial is omitted.
+- The connected `RealGemmaVisualVerifierAcceptanceTest` passed: 1 test, 0 failures/errors/skips. It generated a new CC0 relationship card in app cache, verified it with the installed E2B pack, asserted all three hard conditions, asserted the accepted candidate, asserted three local evidence records and their producer provenance, then deleted exactly that temporary cache file.
+- Real trace: `used=true`, backend `GPU`, generation calls `1`, repair `0`, engine load `2,860 ms`, generation `6,801 ms`, close `458 ms`, verifier elapsed `10,139 ms`, wall `10,142 ms`, accepted `1`, evidence `3`, failures `0`.
+- In-process PSS was 81,279 kB before the verifier and 308,128 kB after explicit engine close. These two samples are not a peak-memory profile.
+- Post-run thermal status was `0`; reported AP temperature samples were below throttling status. A targeted scan found no app `FATAL EXCEPTION`, ANR, `OutOfMemoryError`, or app crash marker.
+- The first build/install invocation failed before compilation because the child PowerShell process did not inherit a discoverable Android SDK path. The command was rerun with process-local `ANDROID_HOME`/`ANDROID_SDK_ROOT` and succeeded; no `local.properties` file was added.
+- The first connected-test command was rejected by Gradle because PowerShell stripped the unquoted `-P` property prefix. Quoting that property fixed command parsing; the test itself passed on its first execution.
+
+Artifacts:
+
+- `artifacts/phase7-visual-verification/build-phase7-unit.log`
+- `artifacts/phase7-visual-verification/build-phase7-androidtest-compile.log`
+- `artifacts/phase7-visual-verification/build-phase7-device.log`
+- `artifacts/phase7-visual-verification/build-phase7-gate.log`
+- `artifacts/phase7-visual-verification/build-phase7-final-focused.log`
+- `artifacts/phase7-visual-verification/diagnostics-20260722_013347/`
+- `android/app/build/outputs/androidTest-results/connected/debug/flavors/consumer/TEST-SM-F966B - 16-_app-consumer.xml`
+- `android/app/build/outputs/androidTest-results/connected/debug/flavors/consumer/SM-F966B - 16/test-result.textproto`
+
+Failures and limitations:
+
+- The 10.14-second wall result is one synthetic image on one high-end phone. It is not an 8-candidate latency percentile or sustained thermal benchmark, and is slightly above the initial 10-second aspirational complex-answer target.
+- The verifier currently receives a downsampled full image. Stable face labels, body crops, and condition-specific evidence regions are not yet overlaid or emitted, so real named-person clothing verification must not be presented as identity-proven until the people pipeline supplies those inputs.
+- Verification currently completes before the repository returns; progressive initial-candidate then verified-result UI states remain pending.
+- The live fail-closed no-match path is implemented, but this slice did not yet run the seeded nonexistent-merchant/no-fabrication UI acceptance query.
+- E4B remains an honest skip; no E4B pack was downloaded or loaded.
+- Structured generative answer composition and post-generation claim/citation validation are the next Phase 7 slice.
+
+Next phase:
+
+- Implement evidence-packet construction, strict grounded-answer JSON, deterministic number/date and evidence-ID post-validation, and the no-fabrication connected acceptance test without expanding into people/events work.
