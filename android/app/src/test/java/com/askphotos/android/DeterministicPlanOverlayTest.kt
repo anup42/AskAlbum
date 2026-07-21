@@ -54,6 +54,19 @@ class DeterministicPlanOverlayTest {
         assertEquals(SortSpec.CAPTURE_TIME_DESC, result.plan.sort)
     }
 
+    @Test
+    fun fillsMissingMerchantInsideModelOcrClause() {
+        val model = plan(FilterExpression.True, null).copy(
+            intent = QueryIntent.DOCUMENT_QA,
+            ocrClause = OcrClause(query = "receipt", merchant = null),
+        )
+
+        val result = overlay.apply("Show a receipt from a merchant that does not exist.", model, null)
+
+        assertEquals(QueryIntent.DOCUMENT_QA, result.plan.intent)
+        assertEquals("a merchant that does not exist", result.plan.ocrClause?.merchant)
+    }
+
     private fun plan(filter: FilterExpression, place: String?) = GalleryQueryPlan(
         originalQuery = "fixture",
         intent = QueryIntent.FIND_MEDIA,

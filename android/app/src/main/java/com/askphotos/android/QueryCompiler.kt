@@ -43,6 +43,7 @@ class QueryCompiler(
         val intent = when {
             Regex("\\b(how many|count|number of|kitne|kitni)\\b").containsMatchIn(normalized) || "कितने" in normalized || "कितनी" in normalized -> QueryIntent.COUNT
             Regex("\\b(total|amount paid|wifi password|wi fi password)\\b").containsMatchIn(normalized) -> QueryIntent.ANSWER_FACT
+            Regex("\\b(receipt|invoice|document)\\b").containsMatchIn(normalized) -> QueryIntent.DOCUMENT_QA
             Regex("\\b(when|where|kab|kahan)\\b").containsMatchIn(normalized) || "कब" in normalized || "कहाँ" in normalized -> QueryIntent.EVENT_SUMMARY
             else -> QueryIntent.FIND_MEDIA
         }
@@ -64,7 +65,12 @@ class QueryCompiler(
             Regex("\\b(wifi password|wi fi password)\\b").containsMatchIn(normalized) -> "password"
             else -> null
         }
-        val merchant = if ("receipt" in terms) terms.firstOrNull { it !in setOf("receipt", "total", "paid", "grand") } else null
+        val merchantAfterFrom = Regex("\\breceipt\\s+from\\s+(.+)$").find(normalized)?.groupValues?.get(1)?.trim()
+        val merchant = if ("receipt" in terms) {
+            merchantAfterFrom ?: terms.firstOrNull { it !in setOf("receipt", "total", "paid", "grand") }
+        } else {
+            null
+        }
 
         val plan = GalleryQueryPlan(
             originalQuery = query,
@@ -76,7 +82,7 @@ class QueryCompiler(
             },
             filter = timeFilter,
             semanticClauses = originalTerms.map { SemanticClause(text = it, canonicalText = aliases[it] ?: it) },
-            ocrClause = if (intent == QueryIntent.ANSWER_FACT) OcrClause(
+            ocrClause = if (intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA)) OcrClause(
                 query = terms.joinToString(" "),
                 merchant = merchant,
                 requestedField = requestedField,

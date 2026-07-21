@@ -17,9 +17,10 @@ class DeterministicPlanOverlay(
     ): DeterministicPlanOverlayResult {
         val deterministic = compiler.compile(query, activeResultIds)
         val merged = modelPlan.copy(
+            intent = if (deterministic.intent != QueryIntent.FIND_MEDIA) deterministic.intent else modelPlan.intent,
             mediaScope = if (deterministic.mediaScope != MediaScope.ALL) deterministic.mediaScope else modelPlan.mediaScope,
             filter = mergeFilter(modelPlan.filter, deterministic.filter),
-            ocrClause = modelPlan.ocrClause ?: deterministic.ocrClause,
+            ocrClause = mergeOcrClause(modelPlan.ocrClause, deterministic.ocrClause),
             grouping = if (modelPlan.grouping == Grouping.NONE) deterministic.grouping else modelPlan.grouping,
             sort = if (deterministic.sort != SortSpec.RELEVANCE) deterministic.sort else modelPlan.sort,
             place = deterministic.place ?: modelPlan.place,
@@ -37,5 +38,15 @@ class DeterministicPlanOverlay(
         model is FilterExpression.And && deterministic in model.clauses -> model
         model is FilterExpression.And -> FilterExpression.And(model.clauses + deterministic)
         else -> FilterExpression.And(listOf(model, deterministic))
+    }
+
+    private fun mergeOcrClause(model: OcrClause?, deterministic: OcrClause?): OcrClause? = when {
+        model == null -> deterministic
+        deterministic == null -> model
+        else -> model.copy(
+            query = model.query ?: deterministic.query,
+            merchant = model.merchant ?: deterministic.merchant,
+            requestedField = model.requestedField ?: deterministic.requestedField,
+        )
     }
 }

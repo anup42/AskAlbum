@@ -44,6 +44,15 @@ class QueryCompilerTest {
     }
 
     @Test
+    fun nonexistentReceiptMerchantIsARequiredDocumentConstraint() {
+        val plan = compiler.compile("Show a receipt from a merchant that does not exist.")
+
+        assertEquals(QueryIntent.DOCUMENT_QA, plan.intent)
+        assertEquals(MediaScope.DOCUMENTS, plan.mediaScope)
+        assertEquals("a merchant that does not exist", plan.ocrClause?.merchant)
+    }
+
+    @Test
     fun sensitiveContentClassifierFindsPasswordsAndCards() {
         assertTrue(SensitiveContentClassifier.isSensitive("Wi-Fi password: mango-tree"))
         assertTrue(SensitiveContentClassifier.isSensitive("4111 1111 1111 1111"))

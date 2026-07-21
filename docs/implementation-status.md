@@ -1406,3 +1406,49 @@ Failures and limitations:
 Next phase:
 
 - Continue Phase 7 with a seeded end-to-end no-match/full-query acceptance and progressive query UI state, then move to the separate opt-in people/events/follow-up slice.
+
+## Phase 7C — seeded no-fabrication acceptance (22 July 2026)
+
+Status: **Implemented, passed, and safely cleaned on the physical device. The Q10 nonexistent-merchant request now becomes a deterministic `DOCUMENT_QA` constraint even when E2B initially returns generic `FIND_MEDIA`; unrelated receipts cannot pass merely because the word “receipt” matches. The full repository returned a clear no-match with zero hits, claims, or evidence.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/QueryCompiler.kt`
+- `android/app/src/main/java/com/askphotos/android/DeterministicPlanOverlay.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryRepository.kt`
+- `android/app/src/test/java/com/askphotos/android/QueryCompilerTest.kt`
+- `android/app/src/test/java/com/askphotos/android/DeterministicPlanOverlayTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/NoFabricationAcceptanceTest.kt`
+
+Architecture decisions and fixes:
+
+- Kotlin classifies receipt/invoice/document requests as `DOCUMENT_QA` and extracts the phrase following “receipt from” as a required merchant constraint.
+- The deterministic overlay now fills individual missing OCR fields instead of discarding a deterministic merchant when Gemma emits a partial OCR clause.
+- A non-generic deterministic intent overrides only when Kotlin recognizes a bounded exact/document/event operation; model semantics remain authoritative when deterministic parsing yields generic `FIND_MEDIA`.
+- The repository applies a nonblank merchant as a hard prefilter over indexed title, description, OCR text, and tags before lexical/vector fusion. It does not silently relax the merchant when no item matches.
+
+Device gate:
+
+- Seed command created 74 media URIs only under `Pictures/AgenticGalleryTest/phase7_no_fab_20260722/` and `Documents/AgenticGalleryTest/phase7_no_fab_20260722/`; the run manifest masked the serial and reported no retries.
+- First acceptance execution failed honestly because the E2B plan intent remained `FIND_MEDIA`. The deterministic intent overlay was repaired and the unchanged assertion was rerun once.
+- Final acceptance: 1 test passed. Plan intent was `DOCUMENT_QA`, the hard merchant contained “does not exist,” hits were empty, headline was `No supported matches found`, and claims/evidence IDs were empty.
+- Cleanup requested and deleted exactly 74 recorded URIs and verified `remainingCount=0`. No broad shared-storage deletion was used.
+- Final JVM gate: 178 flavored tests, 0 failures/errors/skips. Combined parallel lint hit the known Android `GradleDetector` `ConcurrentModificationException` without a source diagnostic; unchanged offline and consumer lint were then run sequentially and both passed without disabling checks.
+
+Artifacts:
+
+- `artifacts/phase7-no-fabrication-seed/`
+- `artifacts/phase7-no-fabrication-device.txt` (retained failed first run)
+- `artifacts/phase7-no-fabrication-device-final.txt`
+- `artifacts/phase7-no-fabrication-cleanup/`
+- `artifacts/phase7-no-fabrication-focused.log`
+- `artifacts/phase7-no-fabrication-repair.log`
+- `artifacts/phase7-no-fabrication-final-gate.log`
+- `artifacts/phase7-no-fabrication-lint-offline.log`
+- `artifacts/phase7-no-fabrication-lint-consumer.log`
+
+Limitations and next phase:
+
+- This closes the seeded no-fabrication query but does not add progressive initial/verified UI states.
+- Merchant matching is a conservative normalized substring constraint. Alias/entity resolution for merchant variants needs a later document-entity evaluation rather than silent fuzzy relaxation.
+- Next narrow slice: progressive query execution state and cancellation, followed separately by opt-in people/events/follow-up work.

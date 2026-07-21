@@ -92,12 +92,13 @@ class GalleryRepository(context: Context) {
         val allowed = plan.baseResultIds
         val terms = plan.terms
         val allItems = database.allItems().filter { item ->
-            when (plan.mediaScope) {
+            val inScope = when (plan.mediaScope) {
                 MediaScope.ALL -> true
                 MediaScope.IMAGES -> item.kind == MediaKind.IMAGE
                 MediaScope.VIDEOS -> item.kind == MediaKind.VIDEO
                 MediaScope.DOCUMENTS -> item.kind == MediaKind.PDF || item.ocrText.isNotBlank() || item.looksLikeDocument()
             }
+            inScope && item.matchesRequiredMerchant(plan.ocrClause?.merchant)
         }
         val fullTextIds = database.fullTextMatches(terms)
         val lexicalRanked = allItems
@@ -358,6 +359,15 @@ class GalleryRepository(context: Context) {
         val text = (filename + " " + title + " " + tags.joinToString(" ")).lowercase(Locale.ROOT)
         return listOf("receipt", "invoice", "document", "ticket", "boarding", "menu", "screenshot", "wifi", "confirmation")
             .any(text::contains)
+    }
+
+    private fun GalleryItem.matchesRequiredMerchant(merchant: String?): Boolean {
+        val required = merchant?.trim()?.lowercase(Locale.ROOT)?.takeIf(String::isNotEmpty) ?: return true
+        val indexedText = buildString {
+            append(title).append(' ').append(description).append(' ').append(ocrText).append(' ')
+            append(tags.joinToString(" "))
+        }.lowercase(Locale.ROOT)
+        return required in indexedText
     }
 
     private fun addDeterministicFactEvidence(hit: SearchHit): SearchHit {
