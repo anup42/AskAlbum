@@ -281,9 +281,53 @@ data class OcrEntityRecord(
 
 data class EventRecord(
     val id: Long,
-    val dayStart: Long,
+    val startTime: Long,
+    val endTime: Long,
     val title: String,
+    val locationName: String?,
+    val latitude: Double?,
+    val longitude: Double?,
+    val eventType: String,
     val memberCount: Int,
+    val confidence: Float,
+    val searchText: String,
+    val representativeMediaId: String?,
+    val producerVersion: String,
+    val userCorrected: Boolean,
+)
+
+enum class EventCorrectionOperation { MERGE, SPLIT, RENAME, LOCATION }
+
+data class EventCorrectionRecord(
+    val id: Long = 0,
+    val operation: EventCorrectionOperation,
+    val mediaIds: Set<String>,
+    val title: String? = null,
+    val locationName: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+data class CompiledEvent(
+    val id: Long,
+    val startTime: Long,
+    val endTime: Long,
+    val title: String,
+    val locationName: String?,
+    val latitude: Double?,
+    val longitude: Double?,
+    val eventType: String,
+    val members: List<GalleryItem>,
+    val confidence: Float,
+    val searchText: String,
+    val representativeMediaId: String?,
+    val producerVersion: String,
+    val userCorrected: Boolean,
+)
+
+data class EventSearchHit(
+    val event: EventRecord,
+    val mediaIds: List<String>,
+    val score: Double,
 )
 
 data class MediaRemovalResult(

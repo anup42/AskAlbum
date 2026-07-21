@@ -128,12 +128,28 @@ data class OcrEntityEntity(
     @ColumnInfo(name = "producer_version") val producerVersion: String,
 )
 
-@Entity(tableName = "gallery_event", indices = [Index(value = ["day_start"], unique = true)])
+@Entity(
+    tableName = "gallery_event",
+    indices = [
+        Index(name = "gallery_event_start_idx", value = ["start_time"]),
+        Index(name = "gallery_event_end_idx", value = ["end_time"]),
+    ],
+)
 data class GalleryEventEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    @ColumnInfo(name = "day_start") val dayStart: Long,
+    @PrimaryKey val id: Long,
+    @ColumnInfo(name = "start_time") val startTime: Long,
+    @ColumnInfo(name = "end_time") val endTime: Long,
     val title: String,
+    @ColumnInfo(name = "location_name") val locationName: String?,
+    val latitude: Double?,
+    val longitude: Double?,
+    @ColumnInfo(name = "event_type", defaultValue = "'MEMORY'") val eventType: String,
     @ColumnInfo(name = "member_count") val memberCount: Int,
+    @ColumnInfo(defaultValue = "0.5") val confidence: Float,
+    @ColumnInfo(name = "search_text", defaultValue = "''") val searchText: String,
+    @ColumnInfo(name = "representative_media_id") val representativeMediaId: String?,
+    @ColumnInfo(name = "producer_version", defaultValue = "'legacy-day-v1'") val producerVersion: String,
+    @ColumnInfo(name = "user_corrected", defaultValue = "0") val userCorrected: Boolean,
 )
 
 @Entity(
@@ -148,6 +164,16 @@ data class GalleryEventEntity(
 data class EventMediaEntity(
     @ColumnInfo(name = "event_id") val eventId: Long,
     @ColumnInfo(name = "media_id") val mediaId: String,
+)
+
+@Entity(tableName = "event_correction", indices = [Index(name = "event_correction_created_idx", value = ["created_at"])])
+data class EventCorrectionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val operation: String,
+    @ColumnInfo(name = "media_ids") val mediaIds: String,
+    val title: String?,
+    @ColumnInfo(name = "location_name") val locationName: String?,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
 )
 
 @Entity(tableName = "people_settings")
@@ -280,6 +306,7 @@ data class MediaIndexStageEntity(
         OcrEntityEntity::class,
         GalleryEventEntity::class,
         EventMediaEntity::class,
+        EventCorrectionEntity::class,
         PeopleSettingsEntity::class,
         PersonClusterEntity::class,
         FaceInstanceEntity::class,
@@ -289,7 +316,7 @@ data class MediaIndexStageEntity(
         ResultSetMediaEntity::class,
         MediaIndexStageEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -309,6 +336,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_6_7,
             MIGRATION_7_8,
             MIGRATION_8_9,
+            MIGRATION_9_10,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -399,6 +427,26 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS result_set_session_created_idx ON result_set(session_id, created_at)")
                 db.execSQL("CREATE TABLE IF NOT EXISTS result_set_media (result_set_id TEXT NOT NULL, media_id TEXT NOT NULL, rank INTEGER NOT NULL, score REAL NOT NULL, PRIMARY KEY(result_set_id, media_id), FOREIGN KEY(result_set_id) REFERENCES result_set(id) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS result_set_media_media_idx ON result_set_media(media_id)")
+            }
+        }
+
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("PRAGMA defer_foreign_keys=ON")
+                db.execSQL("ALTER TABLE event_media RENAME TO event_media_v9")
+                db.execSQL("ALTER TABLE gallery_event RENAME TO gallery_event_v9")
+                db.execSQL("DROP INDEX IF EXISTS index_event_media_media_id")
+                db.execSQL("CREATE TABLE gallery_event (id INTEGER NOT NULL, start_time INTEGER NOT NULL, end_time INTEGER NOT NULL, title TEXT NOT NULL, location_name TEXT, latitude REAL, longitude REAL, event_type TEXT NOT NULL DEFAULT 'MEMORY', member_count INTEGER NOT NULL, confidence REAL NOT NULL DEFAULT 0.5, search_text TEXT NOT NULL DEFAULT '', representative_media_id TEXT, producer_version TEXT NOT NULL DEFAULT 'legacy-day-v1', user_corrected INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(id))")
+                db.execSQL("INSERT INTO gallery_event(id,start_time,end_time,title,event_type,member_count,confidence,search_text,producer_version,user_corrected) SELECT id,day_start,day_start,title,'MEMORY',member_count,0.5,title,'legacy-day-v1',0 FROM gallery_event_v9")
+                db.execSQL("CREATE INDEX gallery_event_start_idx ON gallery_event(start_time)")
+                db.execSQL("CREATE INDEX gallery_event_end_idx ON gallery_event(end_time)")
+                db.execSQL("CREATE TABLE event_media (event_id INTEGER NOT NULL, media_id TEXT NOT NULL, PRIMARY KEY(event_id,media_id), FOREIGN KEY(event_id) REFERENCES gallery_event(id) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("INSERT INTO event_media(event_id,media_id) SELECT event_id,media_id FROM event_media_v9")
+                db.execSQL("CREATE INDEX index_event_media_media_id ON event_media(media_id)")
+                db.execSQL("DROP TABLE event_media_v9")
+                db.execSQL("DROP TABLE gallery_event_v9")
+                db.execSQL("CREATE TABLE event_correction (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, operation TEXT NOT NULL, media_ids TEXT NOT NULL, title TEXT, location_name TEXT, created_at INTEGER NOT NULL)")
+                db.execSQL("CREATE INDEX event_correction_created_idx ON event_correction(created_at)")
             }
         }
 

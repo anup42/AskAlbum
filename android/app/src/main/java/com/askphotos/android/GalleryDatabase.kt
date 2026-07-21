@@ -5,7 +5,6 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.provider.MediaStore
 import org.json.JSONArray
-import java.util.Calendar
 import java.util.UUID
 
 class GalleryDatabase(
@@ -81,7 +80,7 @@ class GalleryDatabase(
                 val existing = itemById(db, imported.stableId)
                 val unchanged = existing != null && existing.contentUri == imported.uri &&
                     existing.modifiedAt == imported.modifiedAt && existing.sizeBytes == imported.sizeBytes &&
-                    existing.album == imported.album
+                    existing.album == imported.album && existing.capturedAt == imported.capturedAt
                 if (unchanged) {
                     initializeStages(db, existing, replace = false)
                     return@forEach
@@ -620,45 +619,133 @@ class GalleryDatabase(
 
     fun rebuildEvents() {
         val ready = queryItems("index_state='READY' AND captured_at IS NOT NULL", null, "captured_at", null)
-        val grouped = ready.groupBy { dayStart(it.capturedAt!!) }
+        val compiled = EventCompiler.compile(ready, eventCorrections())
         val db = writableDatabase
         db.beginTransaction()
         try {
             db.delete("event_media", null, null)
             db.delete("gallery_event", null, null)
-            grouped.toSortedMap().forEach { (day, members) ->
-                val title = members.flatMap { it.tags }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
-                    ?.replaceFirstChar(Char::uppercase) ?: "Gallery day"
-                val eventId = db.insertOrThrow("gallery_event", null, ContentValues().apply {
-                    put("day_start", day)
-                    put("title", title)
-                    put("member_count", members.size)
+            compiled.forEach { event ->
+                db.insertOrThrow("gallery_event", null, ContentValues().apply {
+                    put("id", event.id)
+                    put("start_time", event.startTime)
+                    put("end_time", event.endTime)
+                    put("title", event.title)
+                    put("location_name", event.locationName)
+                    put("latitude", event.latitude)
+                    put("longitude", event.longitude)
+                    put("event_type", event.eventType)
+                    put("member_count", event.members.size)
+                    put("confidence", event.confidence)
+                    put("search_text", event.searchText)
+                    put("representative_media_id", event.representativeMediaId)
+                    put("producer_version", event.producerVersion)
+                    put("user_corrected", event.userCorrected)
                 })
-                members.forEach { member ->
+                event.members.forEach { member ->
                     db.insert("event_media", null, ContentValues().apply {
-                        put("event_id", eventId)
+                        put("event_id", event.id)
                         put("media_id", member.id)
                     })
                 }
             }
-            ready.forEach { updateStage(db, it.id, IndexStage.EVENTS, StageStatus.COMPLETE, "day-event-v1") }
+            ready.forEach { updateStage(db, it.id, IndexStage.EVENTS, StageStatus.COMPLETE, EventCompiler.PRODUCER_VERSION) }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
     }
 
-    fun events(): List<EventRecord> = readableDatabase.query("gallery_event", null, null, null, null, null, "day_start DESC").use { cursor ->
+    fun events(): List<EventRecord> = readableDatabase.query("gallery_event", null, null, null, null, null, "start_time DESC").use { cursor ->
         buildList {
             while (cursor.moveToNext()) add(
                 EventRecord(
                     id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
-                    dayStart = cursor.getLong(cursor.getColumnIndexOrThrow("day_start")),
+                    startTime = cursor.getLong(cursor.getColumnIndexOrThrow("start_time")),
+                    endTime = cursor.getLong(cursor.getColumnIndexOrThrow("end_time")),
                     title = cursor.getString(cursor.getColumnIndexOrThrow("title")),
+                    locationName = cursor.getStringOrNull("location_name"),
+                    latitude = cursor.getDoubleOrNull("latitude"),
+                    longitude = cursor.getDoubleOrNull("longitude"),
+                    eventType = cursor.getString(cursor.getColumnIndexOrThrow("event_type")),
                     memberCount = cursor.getInt(cursor.getColumnIndexOrThrow("member_count")),
+                    confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
+                    searchText = cursor.getString(cursor.getColumnIndexOrThrow("search_text")),
+                    representativeMediaId = cursor.getStringOrNull("representative_media_id"),
+                    producerVersion = cursor.getString(cursor.getColumnIndexOrThrow("producer_version")),
+                    userCorrected = cursor.getInt(cursor.getColumnIndexOrThrow("user_corrected")) != 0,
                 ),
             )
         }
+    }
+
+    fun eventCorrections(): List<EventCorrectionRecord> = readableDatabase.query(
+        "event_correction", null, null, null, null, null, "created_at,id",
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                val operation = runCatching { EventCorrectionOperation.valueOf(cursor.getString(cursor.getColumnIndexOrThrow("operation"))) }
+                    .getOrNull() ?: continue
+                add(EventCorrectionRecord(
+                    id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                    operation = operation,
+                    mediaIds = decodeStrings(cursor.getString(cursor.getColumnIndexOrThrow("media_ids"))),
+                    title = cursor.getStringOrNull("title"),
+                    locationName = cursor.getStringOrNull("location_name"),
+                    createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+                ))
+            }
+        }
+    }
+
+    fun saveEventCorrection(
+        operation: EventCorrectionOperation,
+        mediaIds: Set<String>,
+        title: String? = null,
+        locationName: String? = null,
+    ): EventCorrectionRecord {
+        require(mediaIds.isNotEmpty() && mediaIds.size <= MAX_EVENT_CORRECTION_MEDIA) { "Event correction requires 1..$MAX_EVENT_CORRECTION_MEDIA media IDs" }
+        require(mediaIds.all { it in accessibleIds() }) { "Event correction contains inaccessible or unknown media" }
+        val safeTitle = title?.trim()?.take(MAX_EVENT_LABEL_LENGTH)
+        val safeLocation = locationName?.trim()?.take(MAX_EVENT_LABEL_LENGTH)
+        if (operation == EventCorrectionOperation.RENAME) require(!safeTitle.isNullOrBlank()) { "Rename correction requires a title" }
+        if (operation == EventCorrectionOperation.LOCATION) require(!safeLocation.isNullOrBlank()) { "Location correction requires a location" }
+        val createdAt = System.currentTimeMillis()
+        val id = writableDatabase.insertOrThrow("event_correction", null, ContentValues().apply {
+            put("operation", operation.name)
+            put("media_ids", encode(mediaIds.sorted()))
+            put("title", safeTitle)
+            put("location_name", safeLocation)
+            put("created_at", createdAt)
+        })
+        rebuildEvents()
+        return EventCorrectionRecord(id, operation, mediaIds, safeTitle, safeLocation, createdAt)
+    }
+
+    fun eventMembers(eventId: Long): List<String> = readableDatabase.rawQuery(
+        "SELECT media_id FROM event_media WHERE event_id=? ORDER BY media_id", arrayOf(eventId.toString()),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    fun eventsForMedia(mediaIds: Collection<String>): Map<String, EventRecord> {
+        if (mediaIds.isEmpty()) return emptyMap()
+        val wanted = mediaIds.toSet()
+        val byId = events().associateBy { it.id }
+        return eventMembership().mapNotNull { (mediaId, eventId) ->
+            if (mediaId in wanted) byId[eventId]?.let { mediaId to it } else null
+        }.toMap()
+    }
+
+    fun searchEvents(terms: List<String>, allowedIds: Set<String>? = null): List<EventSearchHit> {
+        val normalized = terms.map { it.trim().lowercase() }.filter { it.length > 1 }.distinct()
+        if (normalized.isEmpty()) return emptyList()
+        return events().mapNotNull { event ->
+            val haystack = "${event.title} ${event.locationName.orEmpty()} ${event.searchText}".lowercase()
+            val matched = normalized.count { it in haystack }
+            if (matched == 0) return@mapNotNull null
+            val members = eventMembers(event.id).filter { allowedIds == null || it in allowedIds }
+            if (members.isEmpty()) return@mapNotNull null
+            EventSearchHit(event, members, matched.toDouble() / normalized.size + if (normalized.all { it in event.title.lowercase() }) 0.25 else 0.0)
+        }.sortedWith(compareByDescending<EventSearchHit> { it.score }.thenByDescending { it.event.startTime })
     }
 
     fun eventMembership(): Map<String, Long> = readableDatabase.rawQuery(
@@ -918,6 +1005,12 @@ class GalleryDatabase(
         )
     }
 
+    private fun android.database.Cursor.getStringOrNull(name: String): String? =
+        getColumnIndexOrThrow(name).let { index -> if (isNull(index)) null else getString(index) }
+
+    private fun android.database.Cursor.getDoubleOrNull(name: String): Double? =
+        getColumnIndexOrThrow(name).let { index -> if (isNull(index)) null else getDouble(index) }
+
     private fun mediaKind(mimeType: String) = when {
         mimeType == "application/pdf" -> MediaKind.PDF
         mimeType.startsWith("video/") -> MediaKind.VIDEO
@@ -1022,15 +1115,6 @@ class GalleryDatabase(
         null, null, null, "1",
     ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
 
-    private fun dayStart(timestamp: Long): Long = Calendar.getInstance().run {
-        timeInMillis = timestamp
-        set(Calendar.HOUR_OF_DAY, 0)
-        set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-        timeInMillis
-    }
-
     private fun peopleIndexEnabled(db: GallerySqlDatabase): Boolean = db.rawQuery(
         "SELECT enabled FROM people_settings WHERE singleton_id=1",
         null,
@@ -1042,6 +1126,8 @@ class GalleryDatabase(
         private const val MAX_RESULT_SETS_PER_SESSION = 20
         private const val MAX_FACES_PER_MEDIA = 64
         private const val MAX_PERSON_ALIASES = 16
+        private const val MAX_EVENT_CORRECTION_MEDIA = 100
+        private const val MAX_EVENT_LABEL_LENGTH = 120
         private const val TAG_SEPARATOR = "\u001F"
         private val PERSON_ID = Regex("[a-z][a-z0-9_]{0,63}")
     }

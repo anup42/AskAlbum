@@ -93,6 +93,16 @@ class GalleryRoomMigrationTest {
                     assertEquals(0, cursor.getInt(0))
                 }
             }
+            database.query("PRAGMA table_info(gallery_event)").use { cursor ->
+                val columns = buildSet {
+                    while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+                }
+                assertTrue(columns.containsAll(setOf("start_time", "end_time", "location_name", "event_type", "search_text", "producer_version", "user_corrected")))
+            }
+            database.query("SELECT COUNT(*) FROM event_correction").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
         } finally {
             room.close()
         }

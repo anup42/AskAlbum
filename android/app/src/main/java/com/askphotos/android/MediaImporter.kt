@@ -39,17 +39,21 @@ class MediaImporter(private val context: Context) {
             var width = 0
             var height = 0
             var album = ""
-            val projection = arrayOf(
-                OpenableColumns.DISPLAY_NAME,
-                OpenableColumns.SIZE,
-                MediaStore.MediaColumns.DATE_MODIFIED,
-                MediaStore.MediaColumns.WIDTH,
-                MediaStore.MediaColumns.HEIGHT,
-            )
+            val projection = buildList {
+                add(OpenableColumns.DISPLAY_NAME)
+                add(OpenableColumns.SIZE)
+                if (source == MediaSource.MEDIA_STORE) add(MediaStore.Images.ImageColumns.DATE_TAKEN)
+                add(MediaStore.MediaColumns.DATE_MODIFIED)
+                add(MediaStore.MediaColumns.WIDTH)
+                add(MediaStore.MediaColumns.HEIGHT)
+            }.toTypedArray()
             resolver.query(uri, projection, null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     cursor.columnText(OpenableColumns.DISPLAY_NAME)?.let { name = it }
                     cursor.columnLong(OpenableColumns.SIZE)?.let { size = it }
+                    if (source == MediaSource.MEDIA_STORE) {
+                        capturedAt = cursor.columnLong(MediaStore.Images.ImageColumns.DATE_TAKEN)
+                    }
                     modifiedAt = cursor.columnLong(MediaStore.MediaColumns.DATE_MODIFIED)?.times(1000)
                     width = cursor.columnLong(MediaStore.MediaColumns.WIDTH)?.toInt() ?: 0
                     height = cursor.columnLong(MediaStore.MediaColumns.HEIGHT)?.toInt() ?: 0

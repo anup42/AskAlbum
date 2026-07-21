@@ -48,13 +48,10 @@ class QueryCompiler(
             Regex("\\b(when|where|kab|kahan)\\b").containsMatchIn(normalized) || "कब" in normalized || "कहाँ" in normalized -> QueryIntent.EVENT_SUMMARY
             else -> QueryIntent.FIND_MEDIA
         }
-        val originalTerms = normalized.split(' ')
+        val candidateTerms = normalized.split(' ')
             .filter { it.length > 1 && it !in stopWords }
             .filterNot { qualityFollowUp && it in setOf("best", "one", "which") }
             .distinct()
-        val terms = originalTerms.map { aliases[it] ?: it }.distinct()
-        val place = listOf("singapore", "goa", "amsterdam", "netherlands", "california", "francisco", "marshall", "rockaway")
-            .firstOrNull { candidate -> candidate in terms }
         val previousYear = Regex("\\b(last year|previous year|pichle saal)\\b").containsMatchIn(normalized) || "पिछले साल" in normalized
         val explicitYear = Regex("\\b(?:19|20)\\d{2}\\b").find(normalized)?.value?.toInt()
         val timeFilter = when {
@@ -62,6 +59,12 @@ class QueryCompiler(
             explicitYear != null -> calendarYear(explicitYear)
             else -> FilterExpression.True
         }
+        val temporalOnlyFollowUp = isFollowUp && timeFilter != FilterExpression.True &&
+            candidateTerms.all { it in TEMPORAL_FOLLOW_UP_WORDS || it.matches(Regex("(?:19|20)\\d{2}")) }
+        val originalTerms = if (temporalOnlyFollowUp) emptyList() else candidateTerms
+        val terms = originalTerms.map { aliases[it] ?: it }.distinct()
+        val place = listOf("singapore", "goa", "amsterdam", "netherlands", "california", "francisco", "marshall", "rockaway")
+            .firstOrNull { candidate -> candidate in terms }
         val requestedField = when {
             Regex("\\b(total|amount paid|grand total)\\b").containsMatchIn(normalized) -> "total"
             Regex("\\b(wifi password|wi fi password)\\b").containsMatchIn(normalized) -> "password"
@@ -108,5 +111,9 @@ class QueryCompiler(
         val start = LocalDate.of(year, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
         val end = LocalDate.of(year + 1, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
         return FilterExpression.TimeRange(start, end)
+    }
+
+    private companion object {
+        val TEMPORAL_FOLLOW_UP_WORDS = setOf("about", "last", "previous", "year", "what", "pichle", "saal")
     }
 }

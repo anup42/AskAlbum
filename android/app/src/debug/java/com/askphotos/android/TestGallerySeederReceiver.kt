@@ -70,19 +70,24 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
                     "Pictures/AgenticGalleryTest/$runId/"
                 }
                 relativePaths += relativePath
+                val capturedAt = item.optString("captured_at").takeIf { it.isNotBlank() }
+                    ?.let { OffsetDateTime.parse(it).toInstant().toEpochMilli() }
                 val values = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
                     put(MediaStore.MediaColumns.MIME_TYPE, mime)
                     put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
-                    item.optString("captured_at").takeIf { it.isNotBlank() }?.let {
-                        put(MediaStore.Images.ImageColumns.DATE_TAKEN, OffsetDateTime.parse(it).toInstant().toEpochMilli())
-                    }
+                    capturedAt?.let { put(MediaStore.Images.ImageColumns.DATE_TAKEN, it) }
                 }
                 val uri = requireNotNull(context.contentResolver.insert(collection, values)) { "MediaStore insert failed for $filename" }
                 created += uri
                 context.contentResolver.openOutputStream(uri, "w")!!.use { output -> source.inputStream().use { it.copyTo(output) } }
-                context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+                context.contentResolver.update(uri, ContentValues().apply {
+                    put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    // MediaProvider may replace DATE_TAKEN while it scans newly written bytes. Apply the
+                    // fixture timestamp again when publishing so the acceptance corpus remains deterministic.
+                    capturedAt?.let { put(MediaStore.Images.ImageColumns.DATE_TAKEN, it) }
+                }, null, null)
                 writeStatus(context, runId, "status.json", JSONObject().put("state", "RUNNING").put("created", created.size).put("total", items.length()))
             }
             val result = JSONObject()

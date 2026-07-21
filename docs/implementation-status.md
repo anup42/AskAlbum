@@ -1693,3 +1693,73 @@ Failures and limitations:
 Next phase:
 
 - Implement richer event compilation (time gaps, album continuity, GPS distance, user correction precedence) and then run the seeded Singapore/Marina Bay/timeline follow-up chain as a separate acceptance slice.
+
+## Phase 8C — episodic event compiler and seeded follow-up gate (22 July 2026)
+
+Status: **Core event-memory implementation is complete, built, installed, unit-tested, linted, and its Room migration passed on the physical device. The full seeded `Singapore -> Marina Bay -> last year` acceptance is NOT PASSED. Two bounded repair cycles identified an Android 16 sample-corpus timestamp problem; both run-scoped galleries were safely removed with zero items remaining.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/EventCompiler.kt`
+- `android/app/src/main/java/com/askphotos/android/RetrievalTerms.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryModels.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryRoomDatabase.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryDatabase.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryRepository.kt`
+- `android/app/src/main/java/com/askphotos/android/QueryCompiler.kt`
+- `android/app/src/main/java/com/askphotos/android/DeterministicPlanOverlay.kt`
+- `android/app/src/main/java/com/askphotos/android/MediaImporter.kt`
+- `android/app/src/debug/java/com/askphotos/android/TestGallerySeederReceiver.kt`
+- `android/app/schemas/com.askphotos.android.GalleryRoomDatabase/10.json`
+- event, temporal-follow-up, retrieval-normalization, migration, and connected acceptance tests under `android/app/src/test` and `android/app/src/androidTest`
+
+Architecture decisions and fixes:
+
+- Room v10 replaces day-only events with stable event IDs, start/end times, optional location centroid, event type, confidence, searchable event text, representative media, producer version, and user-correction provenance. A migration-index collision found by the physical device was fixed by dropping the renamed legacy index before creating the v10 replacement.
+- `EventCompiler` deterministically segments on bounded time gaps, album transitions, and GPS distance. Stable SHA-256-derived IDs do not depend on input order. Local merge, split, rename, and location corrections override inference and survive rebuilds.
+- Event retrieval is a weighted hybrid channel. Every event-derived media hit carries an event evidence ID and producer version; broad result diversity still uses event membership.
+- Multiword model terms are tokenized before lexical/event channels, so a valid Gemma term such as `singapore trip` cannot become an unmatchable atomic string.
+- `What about last year?` compiles as a deterministic time-only patch over the active result set. Model-invented semantic filler is removed, and the empty/no-match result is exact rather than fabricated.
+- MediaStore URI inspection now requests `DATE_TAKEN` for MediaStore sources only and treats a capture-date change as an incremental import change. SAF providers are not asked for MediaStore-only columns.
+- Google AI Edge Gallery was reviewed as requested. Its current public design emphasizes Gemma 4, LiteRT, local model management/download, local import, and per-device benchmarking. This repository already implements the corresponding E2B-default/E4B-gated Settings flow, resumable WorkManager download, signed/hash-verified app-private installation, local SAF import, and LiteRT-LM runtime boundary; no parallel downloader was added.
+
+Commands run (serial masked):
+
+```powershell
+.\gradlew.bat :app:testOfflineDemoDebugUnitTest --console=plain
+.\gradlew.bat :app:compileOfflineDemoDebugAndroidTestKotlin --console=plain
+.\gradlew.bat --no-parallel :app:lintOfflineDemoDebug --console=plain
+powershell -ExecutionPolicy Bypass -File C:\Users\anupk\.codex\skills\android-build-install\scripts\build_install_android.ps1 -Root <repo>\android -Module :app -Variant ConsumerDebug -Serial <masked>
+python tools/device/seed_gallery.py --serial <masked> --gallery build/sample-gallery/core --run-id phase8_events_20260722a
+python tools/device/sync_seeded_gallery.py --serial <masked> --run-id phase8_events_20260722a --action import
+adb -s <masked> shell am instrument -w -r -e galleryRunId phase8_events_20260722a -e class com.askphotos.android.SeededEventFollowUpAcceptanceTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+python tools/device/sync_seeded_gallery.py --serial <masked> --run-id phase8_events_20260722a --action remove
+python tools/device/cleanup_gallery.py --serial <masked> --run-id phase8_events_20260722a
+python tools/device/seed_gallery.py --serial <masked> --gallery build/sample-gallery/core --run-id phase8_events_20260722b
+python tools/device/sync_seeded_gallery.py --serial <masked> --run-id phase8_events_20260722b --action remove
+python tools/device/cleanup_gallery.py --serial <masked> --run-id phase8_events_20260722b
+adb -s <masked> shell am instrument -w -r -e class com.askphotos.android.GalleryRoomMigrationTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+Unit/instrumented/device results:
+
+- Full offline JVM suite passed after the final code changes. Focused event/planner/overlay tests and the new multiword-term regression are included.
+- Offline lint passed with zero errors. The report remains at `android/app/build/reports/lint-results-offlineDemoDebug.html`.
+- ConsumerDebug built and installed repeatedly without clearing app-private data on the sole authorized Samsung SM-F966B (Android 16/API 36, arm64-v8a, SM8750, approximately 11.4 GB RAM).
+- Connected legacy-v3-to-v10 Room migration passed: 1 test, 0 failures, 0.05 seconds.
+- First seeded run: 74/74 items seeded and imported. The initial migration failed on a preserved SQLite index name; after the migration fix, import succeeded. Q01 then failed because no seeded Singapore media was returned.
+- Read-only aggregate diagnosis found one 74-member event, identical import-time timestamps, and a valid Gemma plan containing a multiword `singapore trip` term. Production retrieval-term tokenization and MediaStore date projection were corrected.
+- Second fresh seeded run proved Android 16 MediaProvider still reported `datetaken=NULL` for the generated JPEG fixture after publication. The acceptance test was therefore not rerun/relaxed after the two-cycle limit.
+- Cleanup was exact and safe. Run A removed 74 database rows and 74 recorded MediaStore URIs; run B had no imported rows and removed its 74 recorded MediaStore URIs. Both reported `remainingCount=0`. No unrelated gallery item was modified or deleted.
+- Package diagnostics and a screenshot are retained under `artifacts/device-runs/phase8_events_20260722a/diagnostics/20260722_034210/`. A temporary diagnostic database copy was deleted from both host and device immediately after aggregate inspection.
+
+Failures and limitations:
+
+- The full seeded Q01-Q03 event/follow-up gate is **NOT PASSED**. On this Android 16 device, MediaProvider overwrote/ignored `DATE_TAKEN` because the generated JPEG derivatives do not contain matching EXIF capture timestamps. The next repair must embed deterministic EXIF `DateTimeOriginal` (and preferably GPS) while building the sample JPEG corpus, rebuild/pin checksums, then run one fresh seed/import/acceptance/cleanup cycle.
+- Event segmentation currently uses time, album, GPS, and user corrections. People-overlap and learned event prototype vectors remain future work.
+- Event corrections have a tested storage/compiler API but no merge/split/rename UI yet.
+- E4B remains an honest skip because no E4B pack was installed or benchmarked; the connected E2B pack/settings flow was preserved.
+
+Next phase:
+
+- Fix the corpus generator—not the product query test—by writing pinned EXIF timestamps/GPS into generated JPEG derivatives. Re-run the single seeded Q01-Q03 gate, then add correction UI and video keyframe indexing as separate slices.

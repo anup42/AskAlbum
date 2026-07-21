@@ -80,6 +80,19 @@ class DeterministicPlanOverlayTest {
         assertEquals(active, result.plan.baseResultIds)
     }
 
+    @Test
+    fun temporalOnlyFollowUpRemovesModelInventedSemanticTerms() {
+        val active = setOf("one", "two")
+        val model = plan(FilterExpression.True, null).copy(baseResultIds = active)
+
+        val result = overlay.apply("What about last year?", model, active)
+
+        assertEquals(FilterExpression.TimeRange(1735689600000, 1767225599999), result.plan.filter)
+        assertTrue(result.plan.terms.isEmpty())
+        assertTrue(result.plan.semanticClauses.isEmpty())
+        assertEquals(active, result.plan.baseResultIds)
+    }
+
     private fun plan(filter: FilterExpression, place: String?) = GalleryQueryPlan(
         originalQuery = "fixture",
         intent = QueryIntent.FIND_MEDIA,

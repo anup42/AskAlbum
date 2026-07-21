@@ -105,6 +105,13 @@ class GalleryRepository(context: Context) {
     ) = database.completeIndex(id, labels, description, ocrText, faceCount, previewPath, blocks, entities, ocrAttempted, visualFeatures)
     fun failIndex(id: String, message: String, permanent: Boolean) = database.failIndex(id, message, permanent)
     fun rebuildEvents() = database.rebuildEvents()
+    fun events(): List<EventRecord> = database.events()
+    fun saveEventCorrection(
+        operation: EventCorrectionOperation,
+        mediaIds: Set<String>,
+        title: String? = null,
+        locationName: String? = null,
+    ): EventCorrectionRecord = database.saveEventCorrection(operation, mediaIds, title, locationName)
     fun conversationState(sessionId: String = GalleryDatabase.PRIMARY_QUERY_SESSION): ConversationSearchState =
         database.conversationState(sessionId)
 
@@ -162,7 +169,7 @@ class GalleryRepository(context: Context) {
             return@flow
         }
         val allowed = plan.baseResultIds
-        val terms = plan.terms
+        val terms = RetrievalTerms.normalize(plan.terms)
         val allItems = database.allItems().filter { item ->
             val inScope = when (plan.mediaScope) {
                 MediaScope.ALL -> true
@@ -182,6 +189,12 @@ class GalleryRepository(context: Context) {
         val semanticRanked = runCatching {
             semanticVectors.searchText(plan.originalQuery, topK = plan.limit.coerceIn(20, 100), allowedIds = allowed)
         }.getOrDefault(emptyList())
+        val eligibleIds = allItems.mapTo(mutableSetOf()) { it.id }.let { ids ->
+            if (allowed == null) ids else ids.intersect(allowed)
+        }
+        val eventRanked = database.searchEvents(terms, eligibleIds)
+        val eventMediaRank = eventRanked.flatMap { it.mediaIds }.distinct()
+        val eventByMedia = eventRanked.flatMap { hit -> hit.mediaIds.map { it to hit.event } }.toMap()
         val lexicalById = lexicalRanked.associateBy { it.item.id }
         val semanticById = semanticRanked.associateBy { it.mediaId }
         val itemById = allItems.associateBy { it.id }
@@ -189,6 +202,7 @@ class GalleryRepository(context: Context) {
             listOf(
                 RankedChannel(1.0, lexicalRanked.map { it.item.id }),
                 RankedChannel(0.85, semanticRanked.map { it.mediaId }),
+                RankedChannel(0.95, eventMediaRank),
             ),
         )
         val fusedHits = fused.mapNotNull { (id, score) ->
@@ -205,7 +219,17 @@ class GalleryRepository(context: Context) {
                     producerVersion = semanticVectors.producerVersion() ?: "unknown-retrieval-pack",
                 )
             }
-            SearchHit(item, score, lexical.orEmptyEvidence() + listOfNotNull(semanticEvidence))
+            val eventEvidence = eventByMedia[id]?.let { event ->
+                EvidenceRecord(
+                    id = "${item.id}:event:${event.id}",
+                    mediaId = item.id,
+                    sourceField = "event",
+                    text = "${event.title} (${event.startTime}..${event.endTime})",
+                    confidence = event.confidence,
+                    producerVersion = event.producerVersion,
+                )
+            }
+            SearchHit(item, score, lexical.orEmptyEvidence() + listOfNotNull(semanticEvidence, eventEvidence))
         }
         val ranked = when (plan.sort) {
             SortSpec.CAPTURE_TIME_DESC -> fusedHits.sortedWith(compareByDescending<SearchHit> { it.item.capturedAt ?: Long.MIN_VALUE }.thenByDescending { it.score })
@@ -346,8 +370,11 @@ class GalleryRepository(context: Context) {
         val totalItems = allItems.size
         val readyItems = allItems.count { it.indexState == IndexState.READY }
         val usedSemanticRetrieval = hits.any { hit -> hit.evidence.any { it.sourceField == "image_text_embedding" } }
+        val deterministicResultSetFilter = plan.baseResultIds != null && plan.terms.isEmpty() &&
+            plan.semanticClauses.isEmpty() && plan.filter != FilterExpression.True && !verification.applied
         val exactness = when {
             readyItems < totalItems -> ResultExactness.PARTIAL_INDEX
+            deterministicResultSetFilter -> ResultExactness.EXACT
             usedSemanticRetrieval || verification.applied -> ResultExactness.ESTIMATED_FROM_RETRIEVAL
             else -> ResultExactness.COMPLETE_MODEL_SCAN
         }
@@ -390,11 +417,15 @@ class GalleryRepository(context: Context) {
                 warnings = warnings,
             )
             QueryIntent.EVENT_SUMMARY -> {
-                val locations = hits.groupingBy { it.item.location }.eachCount().entries
+                val event = database.eventsForMedia(hits.map { it.item.id }).values
+                    .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+                val locations = hits.map { it.item.location }.filter(String::isNotBlank).groupingBy { it }.eachCount().entries
                     .sortedByDescending { it.value }.take(3).joinToString { it.key }
                 SearchAnswer(
-                    headline = "Found ${hits.size} related ${if (hits.size == 1) "memory" else "memories"}",
-                    detail = "The strongest evidence points to $locations.",
+                    headline = event?.let { "${it.title}: ${hits.size} related ${if (hits.size == 1) "memory" else "memories"}" }
+                        ?: "Found ${hits.size} related ${if (hits.size == 1) "memory" else "memories"}",
+                    detail = event?.let { "This local event runs from ${it.startTime} to ${it.endTime}${it.locationName?.let { name -> " near $name" }.orEmpty()}." }
+                        ?: "The strongest evidence points to ${locations.ifBlank { "the indexed event" }}.",
                     evidenceIds = evidenceIds,
                     exactness = exactness,
                     indexedEligibleCount = readyItems,

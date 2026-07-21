@@ -88,4 +88,16 @@ class QueryCompilerTest {
 
         assertEquals(FilterExpression.TimeRange(1704067200000, 1735689599999), plan.filter)
     }
+
+    @Test
+    fun temporalOnlyFollowUpUsesTheActiveResultSetWithoutSemanticFiller() {
+        val fixed = QueryCompiler(clock = Clock.fixed(Instant.parse("2026-07-22T00:00:00Z"), ZoneOffset.UTC))
+
+        val plan = fixed.compile("What about last year?", setOf("sg-1", "sg-2"))
+
+        assertEquals(FilterExpression.TimeRange(1735689600000, 1767225599999), plan.filter)
+        assertTrue(plan.terms.isEmpty())
+        assertTrue(plan.semanticClauses.isEmpty())
+        assertEquals(setOf("sg-1", "sg-2"), plan.baseResultIds)
+    }
 }
