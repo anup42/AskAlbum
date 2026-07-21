@@ -2,7 +2,9 @@ package com.askphotos.android
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.net.URL
 
 class GemmaModelCatalogTest {
     @Test
@@ -24,5 +26,25 @@ class GemmaModelCatalogTest {
         assertTrue(GemmaModelCatalog.e4b.minimumRamBytes > GemmaModelCatalog.e2b.minimumRamBytes)
         assertEquals(8, GemmaModelCatalog.e2b.deviceClassRamGb)
         assertEquals(12, GemmaModelCatalog.e4b.deviceClassRamGb)
+    }
+
+    @Test
+    fun modelDownloadPolicyAllowsOnlyPinnedHttpsHosting() {
+        GemmaModelCatalog.all.forEach { spec ->
+            assertEquals(URL(spec.downloadUrl), ModelDownloadEndpointPolicy.requireAllowed(URL(spec.downloadUrl)))
+        }
+        assertEquals(
+            "cas-bridge.xethub.hf.co",
+            ModelDownloadEndpointPolicy.requireAllowed(URL("https://cas-bridge.xethub.hf.co/model")).host,
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            ModelDownloadEndpointPolicy.requireAllowed(URL("http://huggingface.co/model"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ModelDownloadEndpointPolicy.requireAllowed(URL("https://firebaselogging.googleapis.com/model"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ModelDownloadEndpointPolicy.requireAllowed(URL("https://huggingface.co.evil.example/model"))
+        }
     }
 }

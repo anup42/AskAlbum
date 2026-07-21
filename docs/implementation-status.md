@@ -1782,3 +1782,57 @@ Failures and limitations:
 Next phase:
 
 - Add event correction UI as a narrow slice, then implement video keyframe indexing separately. Keep the consumer-network/telemetry audit and offlineDemo end-to-end acceptance as an explicit privacy-hardening gate.
+
+## Phase 9A — distribution network and telemetry hardening (22 July 2026)
+
+Status: **Implemented with a bounded physical-device gate. `offlineDemo` still has no Internet permission. `consumer` retains Internet solely for its user-started Gemma pack downloader, validates every initial/redirect endpoint against an HTTPS Hugging Face allowlist, and no longer registers ML Kit's transitive DataTransport backend, job service, or alarm receiver.**
+
+Files changed:
+
+- `android/app/src/main/AndroidManifest.xml`
+- `android/app/src/main/java/com/askphotos/android/GemmaModelDownloader.kt`
+- `android/app/src/test/java/com/askphotos/android/GemmaModelCatalogTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/NetworkPrivacyAcceptanceTest.kt`
+
+Architecture decisions:
+
+- Google documents that bundled ML Kit inference inputs/results stay on-device, but the Android SDK collects app/device diagnostics and usage analytics. This is stronger network behavior than the product promise permits when `consumer` has Internet access.
+- ML Kit's local vision implementations directly reference `CCTDestination`; removing the CCT classes caused `NoClassDefFoundError` in OCR/labeling and face detection on the phone. Those runtime classes therefore remain for compatibility, while all upload discovery/scheduling Android components are removed at manifest merge. Local ML Kit calls report `Transport backend 'cct' is not registered` and cannot discover or schedule the CCT uploader.
+- The downloader no longer follows redirects implicitly. It accepts HTTPS only, rejects embedded credentials/non-443 ports, caps redirects at five, and validates every hop against `huggingface.co`, its subdomains, or Hugging Face's `*.hf.co` delivery hosts.
+- A connected regression asserts that Internet permission exactly matches `BuildConfig.ALLOW_MODEL_DOWNLOAD` and enumerates installed services, receivers, and providers to reject any DataTransport/CCT component.
+
+Commands run (serial masked):
+
+```powershell
+.\gradlew.bat :app:testOfflineDemoDebugUnitTest :app:testConsumerDebugUnitTest :app:processOfflineDemoDebugMainManifest :app:processConsumerDebugMainManifest --console=plain
+.\gradlew.bat :app:dependencyInsight --configuration consumerDebugRuntimeClasspath --dependency transport-backend-cct --console=plain
+powershell -ExecutionPolicy Bypass -File C:\Users\anupk\.codex\skills\android-build-install\scripts\build_install_android.ps1 -Root <repo>\android -Module :app -Variant ConsumerDebug -Serial <masked>
+.\gradlew.bat :app:connectedConsumerDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=com.askphotos.android.NetworkPrivacyAcceptanceTest,com.askphotos.android.LocalMlKitInferenceAcceptanceTest,com.askphotos.android.RealFaceDetectionAcceptanceTest' --console=plain
+python C:\Users\anupk\.codex\skills\android-device-diagnostics\scripts\android_diagnostics.py --serial <masked> --package com.askphotos.android --minutes 10 --keywords CctTransportBackend,firebaselogging.googleapis.com,TransportRuntime,AndroidRuntime,FATAL,ANR,OutOfMemory --out artifacts\device-runs\phase9_network_privacy_20260722 --screenshot
+```
+
+Verification results:
+
+- Both flavored unit suites passed; both manifests merged. The final merged `offlineDemoDebug` manifest contains no Internet permission and neither merged manifest contains a DataTransport service/receiver.
+- ConsumerDebug built, installed, and launched on the sole authorized Samsung SM-F966B (Android 16/API 36, arm64-v8a, SM8750, approximately 11.4 GB RAM).
+- The connected network/privacy component regression passed. The existing real bundled face-detector acceptance also passed, proving local ML Kit initialization/inference survives removal of the transport components.
+- A diagnostic ML Kit call exercised bundled image labeling and OCR. Both initialized and returned normally, but the selected street-sign asset produced zero OCR text, so that new accuracy assertion failed and was not retained as a regression test. Per the two-cycle rule it was not weakened or retried with another fixture.
+- The final three-test Gradle task therefore reported 2 passed / 1 failed. The failure was only `Bundled OCR returned no text`; there was no crash, ANR, OOM, missing-class error, or transport request.
+- Device logs from the bounded test window contain 0 `CctTransportBackend` lines and 0 `firebaselogging.googleapis.com` lines. They contain 16 expected `TransportRuntime: Transport backend 'cct' is not registered` warnings, confirming the local SDK attempted to log but no backend was registered.
+
+Artifacts:
+
+- `artifacts/device-runs/phase9_network_privacy_20260722/20260722_042648/`
+- `android/app/build/reports/androidTests/connected/debug/flavors/consumer/index.html`
+- `android/app/build/reports/tests/testOfflineDemoDebugUnitTest/`
+- `android/app/build/reports/tests/testConsumerDebugUnitTest/`
+
+Failures and limitations:
+
+- ML Kit's telemetry API/runtime classes remain in the APK because its local vision clients hard-reference them. The application removes their discoverable backend and schedulers; replacing ML Kit entirely with independently benchmarked PaddleOCR and a selected open-source face/label model remains the cleanest long-term elimination of those dormant classes.
+- No multi-gigabyte model download was started during this gate. The E2B pack already installed in app-private storage was preserved. Redirect policy is unit-tested, while full resume/download/checksum acceptance remains pending on a disposable network/device run.
+- The consumer network claim is supported by manifest/component inspection and a bounded device-log window, not by a packet capture. Add an external packet-capture gate before release if an independent transport-level proof is required.
+
+Next phase:
+
+- Keep OCR-engine replacement and an external packet-capture acceptance as separate privacy slices. Resume product work with event correction UI or video keyframes only after choosing that ordering.

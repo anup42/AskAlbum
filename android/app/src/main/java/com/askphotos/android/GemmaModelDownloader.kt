@@ -43,6 +43,23 @@ data class GemmaDownloadSpec(
         get() = "https://huggingface.co/$repository/resolve/$revision/$fileName?download=true"
 }
 
+/** The only hosts the consumer build may contact, all for a user-selected model download. */
+object ModelDownloadEndpointPolicy {
+    private val allowedHosts = setOf("huggingface.co")
+    private val allowedHostSuffixes = setOf(".huggingface.co", ".hf.co")
+
+    fun requireAllowed(url: URL): URL {
+        require(url.protocol.equals("https", ignoreCase = true)) { "Model downloads require HTTPS" }
+        require(url.userInfo == null) { "Model download URLs cannot contain credentials" }
+        require(url.port == -1 || url.port == 443) { "Model downloads require the HTTPS port" }
+        val host = url.host.lowercase()
+        require(host in allowedHosts || allowedHostSuffixes.any(host::endsWith)) {
+            "Model download host is not allowlisted"
+        }
+        return url
+    }
+}
+
 /** Immutable catalog mirrored from Google AI Edge Gallery 1.0.15 and pinned to Hugging Face LFS digests. */
 object GemmaModelCatalog {
     val e2b = GemmaDownloadSpec(
@@ -175,14 +192,7 @@ class GemmaDownloadWorker(context: Context, parameters: WorkerParameters) : Coro
             require(partial.delete()) { "Could not discard an oversized partial download" }
             existing = 0
         }
-        val connection = URL(spec.downloadUrl).openConnection() as HttpURLConnection
-        connection.connectTimeout = 30_000
-        connection.readTimeout = 60_000
-        connection.instanceFollowRedirects = true
-        connection.setRequestProperty("Accept-Encoding", "identity")
-        connection.setRequestProperty("User-Agent", "AgenticGallery/${BuildConfig.VERSION_NAME}")
-        if (existing > 0) connection.setRequestProperty("Range", "bytes=$existing-")
-        connection.connect()
+        val connection = openAllowlistedConnection(spec, existing)
         val response = connection.responseCode
         if (response !in setOf(HttpURLConnection.HTTP_OK, HttpURLConnection.HTTP_PARTIAL)) {
             connection.disconnect()
@@ -221,6 +231,31 @@ class GemmaDownloadWorker(context: Context, parameters: WorkerParameters) : Coro
         require(written == spec.sizeBytes) { "Downloaded model is incomplete" }
     }
 
+    private fun openAllowlistedConnection(spec: GemmaDownloadSpec, existing: Long): HttpURLConnection {
+        var url = ModelDownloadEndpointPolicy.requireAllowed(URL(spec.downloadUrl))
+        repeat(MAX_MODEL_REDIRECTS + 1) { redirectCount ->
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 30_000
+                readTimeout = 60_000
+                instanceFollowRedirects = false
+                setRequestProperty("Accept-Encoding", "identity")
+                setRequestProperty("User-Agent", "AgenticGallery/${BuildConfig.VERSION_NAME}")
+                if (existing > 0) setRequestProperty("Range", "bytes=$existing-")
+                connect()
+            }
+            if (connection.responseCode !in MODEL_REDIRECT_CODES) return connection
+            val location = connection.getHeaderField("Location")
+                ?: run {
+                    connection.disconnect()
+                    throw IOException("Model host returned a redirect without a location")
+                }
+            connection.disconnect()
+            require(redirectCount < MAX_MODEL_REDIRECTS) { "Model download exceeded the redirect limit" }
+            url = ModelDownloadEndpointPolicy.requireAllowed(URL(url, location))
+        }
+        error("Model download redirect handling failed")
+    }
+
     override suspend fun getForegroundInfo(): ForegroundInfo {
         val tier = runCatching { GemmaModelTier.valueOf(inputData.getString(KEY_GEMMA_TIER).orEmpty()) }.getOrDefault(GemmaModelTier.E2B)
         return downloadForeground(GemmaModelCatalog.require(tier), 0)
@@ -257,3 +292,11 @@ private const val KEY_GEMMA_ERROR = "gemma_error"
 private const val GEMMA_DOWNLOAD_CHANNEL = "gemma-model-download"
 private const val MIN_FREE_AFTER_GEMMA_DOWNLOAD = 512L * 1024 * 1024
 private const val DOWNLOAD_GIB = 1024L * 1024 * 1024
+private const val MAX_MODEL_REDIRECTS = 5
+private val MODEL_REDIRECT_CODES = setOf(
+    HttpURLConnection.HTTP_MOVED_PERM,
+    HttpURLConnection.HTTP_MOVED_TEMP,
+    HttpURLConnection.HTTP_SEE_OTHER,
+    307,
+    308,
+)
