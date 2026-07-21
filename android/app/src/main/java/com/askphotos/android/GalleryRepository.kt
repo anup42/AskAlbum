@@ -13,6 +13,7 @@ class GalleryRepository(context: Context) {
     private val planner = LiteRtLmQueryPlanner(services.modelPackManager, services.inferenceResources)
     private val semanticVectors = services.semanticVectorStore
     private val visualVerifier = services.visualVerifier
+    private val groundedAnswerComposer = services.groundedAnswerComposer
     private val importer = MediaImporter(context.applicationContext)
 
     fun initialize(): IndexSummary {
@@ -161,7 +162,12 @@ class GalleryRepository(context: Context) {
         val hits = verified.take(plan.limit.coerceIn(1, 100))
 
         val matchCount = if (verification.applied) verified.size else ranked.size
-        val answer = buildAnswer(plan, hits, allItems, matchCount, verification)
+        val deterministicAnswer = buildAnswer(plan, hits, allItems, matchCount, verification)
+        val answer = if (shouldComposeGroundedAnswer(plan, hits, verification)) {
+            groundedAnswerComposer.compose(GroundedAnswerInput(plan, hits, deterministicAnswer)).answer
+        } else {
+            deterministicAnswer
+        }
         val outcome = SearchOutcome(
             plan = plan,
             hits = hits,
@@ -335,6 +341,18 @@ class GalleryRepository(context: Context) {
     }
 
     private fun SearchHit?.orEmptyEvidence(): List<EvidenceRecord> = this?.evidence.orEmpty()
+
+    private fun shouldComposeGroundedAnswer(
+        plan: GalleryQueryPlan,
+        hits: List<SearchHit>,
+        verification: VerificationResult,
+    ): Boolean = hits.isNotEmpty() && services.modelPackManager.status().installed && (
+        verification.applied || plan.intent in setOf(
+            QueryIntent.COMPARE,
+            QueryIntent.TIMELINE,
+            QueryIntent.EVENT_SUMMARY,
+        )
+    )
 
     private fun GalleryItem.looksLikeDocument(): Boolean {
         val text = (filename + " " + title + " " + tags.joinToString(" ")).lowercase(Locale.ROOT)

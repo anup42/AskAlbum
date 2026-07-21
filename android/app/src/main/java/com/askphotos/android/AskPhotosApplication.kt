@@ -17,6 +17,9 @@ class AppServices(private val application: AskPhotosApplication) {
     val visualVerifier: CandidateVerifier by lazy {
         LiteRtGemmaVisualVerifier(application, modelPackManager, inferenceResources)
     }
+    val groundedAnswerComposer by lazy {
+        LiteRtGemmaGroundedAnswerComposer(modelPackManager, inferenceResources)
+    }
     val repository by lazy { GalleryRepository(application) }
 }
 

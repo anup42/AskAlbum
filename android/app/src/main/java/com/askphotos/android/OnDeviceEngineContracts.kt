@@ -108,7 +108,11 @@ data class VerificationResult(
     val failures: List<VerificationFailure> = emptyList(),
     val trace: VerificationExecutionTrace? = null,
 )
-data class GroundedAnswerInput(val plan: GalleryQueryPlan, val hits: List<SearchHit>)
+data class GroundedAnswerInput(
+    val plan: GalleryQueryPlan,
+    val hits: List<SearchHit>,
+    val deterministicAnswer: SearchAnswer? = null,
+)
 data class ModelImage(
     val rgbBytes: ByteArray,
     val width: Int,

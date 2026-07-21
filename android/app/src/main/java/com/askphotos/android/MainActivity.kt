@@ -445,6 +445,21 @@ private fun AnswerCard(outcome: SearchOutcome) {
             Text(outcome.answer.headline, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(7.dp))
             Text(outcome.answer.detail, color = Color(0xFFDCE8E2), lineHeight = 20.sp)
+            if (outcome.answer.claims.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                outcome.answer.claims.forEach { claim ->
+                    Text("• ${claim.text}", color = Color.White, fontSize = 13.sp, lineHeight = 18.sp)
+                    Text(
+                        "Evidence ${claim.evidenceIds.joinToString()} • ${(claim.confidence * 100).toInt()}%",
+                        color = Color(0xFFB9D6C8),
+                        fontSize = 10.sp,
+                    )
+                }
+            }
+            outcome.answer.warnings.forEach { warning ->
+                Spacer(Modifier.height(8.dp))
+                Text(warning, color = Color(0xFFFFD7A8), fontSize = 11.sp, lineHeight = 15.sp)
+            }
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FactPill(outcome.answer.exactness.name.replace('_', ' '))

@@ -1327,3 +1327,82 @@ Failures and limitations:
 Next phase:
 
 - Implement evidence-packet construction, strict grounded-answer JSON, deterministic number/date and evidence-ID post-validation, and the no-fabrication connected acceptance test without expanding into people/events work.
+
+## Phase 7B — evidence-only Gemma answer composition (22 July 2026)
+
+Status: **Implemented and verified on the connected physical device. Complex verified/event/comparison/timeline answers may now use one bounded text-only E2B wording stage over a compact Kotlin-built evidence packet. The strict decoder rejects invented citations, media references, numbers, calendar dates, paths/URIs, and unsupported descriptive vocabulary; deterministic exactness and coverage fields cannot be changed. Empty/no-answer results bypass Gemma. The final real E2B composition and deterministic no-fabrication tests passed.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/GroundedAnswerCodec.kt`
+- `android/app/src/main/java/com/askphotos/android/LiteRtGemmaGroundedAnswerComposer.kt`
+- `android/app/src/main/java/com/askphotos/android/OnDeviceEngineContracts.kt`
+- `android/app/src/main/java/com/askphotos/android/AskPhotosApplication.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryRepository.kt`
+- `android/app/src/main/java/com/askphotos/android/MainActivity.kt`
+- `android/app/src/test/java/com/askphotos/android/GroundedAnswerCodecTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/RealGemmaGroundedAnswerAcceptanceTest.kt`
+
+Architecture decisions:
+
+- The evidence packet contains the original query, the authoritative deterministic headline/detail/exactness/coverage, and at most 24 evidence records owned by active result media. It excludes filenames, content URIs, preview paths, raw pixels, and model-generated media references.
+- Gemma may return only `headline`, `detail`, and bounded `claims[{text,evidenceIds,confidence}]`. Evidence IDs must be copied from the packet; every claim must cite at least one existing ID.
+- Kotlin preserves exactness, indexed/eligible coverage, and warnings from the deterministic answer. The model cannot overwrite those fields.
+- The validator rejects unknown/missing fields, empty or oversized text, unknown or empty citation lists, invalid confidence, unsupported numeric values, unsupported English month/weekday names, URI/path patterns, and words that are not grounded in the query/baseline/cited evidence or a small answer-glue allowlist. This intentionally favors deterministic fallback over an imaginative paraphrase.
+- The composer performs one deterministic-sampling call and at most one repair. It reuses one initialized engine for the repair, explicitly closes it, and uses the central generative lease with GPU then CPU fallback.
+- Empty evidence or no-match answers do not load Gemma. Live repository composition is currently limited to a non-empty verified result or `COMPARE`, `TIMELINE`, and `EVENT_SUMMARY`; ordinary search/count/document answers retain deterministic wording.
+- Any schema, citation, literal, vocabulary, model-load, or inference failure retains the deterministic answer and adds a sanitized warning. No generated partial answer is rendered.
+- The answer card now renders each grounded claim with its evidence IDs and confidence, plus fail-safe warnings.
+
+Commands and results:
+
+```powershell
+.\gradlew.bat :app:testConsumerDebugUnitTest --tests com.askphotos.android.GroundedAnswerCodecTest
+.\gradlew.bat :app:compileConsumerDebugAndroidTestKotlin
+$env:ANDROID_HOME=<detected-sdk>; $env:ANDROID_SDK_ROOT=<detected-sdk>; powershell -ExecutionPolicy Bypass -File C:\Users\anupk\.codex\skills\android-build-install\scripts\build_install_android.ps1 -Root C:\Users\anupk\Documents\git\askphotos\android -Module :app -Variant ConsumerDebug -Serial <masked>
+.\gradlew.bat :app:connectedConsumerDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=com.askphotos.android.RealGemmaGroundedAnswerAcceptanceTest"
+adb -s <masked> shell am start -n com.askphotos.android/.MainActivity
+# Visible Index/Settings controls were used to download the pinned E2B pack after the connected-test lifecycle removed prior app data.
+adb -s <masked> shell run-as com.askphotos.android sha256sum <app-private-active-e2b-model>
+adb -s <masked> install -r -t android/app/build/outputs/apk/androidTest/consumer/debug/app-consumer-debug-androidTest.apk
+adb -s <masked> shell am instrument -w -r -e class 'com.askphotos.android.RealGemmaGroundedAnswerAcceptanceTest#installedE2bComposesOnlyClaimsWithExistingEvidence' com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+.\gradlew.bat :app:testOfflineDemoDebugUnitTest :app:testConsumerDebugUnitTest :app:lintOfflineDemoDebug :app:lintConsumerDebug
+python C:\Users\anupk\.codex\skills\android-device-diagnostics\scripts\android_diagnostics.py --serial <masked> --package com.askphotos.android --minutes 10 --max-lines 120 --out artifacts\phase7-grounding-diagnostics --screenshot
+adb -s <masked> shell dumpsys thermalservice
+```
+
+Unit/instrumented/device results:
+
+- Final two-flavor JVM gate: 53 XML suites / 174 flavored tests, 0 failures, 0 errors, 0 skipped. Offline and consumer lint both passed.
+- Grounding regression coverage includes exact schema, citation ownership/bounds, one-repair limit, invented IDs, invented numbers, invented month names, content/file path patterns, unrelated claims, and a mixed supported phrase plus invented proper noun.
+- The initial connected class run executed the empty-result test successfully but honestly skipped the E2B test because the preceding connected-test lifecycle had removed the app and app-private pack. This was not counted as a real-model pass.
+- E2B was restored through the visible Settings download. The active artifact is 2,583,085,056 bytes and device SHA-256 is `ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42`, exactly matching the pinned catalog.
+- Final raw-instrumentation E2B result after the strict vocabulary check: 1 test passed, `used=true`, backend `GPU`, generation calls `1`, repaired `false`, evidence `2`, claims `2`, fallback `null`.
+- Final timings: load `2,937 ms`, generation `2,298 ms`, close `321 ms`, composer elapsed `5,560 ms`, wall `5,562 ms`. In-process PSS was 74,304 kB before and 284,790 kB after explicit engine close; these are not peak samples.
+- The deterministic empty-result test asserted no Gemma call, unchanged `No supported matches found` wording, zero evidence IDs, and zero claims.
+- Final thermal status was `0`. Package-scoped diagnostics and a targeted scan found no app `FATAL EXCEPTION`, ANR, `OutOfMemoryError`, or app crash marker.
+
+Artifacts:
+
+- `artifacts/phase7-grounding-focused.log`
+- `artifacts/phase7-grounding-androidtest-compile.log`
+- `artifacts/phase7-grounding-device.log`
+- `artifacts/phase7-grounding-real-rerun.txt`
+- `artifacts/phase7-grounding-vocabulary-focused.log`
+- `artifacts/phase7-grounding-real-final.txt`
+- `artifacts/phase7-grounding-final-gate.log`
+- `artifacts/phase7-grounding-diagnostics/20260722_015951/`
+
+Failures and limitations:
+
+- The real suite covers one two-claim evidence packet, not the full 200–300-query faithfulness/evidence evaluation. Citation validity passed for this acceptance case; corpus-wide 100% citation precision is not yet demonstrated.
+- Vocabulary validation is deliberately conservative. A valid creative paraphrase can be rejected and replaced with the deterministic answer; this is a safety tradeoff, not a semantic-entailment proof.
+- The connected no-answer test exercises the composer boundary with an empty result. The seeded nonexistent-merchant query still needs to run through the full UI/repository acceptance harness after the core gallery is reseeded.
+- Visual verification and answer composition currently initialize E2B separately. Sharing a model lease/session or keeping a short-lived warm engine needs measurement before changing memory policy.
+- The live query flow waits for verification and composition before returning; progressive initial results remain pending.
+- Sensitive OCR authentication/redaction must be enforced before a sensitive evidence packet is built; that full integration remains incomplete.
+- E4B remains an honest skip.
+
+Next phase:
+
+- Continue Phase 7 with a seeded end-to-end no-match/full-query acceptance and progressive query UI state, then move to the separate opt-in people/events/follow-up slice.
