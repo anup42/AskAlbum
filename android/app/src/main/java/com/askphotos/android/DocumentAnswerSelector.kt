@@ -1,0 +1,10 @@
+package com.askphotos.android
+
+data class DocumentFactSelection(val document: SearchHit, val fact: EvidenceRecord?)
+
+/** Selects exactly the first plan-sorted document so an older fact cannot hide a newer failure. */
+object DocumentAnswerSelector {
+    fun select(hits: List<SearchHit>): DocumentFactSelection? = hits.firstOrNull()?.let { hit ->
+        DocumentFactSelection(hit, hit.evidence.firstOrNull { it.sourceField == "document_total" })
+    }
+}

@@ -3,6 +3,7 @@
 .model-download-venv/
 .run/
 artifacts/
+/build/
 models/
 backups/
 __pycache__/
@@ -17,3 +18,15 @@ frontend/vite.config.js
 frontend/vite.config.d.ts
 demo-assets/images/*.tmp
 !demo-assets/images/.gitkeep
+android/.gradle/
+android/**/.cxx/
+android/.kotlin/
+android/local.properties
+android/**/build/
+*.apk
+*.aab
+*.litertlm
+*.agemma
+*.tflite
+*.keystore
+*.jks

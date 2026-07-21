@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "license_whitelist": ["Public domain", "CC0", "CC0 1.0", "CC BY 4.0", "CC BY-SA 4.0"],
+  "legacy_manifest": "demo-assets/manifest.json",
+  "sources": [
+    {
+      "id": "singapore_marina_bay_01",
+      "provider": "wikimedia_commons",
+      "file_title": "File:Skyline of the Central Business District of Singapore seen from across Marina Bay - 20140129.jpg",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Skyline_of_the_Central_Business_District_of_Singapore_seen_from_across_Marina_Bay_-_20140129.jpg",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c0/Skyline_of_the_Central_Business_District_of_Singapore_seen_from_across_Marina_Bay_-_20140129.jpg/1920px-Skyline_of_the_Central_Business_District_of_Singapore_seen_from_across_Marina_Bay_-_20140129.jpg",
+      "local_cache_name": "singapore-marina-bay.jpg",
+      "license": "CC0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "author": "cegoh (Jason Goh)",
+      "sha256": "37c9c3da87dd411ea8ab9e4bc780f52db827262db30ea65d33c127d1416a0e75",
+      "width": 1920,
+      "height": 1079,
+      "fixture": {
+        "captured_at": "2024-03-13T10:42:00+08:00",
+        "gps": [1.2834, 103.8607],
+        "album": "Singapore 2024",
+        "labels": ["singapore", "marina_bay", "skyline", "travel", "daytime"]
+      }
+    },
+    {
+      "id": "goa_beach_01",
+      "provider": "wikimedia_commons",
+      "file_title": "File:GoaBeach.jpg",
+      "source_page": "https://commons.wikimedia.org/wiki/File:GoaBeach.jpg",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/8/86/GoaBeach.jpg",
+      "local_cache_name": "goa-beach.jpg",
+      "license": "Public domain",
+      "license_url": null,
+      "author": "Cferrero at English Wikipedia",
+      "sha256": "5fc7188c6c00670bd5323da34f6430b157827b77d4dca6fdc331ce0f0e9fa0f2",
+      "width": 450,
+      "height": 300,
+      "fixture": {
+        "captured_at": "2025-01-05T17:30:00+05:30",
+        "gps": [15.2993, 74.1240],
+        "album": "Goa 2025",
+        "labels": ["goa", "beach", "travel", "family", "sunset"]
+      }
+    }
+  ],
+  "synthetic_license": "CC0 1.0",
+  "profiles": {
+    "core": {"target_size_min": 60, "target_size_max": 100},
+    "stress-5k": {"target_size": 5000},
+    "stress-20k": {"target_size": 20000}
+  }
+}

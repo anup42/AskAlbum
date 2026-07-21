@@ -1,0 +1,262 @@
+package com.askphotos.android
+
+enum class QueryIntent {
+    FIND_MEDIA,
+    ANSWER_FACT,
+    LIST,
+    COUNT,
+    SUM,
+    MIN_MAX,
+    COMPARE,
+    TIMELINE,
+    EVENT_SUMMARY,
+    DOCUMENT_QA,
+}
+
+enum class MediaScope { ALL, IMAGES, VIDEOS, DOCUMENTS }
+enum class Grouping { NONE, EVENT, PERSON, PLACE, DAY, MONTH, YEAR }
+enum class AggregationOperation { COUNT, SUM, MIN, MAX, MIN_MAX }
+enum class SortSpec { RELEVANCE, CAPTURE_TIME_ASC, CAPTURE_TIME_DESC, QUALITY, AMOUNT_ASC, AMOUNT_DESC }
+enum class VerificationPolicy { NEVER, AUTO, REQUIRED }
+enum class AnswerMode { RESULTS_ONLY, SUMMARY_ONLY, RESULTS_AND_SUMMARY }
+enum class Polarity { POSITIVE, NEGATIVE }
+enum class ConstraintStrength { HARD, SOFT }
+enum class SemanticSubject { WHOLE_MEDIA, PERSON, EVENT, DOCUMENT }
+enum class ResultExactness { EXACT, COMPLETE_MODEL_SCAN, ESTIMATED_FROM_RETRIEVAL, PARTIAL_INDEX }
+enum class MediaSource { DEMO_ASSET, MEDIA_STORE, PHOTO_PICKER, SAF_DOCUMENT }
+enum class MediaKind { IMAGE, VIDEO, PDF }
+enum class IndexState { PENDING, INDEXING, READY, FAILED_RETRYABLE, FAILED_PERMANENT }
+enum class MediaAccessState { ACCESSIBLE, INACCESSIBLE }
+enum class IndexStage { DISCOVERY, METADATA, THUMBNAIL, EMBEDDING, OCR, FACES, EVENTS, ENRICHMENT }
+enum class StageStatus { PENDING, RUNNING, COMPLETE, SKIPPED, FAILED_RETRYABLE, FAILED_PERMANENT }
+enum class OcrEntityType { AMOUNT, RECEIPT_TOTAL, DATE, PHONE, EMAIL, URL, ORDER_ID, FLIGHT_NUMBER, MERCHANT, PASSWORD }
+
+sealed interface FilterExpression {
+    data object True : FilterExpression
+    data class And(val clauses: List<FilterExpression>) : FilterExpression
+    data class TimeRange(val startEpochMs: Long?, val endEpochMs: Long?) : FilterExpression
+    data class MediaKindIs(val kind: MediaKind) : FilterExpression
+    data class AlbumIs(val album: String) : FilterExpression
+}
+
+data class SemanticClause(
+    val text: String,
+    val canonicalText: String? = null,
+    val polarity: Polarity = Polarity.POSITIVE,
+    val hardness: ConstraintStrength = ConstraintStrength.SOFT,
+    val subject: SemanticSubject = SemanticSubject.WHOLE_MEDIA,
+    val relationToPerson: String? = null,
+)
+
+data class PersonClause(
+    val personId: String,
+    val mustBePresent: Boolean = true,
+    val hardness: ConstraintStrength = ConstraintStrength.HARD,
+)
+
+data class OcrClause(
+    val query: String? = null,
+    val merchant: String? = null,
+    val requestedField: String? = null,
+)
+
+data class AggregationSpec(
+    val operation: AggregationOperation,
+    val field: String? = null,
+)
+
+data class GalleryQueryPlan(
+    val version: Int = 1,
+    val originalQuery: String,
+    val intent: QueryIntent,
+    val mediaScope: MediaScope = MediaScope.ALL,
+    val filter: FilterExpression = FilterExpression.True,
+    val semanticClauses: List<SemanticClause> = emptyList(),
+    val peopleClauses: List<PersonClause> = emptyList(),
+    val ocrClause: OcrClause? = null,
+    val grouping: Grouping = Grouping.NONE,
+    val aggregation: AggregationSpec? = null,
+    val sort: SortSpec = SortSpec.RELEVANCE,
+    val verification: VerificationPolicy = VerificationPolicy.AUTO,
+    val answerMode: AnswerMode = AnswerMode.RESULTS_AND_SUMMARY,
+    // Compatibility fields used by the deterministic fixture repository until
+    // hybrid channel executors replace its current term scorer.
+    val terms: List<String> = emptyList(),
+    val place: String? = null,
+    val baseResultIds: Set<String>? = null,
+    val limit: Int = 100,
+)
+
+data class GroundedClaim(
+    val text: String,
+    val evidenceIds: List<String>,
+    val confidence: Float,
+)
+
+data class GalleryItem(
+    val id: String,
+    val filename: String,
+    val title: String,
+    val creator: String?,
+    val location: String,
+    val latitude: Double?,
+    val longitude: Double?,
+    val tags: List<String>,
+    val description: String,
+    val license: String,
+    val sourceUrl: String,
+    val assetPath: String?,
+    val contentUri: String? = null,
+    val previewPath: String? = null,
+    val source: MediaSource = MediaSource.DEMO_ASSET,
+    val kind: MediaKind = MediaKind.IMAGE,
+    val mimeType: String = "image/jpeg",
+    val capturedAt: Long? = null,
+    val modifiedAt: Long? = null,
+    val durationMs: Long? = null,
+    val width: Int = 0,
+    val height: Int = 0,
+    val sizeBytes: Long = 0,
+    val ocrText: String = "",
+    val faceCount: Int = 0,
+    val indexState: IndexState = IndexState.READY,
+    val indexError: String? = null,
+    val accessState: MediaAccessState = MediaAccessState.ACCESSIBLE,
+    val lastSeenAt: Long? = null,
+    val perceptualHash: Long? = null,
+    val blurScore: Float? = null,
+    val exposureScore: Float? = null,
+    val qualityScore: Float? = null,
+)
+
+data class EvidenceRecord(
+    val id: String,
+    val mediaId: String,
+    val sourceField: String,
+    val text: String,
+    val confidence: Float,
+    val producerVersion: String = "demo-sidecar-v1",
+    val region: List<Float>? = null,
+    val timestampMs: Long? = null,
+)
+
+data class SearchHit(
+    val item: GalleryItem,
+    val score: Double,
+    val evidence: List<EvidenceRecord>,
+    val duplicateIds: List<String> = emptyList(),
+)
+
+data class VisualFeatures(
+    val perceptualHash: Long,
+    val blurScore: Float,
+    val exposureScore: Float,
+    val qualityScore: Float,
+)
+
+data class SearchAnswer(
+    val headline: String,
+    val detail: String,
+    val evidenceIds: List<String>,
+    val exactness: ResultExactness,
+    val indexedEligibleCount: Int,
+    val totalEligibleCount: Int,
+    val claims: List<GroundedClaim> = emptyList(),
+    val warnings: List<String> = emptyList(),
+)
+
+data class SearchOutcome(
+    val plan: GalleryQueryPlan,
+    val hits: List<SearchHit>,
+    val answer: SearchAnswer,
+    val elapsedMs: Long,
+)
+
+data class IndexSummary(
+    val discovered: Int = 0,
+    val metadataReady: Int = 0,
+    val semanticFactsReady: Int = 0,
+    val ocrReady: Int = 0,
+    val visualLabelsReady: Int = 0,
+    val facesScanned: Int = 0,
+    val pending: Int = 0,
+    val events: Int = 0,
+    val failed: Int = 0,
+    val storageBytes: Long = 0,
+)
+
+data class ImportedMedia(
+    val stableId: String,
+    val uri: String,
+    val displayName: String,
+    val mimeType: String,
+    val source: MediaSource,
+    val capturedAt: Long?,
+    val modifiedAt: Long?,
+    val durationMs: Long?,
+    val width: Int,
+    val height: Int,
+    val sizeBytes: Long,
+)
+
+data class OcrBlockRecord(
+    val text: String,
+    val normalizedText: String = text.lowercase().replace(Regex("\\s+"), " ").trim(),
+    val language: String? = null,
+    val pageIndex: Int = 0,
+    val timestampMs: Long? = null,
+    val confidence: Float,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+)
+
+data class OcrEntityRecord(
+    val type: OcrEntityType,
+    val rawText: String,
+    val normalizedValue: String,
+    val label: String? = null,
+    val confidence: Float,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    val producerVersion: String = "document-facts-v2",
+)
+
+data class EventRecord(
+    val id: Long,
+    val dayStart: Long,
+    val title: String,
+    val memberCount: Int,
+)
+
+data class MediaRemovalResult(
+    val requestedUris: Int,
+    val matchedItems: Int,
+    val deletedItems: Int,
+    val tombstonesWritten: Int,
+    val previewFilesDeleted: Int,
+)
+
+data class MediaIndexStageRecord(
+    val mediaId: String,
+    val stage: IndexStage,
+    val status: StageStatus,
+    val producerVersion: String,
+    val attemptCount: Int,
+    val updatedAt: Long,
+    val error: String?,
+)
+
+data class MediaScanSnapshot(
+    val items: List<ImportedMedia>,
+    val fullyCoveredKinds: Set<MediaKind>,
+)
+
+data class MediaReconciliationPlan(
+    val seenUris: Set<String>,
+    val inaccessibleUris: Set<String>,
+    val deletedUris: Set<String>,
+)

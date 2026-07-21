@@ -1,0 +1,72 @@
+package com.askphotos.android
+
+/**
+ * Stable seams for production model packs. Implementations must never send image data off-device.
+ * The bundled MVP uses [QueryCompiler] and curated sample facts, so it makes no false model claim.
+ */
+interface GenerativeEngine {
+    suspend fun compilePlan(input: PlannerInput): GalleryQueryPlan
+    suspend fun verify(input: VerificationInput): VerificationResult
+    suspend fun composeAnswer(input: GroundedAnswerInput): SearchAnswer
+}
+
+interface ImageTextEmbeddingEngine {
+    suspend fun embedImage(image: ModelImage): FloatArray
+    suspend fun embedText(text: String): FloatArray
+}
+
+interface OcrEngine {
+    suspend fun recognize(image: ModelImage): OcrDocument
+}
+
+interface FaceEngine {
+    suspend fun detectAndEmbed(image: ModelImage): List<FaceInstance>
+}
+
+interface VectorIndex {
+    suspend fun upsert(mediaId: String, vector: FloatArray)
+    suspend fun delete(mediaId: String)
+    suspend fun search(query: FloatArray, topK: Int, allowedIds: Set<String>? = null): List<VectorHit>
+}
+
+interface QueryPlanner {
+    suspend fun compileAndValidate(input: PlannerInput): GalleryQueryPlan
+}
+
+interface QueryExecutor {
+    suspend fun retrieve(plan: GalleryQueryPlan): List<SearchHit>
+}
+
+interface CandidateVerifier {
+    suspend fun verifyWhenNeeded(plan: GalleryQueryPlan, candidates: List<SearchHit>): VerificationResult
+}
+
+interface EvidenceRepository {
+    suspend fun records(ids: Set<String>): List<EvidenceRecord>
+}
+
+enum class ModelCapability { GENERATIVE, IMAGE_EMBEDDING, TEXT_EMBEDDING, OCR, FACES }
+
+interface InferenceResourceManager {
+    suspend fun <T> withModel(capability: ModelCapability, block: suspend () -> T): T
+}
+
+data class PlannerInput(
+    val query: String,
+    val activeResultIds: Set<String>?,
+    val knownPeopleAliases: Map<String, String> = emptyMap(),
+    val availableCapabilities: Set<ModelCapability> = emptySet(),
+)
+data class VerificationInput(val plan: GalleryQueryPlan, val candidates: List<GalleryItem>)
+data class VerificationResult(val acceptedIds: Set<String>, val evidence: List<EvidenceRecord>)
+data class GroundedAnswerInput(val plan: GalleryQueryPlan, val hits: List<SearchHit>)
+data class ModelImage(
+    val rgbBytes: ByteArray,
+    val width: Int,
+    val height: Int,
+    val fixtureText: String? = null,
+)
+data class OcrDocument(val blocks: List<OcrBlock>, val language: String? = null)
+data class OcrBlock(val text: String, val confidence: Float, val bounds: List<Float>, val script: String? = null)
+data class FaceInstance(val bounds: List<Float>, val embedding: FloatArray, val quality: Float)
+data class VectorHit(val mediaId: String, val score: Float)

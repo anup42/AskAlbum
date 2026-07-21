@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <provider
+            android:name=".TestSeedContentProvider"
+            android:authorities="${applicationId}.testseed"
+            android:enabled="true"
+            android:exported="true" />
+        <receiver
+            android:name=".TestGallerySeederReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.askphotos.android.test.SEED_GALLERY" />
+                <action android:name="com.askphotos.android.test.CLEANUP_GALLERY" />
+                <action android:name="com.askphotos.android.test.IMPORT_SEEDED" />
+                <action android:name="com.askphotos.android.test.REMOVE_IMPORTED" />
+                <action android:name="com.askphotos.android.test.PREPARE_INDEX_INTERRUPTION" />
+                <action android:name="com.askphotos.android.test.VERIFY_INDEX_RECOVERY" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
