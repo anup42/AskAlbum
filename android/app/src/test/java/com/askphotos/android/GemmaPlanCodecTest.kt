@@ -56,4 +56,14 @@ class GemmaPlanCodecTest {
         assertEquals(1, calls)
         assertFalse(calls > 1)
     }
+
+    @Test
+    fun repairPromptRestatesBoundedSchemaAndNumericRules() {
+        val prompt = codec.repairPrompt("photos from 2024", "{broken", "unterminated")
+
+        assertTrue(prompt.contains("Required shape:"))
+        assertTrue(prompt.contains("\"version\":1"))
+        assertTrue(prompt.contains("uninterrupted decimal digits"))
+        assertTrue(prompt.contains("Omit optional fields"))
+    }
 }

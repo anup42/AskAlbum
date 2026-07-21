@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
@@ -29,17 +30,17 @@ class GemmaSettingsUiTest {
         rule.onNodeWithText("Index").performClick()
         rule.onNodeWithText("Gemma model pack").performScrollTo().assertIsDisplayed()
 
-        rule.onNodeWithText("E2B").performScrollTo().performClick()
+        rule.onNodeWithTag("gemma-tier-E2B").performScrollTo().performClick()
         rule.waitUntil(timeoutMillis = 5_000) {
-            runCatching { rule.onNodeWithText("Download Gemma 4 E2B").fetchSemanticsNode() }.isSuccess
+            runCatching { rule.onNodeWithTag("download-gemma-E2B").fetchSemanticsNode() }.isSuccess
         }
-        rule.onNodeWithText("Download Gemma 4 E2B").performScrollTo().assertIsEnabled()
+        rule.onNodeWithTag("download-gemma-E2B").performScrollTo().assertIsEnabled()
 
-        rule.onNodeWithText("E4B").performScrollTo().performClick()
+        rule.onNodeWithTag("gemma-tier-E4B").performScrollTo().performClick()
         rule.waitUntil(timeoutMillis = 5_000) {
-            runCatching { rule.onNodeWithText("Download Gemma 4 E4B").fetchSemanticsNode() }.isSuccess
+            runCatching { rule.onNodeWithTag("download-gemma-E4B").fetchSemanticsNode() }.isSuccess
         }
-        val e4bButton = rule.onNodeWithText("Download Gemma 4 E4B").performScrollTo()
+        val e4bButton = rule.onNodeWithTag("download-gemma-E4B").performScrollTo()
         if (e4bSupported) e4bButton.assertIsEnabled() else e4bButton.assertIsNotEnabled()
     }
 }

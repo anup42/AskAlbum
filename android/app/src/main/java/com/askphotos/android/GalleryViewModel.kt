@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -36,6 +37,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val modelPacks = askPhotosApplication.modelPackManager
     private val modelDownloader = askPhotosApplication.services.modelDownloader
     private val retrievalPacks = askPhotosApplication.services.retrievalModelPackManager
+    private var modelMonitorJob: Job? = null
     var state by mutableStateOf(GalleryUiState())
         private set
 
@@ -112,10 +114,22 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun selectModelTier(tier: GemmaModelTier) {
+        modelMonitorJob?.cancel()
         viewModelScope.launch {
             val status = withContext(Dispatchers.IO) { modelPacks.selectTier(tier) }
+            state = state.copy(
+                modelPack = status,
+                modelDownload = GemmaDownloadProgress(
+                    tier = tier,
+                    totalBytes = GemmaModelCatalog.require(tier).sizeBytes,
+                ),
+                operationMessage = null,
+            )
             val progress = withContext(Dispatchers.IO) { modelDownloader.progress(tier) }
-            state = state.copy(modelPack = status, modelDownload = progress, operationMessage = null)
+            if (state.modelPack.selectedTier == tier) {
+                state = state.copy(modelDownload = progress)
+                if (progress.state in ACTIVE_DOWNLOAD_STATES) monitorModelDownload()
+            }
         }
     }
 
@@ -207,7 +221,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun monitorModelDownload() {
-        viewModelScope.launch {
+        modelMonitorJob?.cancel()
+        modelMonitorJob = viewModelScope.launch {
             repeat(7_200) {
                 val tier = state.modelPack.selectedTier
                 val progress = withContext(Dispatchers.IO) { modelDownloader.progress(tier) }
@@ -215,9 +230,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     withContext(Dispatchers.IO) { modelPacks.status() }
                 } else state.modelPack
                 state = state.copy(modelPack = modelStatus, modelDownload = progress)
-                if (progress.state !in setOf(GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING)) return@launch
+                if (progress.state !in ACTIVE_DOWNLOAD_STATES) return@launch
                 delay(1_000)
             }
         }
+    }
+
+    private companion object {
+        val ACTIVE_DOWNLOAD_STATES = setOf(
+            GemmaDownloadState.QUEUED,
+            GemmaDownloadState.DOWNLOADING,
+            GemmaDownloadState.VERIFYING,
+        )
     }
 }

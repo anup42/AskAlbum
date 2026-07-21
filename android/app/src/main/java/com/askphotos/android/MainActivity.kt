@@ -620,6 +620,7 @@ private fun IndexManagerScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GemmaModelCatalog.all.forEach { spec ->
                         FilterChip(
+                            modifier = Modifier.testTag("gemma-tier-${spec.tier.name}"),
                             selected = modelPack.selectedTier == spec.tier,
                             onClick = { onSelectModelTier(spec.tier) },
                             label = { Text(spec.tier.name) },
@@ -661,7 +662,7 @@ private fun IndexManagerScreen(
                             Button(
                                 onClick = onDownloadModel,
                                 enabled = modelPack.deviceAssessment?.supported == true,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().testTag("download-gemma-${selectedSpec.tier.name}"),
                             ) { Text("Download ${selectedSpec.displayName}") }
                             modelDownload.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
                         }

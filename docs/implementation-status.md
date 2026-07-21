@@ -1165,7 +1165,7 @@ Next phase:
 
 ## Phase 6 — Gemma 4 planning, E2B/E4B selection, and verified download (22 July 2026)
 
-Status: **The constrained Gemma planning boundary and verified E2B/E4B model-management path are implemented. Both Android variants build and the consumer APK is installed. Real Gemma inference and a full model download are NOT RUN. One consumer Settings UI acceptance test remains failing after the requested two repair-cycle limit.**
+Status: **The constrained Gemma planning boundary and verified E2B/E4B model-management path are implemented. The Settings state defect is fixed. A pinned E2B pack was downloaded, independently SHA-256 verified, atomically activated, and used by LiteRT-LM on the connected device to compile a valid typed plan without deterministic fallback. E4B, multilingual real-model planning, visual verification, and answer composition remain NOT RUN.**
 
 Files changed:
 
@@ -1181,6 +1181,7 @@ Files changed:
 - `android/app/src/main/java/com/askphotos/android/GalleryViewModel.kt`
 - `android/app/src/main/java/com/askphotos/android/MainActivity.kt`
 - Gemma catalog/codec/pack unit and instrumented security/UI tests
+- `android/app/src/androidTest/java/com/askphotos/android/RealGemmaPlannerAcceptanceTest.kt`
 
 Architecture decisions:
 
@@ -1189,6 +1190,8 @@ Architecture decisions:
 - `consumer` alone declares `INTERNET`; `offlineDemo` explicitly removes it. Neither variant has a cloud-inference API. The consumer downloader accepts no user/model-generated URL, uses WorkManager with connected-network/storage constraints and resumable ranges, stores partial/final data under app-private storage, verifies exact size and SHA-256, then atomically activates a generation.
 - Settings persists E2B/E4B selection. E2B is the default; E4B requires the stronger runtime assessment. Signed `.agemma` SAF import remains available in both variants.
 - Gemma emits only the typed JSON plan. The codec rejects unknown fields, paths/URIs/SQL/result IDs, enforces bounds, and permits one repair call. Runtime work is serialized, uses GPU then CPU, and rolls back after a load failure.
+- The planner uses the model's declared 4,096-token context, disables thinking for this bounded compiler, and applies deterministic sampling. The same initialized engine is reused for the initial generation and the single repair, then closed.
+- Settings publishes a selected-tier state before its potentially blocking WorkManager lookup and maintains one monitor job. This removes the stale E4B button state that the prior connected Compose test exposed.
 
 Commands and results:
 
@@ -1197,15 +1200,20 @@ Commands and results:
 powershell -ExecutionPolicy Bypass -File C:\Users\anupk\.codex\skills\android-build-install\scripts\build_install_android.ps1 -Root C:\Users\anupk\Documents\git\askphotos\android -Module :app -Variant ConsumerDebug
 adb -s <serial> install -r -t android\app\build\outputs\apk\androidTest\consumer\debug\app-consumer-debug-androidTest.apk
 adb -s <serial> shell am instrument -w -r -e class com.askphotos.android.GemmaSettingsUiTest,com.askphotos.android.GemmaPackSecurityTest,com.askphotos.android.AskPhotosSmokeTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+adb -s <serial> shell sha256sum <app-private-active-e2b-model>
+adb -s <serial> shell am instrument -w -r -e class com.askphotos.android.RealGemmaPlannerAcceptanceTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 Results and device:
 
-- 47 JVM suites / 142 flavored tests: 0 failures and 0 errors.
+- 47 JVM suites / 144 flavored tests: 0 failures and 0 errors.
 - Offline and consumer debug APKs plus consumer Android-test APK assembled. Merged manifests show `INTERNET=false` for `offlineDemoDebug` and `INTERNET=true` for `consumerDebug`.
 - Final consumer APK build/install: success on the sole connected Samsung SM-F966B, Android 16. The serial is intentionally omitted.
-- Connected pack-security test passed. Privacy/onboarding smoke passed. Grounded local Amsterdam search passed with `Found 4 matches`, resolving the earlier device timing failure.
-- Settings test demonstrated both E2B/E4B controls and E4B policy state on the 12 GB-class device, but timed out waiting for the recomposed E2B download button even though the app-private preference changed to `E2B`. There were no installed generations, only an empty private downloads directory. The test remains failed after two bounded repair cycles; no pass is claimed.
+- Connected pack-security test, privacy/onboarding smoke, and grounded local Amsterdam search passed. The focused four-test instrumentation run completed in 4.252 seconds.
+- The Settings test now passes and verifies tagged E2B/E4B selectors, immediate selection state, and the capability-derived E4B download-button policy.
+- The active E2B artifact is 2,583,085,056 bytes. Device `sha256sum` returned `ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42`, exactly matching the immutable catalog.
+- The unchanged real-model assertion passed on the sole connected Samsung SM-F966B, Android 16: `used=true`, `backend=GPU`, `calls=2`, `repaired=true`, planner elapsed 14,091 ms, wall 14,490 ms, intent `FIND_MEDIA`, scope `IMAGES`, schema valid, fallback `null`. Instrumentation reported `OK (1 test)` in 14.504 seconds.
+- The first real-model attempt failed honestly because the 1,536-token engine context exhausted the repair response and produced malformed JSON. One repair cycle increased the engine to the model's 4,096-token context, disabled thinking, made sampling deterministic, and restated the bounded schema; the identical no-fallback acceptance assertion then passed.
 
 Artifacts:
 
@@ -1213,13 +1221,20 @@ Artifacts:
 - `artifacts/phase6-consumer-device-tests.txt`
 - `artifacts/phase6-consumer-settings-rerun.txt`
 - `artifacts/phase6-consumer-settings-final.txt`
+- `artifacts/phase6-settings-state-fix-build.log`
+- `artifacts/phase6-settings-state-device-tests.txt`
+- `artifacts/phase6-real-gemma-planner.txt` (retained failed first attempt)
+- `artifacts/phase6-real-gemma-repair1-build.log`
+- `artifacts/phase6-real-gemma-planner-final-code.txt`
+- `artifacts/phase6-real-gemma-thermal-final.txt`
 
 Failures and limitations:
 
-- No 2.58 GB E2B or 3.65 GB E4B artifact was downloaded, so resume, final on-device checksum duration, LiteRT-LM model initialization, plan quality, visual verification, and answer composition with real Gemma remain NOT RUN.
-- The consumer Settings selection acceptance is not green. The persisted tier updates, but the Compose test did not observe the expected button state within five seconds. Treat this as an unresolved UI/state acceptance defect until reproduced and fixed in a new narrow task.
+- Real E2B acceptance currently covers one English text-only plan. Hindi/Hinglish plan quality, one-image verification, grounded answer composition, repeated load/unload, and peak-memory measurement remain NOT RUN.
+- The instrumentation process exited before the post-run `dumpsys meminfo`, so no peak-RAM claim is made. The captured thermal service status was `0` (no throttling), but this is not a sustained thermal benchmark.
+- E4B was not downloaded or loaded. Its UI option is capability-gated, but quality/latency comparison remains an explicit honest skip.
 - The connected device changed during the work from the earlier SM-F731U to the sole authorized SM-F966B; the final install and tests above apply to SM-F966B.
 
 Next phase:
 
-- In a separate narrow task, fix the Settings state/recomposition acceptance, then user-start the E2B download on an approved network, verify the pinned digest and model load/unload, run English/Hindi/Hinglish real-plan tests and one-image verification, and record E4B quality/latency only if its benchmark remains safe.
+- Continue Phase 6 narrowly with real E2B Hindi/Hinglish plan-quality cases and explicit load/unload memory evidence. Then begin Phase 7 as a separate slice: one-image structured visual verification and evidence-only answer composition. Keep E4B optional and test it only after a dedicated safe-load benchmark.
