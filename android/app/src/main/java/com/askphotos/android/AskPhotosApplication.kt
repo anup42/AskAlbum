@@ -5,6 +5,7 @@ import android.app.Application
 /** Production dependency graph. There is deliberately no mutable test override in release code. */
 class AppServices(private val application: AskPhotosApplication) {
     val modelPackManager by lazy { ModelPackManager(application) }
+    val modelDownloader by lazy { GemmaModelDownloader(application, modelPackManager) }
     val retrievalModelPackManager by lazy { RetrievalModelPackManager(application) }
     val inferenceResources: InferenceResourceManager by lazy { SerializedInferenceResourceManager() }
     val embeddingEngine: ImageTextEmbeddingEngine by lazy {

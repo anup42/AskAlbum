@@ -26,6 +26,7 @@ data class GalleryUiState(
     val destination: AppDestination = AppDestination.ASK,
     val operationMessage: String? = null,
     val modelPack: ModelPackStatus = ModelPackStatus(installed = false),
+    val modelDownload: GemmaDownloadProgress = GemmaDownloadProgress(),
     val retrievalPack: RetrievalPackStatus = RetrievalPackStatus(installed = false),
 )
 
@@ -33,6 +34,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val askPhotosApplication = application as AskPhotosApplication
     private val repository = askPhotosApplication.repository
     private val modelPacks = askPhotosApplication.modelPackManager
+    private val modelDownloader = askPhotosApplication.services.modelDownloader
     private val retrievalPacks = askPhotosApplication.services.retrievalModelPackManager
     var state by mutableStateOf(GalleryUiState())
         private set
@@ -50,9 +52,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     index = summary,
                     items = items,
                     modelPack = modelPacks.status(),
+                    modelDownload = modelDownloader.progress(modelPacks.selectedTier()),
                     retrievalPack = retrievalPacks.status(),
                 )
                 monitorIndexing()
+                monitorModelDownload()
             }.onFailure { error ->
                 state = state.copy(loading = false, error = error.message ?: "Could not open local gallery memory")
             }
@@ -105,6 +109,40 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 .onSuccess { status -> state = state.copy(modelPack = status, operationMessage = "${status.name} is ready") }
                 .onFailure { error -> state = state.copy(operationMessage = error.message ?: "Model import failed") }
         }
+    }
+
+    fun selectModelTier(tier: GemmaModelTier) {
+        viewModelScope.launch {
+            val status = withContext(Dispatchers.IO) { modelPacks.selectTier(tier) }
+            val progress = withContext(Dispatchers.IO) { modelDownloader.progress(tier) }
+            state = state.copy(modelPack = status, modelDownload = progress, operationMessage = null)
+        }
+    }
+
+    fun downloadSelectedModel() {
+        val tier = state.modelPack.selectedTier
+        state = state.copy(operationMessage = "Preparing ${GemmaModelCatalog.require(tier).displayName} download…")
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { modelDownloader.enqueue(tier) } }
+                .onSuccess {
+                    state = state.copy(
+                        modelDownload = GemmaDownloadProgress(
+                            tier = tier,
+                            state = GemmaDownloadState.QUEUED,
+                            totalBytes = GemmaModelCatalog.require(tier).sizeBytes,
+                        ),
+                        operationMessage = "Download queued; the model stays in app-private storage",
+                    )
+                    monitorModelDownload()
+                }
+                .onFailure { error -> state = state.copy(operationMessage = error.message ?: "Model download could not start") }
+        }
+    }
+
+    fun cancelModelDownload() {
+        val tier = state.modelPack.selectedTier
+        modelDownloader.cancel(tier)
+        state = state.copy(operationMessage = "${GemmaModelCatalog.require(tier).displayName} download cancelled")
     }
 
     fun importRetrievalPack(uri: Uri?) {
@@ -164,6 +202,21 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 delay(1_000)
                 reload()
                 if (state.index.pending == 0) return@launch
+            }
+        }
+    }
+
+    private fun monitorModelDownload() {
+        viewModelScope.launch {
+            repeat(7_200) {
+                val tier = state.modelPack.selectedTier
+                val progress = withContext(Dispatchers.IO) { modelDownloader.progress(tier) }
+                val modelStatus = if (progress.state == GemmaDownloadState.INSTALLED) {
+                    withContext(Dispatchers.IO) { modelPacks.status() }
+                } else state.modelPack
+                state = state.copy(modelPack = modelStatus, modelDownload = progress)
+                if (progress.state !in setOf(GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING)) return@launch
+                delay(1_000)
             }
         }
     }

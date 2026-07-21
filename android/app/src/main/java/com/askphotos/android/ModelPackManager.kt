@@ -88,7 +88,7 @@ data class GemmaPackManifest(
                 require(safeId.matches(manifest.packId) && safeId.matches(manifest.packVersion)) { "Invalid Gemma pack identifier" }
                 require(manifest.family == "gemma-4") { "Unsupported generative model family" }
                 require(manifest.multimodal) { "Gemma pack must support image verification" }
-                require(manifest.maxContextTokens in 1024..8192) { "Unsupported Gemma context size" }
+                require(manifest.maxContextTokens in 1024..32000) { "Unsupported Gemma context size" }
                 require(revision.matches(manifest.sourceRevision)) { "Gemma source revision must be pinned" }
                 require(manifest.sourceLicense.isNotBlank() && manifest.sourceLicense.length <= 96) { "Invalid Gemma license identifier" }
                 require(manifest.runtimeName == "LiteRT-LM" && manifest.runtimeVersion == LITERT_LM_VERSION) { "Unsupported LiteRT-LM runtime" }
@@ -124,13 +124,19 @@ data class GemmaDeviceAssessment(
 
 class GemmaDeviceCapability(private val context: Context) {
     fun assess(manifest: GemmaPackManifest? = null): GemmaDeviceAssessment {
+        return assess(manifest?.tier, manifest?.minimumRamBytes)
+    }
+
+    fun assess(spec: GemmaDownloadSpec): GemmaDeviceAssessment = assess(spec.tier, spec.minimumRamBytes)
+
+    private fun assess(tier: GemmaModelTier?, declaredMinimumRamBytes: Long?): GemmaDeviceAssessment {
         val manager = context.getSystemService(ActivityManager::class.java)
         val memory = ActivityManager.MemoryInfo().also(manager::getMemoryInfo)
         val arm64 = Build.SUPPORTED_64_BIT_ABIS.any { it == "arm64-v8a" }
         val recommended = if (arm64 && memory.totalMem >= 10L * GIB && manager.memoryClass >= 512) GemmaModelTier.E4B else GemmaModelTier.E2B
-        val required = manifest?.minimumRamBytes ?: if (recommended == GemmaModelTier.E4B) 8L * GIB else 4L * GIB
-        val policyFloor = when (manifest?.tier) {
-            GemmaModelTier.E4B -> 8L * GIB
+        val required = declaredMinimumRamBytes ?: 4L * GIB
+        val policyFloor = when (tier) {
+            GemmaModelTier.E4B -> 10L * GIB
             GemmaModelTier.E2B -> 4L * GIB
             null -> 4L * GIB
         }
@@ -138,7 +144,7 @@ class GemmaDeviceCapability(private val context: Context) {
         val reason = when {
             !arm64 -> "A 64-bit ARM device is required"
             memory.totalMem < maxOf(required, policyFloor) -> "The model pack requires more physical RAM"
-            manifest?.tier == GemmaModelTier.E4B && recommended != GemmaModelTier.E4B -> "E4B is not recommended by the device benchmark"
+            tier == GemmaModelTier.E4B && recommended != GemmaModelTier.E4B -> "E4B requires a 12 GB-class device; E2B is recommended"
             else -> "Compatible with bounded on-device inference"
         }
         return GemmaDeviceAssessment(supported, recommended, memory.totalMem, manager.memoryClass, reason)
@@ -155,6 +161,9 @@ data class ModelPackStatus(
     val packId: String? = null,
     val packVersion: String? = null,
     val tier: GemmaModelTier? = null,
+    val selectedTier: GemmaModelTier = GemmaModelTier.E2B,
+    val installedTiers: Set<GemmaModelTier> = emptySet(),
+    val downloadAllowed: Boolean = BuildConfig.ALLOW_MODEL_DOWNLOAD,
     val multimodal: Boolean = false,
     val deviceAssessment: GemmaDeviceAssessment? = null,
     val error: String? = null,
@@ -192,9 +201,32 @@ class ModelPackManager(
     private val generations = File(root, "generations")
     private val pointer = File(root, "current")
     private val previousPointer = File(root, "previous")
+    private val preferences = context.getSharedPreferences("gemma-model-selection", Context.MODE_PRIVATE)
+
+    fun selectedTier(): GemmaModelTier = runCatching {
+        GemmaModelTier.valueOf(preferences.getString("tier", GemmaModelTier.E2B.name)!!)
+    }.getOrDefault(GemmaModelTier.E2B)
+
+    fun assess(spec: GemmaDownloadSpec): GemmaDeviceAssessment = deviceCapability.assess(spec)
+
+    fun isInstalled(tier: GemmaModelTier): Boolean = findInstalled(tier) != null
+
+    fun selectTier(tier: GemmaModelTier): ModelPackStatus {
+        preferences.edit().putString("tier", tier.name).apply()
+        findInstalled(tier)?.let { activateGeneration(it.directory.name) }
+        return status()
+    }
 
     fun status(): ModelPackStatus = runCatching {
-        val installed = current() ?: return ModelPackStatus(installed = false, deviceAssessment = deviceCapability.assess())
+        val selected = selectedTier()
+        val tiers = installedTiers()
+        val installed = current()?.takeIf { it.manifest.tier == selected }
+            ?: return ModelPackStatus(
+                installed = false,
+                selectedTier = selected,
+                installedTiers = tiers,
+                deviceAssessment = deviceCapability.assess(GemmaModelCatalog.require(selected)),
+            )
         val model = installed.artifact(GEMMA_ROLE_MODEL)
         ModelPackStatus(
             installed = true,
@@ -205,10 +237,20 @@ class ModelPackManager(
             packId = installed.manifest.packId,
             packVersion = installed.manifest.packVersion,
             tier = installed.manifest.tier,
+            selectedTier = selected,
+            installedTiers = tiers,
             multimodal = installed.manifest.multimodal,
             deviceAssessment = deviceCapability.assess(installed.manifest),
         )
-    }.getOrElse { ModelPackStatus(installed = false, deviceAssessment = deviceCapability.assess(), error = it.message) }
+    }.getOrElse {
+        ModelPackStatus(
+            installed = false,
+            selectedTier = selectedTier(),
+            installedTiers = installedTiers(),
+            deviceAssessment = deviceCapability.assess(GemmaModelCatalog.require(selectedTier())),
+            error = it.message,
+        )
+    }
 
     fun current(): InstalledGemmaPack? {
         if (!pointer.isFile) return null
@@ -249,7 +291,8 @@ class ModelPackManager(
                     output.fd.sync()
                 }
             }
-            installVerified(incoming)
+            val installed = installVerified(incoming)
+            preferences.edit().putString("tier", installed.manifest.tier.name).apply()
             status()
         } finally {
             incoming.delete()
@@ -322,6 +365,99 @@ class ModelPackManager(
         }
     }
 
+    internal fun installDownloaded(spec: GemmaDownloadSpec, downloadedFile: File): InstalledGemmaPack {
+        require(BuildConfig.ALLOW_MODEL_DOWNLOAD) { "Network model downloads are disabled in this build" }
+        require(downloadedFile.isFile && downloadedFile.length() == spec.sizeBytes) { "Downloaded model is incomplete" }
+        val digest = MessageDigest.getInstance("SHA-256")
+        downloadedFile.inputStream().buffered().use { input ->
+            val buffer = ByteArray(1024 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        require(digest.digest().gemmaToHex() == spec.sha256) { "Downloaded model checksum does not match the pinned catalog" }
+        val assessment = deviceCapability.assess(spec)
+        require(assessment.supported) { assessment.reason }
+        if (spec.tier == GemmaModelTier.E4B) require(assessment.recommendedTier == GemmaModelTier.E4B) { assessment.reason }
+
+        val licenseBytes = GEMMA_TERMS_NOTICE.toByteArray(Charsets.UTF_8)
+        val licenseName = "GEMMA_TERMS_NOTICE.txt"
+        val publicKey = context.gemmaApkSigningPublicKey()
+        val signatureAlgorithm = when (publicKey.algorithm.uppercase()) {
+            "RSA" -> "SHA256withRSA"
+            "EC", "ECDSA" -> "SHA256withECDSA"
+            else -> error("Unsupported APK signing-key algorithm")
+        }
+        val keySha = MessageDigest.getInstance("SHA-256").digest(publicKey.encoded).gemmaToHex()
+        val licenseSha = MessageDigest.getInstance("SHA-256").digest(licenseBytes).gemmaToHex()
+        val manifestJson = JSONObject()
+            .put("schemaVersion", 1)
+            .put("packId", "google-ai-edge-gemma-4-${spec.tier.name.lowercase()}")
+            .put("packVersion", spec.revision.take(16))
+            .put("model", JSONObject().put("family", "gemma-4").put("tier", spec.tier.name).put("multimodal", true).put("maxContextTokens", 32000))
+            .put("source", JSONObject().put("revision", spec.revision).put("license", "Gemma Terms"))
+            .put("runtime", JSONObject().put("name", "LiteRT-LM").put("version", LITERT_LM_VERSION))
+            .put("device", JSONObject().put("minimumRamBytes", spec.minimumRamBytes))
+            .put("signing", JSONObject().put("algorithm", signatureAlgorithm).put("keySha256", keySha))
+            .put(
+                "files",
+                org.json.JSONArray()
+                    .put(JSONObject().put("role", GEMMA_ROLE_MODEL).put("name", spec.fileName).put("sizeBytes", spec.sizeBytes).put("sha256", spec.sha256))
+                    .put(JSONObject().put("role", GEMMA_ROLE_LICENSE).put("name", licenseName).put("sizeBytes", licenseBytes.size).put("sha256", licenseSha)),
+            )
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        val manifest = GemmaPackManifest.parse(manifestJson)
+        generations.mkdirs()
+        val generationName = "generation-${manifest.packVersion}-${UUID.randomUUID()}"
+        val staging = File(generations, "$generationName.importing")
+        val installed = File(generations, generationName)
+        require(staging.mkdirs()) { "Could not create Gemma download staging directory" }
+        try {
+            require(downloadedFile.renameTo(File(staging, spec.fileName))) { "Could not move the verified model into app-private storage" }
+            File(staging, licenseName).gemmaWriteBytesAndSync(licenseBytes)
+            File(staging, GEMMA_MANIFEST_NAME).gemmaWriteBytesAndSync(manifestJson)
+            require(staging.renameTo(installed)) { "Could not finalize the downloaded Gemma generation" }
+            activateGeneration(generationName)
+            preferences.edit().putString("tier", spec.tier.name).apply()
+            return InstalledGemmaPack(installed, manifest)
+        } finally {
+            if (staging.exists()) staging.deleteRecursively()
+        }
+    }
+
+    private fun installedTiers(): Set<GemmaModelTier> = GemmaModelTier.entries.filterTo(mutableSetOf(), ::isInstalled)
+
+    private fun findInstalled(tier: GemmaModelTier): InstalledGemmaPack? {
+        return generations.listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter { it.isDirectory && it.name.matches(Regex("generation-[A-Za-z0-9._-]+")) }
+            .sortedByDescending(File::lastModified)
+            .mapNotNull { directory ->
+                runCatching {
+                    val manifest = GemmaPackManifest.parse(File(directory, GEMMA_MANIFEST_NAME).readBytes())
+                    require(manifest.tier == tier)
+                    manifest.files.forEach { spec -> require(File(directory, spec.name).let { it.isFile && it.length() == spec.sizeBytes }) }
+                    InstalledGemmaPack(directory, manifest)
+                }.getOrNull()
+            }
+            .firstOrNull()
+    }
+
+    private fun activateGeneration(generationName: String) {
+        require(generationName.matches(Regex("generation-[A-Za-z0-9._-]+")) && File(generations, generationName).isDirectory)
+        val active = pointer.takeIf(File::isFile)?.readText()?.trim()
+        if (active == generationName) return
+        active?.takeIf { it.matches(Regex("generation-[A-Za-z0-9._-]+")) }?.let(previousPointer::gemmaWriteTextAndSync)
+        val next = File(root, "current.next")
+        next.gemmaWriteTextAndSync(generationName)
+        if (pointer.exists()) require(pointer.delete()) { "Could not replace Gemma generation pointer" }
+        require(next.renameTo(pointer)) { "Could not activate Gemma generation" }
+    }
+
     fun rollbackAfterLoadFailure(activeModelPath: String): Boolean = runCatching {
         val active = current() ?: return false
         if (active.artifact(GEMMA_ROLE_MODEL).absolutePath != activeModelPath || !previousPointer.isFile) return false
@@ -384,3 +520,4 @@ private const val MAX_GEMMA_PACK_BYTES = 7_600_000_000L
 private const val MAX_GEMMA_ARCHIVE_BYTES = 7_700_000_000L
 private const val MIN_FREE_AFTER_GEMMA_IMPORT = 512L * 1024 * 1024
 private const val GIB = 1024L * 1024 * 1024
+private const val GEMMA_TERMS_NOTICE = "Gemma model use is governed by the Gemma Terms. Review and accept the current terms at https://ai.google.dev/gemma/terms before downloading or using this model."

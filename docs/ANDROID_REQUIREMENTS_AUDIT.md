@@ -6,7 +6,7 @@ Legend: **Done** is executable in the Android app; **Partial** is useful but doe
 
 | Requirement area | Status | Current implementation / remaining gap |
 |---|---|---|
-| Native Android, no server | **Done** | Kotlin/Compose, direct repositories and workers; no Docker, Python, HTTP server, React, or `INTERNET` permission. |
+| Native Android, no server | **Done** | Kotlin/Compose, direct repositories and workers; no Docker, Python, HTTP server, React, or cloud inference. `offlineDemo` omits `INTERNET`; `consumer` permits only the allowlisted model downloader. |
 | Sample gallery | **Done** | 14 checksum-pinned CC0 images packaged and indexed idempotently. |
 | Full/partial Android gallery access | **Done** | Version-aware MediaStore permissions including Android 14 selected access; access is re-queried on resume. |
 | Private selection and documents | **Done** | Photo Picker plus SAF image/video/PDF import and persistable URI attempt. |
@@ -24,7 +24,7 @@ Legend: **Done** is executable in the Android app; **Partial** is useful but doe
 | Videos | **Partial** | Metadata and thumbnail labeling/OCR. Scene-change keyframes and timestamp-specific evidence remain. |
 | PDFs | **Partial** | First page is rendered, labeled, OCR-indexed, and cached privately. Per-page child records for every page remain. |
 | Typed query plan | **Done** | Bounded enums/terms/result limits; neither model nor user input can emit SQL, paths, URIs, or tools. |
-| Gemma planning | **Done when pack installed** | `.litertlm` SAF import, space check, SHA-256 record, LiteRT-LM 0.14.0, GPU-to-CPU fallback, schema validation, deterministic fallback. No model weight is bundled. |
+| Gemma planning | **Done when a verified pack is installed** | Strict full-plan JSON codec, one bounded repair, Hindi/Hinglish deterministic coverage, signed SAF import, immutable E2B/E4B download catalog, SHA-256/size verification, LiteRT-LM 0.14.0, GPU-to-CPU fallback, rollback, and deterministic fallback. No weight is bundled and real E2B inference remains NOT RUN. |
 | Gemma visual verification | **External pack required** | Runtime interface exists, but candidate image prompting/strict verifier schema is not connected until a compatible multimodal Gemma pack is installed and tested. |
 | Deterministic count | **Done** | Counts use the complete matching set, not the 100-card UI limit, and report coverage. |
 | Receipt total | **Done / Partial** | Local OCR plus deterministic Total/Grand Total/Amount Paid selection. Broader receipt calibration remains. |
@@ -32,10 +32,10 @@ Legend: **Done** is executable in the Android app; **Partial** is useful but doe
 | Evidence and post-validation | **Done / Partial** | Evidence IDs, source fields, normalized OCR regions, producer versions, coverage, and exactness. Gemma answer composition/citation regeneration is not active without a pack. |
 | Follow-ups | **Done / Partial** | “Only…” and “What about…” retain the active result set. General Gemma PlanPatch and persisted multi-session pronoun resolution remain. |
 | Sensitive OCR | **Done / Partial** | Password/card/identity/medical patterns require biometric or device credential before evidence display. At-rest field-level/database encryption remains. |
-| Model/resource management | **Partial** | Private import, checksum record, pinned runtime, serialized Gemma engine, GPU/CPU fallback. Signed manifests, downloads, E2B/E4B benchmark selection, thermal policies, rollback, and model-specific reindex are pending. |
-| Privacy | **Done / Partial** | App-private data, no Internet permission/cloud inference/raw logging, biometric evidence gate. Keystore-backed database encryption and face-data purge UI await their respective implementations. |
+| Model/resource management | **Partial** | App-private signed import and resumable foreground download, immutable revisions, pinned size/SHA-256, persistent E2B/E4B choice, 8/12 GB-class capability policy, serialized Gemma engine, GPU/CPU fallback, and atomic rollback are implemented. Real-model load/unload benchmarks, thermal policy, and successful Settings recomposition acceptance remain pending. |
+| Privacy | **Done / Partial** | App-private data, no cloud inference/raw logging, biometric evidence gate. `offlineDemo` has no Internet permission; `consumer` uses network only for user-selected immutable model downloads. Keystore-backed database encryption and face-data purge UI remain. |
 | Evaluation | **Partial** | Unit tests, connected-device Compose test, lint, sample query and privacy checks exist. The requested 200–300-query multilingual/retrieval/thermal benchmark suite does not. |
 
 ## Honest completion boundary
 
-The application is now a functional offline Android gallery indexer and evidence-backed search product, not merely a UI mock. It is not yet the complete production system described in the supplied document. The remaining model/evaluation blockers are concrete Gemma 4 E2B/E4B `.litertlm` packs, an actually converted and calibrated SigLIP2 `.agretrieval` pack, a licensed face-embedding model, and a consented labeled evaluation gallery. The SigLIP2 conversion, signing, import, runtime, indexing, and fusion path is implemented, but it is not counted as real-model acceptance until that pack is produced and measured.
+The application is now a functional Android gallery indexer and evidence-backed search product, not merely a UI mock. It is not yet the complete production system described in the supplied document. The consumer app can fetch the official Gemma 4 E2B/E4B LiteRT-LM artifacts, but no multi-gigabyte model was downloaded or inference-tested in this slice. Other blockers remain an actually converted and calibrated SigLIP2 `.agretrieval` pack, a licensed face-embedding model, and a consented labeled evaluation gallery. No real-model capability is counted as accepted until it is installed and measured.

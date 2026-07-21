@@ -50,6 +50,20 @@ android {
         }
     }
 
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("offlineDemo") {
+            dimension = "distribution"
+            buildConfigField("boolean", "ALLOW_MODEL_DOWNLOAD", "false")
+            buildConfigField("String", "DISTRIBUTION", "\"offlineDemo\"")
+        }
+        create("consumer") {
+            dimension = "distribution"
+            buildConfigField("boolean", "ALLOW_MODEL_DOWNLOAD", "true")
+            buildConfigField("String", "DISTRIBUTION", "\"consumer\"")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

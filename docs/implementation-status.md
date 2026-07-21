@@ -1162,3 +1162,64 @@ Failures and limitations:
 Next phase:
 
 - Continue with Phase 6 as a separate model-runtime slice: signed Gemma 4 E2B pack acceptance, constrained JSON plan-quality tests in English/Hindi/Hinglish, bounded repair, resource load/unload evidence, and an honest E4B capability skip or comparison. The actual `.litertlm` pack is still an external artifact gate.
+
+## Phase 6 — Gemma 4 planning, E2B/E4B selection, and verified download (22 July 2026)
+
+Status: **The constrained Gemma planning boundary and verified E2B/E4B model-management path are implemented. Both Android variants build and the consumer APK is installed. Real Gemma inference and a full model download are NOT RUN. One consumer Settings UI acceptance test remains failing after the requested two repair-cycle limit.**
+
+Files changed:
+
+- `android/app/build.gradle.kts`
+- `android/app/src/main/AndroidManifest.xml`
+- `android/app/src/offlineDemo/AndroidManifest.xml`
+- `android/app/src/consumer/AndroidManifest.xml`
+- `android/app/src/main/java/com/askphotos/android/ModelPackManager.kt`
+- `android/app/src/main/java/com/askphotos/android/GemmaModelDownloader.kt`
+- `android/app/src/main/java/com/askphotos/android/GemmaPlanCodec.kt`
+- `android/app/src/main/java/com/askphotos/android/LiteRtLmQueryPlanner.kt`
+- `android/app/src/main/java/com/askphotos/android/QueryCompiler.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryViewModel.kt`
+- `android/app/src/main/java/com/askphotos/android/MainActivity.kt`
+- Gemma catalog/codec/pack unit and instrumented security/UI tests
+
+Architecture decisions:
+
+- Google AI Edge Gallery `model_allowlists/1_0_15.json` is the catalog reference. E2B uses `litert-community/gemma-4-E2B-it-litert-lm` revision `7fa1d78473894f7e736a21d920c3aa80f950c0db`; E4B uses `litert-community/gemma-4-E4B-it-litert-lm` revision `9695417f248178c63a9f318c6e0c56cb917cb837`.
+- The Hugging Face LFS metadata was queried without downloading weights. E2B is pinned to 2,583,085,056 bytes and SHA-256 `ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42`; E4B is pinned to 3,654,467,584 bytes and SHA-256 `f335f2bfd1b758dc6476db16c0f41854bd6237e2658d604cbe566bcefd00a7bc`.
+- `consumer` alone declares `INTERNET`; `offlineDemo` explicitly removes it. Neither variant has a cloud-inference API. The consumer downloader accepts no user/model-generated URL, uses WorkManager with connected-network/storage constraints and resumable ranges, stores partial/final data under app-private storage, verifies exact size and SHA-256, then atomically activates a generation.
+- Settings persists E2B/E4B selection. E2B is the default; E4B requires the stronger runtime assessment. Signed `.agemma` SAF import remains available in both variants.
+- Gemma emits only the typed JSON plan. The codec rejects unknown fields, paths/URIs/SQL/result IDs, enforces bounds, and permits one repair call. Runtime work is serialized, uses GPU then CPU, and rolls back after a load failure.
+
+Commands and results:
+
+```powershell
+.\gradlew.bat :app:testOfflineDemoDebugUnitTest :app:testConsumerDebugUnitTest :app:assembleOfflineDemoDebug :app:assembleConsumerDebug :app:assembleConsumerDebugAndroidTest
+powershell -ExecutionPolicy Bypass -File C:\Users\anupk\.codex\skills\android-build-install\scripts\build_install_android.ps1 -Root C:\Users\anupk\Documents\git\askphotos\android -Module :app -Variant ConsumerDebug
+adb -s <serial> install -r -t android\app\build\outputs\apk\androidTest\consumer\debug\app-consumer-debug-androidTest.apk
+adb -s <serial> shell am instrument -w -r -e class com.askphotos.android.GemmaSettingsUiTest,com.askphotos.android.GemmaPackSecurityTest,com.askphotos.android.AskPhotosSmokeTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+Results and device:
+
+- 47 JVM suites / 142 flavored tests: 0 failures and 0 errors.
+- Offline and consumer debug APKs plus consumer Android-test APK assembled. Merged manifests show `INTERNET=false` for `offlineDemoDebug` and `INTERNET=true` for `consumerDebug`.
+- Final consumer APK build/install: success on the sole connected Samsung SM-F966B, Android 16. The serial is intentionally omitted.
+- Connected pack-security test passed. Privacy/onboarding smoke passed. Grounded local Amsterdam search passed with `Found 4 matches`, resolving the earlier device timing failure.
+- Settings test demonstrated both E2B/E4B controls and E4B policy state on the 12 GB-class device, but timed out waiting for the recomposed E2B download button even though the app-private preference changed to `E2B`. There were no installed generations, only an empty private downloads directory. The test remains failed after two bounded repair cycles; no pass is claimed.
+
+Artifacts:
+
+- `artifacts/phase6-model-download-build.log`
+- `artifacts/phase6-consumer-device-tests.txt`
+- `artifacts/phase6-consumer-settings-rerun.txt`
+- `artifacts/phase6-consumer-settings-final.txt`
+
+Failures and limitations:
+
+- No 2.58 GB E2B or 3.65 GB E4B artifact was downloaded, so resume, final on-device checksum duration, LiteRT-LM model initialization, plan quality, visual verification, and answer composition with real Gemma remain NOT RUN.
+- The consumer Settings selection acceptance is not green. The persisted tier updates, but the Compose test did not observe the expected button state within five seconds. Treat this as an unresolved UI/state acceptance defect until reproduced and fixed in a new narrow task.
+- The connected device changed during the work from the earlier SM-F731U to the sole authorized SM-F966B; the final install and tests above apply to SM-F966B.
+
+Next phase:
+
+- In a separate narrow task, fix the Settings state/recomposition acceptance, then user-start the E2B download on an approved network, verify the pinned digest and model load/unload, run English/Hindi/Hinglish real-plan tests and one-image verification, and record E4B quality/latency only if its benchmark remains safe.

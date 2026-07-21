@@ -47,6 +47,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -212,10 +213,14 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                 state.destination == AppDestination.INDEX_MANAGER -> IndexManagerScreen(
                     index = state.index,
                     modelPack = state.modelPack,
+                    modelDownload = state.modelDownload,
                     retrievalPack = state.retrievalPack,
                     operationMessage = state.operationMessage,
                     onRetry = viewModel::retryIndexing,
                     onImportModel = { modelPicker.launch(arrayOf("application/octet-stream", "application/zip", "*/*")) },
+                    onSelectModelTier = viewModel::selectModelTier,
+                    onDownloadModel = viewModel::downloadSelectedModel,
+                    onCancelModelDownload = viewModel::cancelModelDownload,
                     onImportRetrievalModel = {
                         retrievalModelPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
                     },
@@ -255,7 +260,7 @@ private fun AppHeader() {
         }
         Spacer(Modifier.weight(1f))
         Surface(color = Mist, shape = CircleShape) {
-            Text("OFFLINE", modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), color = Forest, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("ON-DEVICE", modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), color = Forest, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -498,7 +503,11 @@ private fun PrivacyCard(count: Int) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(9.dp).clip(CircleShape).background(Color(0xFF20A36A)))
                 Spacer(Modifier.width(8.dp))
-                Text("No Internet permission", color = Forest, fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (BuildConfig.ALLOW_MODEL_DOWNLOAD) "Network only for model downloads" else "No Internet permission",
+                    color = Forest,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
     }
@@ -553,10 +562,14 @@ private fun GalleryScreen(
 private fun IndexManagerScreen(
     index: IndexSummary,
     modelPack: ModelPackStatus,
+    modelDownload: GemmaDownloadProgress,
     retrievalPack: RetrievalPackStatus,
     operationMessage: String?,
     onRetry: () -> Unit,
     onImportModel: () -> Unit,
+    onSelectModelTier: (GemmaModelTier) -> Unit,
+    onDownloadModel: () -> Unit,
+    onCancelModelDownload: () -> Unit,
     onImportRetrievalModel: () -> Unit,
 ) {
     Column(
@@ -601,15 +614,62 @@ private fun IndexManagerScreen(
             Column(Modifier.padding(20.dp)) {
                 Text("Gemma model pack", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(7.dp))
-                Text(if (modelPack.installed) modelPack.name else "Not installed — deterministic planning remains active")
+                Text(if (modelPack.installed) modelPack.name else "Selected model is not installed — deterministic planning remains active")
                 Text(modelPack.runtimeVersion, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GemmaModelCatalog.all.forEach { spec ->
+                        FilterChip(
+                            selected = modelPack.selectedTier == spec.tier,
+                            onClick = { onSelectModelTier(spec.tier) },
+                            label = { Text(spec.tier.name) },
+                        )
+                    }
+                }
+                val selectedSpec = GemmaModelCatalog.require(modelPack.selectedTier)
+                Text(
+                    "${selectedSpec.displayName} • ${formatBytes(selectedSpec.sizeBytes)} • ${selectedSpec.deviceClassRamGb} GB-class device",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                )
                 if (modelPack.installed) {
                     Text("${modelPack.packId} ${modelPack.packVersion} • ${modelPack.tier} • ${formatBytes(modelPack.sizeBytes)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                     Text("Signed model SHA-256 ${modelPack.sha256?.take(12)}…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                 } else {
                     Text("Device recommendation: ${modelPack.deviceAssessment?.recommendedTier ?: GemmaModelTier.E2B}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    modelPack.deviceAssessment?.reason?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
                 }
                 modelPack.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                if (modelPack.downloadAllowed && !modelPack.installed) {
+                    Spacer(Modifier.height(10.dp))
+                    when (modelDownload.state) {
+                        GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING -> {
+                            LinearProgressIndicator(
+                                progress = { modelDownload.fraction },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = Forest,
+                                trackColor = Mist,
+                            )
+                            Text(
+                                if (modelDownload.state == GemmaDownloadState.VERIFYING) "Verifying SHA-256 and activating…" else "${formatBytes(modelDownload.bytesDownloaded)} of ${formatBytes(modelDownload.totalBytes)}",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp,
+                            )
+                            TextButton(onClick = onCancelModelDownload) { Text("Cancel download") }
+                        }
+                        else -> {
+                            Button(
+                                onClick = onDownloadModel,
+                                enabled = modelPack.deviceAssessment?.supported == true,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Download ${selectedSpec.displayName}") }
+                            modelDownload.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                        }
+                    }
+                } else if (!modelPack.downloadAllowed) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Offline demo build: network model downloads are disabled.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                }
                 Spacer(Modifier.height(11.dp))
                 OutlinedButton(onClick = onImportModel) { Text(if (modelPack.installed) "Replace signed pack" else "Import .agemma pack") }
             }
@@ -644,7 +704,12 @@ private fun IndexManagerScreen(
             Column(Modifier.padding(20.dp)) {
                 Text("Privacy posture", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(10.dp))
-                Text("✓ App-private gallery memory\n✓ No Internet permission\n✓ No cloud inference\n✓ System Photo Picker and partial access\n✓ Evidence source shown per result\n✓ Face identity search remains opt-in and unavailable until its model pack is installed", lineHeight = 25.sp)
+                Text(
+                    "✓ App-private gallery memory\n" +
+                        (if (BuildConfig.ALLOW_MODEL_DOWNLOAD) "✓ Network used only for selected model downloads\n" else "✓ No Internet permission\n") +
+                        "✓ No cloud inference\n✓ System Photo Picker and partial access\n✓ Evidence source shown per result\n✓ Face identity search remains opt-in and unavailable until its model pack is installed",
+                    lineHeight = 25.sp,
+                )
             }
         }
     }
@@ -691,7 +756,8 @@ private fun PrivacyScreen(onReviewOnboarding: () -> Unit) {
                 Text("Current protections", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "No Internet permission\nApp-private index storage\nSystem media consent surfaces\nSensitive evidence authentication\nPeople identity indexing disabled by default",
+                    (if (BuildConfig.ALLOW_MODEL_DOWNLOAD) "Network restricted to user-started model downloads" else "No Internet permission") +
+                        "\nApp-private index storage\nNo cloud inference\nSystem media consent surfaces\nSensitive evidence authentication\nPeople identity indexing disabled by default",
                     lineHeight = 25.sp,
                 )
             }
