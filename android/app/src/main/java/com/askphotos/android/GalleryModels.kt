@@ -172,6 +172,15 @@ data class SearchOutcome(
     val elapsedMs: Long,
 )
 
+sealed interface QueryProgress {
+    data object Understanding : QueryProgress
+    data class PlanReady(val plan: GalleryQueryPlan) : QueryProgress
+    data class InitialResults(val plan: GalleryQueryPlan, val hits: List<SearchHit>) : QueryProgress
+    data class Verifying(val candidateCount: Int) : QueryProgress
+    data object ComposingAnswer : QueryProgress
+    data class Completed(val outcome: SearchOutcome) : QueryProgress
+}
+
 data class IndexSummary(
     val discovered: Int = 0,
     val metadataReady: Int = 0,

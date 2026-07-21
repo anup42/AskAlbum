@@ -4,6 +4,10 @@ import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import java.util.Locale
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.single
 import kotlin.math.max
 
 class GalleryRepository(context: Context) {
@@ -86,9 +90,14 @@ class GalleryRepository(context: Context) {
         if (services.retrievalModelPackManager.status().installed) EmbeddingIndexScheduler.schedule(appContext)
     }
 
-    suspend fun search(query: String, activeResultIds: Set<String>? = null): SearchOutcome {
+    suspend fun search(query: String, activeResultIds: Set<String>? = null): SearchOutcome =
+        searchProgressive(query, activeResultIds).filterIsInstance<QueryProgress.Completed>().single().outcome
+
+    fun searchProgressive(query: String, activeResultIds: Set<String>? = null): Flow<QueryProgress> = flow {
         val started = SystemClock.elapsedRealtime()
+        emit(QueryProgress.Understanding)
         val plan = planner.compile(query, activeResultIds)
+        emit(QueryProgress.PlanReady(plan))
         val allowed = plan.baseResultIds
         val terms = plan.terms
         val allItems = database.allItems().filter { item ->
@@ -150,6 +159,11 @@ class GalleryRepository(context: Context) {
             collapsed
         }
         val enriched = if (plan.intent == QueryIntent.ANSWER_FACT) diverse.map(::addDeterministicFactEvidence) else diverse
+        val initialHits = enriched.take(plan.limit.coerceIn(1, 100))
+        emit(QueryProgress.InitialResults(plan, initialHits))
+        if (VisualVerificationPolicy.requiresVerification(plan) && initialHits.isNotEmpty()) {
+            emit(QueryProgress.Verifying(initialHits.take(LiteRtGemmaVisualVerifier.MAX_CANDIDATES).size))
+        }
         val verification = visualVerifier.verifyWhenNeeded(plan, enriched)
         val verifiedEvidence = verification.evidence.groupBy { it.mediaId }
         val verified = if (verification.applied) {
@@ -165,6 +179,7 @@ class GalleryRepository(context: Context) {
         val matchCount = if (verification.applied) verified.size else ranked.size
         val deterministicAnswer = buildAnswer(plan, hits, allItems, matchCount, verification)
         val answer = if (shouldComposeGroundedAnswer(plan, hits, verification)) {
+            emit(QueryProgress.ComposingAnswer)
             groundedAnswerComposer.compose(GroundedAnswerInput(plan, hits, deterministicAnswer)).answer
         } else {
             deterministicAnswer
@@ -176,7 +191,7 @@ class GalleryRepository(context: Context) {
             elapsedMs = max(1, SystemClock.elapsedRealtime() - started),
         )
         database.recordQuery(outcome)
-        return outcome
+        emit(QueryProgress.Completed(outcome))
     }
 
     private fun score(item: GalleryItem, terms: List<String>, fullTextMatch: Boolean): SearchHit? {
