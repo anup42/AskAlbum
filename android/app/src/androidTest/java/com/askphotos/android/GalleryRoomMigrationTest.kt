@@ -71,6 +71,17 @@ class GalleryRoomMigrationTest {
                 assertTrue(cursor.moveToFirst())
                 assertEquals(0, cursor.getInt(0))
             }
+            database.query("SELECT enabled, consent_version FROM people_settings WHERE singleton_id=1").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+                assertEquals(0, cursor.getInt(1))
+            }
+            listOf("face_instance", "person_cluster").forEach { table ->
+                database.query("SELECT COUNT(*) FROM $table").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+            }
         } finally {
             room.close()
         }

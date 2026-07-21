@@ -37,6 +37,7 @@ data class GalleryUiState(
     val modelPack: ModelPackStatus = ModelPackStatus(installed = false),
     val modelDownload: GemmaDownloadProgress = GemmaDownloadProgress(),
     val retrievalPack: RetrievalPackStatus = RetrievalPackStatus(installed = false),
+    val peopleIndex: PeopleIndexStatus = PeopleIndexStatus(),
 )
 
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
@@ -56,9 +57,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 withContext(Dispatchers.IO) {
                     val summary = repository.initialize()
-                    summary to repository.allItems()
+                    Triple(summary, repository.allItems(), repository.peopleIndexStatus())
                 }
-            }.onSuccess { (summary, items) ->
+            }.onSuccess { (summary, items, peopleIndex) ->
                 state = state.copy(
                     loading = false,
                     index = summary,
@@ -66,6 +67,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     modelPack = modelPacks.status(),
                     modelDownload = modelDownloader.progress(modelPacks.selectedTier()),
                     retrievalPack = retrievalPacks.status(),
+                    peopleIndex = peopleIndex,
                 )
                 monitorIndexing()
                 monitorModelDownload()
@@ -189,6 +191,37 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         state = state.copy(operationMessage = null)
     }
 
+    fun enablePeopleIndexing() {
+        if (state.peopleIndex.enabled) return
+        state = state.copy(operationMessage = "Enabling private on-device face detection…")
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { repository.enablePeopleIndexing() } }
+                .onSuccess { status ->
+                    state = state.copy(
+                        peopleIndex = status,
+                        operationMessage = "People indexing enabled; identity search remains unavailable until you review local clusters",
+                    )
+                    monitorIndexing()
+                }
+                .onFailure { error -> state = state.copy(operationMessage = error.message ?: "People indexing could not be enabled") }
+        }
+    }
+
+    fun resetPeopleIndex() {
+        state = state.copy(operationMessage = "Stopping people indexing and deleting derived face data…")
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { repository.resetPeopleIndex() } }
+                .onSuccess { status ->
+                    state = state.copy(
+                        peopleIndex = status,
+                        operationMessage = "People index reset; all face boxes, clusters, labels, and aliases were deleted",
+                    )
+                    reload()
+                }
+                .onFailure { error -> state = state.copy(operationMessage = error.message ?: "People index reset failed") }
+        }
+    }
+
     fun ask(query: String = state.query) {
         if (query.isBlank() || queryJob?.isActive == true) return
         val previousIds = state.outcome?.hits?.map { it.item.id }?.toSet()
@@ -260,8 +293,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun reload(message: String? = state.operationMessage) {
-        val (summary, items) = withContext(Dispatchers.IO) { repository.indexSummary() to repository.allItems() }
-        state = state.copy(index = summary, items = items, operationMessage = message)
+        val (summary, items, peopleIndex) = withContext(Dispatchers.IO) {
+            Triple(repository.indexSummary(), repository.allItems(), repository.peopleIndexStatus())
+        }
+        state = state.copy(index = summary, items = items, peopleIndex = peopleIndex, operationMessage = message)
     }
 
     private fun monitorIndexing() {
@@ -269,7 +304,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             repeat(90) {
                 delay(1_000)
                 reload()
-                if (state.index.pending == 0) return@launch
+                if (state.index.pending == 0 && state.peopleIndex.pendingMediaCount == 0) return@launch
             }
         }
     }

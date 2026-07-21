@@ -61,7 +61,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -212,6 +214,7 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                 )
                 state.destination == AppDestination.INDEX_MANAGER -> IndexManagerScreen(
                     index = state.index,
+                    peopleIndex = state.peopleIndex,
                     modelPack = state.modelPack,
                     modelDownload = state.modelDownload,
                     retrievalPack = state.retrievalPack,
@@ -226,6 +229,10 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     },
                 )
                 else -> PrivacyScreen(
+                    peopleIndex = state.peopleIndex,
+                    operationMessage = state.operationMessage,
+                    onEnablePeople = viewModel::enablePeopleIndexing,
+                    onResetPeople = viewModel::resetPeopleIndex,
                     onReviewOnboarding = { viewModel.navigate(AppDestination.ONBOARDING) },
                 )
             }
@@ -605,6 +612,7 @@ private fun GalleryScreen(
 @Composable
 private fun IndexManagerScreen(
     index: IndexSummary,
+    peopleIndex: PeopleIndexStatus,
     modelPack: ModelPackStatus,
     modelDownload: GemmaDownloadProgress,
     retrievalPack: RetrievalPackStatus,
@@ -627,7 +635,12 @@ private fun IndexManagerScreen(
         IndexMetric("Semantic facts ready", index.semanticFactsReady, index.discovered, "demo-sidecar-v1")
         IndexMetric("OCR ready or skipped", index.ocrReady, index.discovered, "demo skipped / ML Kit bundled")
         IndexMetric("Visual labels ready", index.visualLabelsReady, index.discovered, "mlkit-image-label-v1 bundled")
-        IndexMetric("Face stage resolved", index.facesScanned, index.discovered, "demo skipped / face count only")
+        IndexMetric(
+            "Face stage complete",
+            index.facesScanned,
+            index.discovered,
+            if (peopleIndex.enabled) "mlkit-face-detection-v1; identity embeddings not installed" else "disabled-until-opt-in",
+        )
         IndexMetric("Pending", index.pending, index.discovered, "WorkManager resumable queue")
         IndexMetric("Events", index.events, index.events, "deterministic day grouping")
         IndexMetric("Failed", index.failed, index.discovered, "No retries pending")
@@ -787,7 +800,14 @@ private fun IndexMetric(label: String, value: Int, total: Int, version: String) 
 }
 
 @Composable
-private fun PrivacyScreen(onReviewOnboarding: () -> Unit) {
+private fun PrivacyScreen(
+    peopleIndex: PeopleIndexStatus,
+    operationMessage: String?,
+    onEnablePeople: () -> Unit,
+    onResetPeople: () -> Unit,
+    onReviewOnboarding: () -> Unit,
+) {
+    var confirmation by remember { mutableStateOf<PeopleConfirmation?>(null) }
     Column(
         Modifier.fillMaxSize().semantics { contentDescription = "Privacy screen" }
             .verticalScroll(rememberScrollState()).padding(20.dp, 10.dp, 20.dp, 32.dp),
@@ -808,9 +828,79 @@ private fun PrivacyScreen(onReviewOnboarding: () -> Unit) {
             }
         }
         Spacer(Modifier.height(14.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(20.dp)) {
+            Column(Modifier.padding(18.dp)) {
+                Text(
+                    if (peopleIndex.enabled) "People indexing enabled" else "People indexing off",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                if (peopleIndex.enabled) {
+                    Text(
+                        "Face detection runs only on this phone. ${peopleIndex.faceInstanceCount} face boxes are stored in app-private memory; " +
+                            "${peopleIndex.reviewedClusterCount} identity clusters have been reviewed.",
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Identity embeddings and automatic clustering are not active until a separately licensed compatible model pack is installed. The app does not infer sensitive traits.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = { confirmation = PeopleConfirmation.RESET },
+                        modifier = Modifier.fillMaxWidth().testTag("reset-people-index"),
+                    ) { Text("Turn off and delete people data") }
+                } else {
+                    Text("No personal face boxes, identity embeddings, clusters, labels, or aliases are retained.")
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = { confirmation = PeopleConfirmation.ENABLE },
+                        modifier = Modifier.fillMaxWidth().testTag("enable-people-index"),
+                    ) { Text("Enable people indexing") }
+                }
+            }
+        }
+        operationMessage?.let { message ->
+            Spacer(Modifier.height(12.dp))
+            Surface(color = Lime, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Text(message, Modifier.padding(14.dp), color = Forest, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        Spacer(Modifier.height(14.dp))
         OutlinedButton(onClick = onReviewOnboarding) { Text("Review onboarding") }
     }
+
+    confirmation?.let { action ->
+        val enabling = action == PeopleConfirmation.ENABLE
+        AlertDialog(
+            onDismissRequest = { confirmation = null },
+            title = { Text(if (enabling) "Enable private face detection?" else "Delete all people data?") },
+            text = {
+                Text(
+                    if (enabling) {
+                        "The app will detect face regions in consented images and keep derived data only in app-private storage. You can erase it at any time. Identity search remains unavailable until you review clusters created by a compatible local model."
+                    } else {
+                        "This stops people indexing and permanently deletes every stored face box, identity embedding reference, cluster, label, and alias. Your original gallery media is not changed."
+                    },
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmation = null
+                        if (enabling) onEnablePeople() else onResetPeople()
+                    },
+                    modifier = Modifier.testTag(if (enabling) "confirm-enable-people" else "confirm-reset-people"),
+                ) { Text(if (enabling) "Enable on device" else "Delete people data") }
+            },
+            dismissButton = { TextButton(onClick = { confirmation = null }) { Text("Cancel") } },
+        )
+    }
 }
+
+private enum class PeopleConfirmation { ENABLE, RESET }
 
 @Composable
 private fun OnboardingScreen(onContinue: () -> Unit) {

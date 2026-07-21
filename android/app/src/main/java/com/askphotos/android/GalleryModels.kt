@@ -194,6 +194,25 @@ data class IndexSummary(
     val storageBytes: Long = 0,
 )
 
+data class PeopleIndexStatus(
+    val enabled: Boolean = false,
+    val consentVersion: Int = 0,
+    val enabledAt: Long? = null,
+    val faceInstanceCount: Int = 0,
+    val personClusterCount: Int = 0,
+    val reviewedClusterCount: Int = 0,
+    val identityReadyFaceCount: Int = 0,
+    val pendingMediaCount: Int = 0,
+)
+
+data class FaceDetectionRecord(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    val quality: Float,
+)
+
 data class ImportedMedia(
     val stableId: String,
     val uri: String,

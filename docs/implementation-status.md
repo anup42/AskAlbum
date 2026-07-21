@@ -1521,3 +1521,82 @@ Failures and limitations:
 Next phase:
 
 - Keep the next slice separate: implement user-controlled people-index opt-in and reset enforcement first, then event/result-set follow-ups in a later slice.
+
+## Phase 8A — opt-in people-index privacy foundation (22 July 2026)
+
+Status: **Implemented, installed, and verified on the connected physical device. People indexing is disabled by default, enabling it requires explicit consent, reset permanently removes all derived face records/labels without touching gallery media, and person-constrained queries fail closed until reviewed identity embeddings actually exist.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/GalleryRoomDatabase.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryDatabase.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryModels.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryRepository.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryIndexWorker.kt`
+- `android/app/src/main/java/com/askphotos/android/MlKitFaceDetectionEngine.kt`
+- `android/app/src/main/java/com/askphotos/android/PeopleIndexScheduler.kt`
+- `android/app/src/main/java/com/askphotos/android/PeopleIndexWorker.kt`
+- `android/app/src/main/java/com/askphotos/android/PeopleQueryGate.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryViewModel.kt`
+- `android/app/src/main/java/com/askphotos/android/MainActivity.kt`
+- `android/app/schemas/com.askphotos.android.GalleryRoomDatabase/8.json`
+- `android/app/src/test/java/com/askphotos/android/PeopleQueryGateTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/GalleryRoomMigrationTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/PeoplePrivacyDatabaseTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/PeoplePrivacyUiTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/RealFaceDetectionAcceptanceTest.kt`
+
+Architecture decisions:
+
+- Room schema v8 adds a singleton consent record, local reviewed person clusters, and local face instances with normalized regions and producer versions.
+- The bundled ML Kit detector performs real offline face detection. It stores detection boxes and quality only; it does not pretend that a detector is an identity embedding model.
+- Enabling people indexing marks only indexed, accessible, non-demo images pending. A dedicated constrained worker performs bounded batches and rechecks consent transactionally before saving.
+- Reset cancels people work, deletes face instances and person clusters (including labels and aliases), marks face stages skipped, and leaves source gallery media unchanged.
+- Person clauses are rejected with `PARTIAL_INDEX` unless consent is enabled and reviewed identity-ready embeddings exist. Face boxes alone are never accepted as person identity evidence.
+- The Privacy UI explains local processing, explicit opt-in, current derived-record counts, and permanent reset behavior. The connected UI acceptance cancels before opt-in and therefore does not mutate the real app's consent state.
+
+Commands run:
+
+```powershell
+$env:ANDROID_HOME=<detected-sdk>; $env:ANDROID_SDK_ROOT=<detected-sdk>
+.\gradlew.bat :app:testConsumerDebugUnitTest --tests com.askphotos.android.PeopleQueryGateTest :app:assembleConsumerDebugAndroidTest
+powershell -ExecutionPolicy Bypass -File C:\Users\anupk\.codex\skills\android-build-install\scripts\build_install_android.ps1 -Root C:\Users\anupk\Documents\git\askphotos\android -Module :app -Variant ConsumerDebug -Serial <masked>
+adb -s <masked> install -r -t android\app\build\outputs\apk\androidTest\consumer\debug\app-consumer-debug-androidTest.apk
+adb -s <masked> shell am instrument -w -r -e class com.askphotos.android.GalleryRoomMigrationTest,com.askphotos.android.PeoplePrivacyDatabaseTest,com.askphotos.android.PeoplePrivacyUiTest,com.askphotos.android.RealFaceDetectionAcceptanceTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+.\gradlew.bat --no-parallel :app:testOfflineDemoDebugUnitTest :app:testConsumerDebugUnitTest :app:lintOfflineDemoDebug :app:lintConsumerDebug
+python C:\Users\anupk\.codex\skills\android-device-diagnostics\scripts\android_diagnostics.py --serial <masked> --package com.askphotos.android --minutes 10 --keywords "AndroidRuntime,FATAL,ANR,OutOfMemory,PeopleIndex,FaceDetector" --max-lines 120 --out build\device-artifacts\phase8-people-privacy\diagnostics --screenshot
+```
+
+Unit/instrumented/device results:
+
+- Final two-flavor JVM gate: 21 suites / 71 tests per flavor (142 flavored executions), 0 failures, 0 errors, 0 skipped.
+- Offline and consumer lint passed with 0 errors. Each report retains 49 non-blocking warnings, predominantly pinned-dependency update notices; no lint check was disabled.
+- Consumer debug built and installed successfully on the sole connected Samsung SM-F966B, Android 16/API 36, arm64-v8a, SM8750. Existing private app data and the E2B pack were preserved.
+- Final connected acceptance: 4 tests passed in 1.697 seconds: schema v3-to-v8 migration, isolated consent/reset persistence, non-mutating Compose opt-in confirmation, and real bundled face-detector execution.
+- Real detector trace: `elapsedMs=223`, `detections=0`, `bytes=856525`. The local acceptance image intentionally contains no face; the test validates bounded output and runtime integration, not positive identity recognition.
+- The manual device screenshot was captured from the foldable's active display and visually inspected. It shows `People indexing off`, the local-only explanation, and the explicit `Enable people indexing` action.
+- Package-scoped diagnostics contained no app `FATAL EXCEPTION`, ANR, or `OutOfMemoryError` marker.
+- No test gallery was seeded and no shared/personal media was modified or deleted in this slice. The database acceptance used an isolated app-private test database and closed/deleted it afterward.
+
+Artifacts:
+
+- `build/device-artifacts/phase8-people-privacy/instrumentation-final.txt`
+- `build/device-artifacts/phase8-people-privacy/privacy-screen.png`
+- `build/device-artifacts/phase8-people-privacy/diagnostics/20260722_025004/`
+- `android/app/build/reports/tests/testOfflineDemoDebugUnitTest/`
+- `android/app/build/reports/tests/testConsumerDebugUnitTest/`
+- `android/app/build/reports/lint-results-offlineDemoDebug.html`
+- `android/app/build/reports/lint-results-consumerDebug.html`
+
+Failures and limitations:
+
+- This slice implements consent, real face detection, persistence, reset, and fail-closed query behavior. It does **not** yet implement a licensed identity embedding pack, clustering, positive person recognition, or the user review/labeling flow.
+- The connected detector fixture has no face, so positive-face recall and box accuracy remain unmeasured. A consented or synthetic face fixture is required before claiming that acceptance.
+- A full seeded people-worker run was intentionally not performed because enabling the real app could process unrelated accessible media. It requires a dedicated run-scoped selected-media harness.
+- Room storage is app-private but not yet database-encrypted; Android Keystore-backed protection and biometric access for sensitive derived data remain incomplete.
+- Event/entity memory, result-set-aware `PlanPatch` follow-ups, video keyframes, and 5k/20k sustained acceptance remain incomplete.
+- E4B remains an honest skip; selection/download support exists, but no compatible E4B pack has been installed or benchmarked on this device.
+
+Next phase:
+
+- Implement event/result-set follow-up memory as its own vertical slice. Keep identity embeddings/clustering separate until a redistribution-compatible on-device model and a synthetic/consented positive-face corpus are pinned.

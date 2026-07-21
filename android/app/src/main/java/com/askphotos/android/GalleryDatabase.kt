@@ -7,8 +7,11 @@ import android.provider.MediaStore
 import org.json.JSONArray
 import java.util.Calendar
 
-class GalleryDatabase(private val context: Context) {
-    private val room = GalleryRoomDatabase.open(context)
+class GalleryDatabase(
+    private val context: Context,
+    private val databaseName: String = GalleryRoomDatabase.NAME,
+) {
+    private val room = GalleryRoomDatabase.open(context, databaseName)
     private val readableDatabase get() = GallerySqlDatabase(room.openHelper.readableDatabase)
     private val writableDatabase get() = GallerySqlDatabase(room.openHelper.writableDatabase)
 
@@ -239,7 +242,11 @@ class GalleryDatabase(private val context: Context) {
                 if (ocrAttempted) StageStatus.COMPLETE else StageStatus.SKIPPED,
                 if (ocrAttempted) "mlkit-text-latin-v2+document-facts-v2" else "ocr-likelihood-gate-v1",
             )
-            updateStage(db, id, IndexStage.FACES, StageStatus.SKIPPED, "disabled-until-opt-in")
+            if (peopleIndexEnabled(db)) {
+                updateStage(db, id, IndexStage.FACES, StageStatus.PENDING, "mlkit-face-detection-v1")
+            } else {
+                updateStage(db, id, IndexStage.FACES, StageStatus.SKIPPED, "disabled-until-opt-in")
+            }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -354,6 +361,176 @@ class GalleryDatabase(private val context: Context) {
 
     fun tombstoneCount(): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM media_tombstone", null).use { cursor ->
         if (cursor.moveToFirst()) cursor.getInt(0) else 0
+    }
+
+    fun peopleIndexStatus(): PeopleIndexStatus {
+        val db = readableDatabase
+        val settings = db.rawQuery(
+            "SELECT enabled,consent_version,enabled_at FROM people_settings WHERE singleton_id=1",
+            null,
+        ).use { cursor ->
+            if (cursor.moveToFirst()) Triple(cursor.getInt(0) != 0, cursor.getInt(1), if (cursor.isNull(2)) null else cursor.getLong(2))
+            else Triple(false, 0, null)
+        }
+        fun count(sql: String): Int = db.rawQuery(sql, null).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        return PeopleIndexStatus(
+            enabled = settings.first,
+            consentVersion = settings.second,
+            enabledAt = settings.third,
+            faceInstanceCount = count("SELECT COUNT(*) FROM face_instance"),
+            personClusterCount = count("SELECT COUNT(*) FROM person_cluster"),
+            reviewedClusterCount = count("SELECT COUNT(*) FROM person_cluster WHERE reviewed=1"),
+            identityReadyFaceCount = count(
+                "SELECT COUNT(*) FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
+                    "WHERE p.reviewed=1 AND f.embedding_dimension>0 AND f.embedding_offset IS NOT NULL",
+            ),
+            pendingMediaCount = count("SELECT COUNT(*) FROM media_index_stage WHERE stage='FACES' AND status IN ('PENDING','RUNNING','FAILED_RETRYABLE')"),
+        )
+    }
+
+    fun enablePeopleIndexing(consentVersion: Int): PeopleIndexStatus {
+        require(consentVersion == PEOPLE_CONSENT_VERSION) { "Unsupported people-consent version" }
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        db.beginTransaction()
+        try {
+            db.insertWithOnConflict("people_settings", null, ContentValues().apply {
+                put("singleton_id", 1)
+                put("enabled", 1)
+                put("consent_version", consentVersion)
+                put("enabled_at", now)
+                put("updated_at", now)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+            db.execSQL(
+                "UPDATE media_index_stage SET status='PENDING',producer_version='mlkit-face-detection-v1',updated_at=$now,error=NULL " +
+                    "WHERE stage='FACES' AND media_id IN (SELECT id FROM media_item WHERE source_kind!='DEMO_ASSET' AND media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY')",
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return peopleIndexStatus()
+    }
+
+    fun resetPeopleIndex(): PeopleIndexStatus {
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        db.beginTransaction()
+        try {
+            db.delete("face_instance", null, null)
+            db.delete("person_cluster", null, null)
+            db.execSQL("UPDATE media_item SET face_count=0")
+            db.execSQL("UPDATE media_index_stage SET status='SKIPPED',producer_version='disabled-until-opt-in',updated_at=$now,error=NULL WHERE stage='FACES'")
+            db.insertWithOnConflict("people_settings", null, ContentValues().apply {
+                put("singleton_id", 1)
+                put("enabled", 0)
+                put("consent_version", 0)
+                putNull("enabled_at")
+                put("updated_at", now)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return peopleIndexStatus()
+    }
+
+    fun saveReviewedPersonCluster(
+        id: String,
+        label: String,
+        relationship: String?,
+        aliases: List<String>,
+    ): PeopleIndexStatus {
+        require(PERSON_ID.matches(id)) { "Invalid local person ID" }
+        val safeLabel = label.trim().also { require(it.isNotBlank() && it.length <= 80) { "Invalid person label" } }
+        val safeRelationship = relationship?.trim()?.takeIf(String::isNotBlank)?.also {
+            require(it.length <= 80) { "Relationship is too long" }
+        }
+        val safeAliases = aliases.asSequence().map(String::trim).filter(String::isNotBlank).distinct().take(MAX_PERSON_ALIASES + 1).toList()
+        require(safeAliases.size <= MAX_PERSON_ALIASES && safeAliases.all { it.length <= 80 }) { "Invalid person aliases" }
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            check(peopleIndexEnabled(db)) { "People indexing is disabled" }
+            val now = System.currentTimeMillis()
+            db.insertWithOnConflict("person_cluster", null, ContentValues().apply {
+                put("id", id)
+                put("label", safeLabel)
+                if (safeRelationship == null) putNull("relationship") else put("relationship", safeRelationship)
+                put("aliases", JSONArray(safeAliases).toString())
+                put("reviewed", 1)
+                put("created_at", now)
+                put("updated_at", now)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return peopleIndexStatus()
+    }
+
+    fun facePendingItems(limit: Int): List<GalleryItem> {
+        if (!peopleIndexStatus().enabled) return emptyList()
+        return queryItems(
+            "source_kind!='DEMO_ASSET' AND media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY' AND id IN " +
+                "(SELECT media_id FROM media_index_stage WHERE stage='FACES' AND status IN ('PENDING','FAILED_RETRYABLE'))",
+            null,
+            "COALESCE(captured_at,0) DESC",
+            limit.coerceIn(1, 100).toString(),
+        )
+    }
+
+    fun markFaces(mediaId: String) {
+        if (!peopleIndexStatus().enabled) return
+        updateStage(writableDatabase, mediaId, IndexStage.FACES, StageStatus.RUNNING, "mlkit-face-detection-v1", incrementAttempt = true)
+    }
+
+    fun completeFaces(mediaId: String, detections: List<FaceDetectionRecord>, producerVersion: String) {
+        require(detections.size <= MAX_FACES_PER_MEDIA) { "Too many face detections" }
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            check(peopleIndexEnabled(db)) { "People indexing was disabled" }
+            db.delete("face_instance", "media_id=?", arrayOf(mediaId))
+            val now = System.currentTimeMillis()
+            detections.forEachIndexed { index, face ->
+                require(face.left in 0f..1f && face.top in 0f..1f && face.right in 0f..1f && face.bottom in 0f..1f) {
+                    "Face bounds must be normalized"
+                }
+                require(face.left < face.right && face.top < face.bottom) { "Face bounds are invalid" }
+                db.insertOrThrow("face_instance", null, ContentValues().apply {
+                    put("id", "$mediaId:$index")
+                    put("media_id", mediaId)
+                    put("left_pos", face.left)
+                    put("top_pos", face.top)
+                    put("right_pos", face.right)
+                    put("bottom_pos", face.bottom)
+                    put("quality", face.quality.coerceIn(0f, 1f))
+                    putNull("embedding_offset")
+                    put("embedding_dimension", 0)
+                    putNull("cluster_id")
+                    put("producer_version", producerVersion)
+                    put("created_at", now)
+                })
+            }
+            db.update("media_item", ContentValues().apply { put("face_count", detections.size) }, "id=?", arrayOf(mediaId))
+            updateStage(db, mediaId, IndexStage.FACES, StageStatus.COMPLETE, producerVersion)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun failFaces(mediaId: String, message: String, permanent: Boolean) {
+        if (!peopleIndexStatus().enabled) return
+        updateStage(
+            writableDatabase,
+            mediaId,
+            IndexStage.FACES,
+            if (permanent) StageStatus.FAILED_PERMANENT else StageStatus.FAILED_RETRYABLE,
+            "mlkit-face-detection-v1",
+            error = message,
+        )
     }
 
     fun stageRecords(mediaId: String): List<MediaIndexStageRecord> = readableDatabase.query(
@@ -491,7 +668,10 @@ class GalleryDatabase(private val context: Context) {
             semanticFactsReady = items.count { it.tags.isNotEmpty() },
             ocrReady = items.count { it.source == MediaSource.DEMO_ASSET || it.indexState == IndexState.READY },
             visualLabelsReady = items.count { it.tags.isNotEmpty() },
-            facesScanned = items.count { it.source == MediaSource.DEMO_ASSET || it.indexState == IndexState.READY },
+            facesScanned = readableDatabase.rawQuery(
+                "SELECT COUNT(*) FROM media_index_stage WHERE stage='FACES' AND status='COMPLETE'",
+                null,
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
             pending = items.count { it.indexState == IndexState.PENDING || it.indexState == IndexState.INDEXING },
             events = events().size,
             failed = items.count { it.indexState == IndexState.FAILED_PERMANENT || it.indexState == IndexState.FAILED_RETRYABLE },
@@ -509,7 +689,9 @@ class GalleryDatabase(private val context: Context) {
         })
     }
 
-    fun databaseBytes(): Long = context.getDatabasePath(GalleryRoomDatabase.NAME).length()
+    fun databaseBytes(): Long = context.getDatabasePath(databaseName).length()
+
+    fun close() = room.close()
 
     private fun insertOrReplace(db: GallerySqlDatabase, item: GalleryItem) {
         db.insertWithOnConflict("media_item", null, values(item), SQLiteDatabase.CONFLICT_REPLACE)
@@ -709,8 +891,17 @@ class GalleryDatabase(private val context: Context) {
         timeInMillis
     }
 
-    private companion object {
-        const val TAG_SEPARATOR = "\u001F"
+    private fun peopleIndexEnabled(db: GallerySqlDatabase): Boolean = db.rawQuery(
+        "SELECT enabled FROM people_settings WHERE singleton_id=1",
+        null,
+    ).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) != 0 }
+
+    companion object {
+        const val PEOPLE_CONSENT_VERSION = 1
+        private const val MAX_FACES_PER_MEDIA = 64
+        private const val MAX_PERSON_ALIASES = 16
+        private const val TAG_SEPARATOR = "\u001F"
+        private val PERSON_ID = Regex("[a-z][a-z0-9_]{0,63}")
     }
 }
 

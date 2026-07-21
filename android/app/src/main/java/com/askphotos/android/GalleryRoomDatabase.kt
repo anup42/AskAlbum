@@ -149,6 +149,52 @@ data class EventMediaEntity(
     @ColumnInfo(name = "media_id") val mediaId: String,
 )
 
+@Entity(tableName = "people_settings")
+data class PeopleSettingsEntity(
+    @PrimaryKey @ColumnInfo(name = "singleton_id") val singletonId: Int = 1,
+    @ColumnInfo(defaultValue = "0") val enabled: Boolean = false,
+    @ColumnInfo(name = "consent_version", defaultValue = "0") val consentVersion: Int = 0,
+    @ColumnInfo(name = "enabled_at") val enabledAt: Long? = null,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+)
+
+@Entity(tableName = "person_cluster")
+data class PersonClusterEntity(
+    @PrimaryKey val id: String,
+    val label: String?,
+    val relationship: String?,
+    @ColumnInfo(defaultValue = "''") val aliases: String = "",
+    @ColumnInfo(defaultValue = "0") val reviewed: Boolean = false,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+)
+
+@Entity(
+    tableName = "face_instance",
+    foreignKeys = [
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["media_id"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = PersonClusterEntity::class, parentColumns = ["id"], childColumns = ["cluster_id"], onDelete = ForeignKey.SET_NULL),
+    ],
+    indices = [
+        Index(name = "face_instance_media_idx", value = ["media_id"]),
+        Index(name = "face_instance_cluster_idx", value = ["cluster_id"]),
+    ],
+)
+data class FaceInstanceEntity(
+    @PrimaryKey val id: String,
+    @ColumnInfo(name = "media_id") val mediaId: String,
+    @ColumnInfo(name = "left_pos") val left: Float,
+    @ColumnInfo(name = "top_pos") val top: Float,
+    @ColumnInfo(name = "right_pos") val right: Float,
+    @ColumnInfo(name = "bottom_pos") val bottom: Float,
+    val quality: Float,
+    @ColumnInfo(name = "embedding_offset") val embeddingOffset: Long?,
+    @ColumnInfo(name = "embedding_dimension", defaultValue = "0") val embeddingDimension: Int = 0,
+    @ColumnInfo(name = "cluster_id") val clusterId: String?,
+    @ColumnInfo(name = "producer_version") val producerVersion: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+)
+
 @Entity(tableName = "query_turn")
 data class QueryTurnEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -184,10 +230,13 @@ data class MediaIndexStageEntity(
         OcrEntityEntity::class,
         GalleryEventEntity::class,
         EventMediaEntity::class,
+        PeopleSettingsEntity::class,
+        PersonClusterEntity::class,
+        FaceInstanceEntity::class,
         QueryTurnEntity::class,
         MediaIndexStageEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -198,7 +247,15 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             context.applicationContext,
             GalleryRoomDatabase::class.java,
             name,
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build()
+        ).addMigrations(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5,
+            MIGRATION_5_6,
+            MIGRATION_6_7,
+            MIGRATION_7_8,
+        ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -261,6 +318,17 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS ocr_entity_type_value_idx ON ocr_entity(entity_type, normalized_value)")
                 db.execSQL("UPDATE media_item SET index_state='PENDING', index_version='ocr-document-v2' WHERE source_kind!='DEMO_ASSET' AND access_state='ACCESSIBLE'")
                 db.execSQL("UPDATE media_index_stage SET status='PENDING', producer_version='ocr-document-v2', error=NULL WHERE stage='OCR' AND media_id IN (SELECT id FROM media_item WHERE source_kind!='DEMO_ASSET' AND access_state='ACCESSIBLE')")
+            }
+        }
+
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS people_settings (singleton_id INTEGER NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, consent_version INTEGER NOT NULL DEFAULT 0, enabled_at INTEGER, updated_at INTEGER NOT NULL, PRIMARY KEY(singleton_id))")
+                db.execSQL("INSERT OR IGNORE INTO people_settings(singleton_id,enabled,consent_version,enabled_at,updated_at) VALUES(1,0,0,NULL,${System.currentTimeMillis()})")
+                db.execSQL("CREATE TABLE IF NOT EXISTS person_cluster (id TEXT NOT NULL, label TEXT, relationship TEXT, aliases TEXT NOT NULL DEFAULT '', reviewed INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(id))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS face_instance (id TEXT NOT NULL, media_id TEXT NOT NULL, left_pos REAL NOT NULL, top_pos REAL NOT NULL, right_pos REAL NOT NULL, bottom_pos REAL NOT NULL, quality REAL NOT NULL, embedding_offset INTEGER, embedding_dimension INTEGER NOT NULL DEFAULT 0, cluster_id TEXT, producer_version TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(id), FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(cluster_id) REFERENCES person_cluster(id) ON UPDATE NO ACTION ON DELETE SET NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS face_instance_media_idx ON face_instance(media_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS face_instance_cluster_idx ON face_instance(cluster_id)")
             }
         }
 

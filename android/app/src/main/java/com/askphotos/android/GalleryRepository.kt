@@ -26,6 +26,7 @@ class GalleryRepository(context: Context) {
         database.ensureStageRows()
         if (database.pendingItems(1).isNotEmpty()) IndexScheduler.schedule(appContext)
         if (services.retrievalModelPackManager.status().installed) EmbeddingIndexScheduler.schedule(appContext)
+        if (database.peopleIndexStatus().enabled) PeopleIndexScheduler.schedule(appContext)
         return database.summary()
     }
 
@@ -60,8 +61,26 @@ class GalleryRepository(context: Context) {
 
     fun tombstoneCount(): Int = database.tombstoneCount()
     fun stageRecords(mediaId: String): List<MediaIndexStageRecord> = database.stageRecords(mediaId)
+    fun peopleIndexStatus(): PeopleIndexStatus = database.peopleIndexStatus()
+
+    fun enablePeopleIndexing(): PeopleIndexStatus = database
+        .enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+        .also { PeopleIndexScheduler.schedule(appContext) }
+
+    fun resetPeopleIndex(): PeopleIndexStatus {
+        PeopleIndexScheduler.cancelAndWait(appContext)
+        return database.resetPeopleIndex()
+    }
+
+    fun saveReviewedPersonCluster(id: String, label: String, relationship: String?, aliases: List<String>): PeopleIndexStatus =
+        database.saveReviewedPersonCluster(id, label, relationship, aliases)
 
     fun pendingItems(limit: Int): List<GalleryItem> = database.pendingItems(limit)
+    fun facePendingItems(limit: Int): List<GalleryItem> = database.facePendingItems(limit)
+    fun markFaces(mediaId: String) = database.markFaces(mediaId)
+    fun completeFaces(mediaId: String, detections: List<FaceDetectionRecord>, producerVersion: String) =
+        database.completeFaces(mediaId, detections, producerVersion)
+    fun failFaces(mediaId: String, message: String, permanent: Boolean) = database.failFaces(mediaId, message, permanent)
     fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> =
         database.embeddingPendingItems(producerVersion, limit)
     fun accessibleIds(): Set<String> = database.accessibleIds()
@@ -98,6 +117,28 @@ class GalleryRepository(context: Context) {
         emit(QueryProgress.Understanding)
         val plan = planner.compile(query, activeResultIds)
         emit(QueryProgress.PlanReady(plan))
+        val peopleStatus = database.peopleIndexStatus()
+        val peopleUnavailable = PeopleQueryGate.unavailableReason(plan, peopleStatus)
+        if (peopleUnavailable != null) {
+            emit(QueryProgress.InitialResults(plan, emptyList()))
+            val outcome = SearchOutcome(
+                plan = plan,
+                hits = emptyList(),
+                answer = SearchAnswer(
+                    headline = "People search is unavailable",
+                    detail = peopleUnavailable,
+                    evidenceIds = emptyList(),
+                    exactness = ResultExactness.PARTIAL_INDEX,
+                    indexedEligibleCount = peopleStatus.faceInstanceCount,
+                    totalEligibleCount = database.allItems().count { it.kind == MediaKind.IMAGE },
+                    warnings = listOf(peopleUnavailable),
+                ),
+                elapsedMs = max(1, SystemClock.elapsedRealtime() - started),
+            )
+            database.recordQuery(outcome)
+            emit(QueryProgress.Completed(outcome))
+            return@flow
+        }
         val allowed = plan.baseResultIds
         val terms = plan.terms
         val allItems = database.allItems().filter { item ->

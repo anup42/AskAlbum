@@ -84,6 +84,7 @@ class GalleryIndexWorker(
                 }
             }
             repository.rebuildEvents()
+            if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.schedule(applicationContext)
             if (repository.pendingItems(1).isNotEmpty()) IndexScheduler.scheduleContinuation(applicationContext)
             if (retryableFailure) Result.retry() else Result.success()
         } finally {
