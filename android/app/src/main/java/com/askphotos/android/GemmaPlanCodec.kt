@@ -26,7 +26,10 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         }.orEmpty()
         val terms = json.optJSONArray("terms")?.strings(MAX_TERMS).orEmpty().map { it.lowercase(Locale.ROOT) }.distinct()
         val finalTerms = if (terms.isNotEmpty()) terms else semantic.mapNotNull { it.canonicalText ?: it.text }.map { it.lowercase(Locale.ROOT) }.distinct()
-        require(finalTerms.isNotEmpty() || intent in setOf(QueryIntent.COUNT, QueryIntent.LIST, QueryIntent.TIMELINE)) { "Planner produced no searchable constraints" }
+        val followUp = FollowUpLanguage.isFollowUp(query)
+        require(finalTerms.isNotEmpty() || followUp || intent in setOf(QueryIntent.COUNT, QueryIntent.LIST, QueryIntent.TIMELINE)) {
+            "Planner produced no searchable constraints"
+        }
         val people = json.optJSONArray("peopleClauses")?.objects(MAX_PEOPLE_CLAUSES) { item ->
             item.requireOnly("personId", "mustBePresent", "hardness")
             PersonClause(
@@ -43,7 +46,6 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
             item.requireOnly("operation", "field")
             AggregationSpec(enum(item, "operation"), item.optNullableString("field"))
         }
-        val followUp = FollowUpLanguage.isFollowUp(query)
         val plan = GalleryQueryPlan(
             version = json.optInt("version", 1),
             originalQuery = query,
@@ -129,7 +131,10 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
 }
 
 object FollowUpLanguage {
-    private val prefixes = listOf("only ", "what about ", "sirf ", "bas ", "केवल ", "सिर्फ़ ", "सिर्फ ")
+    private val prefixes = listOf(
+        "only ", "what about ", "with ", "without ", "which ", "best ", "and now ", "same but ",
+        "sirf ", "bas ", "keval ", "केवल ", "सिर्फ़ ", "सिर्फ ",
+    )
     fun isFollowUp(query: String): Boolean = prefixes.any(query.trim().lowercase(Locale.ROOT)::startsWith)
 }
 

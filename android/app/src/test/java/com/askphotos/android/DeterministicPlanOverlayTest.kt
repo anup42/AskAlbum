@@ -67,6 +67,19 @@ class DeterministicPlanOverlayTest {
         assertEquals("a merchant that does not exist", result.plan.ocrClause?.merchant)
     }
 
+    @Test
+    fun qualityFollowUpRemovesInventedSemanticSearchTerms() {
+        val active = setOf("one", "two")
+        val model = plan(FilterExpression.True, null).copy(baseResultIds = active)
+
+        val result = overlay.apply("Which is the best one?", model, active)
+
+        assertEquals(SortSpec.QUALITY, result.plan.sort)
+        assertTrue(result.plan.terms.isEmpty())
+        assertTrue(result.plan.semanticClauses.isEmpty())
+        assertEquals(active, result.plan.baseResultIds)
+    }
+
     private fun plan(filter: FilterExpression, place: String?) = GalleryQueryPlan(
         originalQuery = "fixture",
         intent = QueryIntent.FIND_MEDIA,

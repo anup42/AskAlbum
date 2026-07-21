@@ -40,6 +40,7 @@ class QueryCompiler(
         val normalized = query.lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{M}\\p{N}]+"), " ").trim()
         val isFollowUp = FollowUpLanguage.isFollowUp(query)
         require(!isFollowUp || !activeResultIds.isNullOrEmpty()) { "Follow-up requires an active result set" }
+        val qualityFollowUp = isFollowUp && Regex("\\b(best|best one|which is the best|which one is best)\\b").containsMatchIn(normalized)
         val intent = when {
             Regex("\\b(how many|count|number of|kitne|kitni)\\b").containsMatchIn(normalized) || "कितने" in normalized || "कितनी" in normalized -> QueryIntent.COUNT
             Regex("\\b(total|amount paid|wifi password|wi fi password)\\b").containsMatchIn(normalized) -> QueryIntent.ANSWER_FACT
@@ -49,6 +50,7 @@ class QueryCompiler(
         }
         val originalTerms = normalized.split(' ')
             .filter { it.length > 1 && it !in stopWords }
+            .filterNot { qualityFollowUp && it in setOf("best", "one", "which") }
             .distinct()
         val terms = originalTerms.map { aliases[it] ?: it }.distinct()
         val place = listOf("singapore", "goa", "amsterdam", "netherlands", "california", "francisco", "marshall", "rockaway")
@@ -89,7 +91,11 @@ class QueryCompiler(
             ) else null,
             grouping = if ("travel" in terms || place in setOf("goa", "singapore")) Grouping.EVENT else Grouping.NONE,
             aggregation = if (intent == QueryIntent.COUNT) AggregationSpec(AggregationOperation.COUNT) else null,
-            sort = if ("latest" in normalized.split(' ')) SortSpec.CAPTURE_TIME_DESC else SortSpec.RELEVANCE,
+            sort = when {
+                qualityFollowUp -> SortSpec.QUALITY
+                "latest" in normalized.split(' ') -> SortSpec.CAPTURE_TIME_DESC
+                else -> SortSpec.RELEVANCE
+            },
             terms = terms,
             place = place,
             baseResultIds = if (isFollowUp) activeResultIds else null,

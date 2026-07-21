@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.provider.MediaStore
 import org.json.JSONArray
 import java.util.Calendar
+import java.util.UUID
 
 class GalleryDatabase(
     private val context: Context,
@@ -31,12 +32,14 @@ class GalleryDatabase(
                 val tags = buildList {
                     for (tagIndex in 0 until tagArray.length()) add(tagArray.getString(tagIndex))
                 }
+                val location = item.optString("location_name", "Unknown location")
                 val galleryItem = GalleryItem(
                     id = item.getString("id"),
                     filename = item.getString("filename"),
                     title = item.getString("title"),
                     creator = item.optString("creator").takeIf { it.isNotBlank() && it != "null" },
-                    location = item.optString("location_name", "Unknown location"),
+                    location = location,
+                    album = item.optString("album", location),
                     latitude = item.optDouble("latitude").takeUnless(Double::isNaN),
                     longitude = item.optDouble("longitude").takeUnless(Double::isNaN),
                     tags = tags,
@@ -77,7 +80,8 @@ class GalleryDatabase(
             items.forEach { imported ->
                 val existing = itemById(db, imported.stableId)
                 val unchanged = existing != null && existing.contentUri == imported.uri &&
-                    existing.modifiedAt == imported.modifiedAt && existing.sizeBytes == imported.sizeBytes
+                    existing.modifiedAt == imported.modifiedAt && existing.sizeBytes == imported.sizeBytes &&
+                    existing.album == imported.album
                 if (unchanged) {
                     initializeStages(db, existing, replace = false)
                     return@forEach
@@ -88,6 +92,7 @@ class GalleryDatabase(
                     title = imported.displayName.substringBeforeLast('.').ifBlank { "Untitled media" },
                     creator = null,
                     location = "",
+                    album = imported.album,
                     latitude = null,
                     longitude = null,
                     tags = emptyList(),
@@ -679,14 +684,110 @@ class GalleryDatabase(
         )
     }
 
-    fun recordQuery(outcome: SearchOutcome) {
+    fun recordQuery(outcome: SearchOutcome, sessionId: String? = null) {
         writableDatabase.insert("query_turn", null, ContentValues().apply {
             put("query", outcome.plan.originalQuery)
             put("plan_summary", "${outcome.plan.intent}:${outcome.plan.terms.joinToString(",")}")
             put("result_count", outcome.hits.size)
             put("elapsed_ms", outcome.elapsedMs)
             put("created_at", System.currentTimeMillis())
+            put("session_id", sessionId)
+            put("result_set_id", outcome.resultSetId)
+            put("base_result_set_id", outcome.baseResultSetId)
+            put("plan_patch_summary", outcome.planPatch?.changedFields?.sorted()?.joinToString(","))
         })
+    }
+
+    fun conversationState(sessionId: String): ConversationSearchState {
+        requireSessionId(sessionId)
+        val session = readableDatabase.query(
+            "query_session", null, "session_id=?", arrayOf(sessionId), null, null, null, "1",
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return ConversationSearchState(sessionId)
+            val active = cursor.nullableText("active_result_set_id")
+            ConversationSearchState(
+                sessionId = sessionId,
+                activeResultSetId = active,
+                activeResultIds = active?.let(::resultSetMediaIds).orEmpty(),
+                lastQuery = cursor.nullableText("last_query"),
+                referencedPeople = decodeStrings(cursor.text("referenced_people")),
+                referencedEvents = decodeLongs(cursor.text("referenced_events")),
+                currentTimeScope = if (cursor.isNull(cursor.getColumnIndexOrThrow("time_start")) && cursor.isNull(cursor.getColumnIndexOrThrow("time_end"))) {
+                    null
+                } else {
+                    FilterExpression.TimeRange(cursor.nullableLong("time_start"), cursor.nullableLong("time_end"))
+                },
+                currentPlaceScope = decodeStrings(cursor.text("place_scope")),
+                grouping = runCatching { Grouping.valueOf(cursor.text("grouping")) }.getOrDefault(Grouping.NONE),
+                lastEvidenceIds = decodeStrings(cursor.text("last_evidence_ids")).toList(),
+            )
+        }
+        return session
+    }
+
+    fun resultSetParent(resultSetId: String): String? = readableDatabase.query(
+        "result_set", arrayOf("parent_result_set_id"), "id=?", arrayOf(resultSetId), null, null, null, "1",
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.nullableText("parent_result_set_id") else null }
+
+    /** Atomically advances one conversation. A stale concurrent follow-up cannot replace the active branch. */
+    fun persistResultSet(
+        sessionId: String,
+        outcome: SearchOutcome,
+        expectedParentResultSetId: String?,
+    ): SearchOutcome {
+        requireSessionId(sessionId)
+        val resultSetId = "rs_${UUID.randomUUID().toString().replace("-", "")}"
+        val now = System.currentTimeMillis()
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val current = db.query(
+                "query_session", arrayOf("active_result_set_id"), "session_id=?", arrayOf(sessionId), null, null, null, "1",
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.nullableText("active_result_set_id") else null }
+            if (expectedParentResultSetId != null) {
+                check(current == expectedParentResultSetId) { "Conversation changed while follow-up was running" }
+            }
+            db.insertOrThrow("result_set", null, ContentValues().apply {
+                put("id", resultSetId)
+                put("session_id", sessionId)
+                put("parent_result_set_id", expectedParentResultSetId)
+                put("query", outcome.plan.originalQuery.take(2_000))
+                put("intent", outcome.plan.intent.name)
+                put("exactness", outcome.answer.exactness.name)
+                put("created_at", now)
+            })
+            outcome.hits.distinctBy { it.item.id }.forEachIndexed { rank, hit ->
+                db.insertOrThrow("result_set_media", null, ContentValues().apply {
+                    put("result_set_id", resultSetId)
+                    put("media_id", hit.item.id)
+                    put("rank", rank)
+                    put("score", hit.score)
+                })
+            }
+            val timeRange = outcome.plan.filter.firstTimeRange()
+            val eventIds = outcome.hits.mapNotNull { eventMembership()[it.item.id] }.toSet()
+            db.insertWithOnConflict("query_session", null, ContentValues().apply {
+                put("session_id", sessionId)
+                put("active_result_set_id", resultSetId)
+                put("last_query", outcome.plan.originalQuery.take(2_000))
+                put("referenced_people", encode(outcome.plan.peopleClauses.map { it.personId }))
+                put("referenced_events", encode(eventIds))
+                put("time_start", timeRange?.startEpochMs)
+                put("time_end", timeRange?.endEpochMs)
+                put("place_scope", encode(listOfNotNull(outcome.plan.place)))
+                put("grouping", outcome.plan.grouping.name)
+                put("last_evidence_ids", encode(outcome.answer.evidenceIds.take(32)))
+                put("updated_at", now)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+            db.execSQL(
+                "DELETE FROM result_set WHERE session_id=? AND id NOT IN (SELECT id FROM result_set WHERE session_id=? ORDER BY created_at DESC LIMIT ?)",
+                arrayOf<Any?>(sessionId, sessionId, MAX_RESULT_SETS_PER_SESSION),
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return outcome.copy(resultSetId = resultSetId, baseResultSetId = expectedParentResultSetId)
     }
 
     fun databaseBytes(): Long = context.getDatabasePath(databaseName).length()
@@ -716,6 +817,7 @@ class GalleryDatabase(
         put("title", item.title)
         put("creator", item.creator)
         put("location", item.location)
+        put("album", item.album)
         put("latitude", item.latitude)
         put("longitude", item.longitude)
         put("tags", item.tags.joinToString(TAG_SEPARATOR))
@@ -784,6 +886,7 @@ class GalleryDatabase(
             title = text("title"),
             creator = nullableText("creator"),
             location = text("location"),
+            album = text("album"),
             latitude = nullableDouble("latitude"),
             longitude = nullableDouble("longitude"),
             tags = text("tags").split(TAG_SEPARATOR).filter(String::isNotBlank),
@@ -819,6 +922,43 @@ class GalleryDatabase(
         mimeType == "application/pdf" -> MediaKind.PDF
         mimeType.startsWith("video/") -> MediaKind.VIDEO
         else -> MediaKind.IMAGE
+    }
+
+    private fun resultSetMediaIds(resultSetId: String): Set<String> = readableDatabase.rawQuery(
+        "SELECT rsm.media_id FROM result_set_media rsm JOIN media_item m ON m.id=rsm.media_id WHERE rsm.result_set_id=? AND m.access_state=? ORDER BY rsm.rank",
+        arrayOf(resultSetId, MediaAccessState.ACCESSIBLE.name),
+    ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    private fun requireSessionId(sessionId: String) {
+        require(sessionId.matches(Regex("[A-Za-z0-9_-]{1,64}"))) { "Invalid query session" }
+    }
+
+    private fun encode(values: Collection<Any>): String = JSONArray(values.toList()).toString()
+
+    private fun decodeStrings(value: String): Set<String> = runCatching {
+        val json = JSONArray(value)
+        buildSet { for (index in 0 until json.length()) add(json.getString(index)) }
+    }.getOrDefault(emptySet())
+
+    private fun decodeLongs(value: String): Set<Long> = runCatching {
+        val json = JSONArray(value)
+        buildSet { for (index in 0 until json.length()) add(json.getLong(index)) }
+    }.getOrDefault(emptySet())
+
+    private fun FilterExpression.firstTimeRange(): FilterExpression.TimeRange? = when (this) {
+        is FilterExpression.TimeRange -> this
+        is FilterExpression.And -> clauses.firstNotNullOfOrNull { it.firstTimeRange() }
+        else -> null
+    }
+
+    private fun android.database.Cursor.text(name: String): String = getString(getColumnIndexOrThrow(name))
+
+    private fun android.database.Cursor.nullableText(name: String): String? = getColumnIndexOrThrow(name).let {
+        if (isNull(it)) null else getString(it)
+    }
+
+    private fun android.database.Cursor.nullableLong(name: String): Long? = getColumnIndexOrThrow(name).let {
+        if (isNull(it)) null else getLong(it)
     }
 
     private fun initializeStages(db: GallerySqlDatabase, item: GalleryItem, replace: Boolean) {
@@ -898,6 +1038,8 @@ class GalleryDatabase(
 
     companion object {
         const val PEOPLE_CONSENT_VERSION = 1
+        const val PRIMARY_QUERY_SESSION = "primary"
+        private const val MAX_RESULT_SETS_PER_SESSION = 20
         private const val MAX_FACES_PER_MEDIA = 64
         private const val MAX_PERSON_ALIASES = 16
         private const val TAG_SEPARATOR = "\u001F"

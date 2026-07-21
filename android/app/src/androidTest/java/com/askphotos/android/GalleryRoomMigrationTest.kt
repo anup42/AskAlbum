@@ -30,6 +30,7 @@ class GalleryRoomMigrationTest {
                 put("id", "legacy-media")
                 put("filename", "legacy.jpg")
                 put("title", "Legacy item")
+                put("location", "Legacy trip")
                 put("index_version", "legacy-v3")
             })
         }
@@ -59,7 +60,11 @@ class GalleryRoomMigrationTest {
                 val columns = buildSet {
                     while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
                 }
-                assertTrue(columns.containsAll(setOf("perceptual_hash", "blur_score", "exposure_score", "quality_score")))
+                assertTrue(columns.containsAll(setOf("perceptual_hash", "blur_score", "exposure_score", "quality_score", "album")))
+            }
+            database.query("SELECT album FROM media_item WHERE id='legacy-media'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("Legacy trip", cursor.getString(0))
             }
             database.query("PRAGMA table_info(ocr_block)").use { cursor ->
                 val columns = buildSet {
@@ -77,6 +82,12 @@ class GalleryRoomMigrationTest {
                 assertEquals(0, cursor.getInt(1))
             }
             listOf("face_instance", "person_cluster").forEach { table ->
+                database.query("SELECT COUNT(*) FROM $table").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+            }
+            listOf("query_session", "result_set", "result_set_media").forEach { table ->
                 database.query("SELECT COUNT(*) FROM $table").use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     assertEquals(0, cursor.getInt(0))

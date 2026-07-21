@@ -13,6 +13,7 @@ internal class GallerySqlDatabase(private val delegate: SupportSQLiteDatabase) {
     fun setTransactionSuccessful() = delegate.setTransactionSuccessful()
     fun endTransaction() = delegate.endTransaction()
     fun execSQL(sql: String) = delegate.execSQL(sql)
+    fun execSQL(sql: String, bindArgs: Array<Any?>) = delegate.execSQL(sql, bindArgs)
     fun rawQuery(sql: String, args: Array<String>?): Cursor = if (args == null) delegate.query(sql) else delegate.query(sql, args)
     fun query(
         table: String,

@@ -42,6 +42,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -354,6 +355,34 @@ private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel) {
                     "Search local memories, refine the result, and inspect every supporting fact.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                state.conversation.activeResultSetId?.let {
+                    Spacer(Modifier.height(12.dp))
+                    Surface(
+                        color = Mist,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("active-result-set").semantics {
+                            contentDescription = "Active local result set"
+                        },
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            val count = state.conversation.activeResultIds.size
+                            Text(
+                                if (count > 0) "Follow-up scope: $count saved ${if (count == 1) "result" else "results"}" else "The last result set was empty",
+                                fontWeight = FontWeight.Bold,
+                                color = Forest,
+                            )
+                            Text(
+                                if (count > 0) {
+                                    "Use “Only…”, “With…”, “What about…”, or “Which is best?” to refine these items without searching unrelated media."
+                                } else {
+                                    "Ask a new full question; an empty result set cannot be refined."
+                                },
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
                 Spacer(Modifier.height(18.dp))
                 OutlinedTextField(
                     value = state.query,
@@ -460,7 +489,7 @@ private fun ResultsScreen(
                 }
             }
         } else {
-            item(span = { GridItemSpan(maxLineSpan) }) { AnswerCard(outcome) }
+            item(span = { GridItemSpan(maxLineSpan) }) { AnswerCard(outcome, onAsk) }
             items(outcome.hits, key = { it.item.id }) { hit ->
                 ResultTile(hit, onClick = { onEvidence(hit) })
             }
@@ -469,7 +498,7 @@ private fun ResultsScreen(
 }
 
 @Composable
-private fun AnswerCard(outcome: SearchOutcome) {
+private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Answer ${outcome.answer.headline}" },
         shape = RoundedCornerShape(22.dp),
@@ -481,6 +510,14 @@ private fun AnswerCard(outcome: SearchOutcome) {
             Text(outcome.answer.headline, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(7.dp))
             Text(outcome.answer.detail, color = Color(0xFFDCE8E2), lineHeight = 20.sp)
+            if (outcome.resultSetId != null && outcome.hits.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                Button(
+                    onClick = onRefine,
+                    modifier = Modifier.testTag("refine-results"),
+                    colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Forest),
+                ) { Text("Refine these results") }
+            }
             if (outcome.answer.claims.isNotEmpty()) {
                 Spacer(Modifier.height(12.dp))
                 outcome.answer.claims.forEach { claim ->

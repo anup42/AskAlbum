@@ -38,6 +38,14 @@ data class GalleryUiState(
     val modelDownload: GemmaDownloadProgress = GemmaDownloadProgress(),
     val retrievalPack: RetrievalPackStatus = RetrievalPackStatus(installed = false),
     val peopleIndex: PeopleIndexStatus = PeopleIndexStatus(),
+    val conversation: ConversationSearchState = ConversationSearchState(GalleryDatabase.PRIMARY_QUERY_SESSION),
+)
+
+private data class GalleryInitialization(
+    val summary: IndexSummary,
+    val items: List<GalleryItem>,
+    val peopleIndex: PeopleIndexStatus,
+    val conversation: ConversationSearchState,
 )
 
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
@@ -57,17 +65,23 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 withContext(Dispatchers.IO) {
                     val summary = repository.initialize()
-                    Triple(summary, repository.allItems(), repository.peopleIndexStatus())
+                    GalleryInitialization(
+                        summary,
+                        repository.allItems(),
+                        repository.peopleIndexStatus(),
+                        repository.conversationState(),
+                    )
                 }
-            }.onSuccess { (summary, items, peopleIndex) ->
+            }.onSuccess { initial ->
                 state = state.copy(
                     loading = false,
-                    index = summary,
-                    items = items,
+                    index = initial.summary,
+                    items = initial.items,
                     modelPack = modelPacks.status(),
                     modelDownload = modelDownloader.progress(modelPacks.selectedTier()),
                     retrievalPack = retrievalPacks.status(),
-                    peopleIndex = peopleIndex,
+                    peopleIndex = initial.peopleIndex,
+                    conversation = initial.conversation,
                 )
                 monitorIndexing()
                 monitorModelDownload()
@@ -224,7 +238,6 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun ask(query: String = state.query) {
         if (query.isBlank() || queryJob?.isActive == true) return
-        val previousIds = state.outcome?.hits?.map { it.item.id }?.toSet()
         val generation = ++queryGeneration
         state = state.copy(
             query = query,
@@ -238,7 +251,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         )
         queryJob = viewModelScope.launch {
             try {
-                repository.searchProgressive(query, previousIds)
+                repository.searchProgressive(query, sessionId = GalleryDatabase.PRIMARY_QUERY_SESSION)
                     .flowOn(Dispatchers.Default)
                     .collect { progress ->
                         if (generation == queryGeneration) state = QueryProgressUiReducer.reduce(state, progress)
@@ -361,11 +374,27 @@ internal object QueryProgressUiReducer {
         )
         is QueryProgress.Completed -> state.copy(
             outcome = progress.outcome,
+            conversation = state.conversation.copy(
+                activeResultSetId = progress.outcome.resultSetId,
+                activeResultIds = progress.outcome.hits.map { it.item.id }.toSet(),
+                lastQuery = progress.outcome.plan.originalQuery,
+                referencedPeople = progress.outcome.plan.peopleClauses.map { it.personId }.toSet(),
+                currentTimeScope = progress.outcome.plan.filter.firstTimeRange(),
+                currentPlaceScope = setOfNotNull(progress.outcome.plan.place),
+                grouping = progress.outcome.plan.grouping,
+                lastEvidenceIds = progress.outcome.answer.evidenceIds,
+            ),
             executionStatus = null,
             executionStage = null,
             progressivePlan = null,
             progressiveHits = emptyList(),
             destination = AppDestination.RESULTS,
         )
+    }
+
+    private fun FilterExpression.firstTimeRange(): FilterExpression.TimeRange? = when (this) {
+        is FilterExpression.TimeRange -> this
+        is FilterExpression.And -> clauses.firstNotNullOfOrNull { it.firstTimeRange() }
+        else -> null
     }
 }

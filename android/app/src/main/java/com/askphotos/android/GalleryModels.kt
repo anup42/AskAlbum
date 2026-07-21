@@ -87,6 +87,27 @@ data class GalleryQueryPlan(
     val limit: Int = 100,
 )
 
+/** App-created refinement contract. The model never supplies [baseResultSetId] or media IDs. */
+data class PlanPatch(
+    val version: Int = 1,
+    val baseResultSetId: String,
+    val changedFields: Set<String>,
+    val replacementPlan: GalleryQueryPlan,
+)
+
+data class ConversationSearchState(
+    val sessionId: String,
+    val activeResultSetId: String? = null,
+    val activeResultIds: Set<String> = emptySet(),
+    val lastQuery: String? = null,
+    val referencedPeople: Set<String> = emptySet(),
+    val referencedEvents: Set<Long> = emptySet(),
+    val currentTimeScope: FilterExpression.TimeRange? = null,
+    val currentPlaceScope: Set<String> = emptySet(),
+    val grouping: Grouping = Grouping.NONE,
+    val lastEvidenceIds: List<String> = emptyList(),
+)
+
 data class GroundedClaim(
     val text: String,
     val evidenceIds: List<String>,
@@ -99,6 +120,7 @@ data class GalleryItem(
     val title: String,
     val creator: String?,
     val location: String,
+    val album: String = "",
     val latitude: Double?,
     val longitude: Double?,
     val tags: List<String>,
@@ -170,6 +192,9 @@ data class SearchOutcome(
     val hits: List<SearchHit>,
     val answer: SearchAnswer,
     val elapsedMs: Long,
+    val resultSetId: String? = null,
+    val baseResultSetId: String? = null,
+    val planPatch: PlanPatch? = null,
 )
 
 sealed interface QueryProgress {
@@ -225,6 +250,7 @@ data class ImportedMedia(
     val width: Int,
     val height: Int,
     val sizeBytes: Long,
+    val album: String = "",
 )
 
 data class OcrBlockRecord(

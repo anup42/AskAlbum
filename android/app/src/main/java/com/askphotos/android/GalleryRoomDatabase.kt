@@ -23,6 +23,7 @@ data class MediaItemEntity(
     val title: String,
     val creator: String?,
     @ColumnInfo(defaultValue = "''") val location: String,
+    @ColumnInfo(defaultValue = "''") val album: String,
     val latitude: Double?,
     val longitude: Double?,
     @ColumnInfo(defaultValue = "''") val tags: String,
@@ -203,6 +204,55 @@ data class QueryTurnEntity(
     @ColumnInfo(name = "result_count") val resultCount: Int,
     @ColumnInfo(name = "elapsed_ms") val elapsedMs: Long,
     @ColumnInfo(name = "created_at") val createdAt: Long,
+    @ColumnInfo(name = "session_id") val sessionId: String?,
+    @ColumnInfo(name = "result_set_id") val resultSetId: String?,
+    @ColumnInfo(name = "base_result_set_id") val baseResultSetId: String?,
+    @ColumnInfo(name = "plan_patch_summary") val planPatchSummary: String?,
+)
+
+@Entity(tableName = "query_session")
+data class QuerySessionEntity(
+    @PrimaryKey @ColumnInfo(name = "session_id") val sessionId: String,
+    @ColumnInfo(name = "active_result_set_id") val activeResultSetId: String?,
+    @ColumnInfo(name = "last_query") val lastQuery: String?,
+    @ColumnInfo(name = "referenced_people", defaultValue = "'[]'") val referencedPeople: String,
+    @ColumnInfo(name = "referenced_events", defaultValue = "'[]'") val referencedEvents: String,
+    @ColumnInfo(name = "time_start") val timeStart: Long?,
+    @ColumnInfo(name = "time_end") val timeEnd: Long?,
+    @ColumnInfo(name = "place_scope", defaultValue = "'[]'") val placeScope: String,
+    @ColumnInfo(defaultValue = "'NONE'") val grouping: String,
+    @ColumnInfo(name = "last_evidence_ids", defaultValue = "'[]'") val lastEvidenceIds: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+)
+
+@Entity(
+    tableName = "result_set",
+    indices = [Index(name = "result_set_session_created_idx", value = ["session_id", "created_at"])],
+)
+data class ResultSetEntity(
+    @PrimaryKey val id: String,
+    @ColumnInfo(name = "session_id") val sessionId: String,
+    @ColumnInfo(name = "parent_result_set_id") val parentResultSetId: String?,
+    val query: String,
+    val intent: String,
+    val exactness: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+)
+
+@Entity(
+    tableName = "result_set_media",
+    primaryKeys = ["result_set_id", "media_id"],
+    foreignKeys = [
+        ForeignKey(entity = ResultSetEntity::class, parentColumns = ["id"], childColumns = ["result_set_id"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["media_id"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index(name = "result_set_media_media_idx", value = ["media_id"])],
+)
+data class ResultSetMediaEntity(
+    @ColumnInfo(name = "result_set_id") val resultSetId: String,
+    @ColumnInfo(name = "media_id") val mediaId: String,
+    val rank: Int,
+    val score: Double,
 )
 
 @Entity(
@@ -234,9 +284,12 @@ data class MediaIndexStageEntity(
         PersonClusterEntity::class,
         FaceInstanceEntity::class,
         QueryTurnEntity::class,
+        QuerySessionEntity::class,
+        ResultSetEntity::class,
+        ResultSetMediaEntity::class,
         MediaIndexStageEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -255,6 +308,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_5_6,
             MIGRATION_6_7,
             MIGRATION_7_8,
+            MIGRATION_8_9,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -329,6 +383,22 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL("CREATE TABLE IF NOT EXISTS face_instance (id TEXT NOT NULL, media_id TEXT NOT NULL, left_pos REAL NOT NULL, top_pos REAL NOT NULL, right_pos REAL NOT NULL, bottom_pos REAL NOT NULL, quality REAL NOT NULL, embedding_offset INTEGER, embedding_dimension INTEGER NOT NULL DEFAULT 0, cluster_id TEXT, producer_version TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(id), FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(cluster_id) REFERENCES person_cluster(id) ON UPDATE NO ACTION ON DELETE SET NULL)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS face_instance_media_idx ON face_instance(media_id)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS face_instance_cluster_idx ON face_instance(cluster_id)")
+            }
+        }
+
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE media_item ADD COLUMN album TEXT NOT NULL DEFAULT ''")
+                db.execSQL("UPDATE media_item SET album=location WHERE source_kind='DEMO_ASSET' AND album='' AND location<>''")
+                db.execSQL("ALTER TABLE query_turn ADD COLUMN session_id TEXT")
+                db.execSQL("ALTER TABLE query_turn ADD COLUMN result_set_id TEXT")
+                db.execSQL("ALTER TABLE query_turn ADD COLUMN base_result_set_id TEXT")
+                db.execSQL("ALTER TABLE query_turn ADD COLUMN plan_patch_summary TEXT")
+                db.execSQL("CREATE TABLE IF NOT EXISTS query_session (session_id TEXT NOT NULL, active_result_set_id TEXT, last_query TEXT, referenced_people TEXT NOT NULL DEFAULT '[]', referenced_events TEXT NOT NULL DEFAULT '[]', time_start INTEGER, time_end INTEGER, place_scope TEXT NOT NULL DEFAULT '[]', grouping TEXT NOT NULL DEFAULT 'NONE', last_evidence_ids TEXT NOT NULL DEFAULT '[]', updated_at INTEGER NOT NULL, PRIMARY KEY(session_id))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS result_set (id TEXT NOT NULL, session_id TEXT NOT NULL, parent_result_set_id TEXT, query TEXT NOT NULL, intent TEXT NOT NULL, exactness TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(id))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS result_set_session_created_idx ON result_set(session_id, created_at)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS result_set_media (result_set_id TEXT NOT NULL, media_id TEXT NOT NULL, rank INTEGER NOT NULL, score REAL NOT NULL, PRIMARY KEY(result_set_id, media_id), FOREIGN KEY(result_set_id) REFERENCES result_set(id) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS result_set_media_media_idx ON result_set_media(media_id)")
             }
         }
 

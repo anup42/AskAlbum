@@ -19,6 +19,7 @@ class GalleryRepository(context: Context) {
     private val visualVerifier = services.visualVerifier
     private val groundedAnswerComposer = services.groundedAnswerComposer
     private val importer = MediaImporter(context.applicationContext)
+    private val planPatchResolver = ResultSetPlanPatchResolver()
 
     fun initialize(): IndexSummary {
         database.recoverInterruptedJobs()
@@ -104,6 +105,8 @@ class GalleryRepository(context: Context) {
     ) = database.completeIndex(id, labels, description, ocrText, faceCount, previewPath, blocks, entities, ocrAttempted, visualFeatures)
     fun failIndex(id: String, message: String, permanent: Boolean) = database.failIndex(id, message, permanent)
     fun rebuildEvents() = database.rebuildEvents()
+    fun conversationState(sessionId: String = GalleryDatabase.PRIMARY_QUERY_SESSION): ConversationSearchState =
+        database.conversationState(sessionId)
 
     private fun scheduleEmbeddingsIfAvailable() {
         if (services.retrievalModelPackManager.status().installed) EmbeddingIndexScheduler.schedule(appContext)
@@ -112,16 +115,35 @@ class GalleryRepository(context: Context) {
     suspend fun search(query: String, activeResultIds: Set<String>? = null): SearchOutcome =
         searchProgressive(query, activeResultIds).filterIsInstance<QueryProgress.Completed>().single().outcome
 
-    fun searchProgressive(query: String, activeResultIds: Set<String>? = null): Flow<QueryProgress> = flow {
+    suspend fun searchInSession(
+        query: String,
+        sessionId: String = GalleryDatabase.PRIMARY_QUERY_SESSION,
+    ): SearchOutcome = searchProgressive(query, sessionId = sessionId)
+        .filterIsInstance<QueryProgress.Completed>().single().outcome
+
+    fun searchProgressive(
+        query: String,
+        activeResultIds: Set<String>? = null,
+        sessionId: String? = null,
+    ): Flow<QueryProgress> = flow {
         val started = SystemClock.elapsedRealtime()
+        val conversation = sessionId?.let(database::conversationState)
+        val isFollowUp = FollowUpLanguage.isFollowUp(query)
+        val scopedIds = if (conversation != null && isFollowUp) conversation.activeResultIds else activeResultIds
+        val parentResultSetId = if (conversation != null && isFollowUp) conversation.activeResultSetId else null
         emit(QueryProgress.Understanding)
-        val plan = planner.compile(query, activeResultIds)
+        val compiledPlan = planner.compile(query, scopedIds)
+        val (planPatch, plan) = if (conversation != null && isFollowUp) {
+            planPatchResolver.createAndApply(compiledPlan, conversation).let { it.first to it.second }
+        } else {
+            null to compiledPlan
+        }
         emit(QueryProgress.PlanReady(plan))
         val peopleStatus = database.peopleIndexStatus()
         val peopleUnavailable = PeopleQueryGate.unavailableReason(plan, peopleStatus)
         if (peopleUnavailable != null) {
             emit(QueryProgress.InitialResults(plan, emptyList()))
-            val outcome = SearchOutcome(
+            val outcome = finalizeOutcome(sessionId, parentResultSetId, SearchOutcome(
                 plan = plan,
                 hits = emptyList(),
                 answer = SearchAnswer(
@@ -134,8 +156,8 @@ class GalleryRepository(context: Context) {
                     warnings = listOf(peopleUnavailable),
                 ),
                 elapsedMs = max(1, SystemClock.elapsedRealtime() - started),
-            )
-            database.recordQuery(outcome)
+                planPatch = planPatch,
+            ))
             emit(QueryProgress.Completed(outcome))
             return@flow
         }
@@ -148,7 +170,7 @@ class GalleryRepository(context: Context) {
                 MediaScope.VIDEOS -> item.kind == MediaKind.VIDEO
                 MediaScope.DOCUMENTS -> item.kind == MediaKind.PDF || item.ocrText.isNotBlank() || item.looksLikeDocument()
             }
-            inScope && item.matchesRequiredMerchant(plan.ocrClause?.merchant)
+            inScope && GalleryFilterEvaluator.matches(item, plan.filter) && item.matchesRequiredMerchant(plan.ocrClause?.merchant)
         }
         val fullTextIds = database.fullTextMatches(terms)
         val lexicalRanked = allItems
@@ -225,14 +247,24 @@ class GalleryRepository(context: Context) {
         } else {
             deterministicAnswer
         }
-        val outcome = SearchOutcome(
+        val outcome = finalizeOutcome(sessionId, parentResultSetId, SearchOutcome(
             plan = plan,
             hits = hits,
             answer = answer,
             elapsedMs = max(1, SystemClock.elapsedRealtime() - started),
-        )
-        database.recordQuery(outcome)
+            planPatch = planPatch,
+        ))
         emit(QueryProgress.Completed(outcome))
+    }
+
+    private fun finalizeOutcome(
+        sessionId: String?,
+        parentResultSetId: String?,
+        outcome: SearchOutcome,
+    ): SearchOutcome {
+        val persisted = if (sessionId == null) outcome else database.persistResultSet(sessionId, outcome, parentResultSetId)
+        database.recordQuery(persisted, sessionId)
+        return persisted
     }
 
     private fun score(item: GalleryItem, terms: List<String>, fullTextMatch: Boolean): SearchHit? {

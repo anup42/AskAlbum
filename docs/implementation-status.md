@@ -1600,3 +1600,96 @@ Failures and limitations:
 Next phase:
 
 - Implement event/result-set follow-up memory as its own vertical slice. Keep identity embeddings/clustering separate until a redistribution-compatible on-device model and a synthetic/consented positive-face corpus are pinned.
+
+## Phase 8B — persistent result sets and validated follow-up patches (22 July 2026)
+
+Status: **Implemented, installed, and verified on the connected physical device. Completed queries now create bounded app-private result sets, follow-ups execute an app-owned validated `PlanPatch` over the active set, stale/concurrent parents fail closed, and the active refinement scope survives process death. Typed time, media-kind, and album filters are now executed as hard Kotlin constraints rather than only being validated.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/GalleryModels.kt`
+- `android/app/src/main/java/com/askphotos/android/ResultSetPlanPatchResolver.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryFilterEvaluator.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryRoomDatabase.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryDatabase.kt`
+- `android/app/src/main/java/com/askphotos/android/GallerySqlDatabase.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryRepository.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryViewModel.kt`
+- `android/app/src/main/java/com/askphotos/android/QueryCompiler.kt`
+- `android/app/src/main/java/com/askphotos/android/GemmaPlanCodec.kt`
+- `android/app/src/main/java/com/askphotos/android/DeterministicPlanOverlay.kt`
+- `android/app/src/main/java/com/askphotos/android/MediaImporter.kt`
+- `android/app/src/main/java/com/askphotos/android/MainActivity.kt`
+- `android/app/schemas/com.askphotos.android.GalleryRoomDatabase/9.json`
+- `android/app/src/test/java/com/askphotos/android/ResultSetPlanPatchResolverTest.kt`
+- `android/app/src/test/java/com/askphotos/android/GalleryFilterEvaluatorTest.kt`
+- `android/app/src/test/java/com/askphotos/android/DeterministicPlanOverlayTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/ResultSetPersistenceDatabaseTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/PersistentFollowUpUiTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/GalleryRoomMigrationTest.kt`
+
+Architecture decisions and fixes:
+
+- Room schema v9 adds `query_session`, `result_set`, and ordered `result_set_media` tables. Query turns record session/result/parent IDs and a bounded patch-field summary; raw media IDs never come from model output.
+- `PlanPatch` contains an app-supplied result-set ID and a detached replacement plan with no media IDs. `ResultSetPlanPatchResolver` rejects unsupported versions/fields, invented IDs, stale parents, empty scopes, and plans that fail the existing typed validator.
+- Result-set persistence and session advancement are atomic. A follow-up may update the session only if its expected parent is still active. At most 20 result sets are retained per session.
+- The ViewModel restores `ConversationSearchState` from Room and no longer derives scope only from the current in-memory `SearchOutcome`. The Ask screen visibly shows the saved scope, and the Results screen has a dedicated `Refine these results` action.
+- `Which is the best one?` becomes a quality sort over the active result set with no invented “best” semantic retrieval term.
+- The repository now enforces typed `TimeRange`, `MediaKindIs`, `AlbumIs`, and nested `And` filters before ranking. Missing capture dates fail a hard time range rather than being silently included.
+- MediaStore ingestion persists the leaf album from `RELATIVE_PATH`. Schema migration backfills existing demo albums from their location; existing personal MediaStore rows acquire the current album on the next incremental scan.
+- A normal non-follow-up query starts a new branch. Recognized elliptical prefixes (`Only`, `With`, `What about`, `Which`, and supported Hindi/Hinglish forms) refine the active set and never re-search unrelated media.
+
+Commands run:
+
+```powershell
+.\gradlew.bat :app:testConsumerDebugUnitTest --tests com.askphotos.android.ResultSetPlanPatchResolverTest --tests com.askphotos.android.GalleryFilterEvaluatorTest --tests com.askphotos.android.DeterministicPlanOverlayTest :app:assembleConsumerDebugAndroidTest
+powershell -ExecutionPolicy Bypass -File C:\Users\anupk\.codex\skills\android-build-install\scripts\build_install_android.ps1 -Root C:\Users\anupk\Documents\git\askphotos\android -Module :app -Variant ConsumerDebug -Serial <masked>
+adb -s <masked> shell am instrument -w -r -e class com.askphotos.android.GalleryRoomMigrationTest,com.askphotos.android.ResultSetPersistenceDatabaseTest,com.askphotos.android.PersistentFollowUpUiTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+adb -s <masked> shell am force-stop com.askphotos.android
+adb -s <masked> shell am start -n com.askphotos.android/.MainActivity
+.\gradlew.bat --no-parallel :app:testOfflineDemoDebugUnitTest
+.\gradlew.bat --no-parallel :app:lintOfflineDemoDebug
+.\gradlew.bat --no-parallel :app:lintConsumerDebug
+python C:\Users\anupk\.codex\skills\android-device-diagnostics\scripts\android_diagnostics.py --serial <masked> --package com.askphotos.android --minutes 15 --keywords "AndroidRuntime,FATAL,ANR,OutOfMemory,result_set,Room,SQLite,PlanPatch" --max-lines 120 --out build\device-artifacts\phase8-follow-up\diagnostics
+```
+
+Unit/instrumented/device results:
+
+- Final two-flavor JVM gate: 23 suites / 77 tests per flavor (154 flavored executions), 0 failures, 0 errors, 0 skipped.
+- Offline and consumer lint each passed sequentially with 0 errors and 49 non-blocking warnings. A combined invocation first hit the already documented Android Lint detector concurrency crash in lint analysis; no product diagnostic was emitted and no check was disabled.
+- Consumer debug built and installed successfully on the sole connected Samsung SM-F966B, Android 16/API 36, arm64-v8a, SM8750. App-private data and the installed E2B pack were preserved.
+- Connected migration, isolated persistence/reopen, and real Compose two-turn acceptance: 3 tests passed in 34.719 seconds.
+- The UI acceptance asked `Show bicycles`, used `Refine these results`, then asked `Which is the best one?`. The second result IDs were contained entirely within the first result set, its persisted parent equaled the first app-created result-set ID, and no unrelated media entered the refinement.
+- The migration test proves legacy v3 data reaches v9, all new tables exist, and a legacy demo album is backfilled.
+- A forced process stop/start restored `Follow-up scope: 2 saved results` from Room. The post-restart UI hierarchy and screenshot were captured and visually inspected.
+- Package-scoped diagnostics found no app `FATAL EXCEPTION`, ANR, `OutOfMemoryError`, or SQLite exception marker.
+- The final album-backfill-only repair was rebuilt/reinstalled and its connected migration regression passed again in 0.042 seconds.
+- No shared gallery was seeded or changed. Tests used bundled CC0 demo assets and isolated/app-private query databases only.
+
+Artifacts:
+
+- `build/device-artifacts/phase8-follow-up/instrumentation.txt`
+- `build/device-artifacts/phase8-follow-up/migration-final.txt`
+- `build/device-artifacts/phase8-follow-up/ui-after-process-restart.xml`
+- `build/device-artifacts/phase8-follow-up/after-process-restart.png`
+- `build/device-artifacts/phase8-follow-up/full-gate.log` (retained combined-lint detector crash)
+- `build/device-artifacts/phase8-follow-up/offline-unit.log`
+- `build/device-artifacts/phase8-follow-up/offline-lint.log`
+- `build/device-artifacts/phase8-follow-up/consumer-lint.log`
+- `build/device-artifacts/phase8-follow-up/diagnostics/20260722_031628/`
+- `android/app/build/reports/tests/testOfflineDemoDebugUnitTest/`
+- `android/app/build/reports/tests/testConsumerDebugUnitTest/`
+- `android/app/build/reports/lint-results-offlineDemoDebug.html`
+- `android/app/build/reports/lint-results-consumerDebug.html`
+
+Failures and limitations:
+
+- This proves persisted result-set scoping, a quality-sort patch, stale-parent rejection, and process-restart restoration. It does not yet prove the full acceptance chain `Singapore -> Only Marina Bay -> What about last year` on a seeded dated/GPS corpus.
+- The connected behavior ran with the installed consumer app and preserved E2B pack, but this test does not expose a planner-backend trace assertion; it proves the product result-set invariant regardless of real-model or safe-fallback planner path.
+- `PlanPatch` currently supports bounded app-recognized elliptical refinements. Rich replacement semantics for arbitrary anaphora, explicit filter-chip editing, and stale-session expiry UX remain incomplete.
+- Event memory is still day-based. GPS/time-gap/album/people event clustering, event prototypes, merge/split corrections, and place-entity resolution remain incomplete.
+- Video keyframes, identity embeddings/clustering, database encryption, Macrobenchmark coverage, and sustained 5k/20k acceptance remain incomplete.
+
+Next phase:
+
+- Implement richer event compilation (time gaps, album continuity, GPS distance, user correction precedence) and then run the seeded Singapore/Marina Bay/timeline follow-up chain as a separate acceptance slice.

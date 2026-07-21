@@ -38,6 +38,7 @@ class MediaImporter(private val context: Context) {
             var duration: Long? = null
             var width = 0
             var height = 0
+            var album = ""
             val projection = arrayOf(
                 OpenableColumns.DISPLAY_NAME,
                 OpenableColumns.SIZE,
@@ -59,6 +60,13 @@ class MediaImporter(private val context: Context) {
                     if (cursor.moveToFirst()) duration = cursor.columnLong(MediaStore.Video.VideoColumns.DURATION)
                 }
             }
+            if (source == MediaSource.MEDIA_STORE) {
+                album = runCatching {
+                    resolver.query(uri, arrayOf(MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) cursor.columnText(MediaStore.MediaColumns.RELATIVE_PATH).toAlbumName() else ""
+                    }.orEmpty()
+                }.getOrDefault("")
+            }
             ImportedMedia(
                 stableId = "uri-${sha256(uri.toString())}",
                 uri = uri.toString(),
@@ -71,6 +79,7 @@ class MediaImporter(private val context: Context) {
                 width = width,
                 height = height,
                 sizeBytes = size,
+                album = album,
             )
         }.getOrNull()
     }
@@ -91,6 +100,7 @@ class MediaImporter(private val context: Context) {
             add(MediaStore.MediaColumns.DATE_MODIFIED)
             add(MediaStore.MediaColumns.WIDTH)
             add(MediaStore.MediaColumns.HEIGHT)
+            add(MediaStore.MediaColumns.RELATIVE_PATH)
             if (kind == MediaKind.IMAGE) add(MediaStore.Images.ImageColumns.DATE_TAKEN)
             if (kind == MediaKind.VIDEO) {
                 add(MediaStore.Video.VideoColumns.DATE_TAKEN)
@@ -121,6 +131,7 @@ class MediaImporter(private val context: Context) {
                             width = cursor.columnLong(MediaStore.MediaColumns.WIDTH)?.toInt() ?: 0,
                             height = cursor.columnLong(MediaStore.MediaColumns.HEIGHT)?.toInt() ?: 0,
                             sizeBytes = cursor.columnLong(MediaStore.MediaColumns.SIZE) ?: 0,
+                            album = cursor.columnText(MediaStore.MediaColumns.RELATIVE_PATH).toAlbumName(),
                         ),
                     )
                 }
@@ -152,6 +163,12 @@ class MediaImporter(private val context: Context) {
         val index = getColumnIndex(name)
         return if (index < 0 || isNull(index)) null else getLong(index)
     }
+
+    private fun String?.toAlbumName(): String = this
+        ?.trim('/')
+        ?.substringAfterLast('/')
+        ?.take(160)
+        .orEmpty()
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
