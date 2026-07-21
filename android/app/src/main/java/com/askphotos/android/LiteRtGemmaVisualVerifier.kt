@@ -3,7 +3,6 @@ package com.askphotos.android
 import android.content.Context
 import android.os.SystemClock
 import com.google.ai.edge.litertlm.Backend
-import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
@@ -11,6 +10,7 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -81,6 +81,7 @@ class LiteRtGemmaVisualVerifier(
                                     )
                                 }
                             }.onFailure { error ->
+                                if (error is CancellationException) throw error
                                 failures += VerificationFailure(hit.item.id, sanitize(error))
                             }
                         }
@@ -112,6 +113,8 @@ class LiteRtGemmaVisualVerifier(
                     )
                 }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Throwable) {
             failedBeforeInference(started, bounded.size, sanitize(error))
         }
@@ -144,18 +147,19 @@ class LiteRtGemmaVisualVerifier(
         """.trimIndent()
     }
 
-    private fun generate(engine: Engine, imageBytes: ByteArray, prompt: String): String {
+    private suspend fun generate(engine: Engine, imageBytes: ByteArray, prompt: String): String {
         val config = ConversationConfig(
             samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = 23),
             extraContext = mapOf("enable_thinking" to false),
         )
-        return engine.createConversation(config).use { conversation ->
-            val message = conversation.sendMessage(
-                Contents.of(Content.ImageBytes(imageBytes), Content.Text(prompt)),
-                extraContext = mapOf("enable_thinking" to false),
-            )
-            message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
-        }
+        return engine.generateTextCancellable(
+            config,
+            Contents.of(
+                com.google.ai.edge.litertlm.Content.ImageBytes(imageBytes),
+                com.google.ai.edge.litertlm.Content.Text(prompt),
+            ),
+            mapOf("enable_thinking" to false),
+        )
     }
 
     private fun createEngine(path: String): InitializedVerificationEngine {

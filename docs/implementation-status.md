@@ -1452,3 +1452,72 @@ Limitations and next phase:
 - This closes the seeded no-fabrication query but does not add progressive initial/verified UI states.
 - Merchant matching is a conservative normalized substring constraint. Alias/entity resolution for merchant variants needs a later document-entity evaluation rather than silent fuzzy relaxation.
 - Next narrow slice: progressive query execution state and cancellation, followed separately by opt-in people/events/follow-up work.
+
+## Phase 7D — progressive results and cancellable inference (22 July 2026)
+
+Status: **Implemented, installed, and verified on the connected physical device. The Ask screen now consumes the repository's real execution flow, shows local candidates before bounded verification/answer composition finishes, exposes a Cancel action, and never publishes a cancelled partial answer. Cancellation is propagated into the active LiteRT-LM conversation through `Conversation.cancelProcess()` and is rethrown through planner, verifier, and composer boundaries instead of being converted into a deterministic fallback.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/GalleryViewModel.kt`
+- `android/app/src/main/java/com/askphotos/android/MainActivity.kt`
+- `android/app/src/main/java/com/askphotos/android/LiteRtConversationRunner.kt`
+- `android/app/src/main/java/com/askphotos/android/LiteRtLmQueryPlanner.kt`
+- `android/app/src/main/java/com/askphotos/android/LiteRtGemmaVisualVerifier.kt`
+- `android/app/src/main/java/com/askphotos/android/LiteRtGemmaGroundedAnswerComposer.kt`
+- `android/app/src/test/java/com/askphotos/android/QueryProgressUiReducerTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/ProgressiveQueryUiTest.kt`
+
+Architecture decisions:
+
+- `GalleryViewModel` collects the typed `QueryProgress` flow on a background dispatcher and reduces `Understanding`, `PlanReady`, `InitialResults`, `Verifying`, `ComposingAnswer`, and `Completed` into explicit UI state.
+- The screen renders up to eight early local candidates with a warning that verification may reorder or remove them. Only `Completed` replaces the saved result set and navigates to the final Results screen.
+- A generation token prevents a cancelled/stale flow from overwriting a newer query. Cancelling retains the previous completed result set, clears transient candidates, returns the Ask action to idle, and displays `Query cancelled; no partial answer was saved`.
+- The LiteRT bridge registers a coroutine cancellation handler before blocking decoding. The handler calls the native `Conversation.cancelProcess()` API; the conversation is then closed in `finally` and the central model lease is released by structured concurrency.
+- `CancellationException` is explicitly rethrown at all three model stages. It cannot be swallowed by the verifier's per-candidate `runCatching`, planner fallback, or grounded-answer fallback.
+
+Commands run:
+
+```powershell
+$env:ANDROID_HOME=<detected-sdk>; $env:ANDROID_SDK_ROOT=<detected-sdk>
+.\gradlew.bat :app:testConsumerDebugUnitTest --tests com.askphotos.android.QueryProgressUiReducerTest :app:compileConsumerDebugKotlin
+.\gradlew.bat :app:testConsumerDebugUnitTest --tests com.askphotos.android.QueryProgressUiReducerTest :app:assembleConsumerDebugAndroidTest
+powershell -ExecutionPolicy Bypass -File C:\Users\anupk\.codex\skills\android-build-install\scripts\build_install_android.ps1 -Root C:\Users\anupk\Documents\git\askphotos\android -Module :app -Variant ConsumerDebug -Serial <masked>
+adb -s <masked> install -r -t android\app\build\outputs\apk\androidTest\consumer\debug\app-consumer-debug-androidTest.apk
+adb -s <masked> shell am instrument -w -r -e class com.askphotos.android.ProgressiveQueryUiTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+.\gradlew.bat --no-parallel :app:testOfflineDemoDebugUnitTest :app:testConsumerDebugUnitTest :app:lintOfflineDemoDebug :app:lintConsumerDebug
+python C:\Users\anupk\.codex\skills\android-device-diagnostics\scripts\android_diagnostics.py --serial <masked> --package com.askphotos.android --minutes 10 --keywords "AndroidRuntime,FATAL,ANR,OutOfMemory,LiteRtLm,cancel" --max-lines 120 --out build\device-artifacts\phase7-progressive-query\diagnostics --screenshot
+```
+
+Unit/instrumented/device results:
+
+- Focused reducer test: 2 tests passed. It verifies early-hit retention through verification and that completion atomically clears transient state and opens the authoritative final result.
+- Final two-flavor JVM gate: 20 suites / 68 tests per flavor (136 flavored executions), 0 failures, 0 errors, 0 skipped.
+- Offline and consumer lint tasks passed with 0 errors. Each report retains 49 non-blocking warnings, predominantly pinned-dependency update notices; no lint check was disabled.
+- Consumer debug build/install succeeded on the sole connected Samsung SM-F966B, Android 16/API 36, arm64-v8a, SM8750. Existing app data and the verified E2B model pack were preserved.
+- Final connected `ProgressiveQueryUiTest`: 1 test passed in 1.832 seconds. It entered a hard visual query through the real Compose UI, observed the active Cancel control, cancelled, asserted the explicit no-partial-answer state, and asserted that Ask was enabled for another query.
+- The first connected assertion found the Cancel semantics node but failed `assertIsDisplayed` because it was below the lazy-grid viewport. The test was corrected to `performScrollTo()` and the unchanged product behavior passed on the single allowed repair cycle.
+- Post-test package-scoped diagnostics found no app process left running and no app `FATAL EXCEPTION`, ANR, or `OutOfMemoryError` marker. The instrumentation lifecycle's normal process teardown is present in the raw log.
+
+Artifacts:
+
+- `build/device-artifacts/phase7-progressive-query/instrumentation.txt` (retained first failed UI assertion)
+- `build/device-artifacts/phase7-progressive-query/instrumentation-retry.txt` (passing connected result)
+- `build/device-artifacts/phase7-progressive-query/instrumentation-final.txt` (passing final installed runtime)
+- `build/device-artifacts/phase7-progressive-query/diagnostics/20260722_022819/`
+- `android/app/build/reports/tests/testOfflineDemoDebugUnitTest/`
+- `android/app/build/reports/tests/testConsumerDebugUnitTest/`
+- `android/app/build/reports/lint-results-offlineDemoDebug.html`
+- `android/app/build/reports/lint-results-consumerDebug.html`
+
+Failures and limitations:
+
+- The connected UI assertion proves cancellation state, re-query readiness, and absence of a published partial result. It does not report a native decoder cancellation latency percentile; that needs a dedicated repeated real-E2B benchmark with an inference-start signal.
+- Early-candidate rendering is covered by the pure reducer test. A device screenshot during the transient early-results window was not captured because this query was cancelled during understanding; transient visual QA remains for the seeded verified-query acceptance run.
+- The diagnostics screenshot was captured after instrumentation teardown and is retained only as a run artifact, not as proof of the transient query UI.
+- Opt-in reviewed people clusters, event/entity memory, result-set `PlanPatch` follow-ups, video keyframes, and 5k/20k sustained acceptance remain incomplete.
+- E4B remains an honest skip; selection/download support exists, but no compatible E4B pack has been installed or benchmarked on this device.
+
+Next phase:
+
+- Keep the next slice separate: implement user-controlled people-index opt-in and reset enforcement first, then event/result-set follow-ups in a later slice.

@@ -387,7 +387,36 @@ private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Forest)
                         Spacer(Modifier.height(10.dp))
                         Text(status, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(
+                            onClick = viewModel::cancelQuery,
+                            modifier = Modifier.testTag("cancel-query").semantics { contentDescription = "Cancel query" },
+                        ) { Text("Cancel") }
                     }
+                }
+            }
+        }
+
+        if (state.progressiveHits.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column {
+                    Text("Early candidates", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Forest)
+                    Text(
+                        "These local matches may be reordered or removed after verification.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+            items(state.progressiveHits.take(8), key = { "progress-${it.item.id}" }) { hit ->
+                ResultTile(hit, onClick = { viewModel.showEvidence(hit) })
+            }
+        }
+
+        state.operationMessage?.takeIf { state.executionStatus == null }?.let { message ->
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Surface(color = Lime, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                    Text(message, Modifier.padding(14.dp), color = Forest, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

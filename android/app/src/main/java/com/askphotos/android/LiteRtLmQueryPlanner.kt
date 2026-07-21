@@ -1,12 +1,12 @@
 package com.askphotos.android
 
 import com.google.ai.edge.litertlm.Backend
-import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -101,6 +101,8 @@ class LiteRtLmQueryPlanner(
                     )
                 }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (load: GemmaModelLoadFailure) {
             modelPacks.rollbackAfterLoadFailure(path)
             fallbackTrace(query, activeResultIds, started, load.message ?: "Gemma load failed")
@@ -109,15 +111,12 @@ class LiteRtLmQueryPlanner(
         }
     }
 
-    private fun generate(engine: Engine, prompt: String): String {
+    private suspend fun generate(engine: Engine, prompt: String): String {
         val config = ConversationConfig(
             samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = 17),
             extraContext = mapOf("enable_thinking" to false),
         )
-        return engine.createConversation(config).use { conversation ->
-            val message = conversation.sendMessage(prompt, extraContext = mapOf("enable_thinking" to false))
-            message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
-        }
+        return engine.generateTextCancellable(config, prompt, mapOf("enable_thinking" to false))
     }
 
     private fun createEngine(path: String): InitializedPlannerEngine {

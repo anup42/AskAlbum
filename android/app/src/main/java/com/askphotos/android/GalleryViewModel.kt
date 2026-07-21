@@ -7,19 +7,27 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 enum class AppDestination { ONBOARDING, GALLERY, ASK, RESULTS, INDEX_MANAGER, PRIVACY }
+
+enum class QueryExecutionStage { UNDERSTANDING, SEARCHING, INITIAL_RESULTS, VERIFYING, COMPOSING }
 
 data class GalleryUiState(
     val loading: Boolean = true,
     val error: String? = null,
     val query: String = "",
     val executionStatus: String? = null,
+    val executionStage: QueryExecutionStage? = null,
+    val progressivePlan: GalleryQueryPlan? = null,
+    val progressiveHits: List<SearchHit> = emptyList(),
     val outcome: SearchOutcome? = null,
     val items: List<GalleryItem> = emptyList(),
     val index: IndexSummary = IndexSummary(),
@@ -38,6 +46,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val modelDownloader = askPhotosApplication.services.modelDownloader
     private val retrievalPacks = askPhotosApplication.services.retrievalModelPackManager
     private var modelMonitorJob: Job? = null
+    private var queryJob: Job? = null
+    private var queryGeneration = 0L
     var state by mutableStateOf(GalleryUiState())
         private set
 
@@ -180,21 +190,65 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun ask(query: String = state.query) {
-        if (query.isBlank() || state.executionStatus != null) return
-        state = state.copy(query = query, executionStatus = "Compiling a safe local plan…", selectedEvidence = null)
-        viewModelScope.launch {
-            delay(120)
-            state = state.copy(executionStatus = "Scanning indexed evidence on this phone…")
-            val previousIds = state.outcome?.hits?.map { it.item.id }?.toSet()
-            val result = runCatching {
-                withContext(Dispatchers.Default) { repository.search(query, previousIds) }
-            }
-            result.onSuccess { outcome ->
-                state = state.copy(outcome = outcome, executionStatus = null, destination = AppDestination.RESULTS)
-            }.onFailure { error ->
-                state = state.copy(executionStatus = null, error = error.message ?: "Search failed")
+        if (query.isBlank() || queryJob?.isActive == true) return
+        val previousIds = state.outcome?.hits?.map { it.item.id }?.toSet()
+        val generation = ++queryGeneration
+        state = state.copy(
+            query = query,
+            executionStatus = "Understanding your question…",
+            executionStage = QueryExecutionStage.UNDERSTANDING,
+            progressivePlan = null,
+            progressiveHits = emptyList(),
+            selectedEvidence = null,
+            operationMessage = null,
+            error = null,
+        )
+        queryJob = viewModelScope.launch {
+            try {
+                repository.searchProgressive(query, previousIds)
+                    .flowOn(Dispatchers.Default)
+                    .collect { progress ->
+                        if (generation == queryGeneration) state = QueryProgressUiReducer.reduce(state, progress)
+                    }
+            } catch (cancelled: CancellationException) {
+                if (generation == queryGeneration) {
+                    state = state.copy(
+                        executionStatus = null,
+                        executionStage = null,
+                        progressivePlan = null,
+                        progressiveHits = emptyList(),
+                        operationMessage = "Query cancelled; no partial answer was saved",
+                    )
+                }
+                throw cancelled
+            } catch (error: Throwable) {
+                if (generation == queryGeneration) {
+                    state = state.copy(
+                        executionStatus = null,
+                        executionStage = null,
+                        progressivePlan = null,
+                        progressiveHits = emptyList(),
+                        error = error.message ?: "Search failed",
+                    )
+                }
+            } finally {
+                if (generation == queryGeneration) queryJob = null
             }
         }
+    }
+
+    fun cancelQuery() {
+        val active = queryJob?.takeIf { it.isActive } ?: return
+        queryGeneration++
+        queryJob = null
+        state = state.copy(
+            executionStatus = null,
+            executionStage = null,
+            progressivePlan = null,
+            progressiveHits = emptyList(),
+            operationMessage = "Query cancelled; no partial answer was saved",
+        )
+        active.cancel(CancellationException("Cancelled by the user"))
     }
 
     fun showEvidence(hit: SearchHit) {
@@ -241,6 +295,42 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             GemmaDownloadState.QUEUED,
             GemmaDownloadState.DOWNLOADING,
             GemmaDownloadState.VERIFYING,
+        )
+    }
+}
+
+internal object QueryProgressUiReducer {
+    fun reduce(state: GalleryUiState, progress: QueryProgress): GalleryUiState = when (progress) {
+        QueryProgress.Understanding -> state.copy(
+            executionStatus = "Understanding your question…",
+            executionStage = QueryExecutionStage.UNDERSTANDING,
+        )
+        is QueryProgress.PlanReady -> state.copy(
+            executionStatus = "Searching indexed evidence on this phone…",
+            executionStage = QueryExecutionStage.SEARCHING,
+            progressivePlan = progress.plan,
+        )
+        is QueryProgress.InitialResults -> state.copy(
+            executionStatus = "Found ${progress.hits.size} possible ${if (progress.hits.size == 1) "match" else "matches"}",
+            executionStage = QueryExecutionStage.INITIAL_RESULTS,
+            progressivePlan = progress.plan,
+            progressiveHits = progress.hits,
+        )
+        is QueryProgress.Verifying -> state.copy(
+            executionStatus = "Checking ${progress.candidateCount} likely ${if (progress.candidateCount == 1) "match" else "matches"} with Gemma…",
+            executionStage = QueryExecutionStage.VERIFYING,
+        )
+        QueryProgress.ComposingAnswer -> state.copy(
+            executionStatus = "Composing an evidence-grounded answer…",
+            executionStage = QueryExecutionStage.COMPOSING,
+        )
+        is QueryProgress.Completed -> state.copy(
+            outcome = progress.outcome,
+            executionStatus = null,
+            executionStage = null,
+            progressivePlan = null,
+            progressiveHits = emptyList(),
+            destination = AppDestination.RESULTS,
         )
     }
 }

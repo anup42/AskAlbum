@@ -2,13 +2,13 @@ package com.askphotos.android
 
 import android.os.SystemClock
 import com.google.ai.edge.litertlm.Backend
-import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 
 data class GroundedAnswerCompositionTrace(
@@ -86,6 +86,8 @@ class LiteRtGemmaGroundedAnswerComposer(
                     )
                 }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (load: GemmaModelLoadFailure) {
             modelPacks.rollbackAfterLoadFailure(path)
             fallback(baseline, started, "The on-device answer model could not be loaded")
@@ -104,15 +106,12 @@ class LiteRtGemmaGroundedAnswerComposer(
         Evidence packet: ${packet.toPromptJson()}
     """.trimIndent()
 
-    private fun generate(engine: Engine, prompt: String): String {
+    private suspend fun generate(engine: Engine, prompt: String): String {
         val config = ConversationConfig(
             samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = 29),
             extraContext = mapOf("enable_thinking" to false),
         )
-        return engine.createConversation(config).use { conversation ->
-            val message = conversation.sendMessage(prompt, extraContext = mapOf("enable_thinking" to false))
-            message.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
-        }
+        return engine.generateTextCancellable(config, prompt, mapOf("enable_thinking" to false))
     }
 
     private fun createEngine(path: String): InitializedAnswerEngine {
