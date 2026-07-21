@@ -7,6 +7,8 @@ from pathlib import Path
 
 from PIL import Image, ImageEnhance
 
+from fixture_metadata import save_raster_with_metadata
+
 
 def generate(core: Path, output: Path, count: int) -> None:
     manifest = json.loads((core / "gallery-manifest.json").read_text(encoding="utf-8"))
@@ -25,10 +27,19 @@ def generate(core: Path, output: Path, count: int) -> None:
             factor = 0.88 + ((index * 17) % 25) / 100
             image = ImageEnhance.Brightness(image).enhance(factor)
             filename = f"stress_{index:05d}.jpg"
-            image.save(media / filename, "JPEG", quality=70 + index % 16, optimize=True)
+            save_raster_with_metadata(
+                image,
+                media / filename,
+                "JPEG",
+                source["captured_at"],
+                source.get("gps"),
+                quality=70 + index % 16,
+                optimize=True,
+            )
         mapping.append({
             "id": f"stress_{index:05d}", "filename": filename, "source_id": source["id"],
             "event": source.get("album"), "captured_at": source.get("captured_at"),
+            "gps": source.get("gps"),
         })
     (output / "stress-mapping.json").write_text(json.dumps(mapping, indent=2), encoding="utf-8")
     digest = hashlib.sha256((output / "stress-mapping.json").read_bytes()).hexdigest()

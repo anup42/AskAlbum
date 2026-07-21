@@ -3,6 +3,7 @@ package com.askphotos.android
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
+import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -71,19 +72,22 @@ class MediaImporter(private val context: Context) {
                     }.orEmpty()
                 }.getOrDefault("")
             }
+            val embedded = readEmbeddedMetadata(uri, mime)
             ImportedMedia(
                 stableId = "uri-${sha256(uri.toString())}",
                 uri = uri.toString(),
                 displayName = name,
                 mimeType = mime,
                 source = source,
-                capturedAt = capturedAt ?: modifiedAt,
+                capturedAt = embedded?.capturedAt ?: capturedAt ?: modifiedAt,
                 modifiedAt = modifiedAt,
                 durationMs = duration,
                 width = width,
                 height = height,
                 sizeBytes = size,
                 album = album,
+                latitude = embedded?.latitude,
+                longitude = embedded?.longitude,
             )
         }.getOrNull()
     }
@@ -121,6 +125,7 @@ class MediaImporter(private val context: Context) {
                     val uri = ContentUris.withAppendedId(collection, id)
                     val mime = cursor.columnText(MediaStore.MediaColumns.MIME_TYPE)
                         ?: if (kind == MediaKind.VIDEO) "video/*" else "image/*"
+                    val embedded = if (kind == MediaKind.IMAGE) readEmbeddedMetadata(uri, mime) else null
                     add(
                         ImportedMedia(
                             stableId = "mediastore-${kind.name.lowercase()}-$id",
@@ -128,7 +133,7 @@ class MediaImporter(private val context: Context) {
                             displayName = cursor.columnText(MediaStore.MediaColumns.DISPLAY_NAME) ?: "Media $id",
                             mimeType = mime,
                             source = MediaSource.MEDIA_STORE,
-                            capturedAt = cursor.columnLong(MediaStore.Images.ImageColumns.DATE_TAKEN)
+                            capturedAt = embedded?.capturedAt ?: cursor.columnLong(MediaStore.Images.ImageColumns.DATE_TAKEN)
                                 ?: cursor.columnLong(MediaStore.MediaColumns.DATE_ADDED)?.times(1000),
                             modifiedAt = cursor.columnLong(MediaStore.MediaColumns.DATE_MODIFIED)?.times(1000),
                             durationMs = if (kind == MediaKind.VIDEO) cursor.columnLong(durationColumn) else null,
@@ -136,6 +141,8 @@ class MediaImporter(private val context: Context) {
                             height = cursor.columnLong(MediaStore.MediaColumns.HEIGHT)?.toInt() ?: 0,
                             sizeBytes = cursor.columnLong(MediaStore.MediaColumns.SIZE) ?: 0,
                             album = cursor.columnText(MediaStore.MediaColumns.RELATIVE_PATH).toAlbumName(),
+                            latitude = embedded?.latitude,
+                            longitude = embedded?.longitude,
                         ),
                     )
                 }
@@ -157,6 +164,36 @@ class MediaImporter(private val context: Context) {
     }
 
     private data class CollectionScan(val items: List<ImportedMedia>, val completed: Boolean)
+
+    private fun readEmbeddedMetadata(uri: Uri, mimeType: String): EmbeddedMetadata? {
+        if (!mimeType.startsWith("image/")) return null
+        return runCatching {
+            resolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                val exif = ExifInterface(descriptor.fileDescriptor)
+                val capturedAt = ExifDateParser.parse(
+                    exif.getAttribute("DateTimeOriginal")
+                        ?: exif.getAttribute("DateTimeDigitized")
+                        ?: exif.getAttribute("DateTime"),
+                    exif.getAttribute("OffsetTimeOriginal")
+                        ?: exif.getAttribute("OffsetTimeDigitized")
+                        ?: exif.getAttribute("OffsetTime"),
+                )
+                val coordinates = FloatArray(2)
+                val hasCoordinates = exif.getLatLong(coordinates)
+                EmbeddedMetadata(
+                    capturedAt = capturedAt,
+                    latitude = coordinates[0].toDouble().takeIf { hasCoordinates },
+                    longitude = coordinates[1].toDouble().takeIf { hasCoordinates },
+                ).takeIf { it.capturedAt != null || hasCoordinates }
+            }
+        }.getOrNull()
+    }
+
+    private data class EmbeddedMetadata(
+        val capturedAt: Long?,
+        val latitude: Double?,
+        val longitude: Double?,
+    )
 
     private fun android.database.Cursor.columnText(name: String): String? {
         val index = getColumnIndex(name)

@@ -15,6 +15,7 @@ from PIL import Image, ImageEnhance, ImageOps
 
 from generate_synthetic_documents import generate as generate_synthetic
 from generate_stress_gallery import generate as generate_stress
+from fixture_metadata import save_raster_with_metadata
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -69,7 +70,13 @@ def download_verified_source(entry: dict[str, object], cache: Path, whitelist: s
     return destination
 
 
-def transformed_copy(source: Path, destination: Path, variant: int) -> None:
+def transformed_copy(
+    source: Path,
+    destination: Path,
+    variant: int,
+    captured_at: str,
+    gps: list[float] | None,
+) -> None:
     with Image.open(source) as opened:
         image = ImageOps.exif_transpose(opened).convert("RGB")
         if variant:
@@ -78,7 +85,15 @@ def transformed_copy(source: Path, destination: Path, variant: int) -> None:
             image = image.crop((inset, inset, width - inset, height - inset))
             image = ImageEnhance.Brightness(image).enhance(0.94 + variant * 0.025)
         image.thumbnail((1280, 1280))
-        image.save(destination, "JPEG", quality=88 - variant, optimize=True)
+        save_raster_with_metadata(
+            image,
+            destination,
+            "JPEG",
+            captured_at,
+            gps,
+            quality=88 - variant,
+            optimize=True,
+        )
 
 
 def build_core(output: Path, config: dict[str, object]) -> None:
@@ -116,12 +131,14 @@ def build_core(output: Path, config: dict[str, object]) -> None:
         for variant in range(4):
             item_id = f"{entry['id']}_v{variant}"
             filename = f"{item_id}.jpg"
-            transformed_copy(source["path"], media / filename, variant)
+            captured_at = (base_time + timedelta(minutes=variant * 7)).isoformat()
             gps = fixture.get("gps")
+            safe_gps = gps if gps and all(value is not None for value in gps) else None
+            transformed_copy(source["path"], media / filename, variant, captured_at, safe_gps)
             items.append({
                 "id": item_id, "filename": filename, "kind": "IMAGE",
-                "captured_at": (base_time + timedelta(minutes=variant * 7)).isoformat(),
-                "gps": gps if gps and all(value is not None for value in gps) else None,
+                "captured_at": captured_at,
+                "gps": safe_gps,
                 "album": fixture["album"], "labels": fixture["labels"],
                 "source_id": entry["id"], "license": entry["license"], "synthetic": False,
             })
@@ -131,10 +148,14 @@ def build_core(output: Path, config: dict[str, object]) -> None:
     for index, record in enumerate(synthetic_records):
         source = synthetic_dir / record["filename"]
         destination = media / record["filename"]
-        shutil.copy2(source, destination)
         captured = datetime(2026, 7, 18, 10, 0, tzinfo=timezone.utc) + timedelta(minutes=index)
         if record["id"] in {"synthetic_boarding_pass", "synthetic_hotel_confirmation", "synthetic_calendar"}:
             captured = datetime(2024, 3, 12, 8, 0, tzinfo=timezone.utc) + timedelta(minutes=index)
+        if record["kind"] == "IMAGE":
+            with Image.open(source) as opened:
+                save_raster_with_metadata(opened.copy(), destination, require_not_none(opened.format), captured.isoformat(), None)
+        else:
+            shutil.copy2(source, destination)
         items.append({
             **record, "captured_at": captured.isoformat(), "gps": None,
             "album": "Synthetic Documents" if record["id"] != "synthetic_people_relation" else "Synthetic People",
@@ -161,6 +182,12 @@ def build_core(output: Path, config: dict[str, object]) -> None:
     count_2024 = sum(1 for item in items if str(item["captured_at"]).startswith("2024") and item["kind"] == "IMAGE")
     (output / "ground-truth-summary.json").write_text(json.dumps({"item_count": len(items), "photo_count_2024": count_2024}, indent=2), encoding="utf-8")
     print(f"Built core gallery with {len(items)} items ({count_2024} images dated 2024) at {output}")
+
+
+def require_not_none(value: str | None) -> str:
+    if value is None:
+        raise RuntimeError("Synthetic raster has no image format")
+    return value
 
 
 def main() -> None:

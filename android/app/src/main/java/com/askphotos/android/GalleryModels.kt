@@ -251,6 +251,8 @@ data class ImportedMedia(
     val height: Int,
     val sizeBytes: Long,
     val album: String = "",
+    val latitude: Double? = null,
+    val longitude: Double? = null,
 )
 
 data class OcrBlockRecord(

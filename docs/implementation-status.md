@@ -1696,7 +1696,7 @@ Next phase:
 
 ## Phase 8C — episodic event compiler and seeded follow-up gate (22 July 2026)
 
-Status: **Core event-memory implementation is complete, built, installed, unit-tested, linted, and its Room migration passed on the physical device. The full seeded `Singapore -> Marina Bay -> last year` acceptance is NOT PASSED. Two bounded repair cycles identified an Android 16 sample-corpus timestamp problem; both run-scoped galleries were safely removed with zero items remaining.**
+Status: **Implemented and passed on the physical device. The event-memory core, Room migration, deterministic EXIF/GPS corpus, direct EXIF metadata ingestion, and the full seeded `Singapore -> Marina Bay -> last year` result-set chain are now verified. The passing run used the installed real Gemma 4 E2B pack and was cleaned with zero test items remaining.**
 
 Files changed:
 
@@ -1709,9 +1709,15 @@ Files changed:
 - `android/app/src/main/java/com/askphotos/android/QueryCompiler.kt`
 - `android/app/src/main/java/com/askphotos/android/DeterministicPlanOverlay.kt`
 - `android/app/src/main/java/com/askphotos/android/MediaImporter.kt`
+- `android/app/src/main/java/com/askphotos/android/ExifDateParser.kt`
 - `android/app/src/debug/java/com/askphotos/android/TestGallerySeederReceiver.kt`
 - `android/app/schemas/com.askphotos.android.GalleryRoomDatabase/10.json`
 - event, temporal-follow-up, retrieval-normalization, migration, and connected acceptance tests under `android/app/src/test` and `android/app/src/androidTest`
+- `tools/sample_gallery/fixture_metadata.py`
+- `tools/sample_gallery/build_sample_gallery.py`
+- `tools/sample_gallery/generate_stress_gallery.py`
+- `tools/sample_gallery/verify_licenses.py`
+- `tools/sample_gallery/test_fixture_metadata.py`
 
 Architecture decisions and fixes:
 
@@ -1720,7 +1726,8 @@ Architecture decisions and fixes:
 - Event retrieval is a weighted hybrid channel. Every event-derived media hit carries an event evidence ID and producer version; broad result diversity still uses event membership.
 - Multiword model terms are tokenized before lexical/event channels, so a valid Gemma term such as `singapore trip` cannot become an unmatchable atomic string.
 - `What about last year?` compiles as a deterministic time-only patch over the active result set. Model-invented semantic filler is removed, and the empty/no-match result is exact rather than fabricated.
-- MediaStore URI inspection now requests `DATE_TAKEN` for MediaStore sources only and treats a capture-date change as an incremental import change. SAF providers are not asked for MediaStore-only columns.
+- MediaStore URI inspection requests `DATE_TAKEN` for MediaStore sources only and treats capture-date/GPS changes as incremental changes. Because Android 16 may leave `datetaken` null even for a valid image, the production importer reads permitted image content with platform `ExifInterface`, prefers `DateTimeOriginal` plus its explicit offset, and persists EXIF GPS. SAF providers are not asked for MediaStore-only columns.
+- Core and stress corpus builders embed deterministic EXIF capture time, offset, and GPS in every generated raster derivative. Corpus verification now fails on a timestamp, offset, or GPS mismatch as well as on license/checksum errors.
 - Google AI Edge Gallery was reviewed as requested. Its current public design emphasizes Gemma 4, LiteRT, local model management/download, local import, and per-device benchmarking. This repository already implements the corresponding E2B-default/E4B-gated Settings flow, resumable WorkManager download, signed/hash-verified app-private installation, local SAF import, and LiteRT-LM runtime boundary; no parallel downloader was added.
 
 Commands run (serial masked):
@@ -1739,6 +1746,14 @@ python tools/device/seed_gallery.py --serial <masked> --gallery build/sample-gal
 python tools/device/sync_seeded_gallery.py --serial <masked> --run-id phase8_events_20260722b --action remove
 python tools/device/cleanup_gallery.py --serial <masked> --run-id phase8_events_20260722b
 adb -s <masked> shell am instrument -w -r -e class com.askphotos.android.GalleryRoomMigrationTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+python tools/sample_gallery/test_fixture_metadata.py
+python tools/sample_gallery/build_sample_gallery.py --profile core --output build/sample-gallery/core
+python tools/sample_gallery/verify_licenses.py --gallery build/sample-gallery/core
+python tools/device/seed_gallery.py --serial <masked> --gallery build/sample-gallery/core --run-id phase8_events_exif_20260722
+python tools/device/sync_seeded_gallery.py --serial <masked> --run-id phase8_events_exif_20260722 --action import
+adb -s <masked> shell am instrument -w -r -e galleryRunId phase8_events_exif_20260722 -e class com.askphotos.android.SeededEventFollowUpAcceptanceTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+python tools/device/sync_seeded_gallery.py --serial <masked> --run-id phase8_events_exif_20260722 --action remove
+python tools/device/cleanup_gallery.py --serial <masked> --run-id phase8_events_exif_20260722
 ```
 
 Unit/instrumented/device results:
@@ -1752,14 +1767,18 @@ Unit/instrumented/device results:
 - Second fresh seeded run proved Android 16 MediaProvider still reported `datetaken=NULL` for the generated JPEG fixture after publication. The acceptance test was therefore not rerun/relaxed after the two-cycle limit.
 - Cleanup was exact and safe. Run A removed 74 database rows and 74 recorded MediaStore URIs; run B had no imported rows and removed its 74 recorded MediaStore URIs. Both reported `remainingCount=0`. No unrelated gallery item was modified or deleted.
 - Package diagnostics and a screenshot are retained under `artifacts/device-runs/phase8_events_20260722a/diagnostics/20260722_034210/`. A temporary diagnostic database copy was deleted from both host and device immediately after aggregate inspection.
+- Final corpus verification passed for 74 gallery items, 17 license records, all generated checksums, and every raster item's EXIF timestamp/offset/GPS contract. Python metadata round-trip tests passed for JPEG and PNG.
+- Final physical-device acceptance passed: 1 test, 0 failures, 64.903 seconds. It independently proved the seeded Singapore records were dated 2024; Q01 returned seeded Singapore items with event evidence; Q02 stayed inside Q01's persisted result set and retained Marina Bay media; Q03 stayed inside Q02's result set, contained no semantic filler, returned no fabricated 2025 match/evidence, and reported `EXACT`.
+- Diagnostics prove the acceptance used the app-private verified `gemma-4-E2B-it.litertlm` pack through LiteRT-LM. No app `FATAL EXCEPTION`, ANR, `OutOfMemoryError`, or SQLite failure appeared in the bounded acceptance window.
+- Final passing-run cleanup removed 74 imported rows and exactly 74 recorded MediaStore URIs; both database and shared-media checks reported `remainingCount=0`.
+- Final diagnostics: `artifacts/device-runs/phase8_events_exif_20260722/diagnostics/20260722_040847/`.
 
 Failures and limitations:
 
-- The full seeded Q01-Q03 event/follow-up gate is **NOT PASSED**. On this Android 16 device, MediaProvider overwrote/ignored `DATE_TAKEN` because the generated JPEG derivatives do not contain matching EXIF capture timestamps. The next repair must embed deterministic EXIF `DateTimeOriginal` (and preferably GPS) while building the sample JPEG corpus, rebuild/pin checksums, then run one fresh seed/import/acceptance/cleanup cycle.
 - Event segmentation currently uses time, album, GPS, and user corrections. People-overlap and learned event prototype vectors remain future work.
 - Event corrections have a tested storage/compiler API but no merge/split/rename UI yet.
 - E4B remains an honest skip because no E4B pack was installed or benchmarked; the connected E2B pack/settings flow was preserved.
 
 Next phase:
 
-- Fix the corpus generator—not the product query test—by writing pinned EXIF timestamps/GPS into generated JPEG derivatives. Re-run the single seeded Q01-Q03 gate, then add correction UI and video keyframe indexing as separate slices.
+- Add event correction UI as a narrow slice, then implement video keyframe indexing separately. Keep the consumer-network/telemetry audit and offlineDemo end-to-end acceptance as an explicit privacy-hardening gate.

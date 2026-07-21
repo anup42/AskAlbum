@@ -80,7 +80,8 @@ class GalleryDatabase(
                 val existing = itemById(db, imported.stableId)
                 val unchanged = existing != null && existing.contentUri == imported.uri &&
                     existing.modifiedAt == imported.modifiedAt && existing.sizeBytes == imported.sizeBytes &&
-                    existing.album == imported.album && existing.capturedAt == imported.capturedAt
+                    existing.album == imported.album && existing.capturedAt == imported.capturedAt &&
+                    existing.latitude == imported.latitude && existing.longitude == imported.longitude
                 if (unchanged) {
                     initializeStages(db, existing, replace = false)
                     return@forEach
@@ -92,8 +93,8 @@ class GalleryDatabase(
                     creator = null,
                     location = "",
                     album = imported.album,
-                    latitude = null,
-                    longitude = null,
+                    latitude = imported.latitude,
+                    longitude = imported.longitude,
                     tags = emptyList(),
                     description = "",
                     license = "Personal media",
