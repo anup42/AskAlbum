@@ -41,12 +41,32 @@ class DeterministicPlanOverlay(
         )
     }
 
-    private fun mergeFilter(model: FilterExpression, deterministic: FilterExpression): FilterExpression = when {
-        deterministic == FilterExpression.True || deterministic == model -> model
-        model == FilterExpression.True -> deterministic
-        model is FilterExpression.And && deterministic in model.clauses -> model
-        model is FilterExpression.And -> FilterExpression.And(model.clauses + deterministic)
-        else -> FilterExpression.And(listOf(model, deterministic))
+    private fun mergeFilter(model: FilterExpression, deterministic: FilterExpression): FilterExpression {
+        val exact = flattenFilter(deterministic)
+        if (exact.isEmpty()) return model
+        val exactSlots = exact.mapTo(mutableSetOf(), ::filterSlot)
+        val retainedModel = flattenFilter(model).filterNot { filterSlot(it) in exactSlots }
+        return composeFilter((retainedModel + exact).distinct())
+    }
+
+    private fun flattenFilter(filter: FilterExpression): List<FilterExpression> = when (filter) {
+        FilterExpression.True -> emptyList()
+        is FilterExpression.And -> filter.clauses.flatMap(::flattenFilter)
+        else -> listOf(filter)
+    }
+
+    private fun composeFilter(clauses: List<FilterExpression>): FilterExpression = when (clauses.size) {
+        0 -> FilterExpression.True
+        1 -> clauses.single()
+        else -> FilterExpression.And(clauses)
+    }
+
+    private fun filterSlot(filter: FilterExpression): String = when (filter) {
+        is FilterExpression.TimeRange -> "time"
+        is FilterExpression.MediaKindIs -> "media-kind"
+        is FilterExpression.AlbumIs -> "album"
+        is FilterExpression.And -> error("AND filters must be flattened before slot comparison")
+        FilterExpression.True -> error("TRUE filters have no replacement slot")
     }
 
     private fun mergeOcrClause(model: OcrClause?, deterministic: OcrClause?): OcrClause? = when {

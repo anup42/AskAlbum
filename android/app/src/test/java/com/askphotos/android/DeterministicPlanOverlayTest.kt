@@ -41,6 +41,31 @@ class DeterministicPlanOverlayTest {
     }
 
     @Test
+    fun exactCalendarYearReplacesModelDateGuessWithoutDuplicatingTimeFilters() {
+        val model = plan(
+            filter = FilterExpression.And(
+                listOf(
+                    FilterExpression.AlbumIs("Favorites"),
+                    FilterExpression.TimeRange(1704067200000, 1735689600000),
+                ),
+            ),
+            place = "goa",
+        )
+
+        val result = overlay.apply("Show Goa photos from 2024", model, null)
+
+        assertEquals(
+            FilterExpression.And(
+                listOf(
+                    FilterExpression.AlbumIs("Favorites"),
+                    FilterExpression.TimeRange(1704067200000, 1735689599999),
+                ),
+            ),
+            result.plan.filter,
+        )
+    }
+
+    @Test
     fun deterministicHardMediaPlaceAndSortOverrideModelGuesses() {
         val model = plan(filter = FilterExpression.True, place = "singapore").copy(
             mediaScope = MediaScope.IMAGES,

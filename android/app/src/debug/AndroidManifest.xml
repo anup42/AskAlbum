@@ -27,5 +27,22 @@
                 <action android:name="com.askphotos.android.test.RESUME_INDEXING" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name=".TestGemmaModelReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.askphotos.android.test.DOWNLOAD_GEMMA" />
+                <action android:name="com.askphotos.android.test.REPORT_GEMMA" />
+                <action android:name="com.askphotos.android.test.CANCEL_GEMMA" />
+            </intent-filter>
+        </receiver>
+        <activity
+            android:name=".TestGemmaDownloadActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:finishOnTaskLaunch="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
     </application>
 </manifest>

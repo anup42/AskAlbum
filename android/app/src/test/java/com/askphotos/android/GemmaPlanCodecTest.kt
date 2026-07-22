@@ -65,5 +65,7 @@ class GemmaPlanCodecTest {
         assertTrue(prompt.contains("\"version\":1"))
         assertTrue(prompt.contains("uninterrupted decimal digits"))
         assertTrue(prompt.contains("Omit optional fields"))
+        assertTrue(prompt.contains("quoted scalar string"))
+        assertTrue(prompt.contains("never be an array or object"))
     }
 }

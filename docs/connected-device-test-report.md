@@ -158,3 +158,16 @@ Latest artifacts:
 - The installed signed q8 SigLIP2 pack remained app-private and recognized. No vector is claimed for this 5k run because background inference was thermally deferred. E2B is not installed on this device.
 - Cleanup was intentionally NOT RUN at the user's request. Future cleanup must use the stored URI manifests and exact run-scoped harness; no broad gallery deletion is permitted.
 - Artifacts: `artifacts/device-runs/fg_core_20260722_f731u/` and `artifacts/device-runs/fg_index5k_20260722/`.
+
+## E2B production download and installation on SM-F731U
+
+- The device has approximately 7.3 GB RAM and selected E2B as its supported/recommended tier. E4B reported unsupported because it requires more physical RAM; no E4B download was attempted.
+- The app's production Settings-equivalent downloader fetched the pinned public LiteRT Community artifact from revision `7fa1d78473894f7e736a21d920c3aa80f950c0db`.
+- Download completed 2,583,085,056/2,583,085,056 bytes in 420.6 seconds. Installation reached `INSTALLED` only after the pinned SHA-256 `ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42` passed and an app-private generation was activated.
+- The final ConsumerDebug build and Android-test APK were installed without clearing app data. A repeated E2B download request returned `INSTALLED` immediately and did not transfer the model again.
+- `GemmaDownloadHarnessTest`: PASS twice, most recently 1 test in 0.059 seconds. Host device tests: 23 PASS. ConsumerDebug app/test assembly: PASS.
+- The initial debug automation attempt correctly exposed Android 16's ban on starting a foreground WorkManager service from a background receiver before any bytes transferred. The final debug harness uses a five-second visible activity trampoline; production Settings already starts from a visible activity. These debug components do not exist in release builds.
+- The device cooled to thermal status 1 and real E2B planner acceptance was run. English and Hindi used GPU E2B with valid plans and no fallback after two generation calls each (24.270 s and 35.910 s wall on the final run). Hinglish still failed the no-fallback assertion after 76.797 s because Gemma emitted unsupported `SemanticSubject.FAMILY`; the strict validator safely selected deterministic fallback.
+- Two repair cycles were applied and tested: `verification` is now explicitly constrained to one scalar enum, and deterministic exact date/media/album slots replace conflicting model guesses instead of duplicating filters. Focused JVM tests pass. No unknown enum was coerced and the acceptance assertion was not weakened; the multilingual E2B planner suite remains FAILED.
+- Thermal returned to MODERATE (2), skin approximately 42.0 C, after the final planner attempt. Grounded-answer/visual-verifier tests and retained 5k heavy indexing were not run. The installed E2B pack, SigLIP2 q8 pack, 83-item core corpus, and 5k stress corpus remain available for continuation.
+- Artifacts: `artifacts/device-runs/model-packs/gemma-e2b-download.json`, `gemma-e2b-status.json`, and `gemma-e4b-status.json`.

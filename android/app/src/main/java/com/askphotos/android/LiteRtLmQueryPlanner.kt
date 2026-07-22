@@ -168,8 +168,9 @@ class LiteRtLmQueryPlanner(
         filter is {"op":"TRUE"}, {"op":"AND","clauses":[]}, {"op":"TIME_RANGE","startEpochMs":null,"endEpochMs":null}, {"op":"MEDIA_KIND","kind":"IMAGE"}, or {"op":"ALBUM","album":"name"}.
         A semantic clause has text, optional canonicalText, polarity POSITIVE|NEGATIVE, hardness HARD|SOFT, subject WHOLE_MEDIA|PERSON|EVENT|DOCUMENT, optional relationToPerson.
         A people clause has personId, mustBePresent, hardness. ocrClause has optional query,merchant,requestedField.
+        verification is exactly one quoted scalar enum string: AUTO, REQUIRED, or NEVER. Never emit an array or object there.
         Preserve the user's language in text and add a short English canonicalText when useful for retrieval.
-        Mark relational, negative, comparative, or fine-grained visual conditions as verification REQUIRED. Do not relax HARD constraints.
+        Set verification to REQUIRED only for relational, negative, comparative, or fine-grained visual conditions. Otherwise use AUTO. Do not relax HARD constraints.
         Query: ${JSONObject.quote(query)}
     """.trimIndent()
 }

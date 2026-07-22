@@ -74,6 +74,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         Original query: ${JSONObject.quote(query)}
         Invalid response: ${JSONObject.quote(invalidResponse.take(1200))}
         Required shape: {"version":1,"intent":"FIND_MEDIA","mediaScope":"IMAGES","filter":{"op":"TRUE"},"semanticClauses":[],"peopleClauses":[],"grouping":"NONE","sort":"RELEVANCE","verification":"AUTO","answerMode":"RESULTS_AND_SUMMARY","limit":100,"terms":["search phrase"]}
+        The root field "verification" must be exactly one quoted scalar string: "AUTO", "REQUIRED", or "NEVER". It must never be an array or object.
         Use integer version 1. Copy numbers as uninterrupted decimal digits. Omit optional fields instead of guessing them.
         Do not add SQL, code, paths, URIs, tool names, result IDs, or fields outside the supplied schema.
     """.trimIndent()

@@ -2546,3 +2546,67 @@ Failures and limitations:
 Next phase:
 
 - When thermal status is LIGHT/NONE, resume the retained 5k run, measure staged progress and vector coverage without reseeding or reimporting, then run vector search benchmarks. Keep the 20k device gate separate.
+
+## Phase 6D - Reproducible Settings-equivalent Gemma download and E2B installation (22 July 2026)
+
+Status: **PASSED for the pinned E2B production downloader, checksum-verified activation, idempotent repeat request, and honest E4B device rejection on Samsung SM-F731U. Real E2B planner acceptance was attempted after cooling: English and Hindi passed on GPU, but Hinglish still fell back after the bounded repair, so the multilingual suite remains FAILED.**
+
+Files changed:
+
+- `android/app/src/debug/AndroidManifest.xml`
+- `android/app/src/debug/java/com/askphotos/android/TestGemmaDownloadActivity.kt`
+- `android/app/src/debug/java/com/askphotos/android/TestGemmaModelReceiver.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/GemmaDownloadHarnessTest.kt`
+- `android/app/src/main/java/com/askphotos/android/GemmaPlanCodec.kt`
+- `android/app/src/main/java/com/askphotos/android/LiteRtLmQueryPlanner.kt`
+- `android/app/src/main/java/com/askphotos/android/DeterministicPlanOverlay.kt`
+- `android/app/src/test/java/com/askphotos/android/GemmaPlanCodecTest.kt`
+- `android/app/src/test/java/com/askphotos/android/DeterministicPlanOverlayTest.kt`
+- `tools/device/install_model_pack.py`
+- `tools/device/test_install_model_pack.py`
+
+Architecture decisions:
+
+- The obsolete host script copied a raw `.litertlm` file to `files/models/gemma.litertlm`, a path no current runtime loads. It could therefore report success without installing a usable pack and has been removed.
+- The replacement drives the same production `GemmaModelDownloader` and `ModelPackManager` used by Settings. Catalog revision, size, and SHA-256 remain compiled and pinned; activation happens only after the entire artifact hashes correctly and is moved into an app-private generation.
+- Debug builds expose correlated download/report/cancel actions only. Download starts through a short visible debug activity because Android 12+ forbids starting WorkManager's foreground service from a background receiver. Report and cancel remain bounded explicit broadcasts. Release builds do not contain these debug components.
+- The host harness never supplies a path, URI, URL, hash, or repository to the app. It can select only the `E2B` or `E4B` catalog enum, preventing arbitrary model/tool arguments.
+- A repeat E2B download request checks installed generations first and returns `INSTALLED` without transferring the 2.58 GB artifact again.
+
+Commands and tests actually run:
+
+- Host device harness suite: 23 PASS, including operation-correlation, exact state/byte validation, pinned SHA-256 presence, and inconsistent terminal-state rejection.
+- Focused `GemmaModelCatalogTest`: PASS.
+- `:app:assembleConsumerDebug` and `:app:assembleConsumerDebugAndroidTest`: PASS after both the receiver and foreground-activity changes.
+- Bundled ConsumerDebug build/install workflow: PASS on `R3C…WE4J`; the first invocation failed before build because its subprocess lacked `ANDROID_HOME`, and the single corrected invocation passed with the discovered SDK path.
+- `GemmaDownloadHarnessTest`: PASS twice on the physical device (0.060 and 0.059 seconds), reporting pinned E2B state without starting network work.
+- The first real host download invocation from a background receiver transferred zero bytes and failed honestly with Android 16's `startForegroundService() not allowed` restriction. Bringing the app visibly foreground exercised the production path and completed the full transfer; the final source replaces this manual precondition with `TestGemmaDownloadActivity`.
+- E2B production transfer and activation: 2,583,085,056/2,583,085,056 bytes, 420.6 seconds, revision `7fa1d78473894f7e736a21d920c3aa80f950c0db`, pinned SHA-256 `ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42`, final state `INSTALLED`.
+- Final foreground-safe harness build installed while preserving app data. A repeat `--action download --tier E2B` returned `INSTALLED` immediately and did not re-download.
+- E4B report: `deviceSupported=false`, `recommendedTier=E2B`, reason `The model pack requires more physical RAM`; no E4B bytes were downloaded.
+- After cooling to thermal status 1, the first real E2B planner run exposed an invalid array in the scalar `verification` field for Hindi. The planner and single repair prompts now explicitly require `verification` to be one quoted `AUTO|REQUIRED|NEVER` scalar; focused codec tests pass.
+- The first rerun used E2B/GPU for English but exposed two time ranges because Gemma's approximate year range and Kotlin's exact year range were both retained. Deterministic hard filters now replace model filters in the same typed slot and flatten/deduplicate `AND`; a regression preserves unrelated album filters while replacing the date guess.
+- Final real planner rerun: English passed (`used=true`, GPU, 2 calls, valid, 24.270 s wall); Hindi passed (`used=true`, GPU, 2 calls, valid, 35.910 s wall); Hinglish failed the no-fallback assertion after 76.797 s because the repaired model output used unsupported `SemanticSubject.FAMILY`. The validator rejected it and returned a valid deterministic plan. No permissive enum coercion or weakened assertion was added.
+
+Device and runtime state:
+
+- Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550, total RAM approximately 7.3 GB, about 188 GB free before download.
+- Thermal improved from status 3 to status 1 before planner testing. The final multilingual attempt raised it to status 2 with skin approximately 42.0 C. Heavy gallery indexing stayed paused under the background admission policy; no 5k embedding batch was started.
+- Post-install app memory without model inference: PSS 79,937 KB, RSS 190,808 KB, swap PSS 108 KB.
+- The retained 83-item core and 5,000-item stress galleries, Room records, and the signed SigLIP2 q8 pack were preserved.
+
+Artifacts:
+
+- `artifacts/device-runs/model-packs/gemma-e2b-download.json`
+- `artifacts/device-runs/model-packs/gemma-e2b-status.json`
+- `artifacts/device-runs/model-packs/gemma-e4b-status.json`
+
+Failures and limitations:
+
+- This phase proves download, exact catalog identity, checksum-gated installation, device-tier selection, persistence across app replacement, and real English/Hindi E2B planning on this SM-F731U. The required English/Hindi/Hinglish planner suite is not passed because Hinglish still safely falls back on an out-of-schema model enum after the one allowed repair.
+- Two bounded repair cycles were used: scalar-verification prompting, then deterministic time-filter replacement. Work stopped after the second cycle as required. The next planner fix should address semantic-subject enum adherence without coercing unknown model values or increasing model-call count.
+- The full 5k OCR/embedding/event index and every connected 20k gate remain outstanding. E4B is an evidence-backed unsupported-device skip, not a pass.
+
+Next phase:
+
+- In a separate slice, diagnose `SemanticSubject.FAMILY` from the saved failure boundary and prove Hinglish without weakening the enum contract. After cooling again, run grounded-answer/one-image verifier acceptance, then resume bounded 5k indexing. Keep README replacement and 20k acceptance separate.
