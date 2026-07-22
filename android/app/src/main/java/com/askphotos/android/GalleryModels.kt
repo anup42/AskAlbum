@@ -220,6 +220,12 @@ data class IndexSummary(
     val storageBytes: Long = 0,
 )
 
+data class ScopedIndexCoverage(
+    val mediaCount: Int,
+    val indexStates: Map<IndexState, Int>,
+    val stageStatuses: Map<IndexStage, Map<StageStatus, Int>>,
+)
+
 data class VideoKeyframeRecord(
     val id: String,
     val mediaId: String,

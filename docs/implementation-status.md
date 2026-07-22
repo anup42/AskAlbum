@@ -2474,3 +2474,75 @@ Remaining acceptance gaps:
 
 - Reconnect the SM-F966B and run `CoreCorpusEvaluationAcceptanceTest` against `persistent_multidomain_20260722`, or explicitly install/import the same verified model packs and index state on another capable device.
 - Install a reviewed face-embedding pack and obtain explicit people-search opt-in before converting Q07/Q08 from structured skips into identity acceptance.
+
+## Phase 3D - Retained multi-domain corpus, 5k Room import, and thermal-aware recovery (22 July 2026)
+
+Status: **PASSED for exact 5,000-item Room import, complete stage-row accounting, forced-process recovery, and thermal deferral on Samsung SM-F731U. Full OCR/SigLIP/event indexing remains DEFERRED because the device thermal status is 3.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/BackgroundWorkAdmissionPolicy.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryIndexWorker.kt`
+- `android/app/src/main/java/com/askphotos/android/EmbeddingIndexWorker.kt`
+- `android/app/src/main/java/com/askphotos/android/PeopleIndexWorker.kt`
+- `android/app/src/main/java/com/askphotos/android/IndexScheduler.kt`
+- `android/app/src/main/java/com/askphotos/android/PeopleIndexScheduler.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryDatabase.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryRepository.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryModels.kt`
+- `android/app/src/main/java/com/askphotos/android/SemanticVectorStore.kt`
+- `android/app/src/debug/java/com/askphotos/android/TestGallerySeederReceiver.kt`
+- `android/app/src/debug/java/com/askphotos/android/TestGallerySeederService.kt`
+- `android/app/src/debug/AndroidManifest.xml`
+- `android/app/src/test/java/com/askphotos/android/BackgroundWorkAdmissionPolicyTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/ScopedIndexCoverageDatabaseTest.kt`
+- `tools/device/index_seeded_gallery.py`
+- `tools/device/test_index_seeded_gallery.py`
+
+Architecture decisions:
+
+- Gallery, embedding, and people workers now consult one thermal admission policy before work and between batches. Android thermal status `MODERATE` or hotter returns bounded WorkManager retry instead of starting or continuing heavy inference.
+- All three schedulers use a linear 15-minute retry backoff. Interactive work remains separate from this background admission rule.
+- Run-scoped coverage is aggregated in SQLite in chunks below the bind-parameter limit. It reports exact media/index-state counts and the full nine-stage status matrix without loading vectors or issuing one query per item.
+- Debug-only import runs in the existing foreground service with a correlated operation ID. Recovery preparation no longer performs an unnecessary second 5,000-file import; recovery validation uses aggregate stage coverage.
+
+Commands and tests actually run:
+
+- `python -m unittest test_index_seeded_gallery.py`: 2 PASS.
+- Focused `BackgroundWorkAdmissionPolicyTest`: PASS.
+- `:app:assembleConsumerDebug` and `:app:assembleConsumerDebugAndroidTest`: PASS.
+- `ScopedIndexCoverageDatabaseTest`: PASS on the physical device, 1 test in 0.075 seconds.
+- ConsumerDebug app and Android-test APK installed with `adb install -r -t`: PASS; app-private data was preserved.
+- Run `fg_index5k_20260722`: MediaStore seeding 5,000/5,000, staging removed; foreground Room import 5,000/5,000 in 609.5 seconds.
+- Coverage report: 5,000 unique media rows and 45,000 stage rows. Discovery and metadata are complete for all 5,000; video keyframes and faces are skipped as expected; every other heavy stage is pending. No row or stage is stuck RUNNING/INDEXING.
+- Forced process recovery: one media row persisted with three RUNNING stages, process force-stopped, then recovery returned 5,000 unique rows, 45,000 stage rows, zero RUNNING stages, and zero INDEXING media rows in 13.5 seconds.
+
+Device and metrics:
+
+- Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550; serial masked in artifacts.
+- Thermal status remained 3, skin approximately 43.8 C. The final coverage report records `thermalAllowed=false` and `thermalReason=thermal_status_3`.
+- App memory after recovery/report: PSS 75,376 KB, RSS 164,100 KB, swap PSS 112 KB. No ANR/OOM/crash was observed.
+- The signed q8 SigLIP2 producer remains installed and recognized as `siglip2-base-p16-224-q8@ba1f3b0-q8-core05`; vectors are deliberately 0 for this stress run because thermal admission blocked background inference.
+
+Retained device datasets:
+
+- `fg_core_20260722_f731u`: 83 openly licensed/CC0 multi-domain items (81 images, one video, one PDF) covering travel, beach/sunset, food, pets, sport, architecture, OCR documents, receipts, Wi-Fi, boarding pass, hotel, multilingual menus, people/clothing fixtures, duplicates, and video timeline.
+- `fg_index5k_20260722`: 5,000 deterministic attributed stress images in `Pictures/AgenticGalleryTest/fg_index5k_20260722/`, also retained for resume and scale testing.
+- Cleanup was intentionally NOT RUN because the user requested that the samples remain on the device. Both datasets have exact run-scoped URI manifests; future cleanup must delete only those recorded URIs.
+
+Artifacts:
+
+- `artifacts/device-runs/fg_core_20260722_f731u/seed-result.json`
+- `artifacts/device-runs/fg_index5k_20260722/seed-result.json`
+- `artifacts/device-runs/fg_index5k_20260722/index-import-result.json`
+- `artifacts/device-runs/fg_index5k_20260722/index-coverage-result.json`
+- `artifacts/device-runs/fg_index5k_20260722/index-recovery-result.json`
+
+Failures and limitations:
+
+- Complete 5k image embedding, OCR, events, semantic query latency, and the connected 20k gate were not run. Starting heavy background inference at thermal status 3 would violate the new runtime policy and produce misleading performance numbers.
+- E2B is not installed on this device; E4B remains an explicit skip. The retained corpus can still exercise deterministic/fallback paths and the already installed real SigLIP2 pack after cooling.
+
+Next phase:
+
+- When thermal status is LIGHT/NONE, resume the retained 5k run, measure staged progress and vector coverage without reseeding or reimporting, then run vector search benchmarks. Keep the 20k device gate separate.

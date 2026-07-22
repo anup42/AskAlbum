@@ -846,6 +846,45 @@ class GalleryDatabase(
         )
     }
 
+    fun indexCoverageForContentUris(contentUris: Collection<String>): ScopedIndexCoverage {
+        val distinctUris = contentUris.filter(String::isNotBlank).distinct()
+        val indexStates = IndexState.entries.associateWith { 0 }.toMutableMap()
+        val stageStatuses = IndexStage.entries.associateWith {
+            StageStatus.entries.associateWith { 0 }.toMutableMap()
+        }.toMutableMap()
+        distinctUris.chunked(400).forEach { chunk ->
+            val placeholders = chunk.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT index_state,COUNT(*) FROM media_item WHERE content_uri IN ($placeholders) GROUP BY index_state",
+                chunk.toTypedArray(),
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val state = IndexState.valueOf(cursor.getString(0))
+                    indexStates[state] = indexStates.getValue(state) + cursor.getInt(1)
+                }
+            }
+            readableDatabase.rawQuery(
+                """SELECT s.stage,s.status,COUNT(*) FROM media_index_stage s
+                   JOIN media_item m ON m.id=s.media_id
+                   WHERE m.content_uri IN ($placeholders)
+                   GROUP BY s.stage,s.status""".trimIndent(),
+                chunk.toTypedArray(),
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val stage = IndexStage.valueOf(cursor.getString(0))
+                    val status = StageStatus.valueOf(cursor.getString(1))
+                    val counts = stageStatuses.getValue(stage)
+                    counts[status] = counts.getValue(status) + cursor.getInt(2)
+                }
+            }
+        }
+        return ScopedIndexCoverage(
+            mediaCount = indexStates.values.sum(),
+            indexStates = indexStates.toMap(),
+            stageStatuses = stageStatuses.mapValues { it.value.toMap() },
+        )
+    }
+
     fun recordQuery(outcome: SearchOutcome, sessionId: String? = null) {
         writableDatabase.insert("query_turn", null, ContentValues().apply {
             put("query", outcome.plan.originalQuery)

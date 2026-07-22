@@ -34,6 +34,8 @@ class GalleryRepository(context: Context) {
     fun allItems(): List<GalleryItem> = database.allItems()
 
     fun indexSummary(): IndexSummary = database.summary()
+    fun indexCoverageForContentUris(contentUris: Collection<String>): ScopedIndexCoverage =
+        database.indexCoverageForContentUris(contentUris)
 
     fun importUris(uris: List<Uri>, source: MediaSource): Int {
         val changed = database.upsertImported(importer.inspectUris(uris, source))

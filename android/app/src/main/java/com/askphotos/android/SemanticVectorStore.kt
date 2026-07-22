@@ -33,6 +33,8 @@ class SemanticVectorStore(
         (index.ids() - accessibleIds).forEach { index.delete(it) }
     }
 
+    suspend fun indexedIds(): Set<String> = if (packs.current() == null) emptySet() else currentIndex().index.ids()
+
     private suspend fun currentIndex(): Loaded = loadMutex.withLock {
         val pack = packs.current() ?: error("No verified retrieval model pack is installed")
         val key = version(pack)

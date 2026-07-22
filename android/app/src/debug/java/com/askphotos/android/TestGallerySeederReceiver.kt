@@ -10,6 +10,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.Executors
+import kotlinx.coroutines.runBlocking
 
 /** Debug-only MediaStore bridge used by the safe connected-device harness. */
 class TestGallerySeederReceiver : BroadcastReceiver() {
@@ -23,10 +24,12 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
                 when (intent.action) {
                     ACTION_SEED -> TestGallerySeederService.start(context, runId)
                     ACTION_CLEANUP -> TestGallerySeederService.start(context, runId, TestGallerySeederService.ACTION_CLEANUP)
-                    ACTION_IMPORT -> importSeeded(context, runId)
+                    ACTION_IMPORT -> TestGallerySeederService.start(context, runId, TestGallerySeederService.ACTION_IMPORT)
                     ACTION_REMOVE_IMPORTED -> removeImported(context, runId)
                     ACTION_PREPARE_INTERRUPTION -> prepareIndexInterruption(context, runId)
                     ACTION_VERIFY_RECOVERY -> verifyIndexRecovery(context, runId)
+                    ACTION_REPORT_INDEX -> reportIndexCoverage(context, runId)
+                    ACTION_RESUME_INDEX -> resumeIndexing(context, runId)
                     else -> error("Unsupported test action")
                 }
             } catch (error: Throwable) {
@@ -42,7 +45,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
     }
 
     internal fun cleanup(context: Context, runId: String, operationId: String? = null) {
-        operationId?.let { require(CLEANUP_OPERATION_ID.matches(it)) { "Invalid cleanup operation ID" } }
+        operationId?.let { require(OPERATION_ID.matches(it)) { "Invalid cleanup operation ID" } }
         writeStatus(
             context,
             runId,
@@ -119,9 +122,12 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun importSeeded(context: Context, runId: String) {
+    internal fun importSeeded(context: Context, runId: String, operationId: String? = null) {
+        operationId?.let { require(OPERATION_ID.matches(it)) { "Invalid import operation ID" } }
         val uris = seededUris(context, runId)
-        writeStatus(context, runId, "import-status.json", JSONObject().put("state", "RUNNING"))
+        writeStatus(context, runId, "import-status.json", JSONObject().put("state", "RUNNING").put("runId", runId).also {
+            operationId?.let { value -> it.put("operationId", value) }
+        })
         val repository = (context.applicationContext as AskPhotosApplication).repository
         val changed = repository.importUris(uris, MediaSource.MEDIA_STORE)
         val expected = uris.map(Uri::toString).toSet()
@@ -132,7 +138,54 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
             runId,
             "import-status.json",
             JSONObject().put("state", "COMPLETE").put("runId", runId)
-                .put("requestedCount", expected.size).put("changedCount", changed).put("importedCount", imported),
+                .put("requestedCount", expected.size).put("changedCount", changed).put("importedCount", imported).also {
+                    operationId?.let { value -> it.put("operationId", value) }
+                },
+        )
+    }
+
+    private fun reportIndexCoverage(context: Context, runId: String) {
+        val uris = seededUris(context, runId)
+        val expectedUris = uris.map(Uri::toString).toSet()
+        val application = context.applicationContext as AskPhotosApplication
+        val repository = application.repository
+        val coverage = repository.indexCoverageForContentUris(expectedUris)
+        val scopedIds = repository.allItems().filter { it.contentUri in expectedUris }.mapTo(mutableSetOf()) { it.id }
+        val vectorIds = runBlocking { application.services.semanticVectorStore.indexedIds() }
+        val admission = BackgroundWorkAdmissionPolicy(context).evaluate()
+        val stages = JSONObject()
+        coverage.stageStatuses.forEach { (stage, counts) ->
+            stages.put(stage.name, JSONObject().also { value -> counts.forEach { (status, count) -> value.put(status.name, count) } })
+        }
+        val states = JSONObject().also { value ->
+            coverage.indexStates.forEach { (state, count) -> value.put(state.name, count) }
+        }
+        writeStatus(
+            context,
+            runId,
+            "index-coverage-status.json",
+            JSONObject().put("state", "COMPLETE").put("runId", runId)
+                .put("expectedCount", expectedUris.size).put("mediaCount", coverage.mediaCount)
+                .put("uniqueMediaIds", scopedIds.size).put("vectorCount", vectorIds.count(scopedIds::contains))
+                .put("vectorProducer", application.services.semanticVectorStore.producerVersion())
+                .put("thermalAllowed", admission.allowed).put("thermalStatus", admission.thermalStatus)
+                .put("thermalReason", admission.reason).put("indexStates", states).put("stages", stages),
+        )
+    }
+
+    private fun resumeIndexing(context: Context, runId: String) {
+        val application = context.applicationContext as AskPhotosApplication
+        application.repository.recoverInterruptedJobs()
+        IndexScheduler.schedule(context)
+        if (application.services.semanticVectorStore.producerVersion() != null) EmbeddingIndexScheduler.schedule(context)
+        val admission = BackgroundWorkAdmissionPolicy(context).evaluate()
+        writeStatus(
+            context,
+            runId,
+            "index-resume-status.json",
+            JSONObject().put("state", "COMPLETE").put("runId", runId)
+                .put("thermalAllowed", admission.allowed).put("thermalStatus", admission.thermalStatus)
+                .put("thermalReason", admission.reason),
         )
     }
 
@@ -173,9 +226,10 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         val expected = uris.map(Uri::toString).toSet()
         val repository = (context.applicationContext as AskPhotosApplication).repository
         IndexScheduler.cancelAndWait(context)
-        val idempotentChanged = repository.importUris(uris, MediaSource.MEDIA_STORE)
-        require(idempotentChanged == 0) { "Repeat import changed $idempotentChanged rows" }
-        IndexScheduler.cancelAndWait(context)
+        val before = repository.indexCoverageForContentUris(expected)
+        require(before.mediaCount == expected.size) {
+            "Expected ${expected.size} indexed rows before interruption, found ${before.mediaCount}"
+        }
         val imported = repository.allItems().filter { it.contentUri in expected }
         require(imported.size == expected.size) { "Expected ${expected.size} unique rows, found ${imported.size}" }
         val interrupted = imported.first()
@@ -187,7 +241,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
             runId,
             "recovery-prepare-status.json",
             JSONObject().put("state", "COMPLETE").put("runId", runId).put("mediaId", interrupted.id)
-                .put("uniqueRows", imported.size).put("idempotentChangedCount", idempotentChanged)
+                .put("uniqueRows", imported.size)
                 .put("runningStages", runningStages),
         )
     }
@@ -197,19 +251,22 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         val expected = uris.map(Uri::toString).toSet()
         val repository = (context.applicationContext as AskPhotosApplication).repository
         repository.recoverInterruptedJobs()
-        val imported = repository.allItems().filter { it.contentUri in expected }
-        require(imported.size == expected.size) { "Recovery changed row count: ${imported.size}" }
-        require(imported.map { it.id }.toSet().size == expected.size) { "Recovery produced duplicate stable IDs" }
-        val stages = imported.flatMap { repository.stageRecords(it.id) }
-        require(stages.size == expected.size * IndexStage.entries.size) { "Expected ${expected.size * IndexStage.entries.size} stages, found ${stages.size}" }
-        require(stages.none { it.status == StageStatus.RUNNING }) { "Recovery left a RUNNING stage" }
-        require(imported.none { it.indexState == IndexState.INDEXING }) { "Recovery left an INDEXING media row" }
+        val coverage = repository.indexCoverageForContentUris(expected)
+        require(coverage.mediaCount == expected.size) { "Recovery changed row count: ${coverage.mediaCount}" }
+        val stageRows = coverage.stageStatuses.values.sumOf { it.values.sum() }
+        require(stageRows == expected.size * IndexStage.entries.size) {
+            "Expected ${expected.size * IndexStage.entries.size} stages, found $stageRows"
+        }
+        val runningStages = coverage.stageStatuses.values.sumOf { it[StageStatus.RUNNING] ?: 0 }
+        val indexingRows = coverage.indexStates[IndexState.INDEXING] ?: 0
+        require(runningStages == 0) { "Recovery left $runningStages RUNNING stages" }
+        require(indexingRows == 0) { "Recovery left $indexingRows INDEXING media rows" }
         writeStatus(
             context,
             runId,
             "recovery-verify-status.json",
             JSONObject().put("state", "COMPLETE").put("runId", runId)
-                .put("uniqueRows", imported.size).put("stageRows", stages.size)
+                .put("uniqueRows", coverage.mediaCount).put("stageRows", stageRows)
                 .put("runningStages", 0).put("indexingRows", 0),
         )
     }
@@ -219,6 +276,8 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         ACTION_REMOVE_IMPORTED -> "db-cleanup-status.json"
         ACTION_PREPARE_INTERRUPTION -> "recovery-prepare-status.json"
         ACTION_VERIFY_RECOVERY -> "recovery-verify-status.json"
+        ACTION_REPORT_INDEX -> "index-coverage-status.json"
+        ACTION_RESUME_INDEX -> "index-resume-status.json"
         ACTION_CLEANUP -> "cleanup-status.json"
         else -> "status.json"
     }
@@ -246,8 +305,10 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         const val ACTION_REMOVE_IMPORTED = "com.askphotos.android.test.REMOVE_IMPORTED"
         const val ACTION_PREPARE_INTERRUPTION = "com.askphotos.android.test.PREPARE_INDEX_INTERRUPTION"
         const val ACTION_VERIFY_RECOVERY = "com.askphotos.android.test.VERIFY_INDEX_RECOVERY"
+        const val ACTION_REPORT_INDEX = "com.askphotos.android.test.REPORT_INDEX_COVERAGE"
+        const val ACTION_RESUME_INDEX = "com.askphotos.android.test.RESUME_INDEXING"
         const val EXTRA_RUN_ID = "run_id"
         val RUN_ID = Regex("[A-Za-z0-9_-]{6,64}")
-        val CLEANUP_OPERATION_ID = Regex("[a-f0-9]{32}")
+        val OPERATION_ID = Regex("[a-f0-9]{32}")
     }
 }

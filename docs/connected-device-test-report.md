@@ -146,3 +146,15 @@ Latest artifacts:
 - Package-PID-scoped diagnostics replaced an initially unfiltered local log artifact. Generated logs are not committed.
 - Remaining gap: 5k Room import/full indexing/query performance and every 20k connected-device gate are NOT RUN.
 - Artifacts: `artifacts/device-runs/fg_stress5k_recovery_20260722/`, `artifacts/device-runs/fg_cleanup_probe_20260722/`, and `artifacts/device-runs/fg_core_20260722_f731u/`.
+
+## Retained samples and 5k Room/recovery acceptance
+
+- Two test datasets are intentionally retained on Samsung SM-F731U: the 83-item `fg_core_20260722_f731u` multi-domain gallery and the 5,000-image `fg_index5k_20260722` stress gallery. They live only under their run-specific `Pictures/AgenticGalleryTest/...` and `Documents/AgenticGalleryTest/...` paths.
+- The core gallery contains openly licensed sources and locally generated CC0 fixtures spanning travel, places, beaches/sunsets, food, pets, sport, architecture, duplicate bursts, people/clothing, receipts, Wi-Fi, boarding pass, hotel, multilingual menus, PDF, and video. Its attribution/checksum artifacts remain available on the host.
+- The 5k MediaStore seed completed exactly 5,000/5,000 with private staging removed. Foreground Room import then completed 5,000/5,000 in 609.5 seconds.
+- SQLite coverage reported 5,000 unique media rows and all 45,000 expected stage rows. Discovery/metadata are complete; faces and video keyframes are skipped by policy/media type; heavy thumbnail, embedding, OCR, events, and enrichment stages remain pending.
+- Forced process recovery passed: three persisted RUNNING stages were prepared, the app was force-stopped, and recovery returned zero RUNNING stages and zero INDEXING media rows while preserving all 5,000 rows and 45,000 stages.
+- Thermal status was 3 (skin approximately 43.8 C). New background admission correctly deferred heavy indexing and the report recorded `thermalAllowed=false`. Final app PSS was 75,376 KB; no target ANR/OOM/crash was observed.
+- The installed signed q8 SigLIP2 pack remained app-private and recognized. No vector is claimed for this 5k run because background inference was thermally deferred. E2B is not installed on this device.
+- Cleanup was intentionally NOT RUN at the user's request. Future cleanup must use the stored URI manifests and exact run-scoped harness; no broad gallery deletion is permitted.
+- Artifacts: `artifacts/device-runs/fg_core_20260722_f731u/` and `artifacts/device-runs/fg_index5k_20260722/`.

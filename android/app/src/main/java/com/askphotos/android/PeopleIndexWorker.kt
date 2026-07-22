@@ -13,14 +13,17 @@ class PeopleIndexWorker(
 ) : CoroutineWorker(appContext, params) {
     private val repository = (appContext as AskPhotosApplication).repository
     private val imageLoader = GalleryImageLoader(appContext)
+    private val workAdmission = BackgroundWorkAdmissionPolicy(appContext)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (!repository.peopleIndexStatus().enabled) return@withContext Result.success()
+        if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         val detector = MlKitFaceDetectionEngine()
         var retryableFailure = false
         try {
             repository.facePendingItems(BATCH_SIZE).forEach { item ->
                 if (isStopped || !repository.peopleIndexStatus().enabled) return@withContext Result.success()
+                if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
                 repository.markFaces(item.id)
                 runCatching {
                     val jpeg = imageLoader.loadJpeg(item)

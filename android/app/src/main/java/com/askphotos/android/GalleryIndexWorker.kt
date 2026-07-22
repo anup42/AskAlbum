@@ -23,8 +23,10 @@ class GalleryIndexWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
     private val repository = (appContext as AskPhotosApplication).repository
+    private val workAdmission = BackgroundWorkAdmissionPolicy(appContext)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         var retryableFailure = false
@@ -32,7 +34,7 @@ class GalleryIndexWorker(
             repository.recoverInterruptedJobs()
             val pending = repository.pendingItems(BATCH_SIZE)
             pending.forEach { item ->
-                if (isStopped) return@withContext Result.retry()
+                if (isStopped || !workAdmission.evaluate().allowed) return@withContext Result.retry()
                 repository.markIndexing(item.id)
                 runCatching {
                     val analyses = if (item.kind == MediaKind.VIDEO) {

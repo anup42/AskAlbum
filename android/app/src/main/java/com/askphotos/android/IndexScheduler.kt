@@ -2,6 +2,7 @@ package com.askphotos.android
 
 import android.content.Context
 import androidx.work.Constraints
+import androidx.work.BackoffPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
@@ -31,6 +32,7 @@ object IndexScheduler {
                     .setRequiresStorageNotLow(true)
                     .build(),
             )
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
             .addTag(UNIQUE_WORK)
             .build()
 }

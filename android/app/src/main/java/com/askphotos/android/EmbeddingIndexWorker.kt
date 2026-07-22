@@ -7,6 +7,7 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.util.Size
 import androidx.work.Constraints
+import androidx.work.BackoffPolicy
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -17,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     private val app = appContext as AskPhotosApplication
@@ -24,8 +26,10 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
     private val packs = app.services.retrievalModelPackManager
     private val vectors = app.services.semanticVectorStore
     private val engine = app.services.embeddingEngine
+    private val workAdmission = BackgroundWorkAdmissionPolicy(appContext)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         val producer = vectors.producerVersion() ?: return@withContext Result.success()
         repository.recoverInterruptedJobs()
         val candidates = repository.embeddingPendingItems(producer, BATCH_SIZE)
@@ -37,7 +41,7 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
 
         val prepared = mutableListOf<Pair<GalleryItem, ModelImage>>()
         candidates.forEach { item ->
-            if (isStopped) return@withContext Result.retry()
+            if (isStopped || !workAdmission.evaluate().allowed) return@withContext Result.retry()
             repository.markEmbedding(item.id, producer)
             runCatching { decodeModelImage(item) }
                 .onSuccess { prepared += item to it }
@@ -52,6 +56,10 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
         }
 
         if (prepared.isNotEmpty()) {
+            if (!workAdmission.evaluate().allowed) {
+                repository.recoverInterruptedJobs()
+                return@withContext Result.retry()
+            }
             val embedded = runCatching {
                 val images = prepared.map { it.second }
                 (engine as? LiteRtImageTextEmbeddingEngine)?.embedImages(images)
@@ -69,6 +77,7 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
         }
 
         if (keyframeCandidates.isNotEmpty()) {
+            if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
             val preparedFrames = keyframeCandidates.map { frame -> frame to decodeKeyframeModelImage(frame) }
             val embedded = runCatching {
                 val images = preparedFrames.map { it.second }
@@ -175,6 +184,7 @@ object EmbeddingIndexScheduler {
                 .setRequiresStorageNotLow(true)
                 .build(),
         )
+        .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
         .addTag(UNIQUE_WORK)
         .build()
 }

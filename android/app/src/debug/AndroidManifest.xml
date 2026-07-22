@@ -23,6 +23,8 @@
                 <action android:name="com.askphotos.android.test.REMOVE_IMPORTED" />
                 <action android:name="com.askphotos.android.test.PREPARE_INDEX_INTERRUPTION" />
                 <action android:name="com.askphotos.android.test.VERIFY_INDEX_RECOVERY" />
+                <action android:name="com.askphotos.android.test.REPORT_INDEX_COVERAGE" />
+                <action android:name="com.askphotos.android.test.RESUME_INDEXING" />
             </intent-filter>
         </receiver>
     </application>
