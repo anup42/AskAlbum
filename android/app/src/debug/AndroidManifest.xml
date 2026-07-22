@@ -6,6 +6,12 @@
             android:authorities="${applicationId}.testseed"
             android:enabled="true"
             android:exported="true" />
+        <service
+            android:name=".TestGallerySeederService"
+            android:enabled="true"
+            android:exported="true"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
         <receiver
             android:name=".TestGallerySeederReceiver"
             android:enabled="true"

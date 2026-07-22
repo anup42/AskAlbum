@@ -64,7 +64,7 @@ Detailed commands, run IDs, failures, cleanup counts, and artifact paths are rec
 - SigLIP2 q8 retrieval pack: INSTALLED and semantic smoke acceptance PASSED after the SentencePiece BPE repair. The run-scoped core Q01-Q13 evaluator now passes every implemented case on SM-F731U; multilingual retrieval and 5k/20k performance gates remain pending.
 - Full release acceptance and universal performance claims: NOT CLAIMED.
 - The planner needed its permitted repair call for all three language fixtures; first-pass structured output remains an optimization target.
-- Actual stress-gallery ingestion: NOT PASSED. The generated 5k/20k profiles now verify and satisfy the seeder manifest contract, but the 5k device transfer stopped after two failed transport cycles before any MediaStore insertion. Existing native FP16 5k/20k measurements prove vector scanning only, not media ingestion.
+- Stress-gallery state: exact 5k MediaStore seeding and forced-process recovery now PASS on SM-F731U. Full 5k Room import/indexing/query performance and every 20k connected gate remain NOT RUN; existing native FP16 measurements prove vector scanning only.
 
 ## Persistent multi-domain test gallery
 
@@ -126,7 +126,23 @@ Latest artifacts:
 
 - The 110,337,694-byte 5k archive successfully moved through an app-owned external-files path, exact provider size/SHA-256 validation, an independently hashed private copy, atomic private adoption, and external-source deletion.
 - Final provider contract: PASS, two tests in 0.085 seconds for chunked and external-file routes.
-- Complete 5k MediaStore seeding is still NOT PASSED. The long broadcast stopped after 2,346 items; one WorkManager/resume experiment recovered 2,347 rows but encountered incomplete mutable extraction. It was removed and no third repair was attempted.
+- At this intermediate checkpoint, complete 5k MediaStore seeding had not passed: the long broadcast stopped after 2,346 items and the discarded WorkManager experiment encountered incomplete mutable extraction. The later foreground-service section below supersedes this checkpoint.
 - Incomplete cleanup: PASS. Exactly 2,347 URIs proven by run path plus owner package were recovered and deleted; `remainingCount=0`.
 - The connected app was rebuilt/reinstalled from the final source and provider tests passed again. The retained 83-item core gallery and personal media were unchanged.
 - Artifacts: `artifacts/device-runs/stress5k_external_20260722_f731u/`.
+
+## Foreground 5k recovery acceptance
+
+- Device: Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550 (serial masked in artifacts).
+- ConsumerDebug built and installed from the final source. The test service exists only in the debug manifest and runs as a `dataSync` foreground service.
+- Retained functional corpus: `fg_core_20260722_f731u`, 83 items (81 images, one video, and one PDF), exact seed result, staging removed. Cleanup was intentionally not run.
+- Stress run: `fg_stress5k_recovery_20260722`, 110,337,694-byte verified ZIP, 5,000 images.
+- Forced process death occurred at the durable 500-item checkpoint. Restart reconciled 509 already-published rows and completed exactly 5,000 with no duplicates; `stagingRemoved=true`.
+- Independent visibility instrumentation: PASS, exactly 5,000 run-scoped app-owned images in 0.043 seconds.
+- Stress cleanup: 5,000 recorded URIs deleted, 0 orphans, 0 remaining. Independent post-cleanup instrumentation reported 0 stress images while all 82 retained core Pictures media remained.
+- Foreground cleanup regression: a fresh 83-item probe deleted 83/83 recorded URIs and left 0 rows. A second operation-correlated call returned its new operation ID and still reported 0 remaining, rather than accepting stale status.
+- No target ANR, crash, native fatal signal, or OOM was observed. Resume/completion took 192.1 seconds. After launch, app PSS was 100,572 KB. Thermal status was 3 (skin approximately 44.0 C), so this is not a normal-temperature performance baseline.
+- The signed SigLIP2 q8 pack was restored after the earlier uninstalling test lifecycle. Host/device SHA-256 matched `5966d528a7ddf73be52a299251e5c0071d878ba1e0fcc70d39fcf38ec6a8f010`; tokenizer and red/blue/dog/football semantic checks passed with an 18,012 ms encoder block and no OOM.
+- Package-PID-scoped diagnostics replaced an initially unfiltered local log artifact. Generated logs are not committed.
+- Remaining gap: 5k Room import/full indexing/query performance and every 20k connected-device gate are NOT RUN.
+- Artifacts: `artifacts/device-runs/fg_stress5k_recovery_20260722/`, `artifacts/device-runs/fg_cleanup_probe_20260722/`, and `artifacts/device-runs/fg_core_20260722_f731u/`.

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
-from seed_gallery import parse_complete_seed, parse_external_path, sha256_file, validate_transport_mode
+from seed_gallery import parse_complete_seed, parse_external_path, print_result_summary, sha256_file, validate_transport_mode
 
 
 class ExistingSeedResultTest(unittest.TestCase):
@@ -13,6 +15,7 @@ class ExistingSeedResultTest(unittest.TestCase):
         payload = json.dumps({
             "state": "COMPLETE",
             "runId": "sample_run",
+            "createdCount": 1,
             "createdUris": ["content://media/external_primary/images/media/7"],
         }).encode()
         self.assertEqual("COMPLETE", parse_complete_seed(payload, "sample_run")["state"])
@@ -23,7 +26,14 @@ class ExistingSeedResultTest(unittest.TestCase):
         self.assertIsNone(parse_complete_seed(json.dumps({
             "state": "COMPLETE",
             "runId": "sample_run",
+            "createdCount": 1,
             "createdUris": ["file:///sdcard/picture.jpg"],
+        }).encode(), "sample_run"))
+        self.assertIsNone(parse_complete_seed(json.dumps({
+            "state": "COMPLETE",
+            "runId": "sample_run",
+            "createdCount": 2,
+            "createdUris": ["content://media/external_primary/file/7", "content://media/external_primary/file/7"],
         }).encode(), "sample_run"))
 
     def test_streaming_sha256_does_not_load_the_archive_contract_into_memory(self) -> None:
@@ -45,13 +55,20 @@ class ExistingSeedResultTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             parse_external_path("path=/storage/emulated/0/Android/data/com.askphotos.android/files/../test-seed-transfer/stress_run.zip", "com.askphotos.android", "stress_run")
 
-    def test_external_file_route_is_staging_only_until_seeder_acceptance(self) -> None:
+    def test_external_file_route_supports_staging_and_foreground_seeding(self) -> None:
         validate_transport_mode("chunked", False)
         validate_transport_mode("external-file", True)
+        validate_transport_mode("external-file", False)
         with self.assertRaises(RuntimeError):
             validate_transport_mode("chunked", True)
-        with self.assertRaises(RuntimeError):
-            validate_transport_mode("external-file", False)
+
+    def test_console_summary_omits_large_uri_lists_but_keeps_the_count(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            print_result_summary({"state": "COMPLETE", "createdUris": ["content://media/1", "content://media/2"]})
+        rendered = json.loads(output.getvalue())
+        self.assertNotIn("createdUris", rendered)
+        self.assertEqual(2, rendered["createdUriCount"])
 
 
 if __name__ == "__main__":

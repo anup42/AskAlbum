@@ -1,7 +1,6 @@
 package com.askphotos.android
 
 import android.content.BroadcastReceiver
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.ContentUris
@@ -10,9 +9,7 @@ import android.provider.MediaStore
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.time.OffsetDateTime
 import java.util.concurrent.Executors
-import java.util.zip.ZipInputStream
 
 /** Debug-only MediaStore bridge used by the safe connected-device harness. */
 class TestGallerySeederReceiver : BroadcastReceiver() {
@@ -24,8 +21,8 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
             try {
                 val runId = requireRunId(intent.getStringExtra(EXTRA_RUN_ID))
                 when (intent.action) {
-                    ACTION_SEED -> seed(context, runId)
-                    ACTION_CLEANUP -> cleanup(context, runId)
+                    ACTION_SEED -> TestGallerySeederService.start(context, runId)
+                    ACTION_CLEANUP -> TestGallerySeederService.start(context, runId, TestGallerySeederService.ACTION_CLEANUP)
                     ACTION_IMPORT -> importSeeded(context, runId)
                     ACTION_REMOVE_IMPORTED -> removeImported(context, runId)
                     ACTION_PREPARE_INTERRUPTION -> prepareIndexInterruption(context, runId)
@@ -44,98 +41,16 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun seed(context: Context, runId: String) {
-        val previousResultFile = child(runRoot(context, runId), "seed-result.json")
-        val previousResult = previousResultFile
-            .takeIf(File::isFile)
-            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
-        val cleanupStatusFile = child(runRoot(context, runId), "cleanup-status.json")
-        val cleanupComplete = cleanupStatusFile
-            .takeIf(File::isFile)
-            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
-            ?.optString("state") == "COMPLETE"
-        val activeCompletedSeed = previousResult?.optString("state") == "COMPLETE" &&
-            previousResult.optString("runId") == runId &&
-            (!cleanupComplete || previousResultFile.lastModified() > cleanupStatusFile.lastModified())
-        if (activeCompletedSeed) {
-            if (cleanupComplete) clearCompletedCleanupMarker(context, runId)
-            writeStatus(context, runId, "status.json", previousResult)
-            return
-        }
-        if (cleanupComplete) clearCompletedCleanupMarker(context, runId)
-        val stagingRoot = extractStaging(context, runId)
-        val manifestFile = child(stagingRoot, "gallery-manifest.json")
-        val mediaRoot = child(stagingRoot, "media")
-        val manifest = JSONObject(manifestFile.readText())
-        val created = mutableListOf<Uri>()
-        val relativePaths = linkedSetOf<String>()
-        writeStatus(context, runId, "status.json", JSONObject().put("state", "RUNNING").put("created", 0))
-        try {
-            val items = manifest.getJSONArray("items")
-            for (index in 0 until items.length()) {
-                val item = items.getJSONObject(index)
-                val filename = safeFilename(item.getString("filename"))
-                val source = child(mediaRoot, filename)
-                require(source.isFile) { "Missing staged media: $filename" }
-                val mime = mimeType(filename)
-                val collection = when {
-                    mime.startsWith("image/") -> MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                    mime.startsWith("video/") -> MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                    else -> MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                }
-                val relativePath = if (mime == "application/pdf") {
-                    "Documents/AgenticGalleryTest/$runId/"
-                } else {
-                    "Pictures/AgenticGalleryTest/$runId/"
-                }
-                relativePaths += relativePath
-                val capturedAt = item.optString("captured_at").takeIf { it.isNotBlank() }
-                    ?.let { OffsetDateTime.parse(it).toInstant().toEpochMilli() }
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
-                    put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
-                    put(MediaStore.MediaColumns.IS_PENDING, 1)
-                    capturedAt?.let { put(MediaStore.Images.ImageColumns.DATE_TAKEN, it) }
-                }
-                val uri = requireNotNull(context.contentResolver.insert(collection, values)) { "MediaStore insert failed for $filename" }
-                created += uri
-                context.contentResolver.openOutputStream(uri, "w")!!.use { output -> source.inputStream().use { it.copyTo(output) } }
-                context.contentResolver.update(uri, ContentValues().apply {
-                    put(MediaStore.MediaColumns.IS_PENDING, 0)
-                    // MediaProvider may replace DATE_TAKEN while it scans newly written bytes. Apply the
-                    // fixture timestamp again when publishing so the acceptance corpus remains deterministic.
-                    capturedAt?.let { put(MediaStore.Images.ImageColumns.DATE_TAKEN, it) }
-                }, null, null)
-                writeStatus(context, runId, "status.json", JSONObject().put("state", "RUNNING").put("created", created.size).put("total", items.length()))
-            }
-            val result = JSONObject()
-                .put("state", "COMPLETE")
-                .put("runId", runId)
-                .put("relativePaths", JSONArray(relativePaths.toList()))
-                .put("createdUris", JSONArray(created.map(Uri::toString)))
-                .put("createdCount", created.size)
-            require(stagingRoot.deleteRecursively()) { "Could not remove app-private seed staging" }
-            require(inputRoot(context, runId).deleteRecursively()) { "Could not remove app-private seed input" }
-            result.put("stagingRemoved", !stagingRoot.exists() && !inputRoot(context, runId).exists())
-            writeStatus(context, runId, "seed-result.json", result)
-            writeStatus(context, runId, "status.json", result)
-        } catch (error: Throwable) {
-            created.asReversed().forEach { uri -> runCatching { context.contentResolver.delete(uri, null, null) } }
-            runCatching { stagingRoot.deleteRecursively() }
-            runCatching { inputRoot(context, runId).deleteRecursively() }
-            throw error
-        }
-    }
-
-    private fun clearCompletedCleanupMarker(context: Context, runId: String) {
-        listOf("cleanup-status.json", "cleanup-result.json").forEach { name ->
-            val file = child(runRoot(context, runId), name)
-            require(!file.exists() || file.delete()) { "Could not clear stale $name" }
-        }
-    }
-
-    private fun cleanup(context: Context, runId: String) {
+    internal fun cleanup(context: Context, runId: String, operationId: String? = null) {
+        operationId?.let { require(CLEANUP_OPERATION_ID.matches(it)) { "Invalid cleanup operation ID" } }
+        writeStatus(
+            context,
+            runId,
+            "cleanup-status.json",
+            JSONObject().put("state", "RUNNING").put("runId", runId).also {
+                operationId?.let { value -> it.put("operationId", value) }
+            },
+        )
         val resultFile = child(runRoot(context, runId), "seed-result.json")
         val seed = resultFile.takeIf(File::isFile)?.let { JSONObject(it.readText()) }
         seed?.let { require(it.getString("runId") == runId) }
@@ -178,6 +93,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
             .put("relativePaths", relativePaths).put("requestedCount", uris.length())
             .put("deletedCount", deleted).put("recoveredOrphanCount", recovered.size)
             .put("recoveredOrphanDeletedCount", recoveredDeleted).put("remainingCount", remaining)
+        operationId?.let { cleanup.put("operationId", it) }
         writeStatus(context, runId, "cleanup-result.json", cleanup)
         writeStatus(context, runId, "cleanup-status.json", cleanup)
     }
@@ -307,77 +223,16 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         else -> "status.json"
     }
 
-    private fun writeStatus(context: Context, runId: String, name: String, value: JSONObject) {
+    internal fun writeStatus(context: Context, runId: String, name: String, value: JSONObject) {
         child(runRoot(context, runId).apply { mkdirs() }, name).writeText(value.toString())
     }
 
     private fun runRoot(context: Context, runId: String): File = child(File(context.filesDir, "test-seed"), requireRunId(runId))
 
-    private fun stagingRoot(context: Context, runId: String): File = child(runRoot(context, runId), "staging")
-
-    private fun inputRoot(context: Context, runId: String): File =
-        child(File(context.filesDir, "test-seed-input"), requireRunId(runId))
-
-    private fun extractStaging(context: Context, runId: String): File {
-        val input = child(inputRoot(context, runId), "gallery.zip")
-        require(input.isFile && input.length() in 1..MAX_ARCHIVE_BYTES) { "Missing or oversized seed archive" }
-        val staging = stagingRoot(context, runId)
-        runCatching { staging.deleteRecursively() }
-        staging.mkdirs()
-        var entries = 0
-        var extractedBytes = 0L
-        try {
-            ZipInputStream(input.inputStream().buffered()).use { zip ->
-                while (true) {
-                    val entry = zip.nextEntry ?: break
-                    entries += 1
-                    require(entries <= MAX_ARCHIVE_ENTRIES) { "Seed archive has too many entries" }
-                    val target = child(staging, entry.name)
-                    if (entry.isDirectory) {
-                        target.mkdirs()
-                    } else {
-                        require(entry.name == "gallery-manifest.json" || entry.name.startsWith("media/")) { "Unexpected seed archive entry" }
-                        target.parentFile?.mkdirs()
-                        target.outputStream().buffered().use { output ->
-                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                            while (true) {
-                                val count = zip.read(buffer)
-                                if (count < 0) break
-                                extractedBytes += count
-                                require(extractedBytes <= MAX_EXTRACTED_BYTES) { "Seed archive expands beyond limit" }
-                                output.write(buffer, 0, count)
-                            }
-                        }
-                    }
-                    zip.closeEntry()
-                }
-            }
-            require(child(staging, "gallery-manifest.json").isFile) { "Seed archive has no gallery manifest" }
-            return staging
-        } catch (error: Throwable) {
-            runCatching { staging.deleteRecursively() }
-            runCatching { inputRoot(context, runId).deleteRecursively() }
-            throw error
-        }
-    }
-
     private fun child(parent: File, name: String): File {
         val file = File(parent, name).canonicalFile
         require(file.toPath().startsWith(parent.canonicalFile.toPath())) { "Path escaped test staging root" }
         return file
-    }
-
-    private fun safeFilename(value: String): String {
-        require(value.matches(Regex("[A-Za-z0-9._-]{1,180}"))) { "Unsafe staged filename" }
-        return value
-    }
-
-    private fun mimeType(filename: String): String = when (filename.substringAfterLast('.').lowercase()) {
-        "jpg", "jpeg" -> "image/jpeg"
-        "png" -> "image/png"
-        "pdf" -> "application/pdf"
-        "mp4" -> "video/mp4"
-        else -> error("Unsupported test media type")
     }
 
     private fun requireRunId(value: String?): String = requireNotNull(value).also {
@@ -393,8 +248,6 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         const val ACTION_VERIFY_RECOVERY = "com.askphotos.android.test.VERIFY_INDEX_RECOVERY"
         const val EXTRA_RUN_ID = "run_id"
         val RUN_ID = Regex("[A-Za-z0-9_-]{6,64}")
-        const val MAX_ARCHIVE_ENTRIES = 20_001
-        const val MAX_ARCHIVE_BYTES = 512L * 1024 * 1024
-        const val MAX_EXTRACTED_BYTES = 1024L * 1024 * 1024
+        val CLEANUP_OPERATION_ID = Regex("[a-f0-9]{32}")
     }
 }

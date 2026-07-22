@@ -2377,6 +2377,81 @@ Next phase:
 
 - Implement the stress seeder as a debug foreground service with an immutable verified extraction generation, durable manifest-index checkpoint, and idempotent filename/owner reconciliation. Run a small process-death test, then one clean 5k seed/visibility/cleanup cycle before attempting database import or 20k.
 
+## Phase 2G - Foreground stress seeding, process-death recovery, and 5k MediaStore gate (22 July 2026)
+
+Status: **PASSED for exact 5,000-item MediaStore seeding and forced-process-death recovery on Samsung SM-F731U. Database import/indexing and the 20k device gate remain NOT RUN.**
+
+Files changed:
+
+- `android/app/src/debug/AndroidManifest.xml`
+- `android/app/src/debug/java/com/askphotos/android/TestGallerySeedEngine.kt`
+- `android/app/src/debug/java/com/askphotos/android/TestGallerySeederService.kt`
+- `android/app/src/debug/java/com/askphotos/android/TestGallerySeederReceiver.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/TestGallerySeederServiceTest.kt`
+- `tools/device/seed_gallery.py`
+- `tools/device/cleanup_gallery.py`
+- `tools/device/collect_artifacts.py`
+- `tools/device/test_seed_gallery.py`
+- `tools/device/test_collect_artifacts.py`
+- `docs/implementation-status.md`
+- `docs/connected-device-test-report.md`
+
+Architecture decisions:
+
+- Long seed and cleanup operations now run in a debug-only `dataSync` foreground service. The release application has no exported test service because the declaration exists only in the debug manifest.
+- ZIP extraction is built in `staging.building`, validated against the provider-verified transfer fingerprint, marked as a complete generation, and atomically promoted. A killed process cannot expose half-extracted media as the active staging generation.
+- Every 25 manifest items writes an atomic checkpoint. Restart also queries only the two exact run paths with `OWNER_PACKAGE_NAME=com.askphotos.android`, then reconciles by relative path, filename, byte size, and `IS_PENDING`. Invalid or duplicate rows for that exact test filename are replaced; valid published rows are reused.
+- Completion requires exactly one published row for every manifest item and no extra app-owned row in the run paths. The result is written before private staging deletion for crash safety, then finalized with `stagingRemoved=true`; the host now waits for that finalized state.
+- Console output omits the potentially 5,000-entry URI list while the complete URI manifest remains in the run artifact for exact cleanup.
+- Cleanup uses the same foreground-service lifecycle and still deletes the recorded URIs individually. Orphan recovery remains restricted to exact run path plus owner package.
+- Artifact collection now restricts logcat to the target package PID. The previously collected unfiltered local log was removed and replaced; unrelated system logcat is no longer described as privacy-safe.
+
+Commands and tests actually run:
+
+- Host device harness tests: 19 PASS after adding privacy, duplicate seed-manifest, and cleanup-operation correlation regressions.
+- `:app:compileConsumerDebugKotlin` and `:app:compileConsumerDebugAndroidTestKotlin`: PASS.
+- ConsumerDebug build/install: PASS repeatedly through the required bundled build/install workflow; final installed source contains foreground seed and cleanup handling.
+- Connected provider/service tests: 4 PASS initially (two provider transports plus two service tests). The final installed source reran `TestGallerySeederServiceTest`: 2 PASS in 0.024 seconds.
+- Core foreground seed `fg_core_20260722_f731u`: 83/83 complete, zero reuse/retry, both Pictures/Documents paths, `stagingRemoved=true`. It is intentionally retained for functional testing.
+- Fresh cleanup probe `fg_cleanup_probe_20260722`: 83/83 recorded URIs deleted through the foreground service, orphan count 0, remaining count 0. A final idempotent rerun carried a new 32-hex operation ID through service status, proving stale `COMPLETE` files are not accepted for a new cleanup call.
+
+5k recovery evidence:
+
+- Run: `fg_stress5k_recovery_20260722`.
+- Archive: 110,337,694 bytes, 5,001 entries, SHA-256 `b11b63cd176388c83e5adf9cba3f63ae363b3c8af5535dce43571d9aaeed74d9`.
+- The process was deliberately force-stopped after the atomic checkpoint reported 500/5,000 with `stress_00499.jpg` last.
+- Restart found 509 valid published rows (nine commits occurred after the last status checkpoint), reused all 509, and completed exactly 5,000 without duplicate insertion.
+- Independent `StressSeededGalleryTest`: PASS in 0.043 seconds for exactly 5,000 app-owned image rows.
+- Final seed result: `createdCount=5000`, `reusedCount=509`, `recovered=true`, `stagingRemoved=true`.
+- No ANR, Java/native crash, or OOM was observed. The host resume/wait command completed in 192.1 seconds; this is a harness/media-publication measurement, not an indexing or query benchmark.
+- Diagnostics after the run showed app PSS 100,572 KB after launch. Thermal status was 3 with skin about 44.0 C, so the device was thermally constrained; no universal performance claim is made.
+
+Cleanup and retained state:
+
+- The first 5k cleanup invocation still used the older receiver build and its host command timed out at 60 seconds, but the on-device exact operation completed: requested 5,000, deleted 5,000, orphan count 0, remaining 0. The lifecycle was then moved into the foreground service and verified with the fresh 83-item probe.
+- Independent post-cleanup checks passed: 0 stress-run image rows remain; the retained core run still has all 82 Pictures media rows (81 images and one video) plus its one PDF. Personal media was not queried for evaluation and no unrelated URI was modified.
+- The connected Gradle test lifecycle had removed app-private models earlier. The signed SigLIP2 q8 pack was restored from `siglip2-base-p16-224-q8-core05.agretrieval`; host and device SHA-256 both matched `5966d528a7ddf73be52a299251e5c0071d878ba1e0fcc70d39fcf38ec6a8f010`.
+- Real SigLIP2 acceptance passed again: exact tokenizer IDs; red 0.1327772 > 0.09285481; blue 0.14373945 > 0.0864488; dog 0.07813349 > 0.014190406; football 0.11567759 > -0.031866416. Encoder block 18,012 ms; PSS 309,568 KB to 462,933 KB; no crash/OOM.
+
+Artifacts:
+
+- `artifacts/device-runs/fg_core_20260722_f731u/seed-result.json`
+- `artifacts/device-runs/fg_stress5k_recovery_20260722/staging-result.json`
+- `artifacts/device-runs/fg_stress5k_recovery_20260722/seed-result.json`
+- `artifacts/device-runs/fg_stress5k_recovery_20260722/diagnostics/`
+- `artifacts/device-runs/fg_stress5k_recovery_20260722/siglip2-restored-acceptance.txt`
+- `artifacts/device-runs/fg_cleanup_probe_20260722/cleanup-result.json`
+
+Failures and limitations:
+
+- This phase proves host-to-device transfer, exact MediaStore publication, foreground lifecycle recovery, exact visibility, and cleanup at 5k. It does not prove 5k Room import, complete embedding/OCR/event indexing, semantic query latency, or the 20k media gate.
+- Thermal status 3 means future 20k/indexing work must exercise pause/backoff behavior rather than treating this device's current throughput as a normal-temperature baseline.
+- E2B is not installed on this SM-F731U and is not claimed in this phase. E4B remains an explicit skip.
+
+Next phase:
+
+- Import/index the retained core and a bounded stress subset under the installed SigLIP2 pack, verify foreground indexing recovery and exact vector-row coverage, then run the 5k indexing/vector-query benchmark. Attempt 20k MediaStore seeding only after adding a thermal-aware pause gate and confirming sufficient time/storage.
+
 ## Phase 7B - Structured core evaluator and deterministic aggregation correction (22 July 2026)
 
 Status: **Implemented and host-verified; full Q01-Q13 device execution NOT RUN because the reference SM-F966B disconnected before the suite started.**
