@@ -1,6 +1,6 @@
 # Application versioning
 
-The current Android application version is `0.0.1` with Android `versionCode` 1.
+The current Android application version is `0.0.2` with Android `versionCode` 2.
 
 The project uses semantic versions while it is pre-1.0:
 

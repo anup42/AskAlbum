@@ -254,6 +254,23 @@ class RetrievalModelPackManager(
     }
 
     internal fun installVerified(zipFile: File): InstalledRetrievalPack {
+        return installArchive(zipFile, requireApkSignature = true, catalogSpec = null)
+    }
+
+    internal fun installCatalogDownload(
+        spec: RetrievalDownloadSpec,
+        zipFile: File,
+    ): InstalledRetrievalPack {
+        require(zipFile.length() == spec.archiveSizeBytes) { "Downloaded retrieval pack has the wrong size" }
+        require(zipFile.sha256Hex() == spec.archiveSha256) { "Downloaded retrieval pack failed SHA-256 verification" }
+        return installArchive(zipFile, requireApkSignature = false, catalogSpec = spec)
+    }
+
+    private fun installArchive(
+        zipFile: File,
+        requireApkSignature: Boolean,
+        catalogSpec: RetrievalDownloadSpec?,
+    ): InstalledRetrievalPack {
         require(root.mkdirs() || root.isDirectory) { "Could not create retrieval model directory" }
         require(generations.mkdirs() || generations.isDirectory) { "Could not create retrieval generation directory" }
         ZipFile(zipFile).use { zip ->
@@ -269,7 +286,8 @@ class RetrievalModelPackManager(
             val signatureBytes = zip.getInputStream(signatureEntry).use { input ->
                 Base64.getDecoder().decode(input.readBytesLimited(MAX_SIGNATURE_BYTES).toString(Charsets.US_ASCII).trim())
             }
-            verifier.verify(manifestBytes, signatureBytes, manifest)
+            if (requireApkSignature) verifier.verify(manifestBytes, signatureBytes, manifest)
+            catalogSpec?.validate(manifest)
             val allowed = manifest.files.mapTo(mutableSetOf()) { it.name }.apply { add(MANIFEST_NAME); add(SIGNATURE_NAME) }
             require(entries.all { !it.isDirectory && it.name in allowed }) { "Retrieval pack contains an unlisted entry" }
             require(entries.map { it.name }.toSet() == allowed) { "Retrieval pack is missing an artifact" }
@@ -354,6 +372,16 @@ private fun java.io.InputStream.readBytesLimited(limit: Int): ByteArray {
 
 private fun File.writeBytesAndSync(bytes: ByteArray) = FileOutputStream(this).use { it.write(bytes); it.fd.sync() }
 private fun File.writeTextAndSync(value: String) = writeBytesAndSync(value.toByteArray(Charsets.UTF_8))
+private fun File.sha256Hex(): String = inputStream().buffered().use { input ->
+    val digest = MessageDigest.getInstance("SHA-256")
+    val buffer = ByteArray(256 * 1024)
+    while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        digest.update(buffer, 0, count)
+    }
+    digest.digest().toHex()
+}
 private fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
 private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 private fun String.hexToBytes(): ByteArray = chunked(2).map { it.toInt(16).toByte() }.toByteArray()

@@ -3035,3 +3035,17 @@ Limitation: real PaddleOCR recognition was not rerun during this narrow compatib
 - Added `docs/versioning.md` defining semantic-version increments for meaningful upgrades and mandatory monotonically increasing Android version codes for distributed APKs.
 - ConsumerDebug assemble and replace-install: PASS on SM-F731U, Android 16/API 36; 67 Gradle tasks completed in 57 seconds.
 - `aapt2 dump badging` verified the generated APK contains `versionCode='1' versionName='0.0.1'`. Device `dumpsys package` independently reported the same installed values.
+## SigLIP2 catalog downloader and application 0.0.2 (22 July 2026)
+
+Status: **IMPLEMENTED; focused JVM gate passed. Connected download/install gate pending the published release asset and final device run.**
+
+- Added a consumer-build Settings action for the pinned `siglip2-base-p16-224-q8` pack with WorkManager-backed resumable download, foreground progress, cancellation, storage admission, HTTPS host allowlisting, and app-private activation.
+- The catalog pins release URL, 267,744,234-byte archive size, SHA-256 `5966d528a7ddf73be52a299251e5c0071d878ba1e0fcc70d39fcf38ec6a8f010`, Google source revision, ONNX artifact revision, and 384,737,099 installed bytes.
+- Catalog downloads trust only that exact outer archive hash and then revalidate the manifest, declared artifact set, per-file sizes, and per-file SHA-256 values. Manual `.agretrieval` imports retain the stricter APK-signing-certificate signature verification path.
+- Successful activation schedules the versioned embedding index. The `offlineDemo` variant remains import-only and retains no Internet permission.
+- Incremented the distributed application to `0.0.2` (`versionCode` 2).
+
+Commands run:
+
+- `:app:testConsumerDebugUnitTest --tests com.askphotos.android.RetrievalModelCatalogTest --tests com.askphotos.android.RetrievalPackValidationTest`: PASS in 53 seconds.
+- Bundled Android build/install workflow (`:app:assembleConsumerDebug :app:installConsumerDebug`): PASS in 52 seconds on Samsung SM-F731U, Android 16/API 36. The 0.0.2 consumer APK replaced the previous install without clearing app-private data.
