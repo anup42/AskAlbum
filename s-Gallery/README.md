@@ -37,11 +37,6 @@ These are the baseline screens used for the comparison:
 | Ask | [PNG](current-agentic/ask-before/ask-before.png) | [XML](current-agentic/ask-before/ask-before.xml) |
 | Index manager | [PNG](current-agentic/settings-before/settings-before.png) | [XML](current-agentic/settings-before/settings-before.xml) |
 
-## Documents
-
-- [Agentic Gallery One UI redesign plan](agentic-gallery-one-ui-plan.md)
-- [Samsung Gallery APK asset/resource inventory](samsung-apk-asset-inventory.md)
-
 ## Official references
 
 - [Samsung Gallery feature guide](https://www.samsung.com/us/support/answer/ANS10002535/)
