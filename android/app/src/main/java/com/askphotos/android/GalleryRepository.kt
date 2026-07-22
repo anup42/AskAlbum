@@ -62,6 +62,7 @@ class GalleryRepository(context: Context) {
 
     fun tombstoneCount(): Int = database.tombstoneCount()
     fun stageRecords(mediaId: String): List<MediaIndexStageRecord> = database.stageRecords(mediaId)
+    fun videoKeyframes(mediaId: String): List<VideoKeyframeRecord> = database.videoKeyframes(mediaId)
     fun peopleIndexStatus(): PeopleIndexStatus = database.peopleIndexStatus()
 
     fun enablePeopleIndexing(): PeopleIndexStatus = database
@@ -85,6 +86,10 @@ class GalleryRepository(context: Context) {
     fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> =
         database.embeddingPendingItems(producerVersion, limit)
     fun accessibleIds(): Set<String> = database.accessibleIds()
+    fun accessibleVectorIds(): Set<String> = database.accessibleVectorIds()
+    fun keyframeEmbeddingPendingItems(producerVersion: String, limit: Int): List<VideoKeyframeRecord> =
+        database.keyframeEmbeddingPendingItems(producerVersion, limit)
+    fun completeKeyframeEmbedding(id: String, producerVersion: String) = database.completeKeyframeEmbedding(id, producerVersion)
     fun markEmbedding(id: String, producerVersion: String) = database.markEmbedding(id, producerVersion)
     fun completeEmbedding(id: String, producerVersion: String) = database.completeEmbedding(id, producerVersion)
     fun failEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean) =
@@ -102,7 +107,8 @@ class GalleryRepository(context: Context) {
         entities: List<OcrEntityRecord>,
         ocrAttempted: Boolean,
         visualFeatures: VisualFeatures,
-    ) = database.completeIndex(id, labels, description, ocrText, faceCount, previewPath, blocks, entities, ocrAttempted, visualFeatures)
+        keyframes: List<VideoKeyframeRecord>,
+    ) = database.completeIndex(id, labels, description, ocrText, faceCount, previewPath, blocks, entities, ocrAttempted, visualFeatures, keyframes)
     fun failIndex(id: String, message: String, permanent: Boolean) = database.failIndex(id, message, permanent)
     fun rebuildEvents() = database.rebuildEvents()
     fun events(): List<EventRecord> = database.events()
@@ -186,9 +192,19 @@ class GalleryRepository(context: Context) {
             .mapNotNull { item -> score(item, terms, item.id in fullTextIds) }
             .sortedWith(compareByDescending<SearchHit> { it.score }.thenBy { it.item.title })
             .toList()
-        val semanticRanked = runCatching {
-            semanticVectors.searchText(plan.originalQuery, topK = plan.limit.coerceIn(20, 100), allowedIds = allowed)
+        val rawSemanticRanked = runCatching {
+            semanticVectors.searchText(
+                plan.originalQuery,
+                topK = plan.limit.coerceIn(20, 100),
+                allowedIds = allowed?.let(database::vectorIdsForMedia),
+            )
         }.getOrDefault(emptyList())
+        val semanticKeyframes = database.videoKeyframesByIds(rawSemanticRanked.mapTo(mutableSetOf()) { it.mediaId })
+        val resolvedSemanticHits = resolveSemanticVideoHits(rawSemanticRanked, semanticKeyframes)
+        val semanticRanked = resolvedSemanticHits.map { it.hit }
+        val bestSemanticKeyframeByMedia = resolvedSemanticHits.mapNotNull { resolved ->
+            resolved.keyframe?.let { it.mediaId to it }
+        }.toMap()
         val eligibleIds = allItems.mapTo(mutableSetOf()) { it.id }.let { ids ->
             if (allowed == null) ids else ids.intersect(allowed)
         }
@@ -210,13 +226,15 @@ class GalleryRepository(context: Context) {
             val semantic = semanticById[id]
             val item = lexical?.item ?: itemById[id] ?: return@mapNotNull null
             val semanticEvidence = semantic?.let {
+                val keyframe = bestSemanticKeyframeByMedia[item.id]
                 EvidenceRecord(
                     id = "${item.id}:image_text_embedding:${plan.originalQuery.hashCode().toUInt()}",
                     mediaId = item.id,
                     sourceField = "image_text_embedding",
-                    text = "Local image-text similarity",
+                    text = if (keyframe == null) "Local image-text similarity" else "Local video-frame similarity at ${formatTimestamp(keyframe.timestampMs)}",
                     confidence = ((it.score + 1f) / 2f).coerceIn(0f, 1f),
                     producerVersion = semanticVectors.producerVersion() ?: "unknown-retrieval-pack",
+                    timestampMs = keyframe?.timestampMs,
                 )
             }
             val eventEvidence = eventByMedia[id]?.let { event ->
@@ -305,6 +323,24 @@ class GalleryRepository(context: Context) {
         val evidence = mutableListOf<EvidenceRecord>()
 
         terms.forEach { term ->
+            val matchingKeyframe = if (item.kind == MediaKind.VIDEO) {
+                database.videoKeyframes(item.id).firstOrNull { frame ->
+                    frame.labels.any { term in it.lowercase(Locale.ROOT) || it.lowercase(Locale.ROOT) in term } ||
+                        term in frame.ocrText.lowercase(Locale.ROOT)
+                }
+            } else null
+            if (matchingKeyframe != null) {
+                score += 12.0
+                evidence += EvidenceRecord(
+                    id = "${item.id}:video_keyframe:${matchingKeyframe.id}:$term",
+                    mediaId = item.id,
+                    sourceField = "video_keyframe",
+                    text = "${matchingKeyframe.labels.joinToString(", ").ifBlank { matchingKeyframe.ocrText }} at ${formatTimestamp(matchingKeyframe.timestampMs)}",
+                    confidence = .92f,
+                    producerVersion = matchingKeyframe.producerVersion,
+                    timestampMs = matchingKeyframe.timestampMs,
+                )
+            }
             when {
                 tags.any { it == term } -> {
                     score += 8.0
@@ -338,6 +374,7 @@ class GalleryRepository(context: Context) {
                     confidence = matchingBlock?.confidence ?: .8f,
                     producerVersion = "mlkit-text-v2",
                     region = matchingBlock?.let { listOf(it.left, it.top, it.right, it.bottom) },
+                    timestampMs = matchingBlock?.timestampMs,
                 )
             }
         }
@@ -462,6 +499,11 @@ class GalleryRepository(context: Context) {
 
     private fun SearchHit?.orEmptyEvidence(): List<EvidenceRecord> = this?.evidence.orEmpty()
 
+    private fun formatTimestamp(timestampMs: Long): String {
+        val totalSeconds = timestampMs.coerceAtLeast(0L) / 1_000L
+        return "%d:%02d".format(Locale.ROOT, totalSeconds / 60L, totalSeconds % 60L)
+    }
+
     private fun shouldComposeGroundedAnswer(
         plan: GalleryQueryPlan,
         hits: List<SearchHit>,
@@ -502,4 +544,27 @@ class GalleryRepository(context: Context) {
         )
         return hit.copy(evidence = listOf(evidence) + hit.evidence)
     }
+}
+
+internal data class ResolvedSemanticHit(
+    val hit: VectorHit,
+    val keyframe: VideoKeyframeRecord?,
+    val sourceVectorId: String,
+)
+
+internal fun resolveSemanticVideoHits(
+    rawHits: List<VectorHit>,
+    keyframesById: Map<String, VideoKeyframeRecord>,
+): List<ResolvedSemanticHit> {
+    val order = compareByDescending<ResolvedSemanticHit> { it.hit.score }.thenBy { it.sourceVectorId }
+    return rawHits.map { raw ->
+        val keyframe = keyframesById[raw.mediaId]
+        ResolvedSemanticHit(
+            hit = raw.copy(mediaId = keyframe?.mediaId ?: raw.mediaId),
+            keyframe = keyframe,
+            sourceVectorId = raw.mediaId,
+        )
+    }.groupBy { it.hit.mediaId }
+        .mapNotNull { (_, candidates) -> candidates.minWithOrNull(order) }
+        .sortedWith(order)
 }

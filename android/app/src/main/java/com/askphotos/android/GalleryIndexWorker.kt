@@ -35,48 +35,36 @@ class GalleryIndexWorker(
                 if (isStopped) return@withContext Result.retry()
                 repository.markIndexing(item.id)
                 runCatching {
-                    val prepared = prepareBitmap(item)
-                    val bitmap = prepared.first
-                    val pixels = IntArray(bitmap.width * bitmap.height)
-                    bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-                    val visualFeatures = VisualFeatureExtractor.extract(pixels, bitmap.width, bitmap.height)
-                    val input = InputImage.fromBitmap(bitmap, 0)
-                    val labels = labeler.process(input).await()
-                        .filter { it.confidence >= .55f }
-                        .sortedByDescending { it.confidence }
-                        .take(12)
-                        .map { it.text.lowercase() }
-                        .distinct()
-                    val ocrDecision = OcrLikelihoodGate.decide(item, labels, pixels, bitmap.width, bitmap.height)
-                    val text = if (ocrDecision.shouldRun) recognizer.process(input).await() else null
-                    val blocks = text?.textBlocks.orEmpty().mapNotNull { block ->
-                        val box = block.boundingBox ?: return@mapNotNull null
-                        OcrBlockRecord(
-                            text = block.text,
-                            normalizedText = block.text.lowercase().replace(Regex("\\s+"), " ").trim(),
-                            language = block.recognizedLanguage.takeUnless(String::isBlank),
-                            pageIndex = 0,
-                            confidence = block.lines.mapNotNull { it.confidence }.average().takeUnless(Double::isNaN)?.toFloat() ?: .8f,
-                            left = box.left.toFloat() / bitmap.width,
-                            top = box.top.toFloat() / bitmap.height,
-                            right = box.right.toFloat() / bitmap.width,
-                            bottom = box.bottom.toFloat() / bitmap.height,
-                        )
+                    val analyses = if (item.kind == MediaKind.VIDEO) {
+                        VideoKeyframeExtractor(applicationContext).extract(item).map { frame ->
+                            analyze(item, frame.bitmap, frame.timestampMs, frame.previewPath, frame.id, frame.visualFeatures, labeler, recognizer)
+                        }
+                    } else {
+                        val (bitmap, previewPath) = prepareBitmap(item)
+                        listOf(analyze(item, bitmap, null, previewPath, null, null, labeler, recognizer))
                     }
+                    val labels = analyses.flatMap { it.labels }.distinct().take(24)
+                    val blocks = analyses.flatMap { it.blocks }
                     val entities = DocumentFactExtractor.extract(blocks)
-                    repository.completeIndex(
-                        id = item.id,
-                        labels = labels,
-                        description = labels.take(5).joinToString(", "),
-                        ocrText = text?.text.orEmpty(),
-                        faceCount = 0,
-                        previewPath = prepared.second,
-                        blocks = blocks,
-                        entities = entities,
-                        ocrAttempted = ocrDecision.shouldRun,
-                        visualFeatures = visualFeatures,
-                    )
-                    if (!bitmap.isRecycled) bitmap.recycle()
+                    val representative = analyses.maxByOrNull { it.visualFeatures.qualityScore }
+                        ?: error("No media frame was analyzed")
+                    try {
+                        repository.completeIndex(
+                            id = item.id,
+                            labels = labels,
+                            description = labels.take(8).joinToString(", "),
+                            ocrText = analyses.map { it.ocrText }.filter(String::isNotBlank).joinToString("\n"),
+                            faceCount = 0,
+                            previewPath = representative.previewPath,
+                            blocks = blocks,
+                            entities = entities,
+                            ocrAttempted = analyses.any { it.ocrAttempted },
+                            visualFeatures = representative.visualFeatures,
+                            keyframes = analyses.mapNotNull { it.asKeyframe(item.id) },
+                        )
+                    } finally {
+                        analyses.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
+                    }
                 }.onFailure { error ->
                     val permanent = error is SecurityException || error is java.io.FileNotFoundException
                     repository.failIndex(item.id, error::class.java.simpleName, permanent)
@@ -102,6 +90,56 @@ class GalleryIndexWorker(
             requireNotNull(BitmapFactory.decodeStream(stream)) { "Unsupported image content" }
         }
         return scaleDown(bitmap) to item.previewPath
+    }
+
+    private suspend fun analyze(
+        item: GalleryItem,
+        bitmap: Bitmap,
+        timestampMs: Long?,
+        previewPath: String?,
+        keyframeId: String?,
+        precomputedVisual: VisualFeatures?,
+        labeler: com.google.mlkit.vision.label.ImageLabeler,
+        recognizer: com.google.mlkit.vision.text.TextRecognizer,
+    ): FrameAnalysis {
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        val visual = precomputedVisual ?: VisualFeatureExtractor.extract(pixels, bitmap.width, bitmap.height)
+        val input = InputImage.fromBitmap(bitmap, 0)
+        val labels = labeler.process(input).await()
+            .filter { it.confidence >= .55f }
+            .sortedByDescending { it.confidence }
+            .take(12)
+            .map { it.text.lowercase() }
+            .distinct()
+        val ocrDecision = OcrLikelihoodGate.decide(item, labels, pixels, bitmap.width, bitmap.height)
+        val text = if (ocrDecision.shouldRun) recognizer.process(input).await() else null
+        val blocks = text?.textBlocks.orEmpty().mapNotNull { block ->
+            val box = block.boundingBox ?: return@mapNotNull null
+            OcrBlockRecord(
+                text = block.text,
+                normalizedText = block.text.lowercase().replace(Regex("\\s+"), " ").trim(),
+                language = block.recognizedLanguage.takeUnless(String::isBlank),
+                pageIndex = 0,
+                timestampMs = timestampMs,
+                confidence = block.lines.mapNotNull { it.confidence }.average().takeUnless(Double::isNaN)?.toFloat() ?: .8f,
+                left = box.left.toFloat() / bitmap.width,
+                top = box.top.toFloat() / bitmap.height,
+                right = box.right.toFloat() / bitmap.width,
+                bottom = box.bottom.toFloat() / bitmap.height,
+            )
+        }
+        return FrameAnalysis(
+            bitmap = bitmap,
+            timestampMs = timestampMs,
+            previewPath = previewPath,
+            keyframeId = keyframeId,
+            labels = labels,
+            ocrText = text?.text.orEmpty(),
+            blocks = blocks,
+            ocrAttempted = ocrDecision.shouldRun,
+            visualFeatures = visual,
+        )
     }
 
     private fun renderPdf(item: GalleryItem): Pair<Bitmap, String> {
@@ -135,5 +173,32 @@ class GalleryIndexWorker(
 
     private companion object {
         const val BATCH_SIZE = 24
+    }
+
+    private data class FrameAnalysis(
+        val bitmap: Bitmap,
+        val timestampMs: Long?,
+        val previewPath: String?,
+        val keyframeId: String?,
+        val labels: List<String>,
+        val ocrText: String,
+        val blocks: List<OcrBlockRecord>,
+        val ocrAttempted: Boolean,
+        val visualFeatures: VisualFeatures,
+    ) {
+        fun asKeyframe(mediaId: String): VideoKeyframeRecord? {
+            val id = keyframeId ?: return null
+            return VideoKeyframeRecord(
+                id = id,
+                mediaId = mediaId,
+                timestampMs = requireNotNull(timestampMs),
+                previewPath = requireNotNull(previewPath),
+                labels = labels,
+                ocrText = ocrText,
+                perceptualHash = visualFeatures.perceptualHash,
+                qualityScore = visualFeatures.qualityScore,
+                producerVersion = VideoKeyframePolicy.PRODUCER_VERSION,
+            )
+        }
     }
 }

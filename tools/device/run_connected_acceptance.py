@@ -13,10 +13,37 @@ from preflight import collect as collect_preflight
 
 
 ROOT = Path(__file__).resolve().parents[2]
+GRADLE_ROOT = ROOT / "android"
+DEFAULT_TEST_CLASSES = (
+    "com.askphotos.android.SeededGalleryTest",
+    "com.askphotos.android.IndexRecoveryTest",
+    "com.askphotos.android.SeededGalleryDisplayTest",
+)
 
 
-def run(args: list[str], log: Path, env: dict[str, str] | None = None) -> None:
-    result = subprocess.run(args, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
+def variant_artifacts(variant: str) -> tuple[str, Path, Path]:
+    variants = {
+        "consumerDebug": (
+            "ConsumerDebug",
+            ROOT / "android/app/build/outputs/apk/consumer/debug/app-consumer-debug.apk",
+            ROOT / "android/app/build/outputs/apk/androidTest/consumer/debug/app-consumer-debug-androidTest.apk",
+        ),
+        "offlineDemoDebug": (
+            "OfflineDemoDebug",
+            ROOT / "android/app/build/outputs/apk/offlineDemo/debug/app-offlineDemo-debug.apk",
+            ROOT / "android/app/build/outputs/apk/androidTest/offlineDemo/debug/app-offlineDemo-debug-androidTest.apk",
+        ),
+    }
+    try:
+        return variants[variant]
+    except KeyError as error:
+        raise ValueError(f"Unsupported variant: {variant}") from error
+
+
+def run(
+    args: list[str], log: Path, env: dict[str, str] | None = None, cwd: Path = ROOT,
+) -> None:
+    result = subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
     log.parent.mkdir(parents=True, exist_ok=True)
     log.write_text(result.stdout, encoding="utf-8")
     if result.returncode:
@@ -28,6 +55,10 @@ def main() -> None:
     parser.add_argument("--serial")
     parser.add_argument("--package", default="com.askphotos.android")
     parser.add_argument("--run-id")
+    parser.add_argument("--variant", choices=("consumerDebug", "offlineDemoDebug"), default="consumerDebug")
+    parser.add_argument("--test-class", action="append", dest="test_classes")
+    parser.add_argument("--skip-index-recovery", action="store_true")
+    parser.add_argument("--instrument-timeout-seconds", type=int, default=600)
     parser.add_argument("--skip-build", action="store_true")
     args = parser.parse_args()
     serial = resolve_serial(args.serial)
@@ -43,15 +74,30 @@ def main() -> None:
     run([sys.executable, "tools/sample_gallery/verify_licenses.py", "--gallery", str(gallery)], artifacts / "license-check.txt")
     sdk_root = str(Path(subprocess.check_output(["where.exe", "adb"], text=True).splitlines()[0]).parent.parent)
     env = {**os.environ, "ANDROID_HOME": sdk_root, "ANDROID_SDK_ROOT": sdk_root, "ANDROID_SERIAL": serial}
-    if not args.skip_build:
-        run(
-            [str(ROOT / "android" / "gradlew.bat"), ":app:assembleDebug", ":app:assembleDebugAndroidTest", "--console=plain"],
-            artifacts / "gradle-build.txt", env,
-        )
-        app_apk = ROOT / "android/app/build/outputs/apk/debug/app-debug.apk"
-        test_apk = ROOT / "android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
-        adb(serial, "install", "-r", "-t", str(app_apk), timeout_seconds=300)
-        adb(serial, "install", "-r", "-t", str(test_apk), timeout_seconds=300)
+    task_variant, app_apk, test_apk = variant_artifacts(args.variant)
+    marker = f"files/test-install-preservation-{run_id}"
+    installed_before = b"package:" in adb(serial, "shell", "pm", "path", args.package, check=False).stdout
+    if installed_before:
+        adb(serial, "shell", "run-as", args.package, "touch", marker)
+    try:
+        if not args.skip_build:
+            run(
+                [str(GRADLE_ROOT / "gradlew.bat"), f":app:assemble{task_variant}",
+                 f":app:assemble{task_variant}AndroidTest", "--console=plain"],
+                artifacts / "gradle-build.txt", env, GRADLE_ROOT,
+            )
+            if not app_apk.is_file() or not test_apk.is_file():
+                raise RuntimeError(f"Expected APK outputs are missing for {args.variant}")
+            adb(serial, "install", "-r", "-t", str(app_apk), timeout_seconds=300)
+            adb(serial, "install", "-r", "-t", str(test_apk), timeout_seconds=300)
+        if installed_before:
+            preserved = adb(serial, "shell", "run-as", args.package, "ls", marker, check=False)
+            if preserved.returncode:
+                raise RuntimeError("Target install erased app-private data; refusing to seed or run acceptance")
+    except BaseException:
+        if installed_before:
+            adb(serial, "shell", "run-as", args.package, "rm", marker, check=False)
+        raise
     seeded = False
     imported = False
     try:
@@ -68,20 +114,20 @@ def main() -> None:
             artifacts / "database-import-command.txt",
         )
         imported = True
-        run(
-            [sys.executable, "tools/device/test_index_recovery.py", "--serial", serial, "--package", args.package,
-             "--run-id", run_id, "--artifacts", str(artifacts.parent)],
-            artifacts / "index-recovery-command.txt",
-        )
-        for test_class, log_name in (
-            ("com.askphotos.android.SeededGalleryTest", "seeded-gallery-instrumentation.txt"),
-            ("com.askphotos.android.IndexRecoveryTest", "index-recovery-instrumentation.txt"),
-            ("com.askphotos.android.SeededGalleryDisplayTest", "seeded-gallery-display-instrumentation.txt"),
-        ):
+        if not args.skip_index_recovery:
+            run(
+                [sys.executable, "tools/device/test_index_recovery.py", "--serial", serial, "--package", args.package,
+                 "--run-id", run_id, "--artifacts", str(artifacts.parent)],
+                artifacts / "index-recovery-command.txt",
+            )
+        test_classes = tuple(args.test_classes or DEFAULT_TEST_CLASSES)
+        for index, test_class in enumerate(test_classes, start=1):
+            log_name = f"instrumentation-{index:02d}-{test_class.rsplit('.', 1)[-1]}.txt"
             instrumentation = adb(
                 serial, "shell", "am", "instrument", "-w", "-r", "-e", "class", test_class,
                 "-e", "galleryRunId", run_id, "-e", "galleryExpectedCount", str(expected_count),
-                f"{args.package}.test/androidx.test.runner.AndroidJUnitRunner", timeout_seconds=180,
+                f"{args.package}.test/androidx.test.runner.AndroidJUnitRunner",
+                timeout_seconds=args.instrument_timeout_seconds,
             )
             (artifacts / log_name).write_bytes(instrumentation.stdout + instrumentation.stderr)
             if b"OK (1 test)" not in instrumentation.stdout:
@@ -106,6 +152,8 @@ def main() -> None:
                      "--run-id", run_id, "--artifacts", str(artifacts.parent)],
                     artifacts / "cleanup-command.txt",
                 )
+            if installed_before:
+                adb(serial, "shell", "run-as", args.package, "rm", marker, check=False)
     print(f"Connected core acceptance passed for {run_id}; artifacts: {artifacts}")
 
 

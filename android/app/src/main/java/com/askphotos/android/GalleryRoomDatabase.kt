@@ -129,6 +129,32 @@ data class OcrEntityEntity(
 )
 
 @Entity(
+    tableName = "video_keyframe",
+    foreignKeys = [ForeignKey(
+        entity = MediaItemEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["media_id"],
+        onDelete = ForeignKey.CASCADE,
+    )],
+    indices = [
+        Index(name = "video_keyframe_media_time_idx", value = ["media_id", "timestamp_ms"], unique = true),
+        Index(name = "video_keyframe_embedding_idx", value = ["embedding_version"]),
+    ],
+)
+data class VideoKeyframeEntity(
+    @PrimaryKey val id: String,
+    @ColumnInfo(name = "media_id") val mediaId: String,
+    @ColumnInfo(name = "timestamp_ms") val timestampMs: Long,
+    @ColumnInfo(name = "preview_path") val previewPath: String,
+    @ColumnInfo(defaultValue = "''") val labels: String,
+    @ColumnInfo(name = "ocr_text", defaultValue = "''") val ocrText: String,
+    @ColumnInfo(name = "perceptual_hash") val perceptualHash: String,
+    @ColumnInfo(name = "quality_score") val qualityScore: Float,
+    @ColumnInfo(name = "producer_version") val producerVersion: String,
+    @ColumnInfo(name = "embedding_version") val embeddingVersion: String?,
+)
+
+@Entity(
     tableName = "gallery_event",
     indices = [
         Index(name = "gallery_event_start_idx", value = ["start_time"]),
@@ -304,6 +330,7 @@ data class MediaIndexStageEntity(
         MediaTombstoneEntity::class,
         OcrBlockEntity::class,
         OcrEntityEntity::class,
+        VideoKeyframeEntity::class,
         GalleryEventEntity::class,
         EventMediaEntity::class,
         EventCorrectionEntity::class,
@@ -316,7 +343,7 @@ data class MediaIndexStageEntity(
         ResultSetMediaEntity::class,
         MediaIndexStageEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -337,6 +364,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_7_8,
             MIGRATION_8_9,
             MIGRATION_9_10,
+            MIGRATION_10_11,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -447,6 +475,17 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL("DROP TABLE gallery_event_v9")
                 db.execSQL("CREATE TABLE event_correction (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, operation TEXT NOT NULL, media_ids TEXT NOT NULL, title TEXT, location_name TEXT, created_at INTEGER NOT NULL)")
                 db.execSQL("CREATE INDEX event_correction_created_idx ON event_correction(created_at)")
+            }
+        }
+
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS video_keyframe (id TEXT NOT NULL, media_id TEXT NOT NULL, timestamp_ms INTEGER NOT NULL, preview_path TEXT NOT NULL, labels TEXT NOT NULL DEFAULT '', ocr_text TEXT NOT NULL DEFAULT '', perceptual_hash TEXT NOT NULL, quality_score REAL NOT NULL, producer_version TEXT NOT NULL, embedding_version TEXT, PRIMARY KEY(id), FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS video_keyframe_media_time_idx ON video_keyframe(media_id,timestamp_ms)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS video_keyframe_embedding_idx ON video_keyframe(embedding_version)")
+                val now = System.currentTimeMillis()
+                db.execSQL("INSERT OR IGNORE INTO media_index_stage(media_id,stage,status,producer_version,attempt_count,updated_at,error) SELECT id,'VIDEO_KEYFRAMES',CASE WHEN media_kind='VIDEO' AND source_kind!='DEMO_ASSET' THEN 'PENDING' ELSE 'SKIPPED' END,CASE WHEN media_kind='VIDEO' THEN 'video-keyframes-v1' ELSE 'not-video' END,0,$now,NULL FROM media_item")
+                db.execSQL("UPDATE media_item SET index_state='PENDING',index_version='video-keyframes-v1' WHERE media_kind='VIDEO' AND source_kind!='DEMO_ASSET' AND access_state='ACCESSIBLE'")
             }
         }
 

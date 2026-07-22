@@ -27,7 +27,7 @@ enum class MediaSource { DEMO_ASSET, MEDIA_STORE, PHOTO_PICKER, SAF_DOCUMENT }
 enum class MediaKind { IMAGE, VIDEO, PDF }
 enum class IndexState { PENDING, INDEXING, READY, FAILED_RETRYABLE, FAILED_PERMANENT }
 enum class MediaAccessState { ACCESSIBLE, INACCESSIBLE }
-enum class IndexStage { DISCOVERY, METADATA, THUMBNAIL, EMBEDDING, OCR, FACES, EVENTS, ENRICHMENT }
+enum class IndexStage { DISCOVERY, METADATA, THUMBNAIL, VIDEO_KEYFRAMES, EMBEDDING, OCR, FACES, EVENTS, ENRICHMENT }
 enum class StageStatus { PENDING, RUNNING, COMPLETE, SKIPPED, FAILED_RETRYABLE, FAILED_PERMANENT }
 enum class OcrEntityType { AMOUNT, RECEIPT_TOTAL, DATE, PHONE, EMAIL, URL, ORDER_ID, FLIGHT_NUMBER, MERCHANT, PASSWORD }
 
@@ -212,11 +212,25 @@ data class IndexSummary(
     val semanticFactsReady: Int = 0,
     val ocrReady: Int = 0,
     val visualLabelsReady: Int = 0,
+    val videoKeyframesReady: Int = 0,
     val facesScanned: Int = 0,
     val pending: Int = 0,
     val events: Int = 0,
     val failed: Int = 0,
     val storageBytes: Long = 0,
+)
+
+data class VideoKeyframeRecord(
+    val id: String,
+    val mediaId: String,
+    val timestampMs: Long,
+    val previewPath: String,
+    val labels: List<String>,
+    val ocrText: String,
+    val perceptualHash: Long,
+    val qualityScore: Float,
+    val producerVersion: String,
+    val embeddingVersion: String? = null,
 )
 
 data class PeopleIndexStatus(

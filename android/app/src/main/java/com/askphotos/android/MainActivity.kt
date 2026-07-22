@@ -3,6 +3,8 @@ package com.askphotos.android
 import android.graphics.BitmapFactory
 import android.Manifest
 import android.content.pm.PackageManager
+import android.widget.MediaController
+import android.widget.VideoView
 import android.net.Uri
 import android.os.Build
 import android.util.Size
@@ -72,6 +74,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -569,6 +572,9 @@ private fun ResultTile(hit: SearchHit, onClick: () -> Unit) {
                 Text(hit.item.title, fontWeight = FontWeight.Bold, maxLines = 2, lineHeight = 18.sp)
                 Spacer(Modifier.height(3.dp))
                 Text(hit.item.location, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1)
+                hit.evidence.mapNotNull { it.timestampMs }.minOrNull()?.let { timestamp ->
+                    Text("Match at ${formatPlaybackTime(timestamp)}", color = Forest, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
                 if (hit.duplicateIds.isNotEmpty()) {
                     Spacer(Modifier.height(5.dp))
                     Text("+${hit.duplicateIds.size} similar", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
@@ -672,6 +678,7 @@ private fun IndexManagerScreen(
         IndexMetric("Semantic facts ready", index.semanticFactsReady, index.discovered, "demo-sidecar-v1")
         IndexMetric("OCR ready or skipped", index.ocrReady, index.discovered, "demo skipped / ML Kit bundled")
         IndexMetric("Visual labels ready", index.visualLabelsReady, index.discovered, "mlkit-image-label-v1 bundled")
+        IndexMetric("Video keyframes", index.videoKeyframesReady, index.videoKeyframesReady, VideoKeyframePolicy.PRODUCER_VERSION)
         IndexMetric(
             "Face stage complete",
             index.facesScanned,
@@ -698,7 +705,7 @@ private fun IndexManagerScreen(
                 Spacer(Modifier.height(9.dp))
                 Text("Offline hybrid local runtime", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(7.dp))
-                Text("Bundled OCR, image labeling, face detection, PDF rendering, and video thumbnails run locally. Gemma, SigLIP2, and face identity embeddings still require separate compatible model packs.", color = Color(0xFFDCE8E2))
+                Text("Bundled OCR, image labeling, face detection, PDF rendering, and bounded video keyframes run locally. Gemma, SigLIP2, and face identity embeddings still require separate compatible model packs.", color = Color(0xFFDCE8E2))
                 Spacer(Modifier.height(12.dp))
                 Text("Local database: ${formatBytes(index.storageBytes)}", color = Color.White, fontWeight = FontWeight.SemiBold)
             }
@@ -971,18 +978,46 @@ private fun OnboardingScreen(onContinue: () -> Unit) {
 }
 
 @Composable
-private fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit) {
+internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit) {
+    val playbackTimestamp = hit.evidence.mapNotNull { it.timestampMs }.minOrNull()
+    var playing by remember(hit.item.id, playbackTimestamp) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
         title = { Text("Why this answer?", fontWeight = FontWeight.Bold) },
         text = {
             Column(Modifier.fillMaxWidth().fillMaxHeight(.72f).verticalScroll(rememberScrollState())) {
-                AssetImage(hit.item, Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(16.dp)))
+                if (playing && hit.item.kind == MediaKind.VIDEO && hit.item.contentUri != null) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(16.dp)).testTag("video-playback"),
+                        factory = { viewContext ->
+                            VideoView(viewContext).apply {
+                                val controls = MediaController(viewContext)
+                                controls.setAnchorView(this)
+                                setMediaController(controls)
+                                setVideoURI(Uri.parse(hit.item.contentUri))
+                                setOnPreparedListener {
+                                    seekTo((playbackTimestamp ?: 0L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt())
+                                    start()
+                                }
+                            }
+                        },
+                        onRelease = VideoView::stopPlayback,
+                    )
+                } else {
+                    AssetImage(hit.item, Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(16.dp)))
+                }
                 Spacer(Modifier.height(13.dp))
                 Text(hit.item.title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text(hit.item.location, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("${hit.item.kind.name} • ${hit.item.source.name.replace('_', ' ')} • ${hit.item.indexState.name.replace('_', ' ')}", fontSize = 11.sp, color = Forest, fontWeight = FontWeight.SemiBold)
+                if (hit.item.kind == MediaKind.VIDEO && hit.item.contentUri != null && playbackTimestamp != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = { playing = true },
+                        modifier = Modifier.testTag("play-video-at-match"),
+                    ) { Text("Play from ${formatPlaybackTime(playbackTimestamp)}") }
+                }
                 Spacer(Modifier.height(14.dp))
                 Text("EVIDENCE", color = Forest, fontSize = 11.sp, fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(7.dp))
@@ -1043,4 +1078,9 @@ private fun formatBytes(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
     bytes < 1024 * 1024 -> "${bytes / 1024} KB"
     else -> "${"%.1f".format(bytes / 1024f / 1024f)} MB"
+}
+
+private fun formatPlaybackTime(timestampMs: Long): String {
+    val totalSeconds = timestampMs.coerceAtLeast(0L) / 1_000L
+    return "%d:%02d".format(totalSeconds / 60L, totalSeconds % 60L)
 }

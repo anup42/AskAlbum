@@ -15,6 +15,7 @@ from PIL import Image, ImageEnhance, ImageOps
 
 from generate_synthetic_documents import generate as generate_synthetic
 from generate_stress_gallery import generate as generate_stress
+from generate_synthetic_video import generate as generate_synthetic_video
 from fixture_metadata import save_raster_with_metadata
 
 
@@ -163,6 +164,15 @@ def build_core(output: Path, config: dict[str, object]) -> None:
         })
     shutil.rmtree(synthetic_dir)
 
+    video_record = generate_synthetic_video(media / "synthetic_video_screen_timeline.mp4")
+    items.append({
+        **video_record,
+        "captured_at": "2024-03-15T18:00:00+08:00",
+        "gps": [1.2834, 103.8607],
+        "album": "Singapore 2024",
+        "source_id": "synthetic_video_fixture",
+    })
+
     if not 60 <= len(items) <= 100:
         raise RuntimeError(f"Core profile must contain 60-100 items, generated {len(items)}")
     gallery_manifest = {"profile": "core", "generated_at": "deterministic", "items": items}
@@ -180,7 +190,7 @@ def build_core(output: Path, config: dict[str, object]) -> None:
     checksum_lines = [f"{sha256_file(path)}  {path.relative_to(output.parent).as_posix()}" for path in sorted(media.iterdir())]
     (output.parent / "CHECKSUMS.sha256").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
     count_2024 = sum(1 for item in items if str(item["captured_at"]).startswith("2024") and item["kind"] == "IMAGE")
-    (output / "ground-truth-summary.json").write_text(json.dumps({"item_count": len(items), "photo_count_2024": count_2024}, indent=2), encoding="utf-8")
+    (output / "ground-truth-summary.json").write_text(json.dumps({"item_count": len(items), "photo_count_2024": count_2024, "video_count": 1}, indent=2), encoding="utf-8")
     print(f"Built core gallery with {len(items)} items ({count_2024} images dated 2024) at {output}")
 
 

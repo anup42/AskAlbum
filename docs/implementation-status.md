@@ -1836,3 +1836,73 @@ Failures and limitations:
 Next phase:
 
 - Keep OCR-engine replacement and an external packet-capture acceptance as separate privacy slices. Resume product work with event correction UI or video keyframes only after choosing that ordering.
+
+## Phase 8B - video keyframes (22 July 2026)
+
+Status: **Implemented and passed through a non-uninstalling direct-instrumentation physical-device gate.**
+
+Files changed:
+
+- Room schema/version 11, video-keyframe entity/DAO/migration, index stages, embedding worker, repository retrieval/evidence, and timestamp playback UI.
+- `android/app/src/main/java/com/askphotos/android/VideoKeyframeExtractor.kt`
+- `android/app/src/test/java/com/askphotos/android/VideoKeyframePolicyTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/SeededVideoKeyframeAcceptanceTest.kt`
+- deterministic synthetic-video corpus generator and Q11 expected-query fixture.
+- `tools/device/run_connected_acceptance.py` now understands the distribution flavours, supports focused test classes, and verifies that `adb install -r` preserves app-private data before seeding.
+
+Architecture decisions:
+
+- Videos remain parent media records. Bounded keyframes are child records with stable IDs, timestamps, private previews, labels/OCR, pHash/quality metadata, producer version, and embedding version.
+- Extraction samples at most 12 center timestamps and collapses adjacent near-identical frames by pHash. Keyframe vector hits resolve back to the parent video and carry timestamped evidence.
+- Result evidence can open a video through the system content URI and seek to the verified keyframe timestamp.
+- Existing videos are requeued by migration 10-to-11; stage work remains idempotent and separately versioned.
+
+Commands run (serial masked):
+
+```powershell
+python tools/sample_gallery/build_sample_gallery.py --profile core --output build/sample-gallery/core
+python tools/sample_gallery/verify_licenses.py --gallery build/sample-gallery/core
+.\gradlew.bat :app:testOfflineDemoDebugUnitTest --tests com.askphotos.android.VideoKeyframePolicyTest :app:compileOfflineDemoDebugAndroidTestKotlin
+powershell -ExecutionPolicy Bypass -File C:\Users\anupk\.codex\skills\android-build-install\scripts\build_install_android.ps1 -Root <repo>\android -Module :app -Variant ConsumerDebug -Serial <masked>
+python tools/device/seed_gallery.py --serial <masked> --gallery build/sample-gallery/core --run-id phase8_video_keyframes_20260722
+python tools/device/sync_seeded_gallery.py --serial <masked> --run-id phase8_video_keyframes_20260722 --action import
+.\gradlew.bat :app:connectedConsumerDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.galleryRunId=phase8_video_keyframes_20260722 -Pandroid.testInstrumentationRunnerArguments.class=GalleryRoomMigrationTest,SeededVideoKeyframeAcceptanceTest
+python C:\Users\anupk\.codex\skills\android-device-diagnostics\scripts\android_diagnostics.py --serial <masked> --package com.askphotos.android --minutes 20 --keywords VideoKeyframe,MediaMetadataRetriever,AndroidRuntime,FATAL,ANR,OutOfMemory,SQLite,Room --out artifacts\device-runs\phase8_video_keyframes_20260722\diagnostics --screenshot
+python -m unittest test_common.py test_run_connected_acceptance.py -v
+python tools/device/run_connected_acceptance.py --serial <masked> --variant consumerDebug --run-id phase8_video_direct2_20260722 --test-class com.askphotos.android.SeededVideoKeyframeAcceptanceTest --skip-index-recovery --instrument-timeout-seconds 720
+.\gradlew.bat :app:testOfflineDemoDebugUnitTest :app:testConsumerDebugUnitTest :app:lintOfflineDemoDebug :app:lintConsumerDebug --console=plain
+python C:\Users\anupk\.codex\skills\android-device-diagnostics\scripts\android_diagnostics.py --serial <masked> --package com.askphotos.android --minutes 10 --keywords VideoKeyframe,MediaMetadataRetriever,AndroidRuntime,FATAL,ANR,OutOfMemory,SQLite,Room --out artifacts\device-runs\phase8_video_direct2_20260722\diagnostics-final --screenshot
+```
+
+Verification results:
+
+- Core corpus generation passed with 75 items. The new CC0 synthetic video is 18 seconds, 180 frames at 10 fps. License/checksum verification passed for all 75 items and 17 license records.
+- Focused video-keyframe unit tests and Android-test Kotlin compilation passed.
+- ConsumerDebug built and installed successfully on the sole authorized Samsung SM-F966B (Android 16/API 36, arm64-v8a, SM8750).
+- Seeding created exactly 75 run-scoped MediaStore URIs. The import command reported 75 requested/changed/imported records.
+- The first Gradle-managed connected run reported 1 pass/1 failure: migration passed, while the video test saw no imported video. The cause was the Gradle lifecycle replacing the seeded target package before instrumentation and uninstalling it afterward, not a video importer failure.
+- The repaired harness builds from the Android project root, uses current `consumerDebug`/`offlineDemoDebug` APK paths, installs both APKs with `adb install -r -t`, and aborts if an app-private preservation sentinel disappears.
+- Final direct physical-device acceptance passed: `SeededVideoKeyframeAcceptanceTest`, 1 test, 0 failures, 32.525 seconds. It proved video import, ready indexing state, bounded/distinct keyframes, private previews, complete stage state, semantic retrieval, timestamp evidence in the grounded answer, and playback-at-match UI.
+- Both complete flavour unit suites and both lint gates passed in 95.9 seconds. Six Python harness/unit tests passed.
+- A final diff audit found and fixed a vector-grounding edge case: timestamp evidence now comes only from the parent or keyframe vector that actually won ranking. Its parent-wins/frame-wins regression passed in both distributions; both lint gates passed again in 111.2 seconds. The final ConsumerDebug APK then built and installed successfully in 20 seconds.
+
+Cleanup and artifacts:
+
+- The connected Gradle task uninstalled the target package at teardown. This erased app-private state, including the previously installed E2B model pack, and revoked ownership of seeded MediaStore rows. This is a harness defect that must be fixed before another seeded connected run.
+- Cleanup still removed only this run's data: Android's exact-URI confirmation deleted 74 image/video items, and the one verified synthetic PDF was removed by its exact run-specific path. Its exact MediaStore row returned no result afterward. Both empty run directories were removed, temporary media grants were revoked, and no unrelated gallery item was touched.
+- JUnit XML: `android/app/build/outputs/androidTest-results/connected/debug/flavors/consumer/TEST-SM-F966B - 16-_app-consumer.xml`.
+- Diagnostics and screenshot: `artifacts/device-runs/phase8_video_keyframes_20260722/diagnostics/20260722_050921/`.
+- Seed manifest: `artifacts/device-runs/phase8_video_keyframes_20260722/seed-result.json`.
+- Passing direct-run artifacts: `artifacts/device-runs/phase8_video_direct2_20260722/`.
+- Passing-run diagnostics and screenshot: `artifacts/device-runs/phase8_video_direct2_20260722/diagnostics-final/20260722_051905/`.
+- Passing-run cleanup removed 75/75 imported rows, wrote 75 tombstones, deleted four private previews, deleted exactly 75 recorded MediaStore URIs, and reported zero remaining items.
+
+Failures and limitations:
+
+- Gradle `connected*AndroidTest` remains unsuitable for stateful seeded/model-pack acceptance because it uninstalls the app. The repaired repository harness uses direct instrumentation and proves app-private preservation before seeding.
+- The old failed-run diagnostics include crashes from a temporary debug cleanup recovery activity. That activity was removed and is not part of the implemented slice or passing evidence.
+- E2B real-model acceptance was not run in this slice, and the installed pack must now be re-imported. E4B remains not run.
+
+Next phase:
+
+- Re-import the E2B model pack and rerun the real-model planner/verifier/answer suite through the corrected non-uninstalling harness. Keep E4B an explicit skip until a valid pack is installed and benchmarked.

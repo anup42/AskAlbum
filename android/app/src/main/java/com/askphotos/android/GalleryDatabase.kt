@@ -148,6 +148,41 @@ class GalleryDatabase(
         "SELECT id FROM media_item WHERE access_state='ACCESSIBLE'", null,
     ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
 
+    fun accessibleVectorIds(): Set<String> = readableDatabase.rawQuery(
+        "SELECT id FROM media_item WHERE access_state='ACCESSIBLE' UNION SELECT v.id FROM video_keyframe v JOIN media_item m ON m.id=v.media_id WHERE m.access_state='ACCESSIBLE'",
+        null,
+    ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    fun vectorIdsForMedia(mediaIds: Set<String>): Set<String> {
+        if (mediaIds.isEmpty()) return emptySet()
+        val placeholders = mediaIds.joinToString(",") { "?" }
+        val keyframes = readableDatabase.rawQuery(
+            "SELECT id FROM video_keyframe WHERE media_id IN ($placeholders)", mediaIds.toTypedArray(),
+        ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+        return mediaIds + keyframes
+    }
+
+    fun keyframeEmbeddingPendingItems(producerVersion: String, limit: Int): List<VideoKeyframeRecord> = readableDatabase.rawQuery(
+        "SELECT v.* FROM video_keyframe v JOIN media_item m ON m.id=v.media_id WHERE m.access_state='ACCESSIBLE' AND (v.embedding_version IS NULL OR v.embedding_version!=?) ORDER BY COALESCE(m.captured_at,0) DESC,v.timestamp_ms LIMIT ?",
+        arrayOf(producerVersion, limit.toString()),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorVideoKeyframe(cursor)) } }
+
+    fun completeKeyframeEmbedding(id: String, producerVersion: String) {
+        writableDatabase.update("video_keyframe", ContentValues().apply { put("embedding_version", producerVersion) }, "id=?", arrayOf(id))
+    }
+
+    fun videoKeyframes(mediaId: String): List<VideoKeyframeRecord> = readableDatabase.rawQuery(
+        "SELECT * FROM video_keyframe WHERE media_id=? ORDER BY timestamp_ms", arrayOf(mediaId),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorVideoKeyframe(cursor)) } }
+
+    fun videoKeyframesByIds(ids: Set<String>): Map<String, VideoKeyframeRecord> {
+        if (ids.isEmpty()) return emptyMap()
+        val placeholders = ids.joinToString(",") { "?" }
+        return readableDatabase.rawQuery(
+            "SELECT * FROM video_keyframe WHERE id IN ($placeholders)", ids.toTypedArray(),
+        ).use { cursor -> buildMap { while (cursor.moveToNext()) cursorVideoKeyframe(cursor).also { put(it.id, it) } } }
+    }
+
     fun markEmbedding(id: String, producerVersion: String) =
         updateStage(writableDatabase, id, IndexStage.EMBEDDING, StageStatus.RUNNING, producerVersion, incrementAttempt = true)
 
@@ -172,6 +207,15 @@ class GalleryDatabase(
         listOf(IndexStage.THUMBNAIL, IndexStage.OCR, IndexStage.ENRICHMENT).forEach {
             updateStage(db, id, it, StageStatus.RUNNING, "mlkit-mobile-v1", incrementAttempt = true)
         }
+        val item = itemById(db, id)
+        updateStage(
+            db,
+            id,
+            IndexStage.VIDEO_KEYFRAMES,
+            if (item?.kind == MediaKind.VIDEO) StageStatus.RUNNING else StageStatus.SKIPPED,
+            if (item?.kind == MediaKind.VIDEO) VideoKeyframePolicy.PRODUCER_VERSION else "not-video",
+            incrementAttempt = item?.kind == MediaKind.VIDEO,
+        )
     }
 
     fun completeIndex(
@@ -185,6 +229,7 @@ class GalleryDatabase(
         entities: List<OcrEntityRecord>,
         ocrAttempted: Boolean,
         visualFeatures: VisualFeatures,
+        keyframes: List<VideoKeyframeRecord>,
     ) {
         val db = writableDatabase
         db.beginTransaction()
@@ -206,6 +251,7 @@ class GalleryDatabase(
             }, "id=?", arrayOf(id))
             db.delete("ocr_block", "media_id=?", arrayOf(id))
             db.delete("ocr_entity", "media_id=?", arrayOf(id))
+            db.delete("video_keyframe", "media_id=?", arrayOf(id))
             blocks.forEach { block ->
                 db.insert("ocr_block", null, ContentValues().apply {
                     put("media_id", id)
@@ -236,6 +282,21 @@ class GalleryDatabase(
                     put("producer_version", entity.producerVersion)
                 })
             }
+            keyframes.forEach { keyframe ->
+                require(keyframe.mediaId == id) { "Keyframe parent mismatch" }
+                db.insertOrThrow("video_keyframe", null, ContentValues().apply {
+                    put("id", keyframe.id)
+                    put("media_id", id)
+                    put("timestamp_ms", keyframe.timestampMs)
+                    put("preview_path", keyframe.previewPath)
+                    put("labels", keyframe.labels.joinToString(TAG_SEPARATOR))
+                    put("ocr_text", keyframe.ocrText)
+                    put("perceptual_hash", java.lang.Long.toUnsignedString(keyframe.perceptualHash, 16))
+                    put("quality_score", keyframe.qualityScore)
+                    put("producer_version", keyframe.producerVersion)
+                    if (keyframe.embeddingVersion == null) putNull("embedding_version") else put("embedding_version", keyframe.embeddingVersion)
+                })
+            }
             itemById(db, id)?.let { refreshFts(db, it) }
             listOf(IndexStage.THUMBNAIL, IndexStage.ENRICHMENT).forEach {
                 updateStage(db, id, it, StageStatus.COMPLETE, "mlkit-mobile-v1")
@@ -246,6 +307,13 @@ class GalleryDatabase(
                 IndexStage.OCR,
                 if (ocrAttempted) StageStatus.COMPLETE else StageStatus.SKIPPED,
                 if (ocrAttempted) "mlkit-text-latin-v2+document-facts-v2" else "ocr-likelihood-gate-v1",
+            )
+            updateStage(
+                db,
+                id,
+                IndexStage.VIDEO_KEYFRAMES,
+                if (keyframes.isNotEmpty()) StageStatus.COMPLETE else StageStatus.SKIPPED,
+                if (keyframes.isNotEmpty()) VideoKeyframePolicy.PRODUCER_VERSION else "not-video",
             )
             if (peopleIndexEnabled(db)) {
                 updateStage(db, id, IndexStage.FACES, StageStatus.PENDING, "mlkit-face-detection-v1")
@@ -265,7 +333,7 @@ class GalleryDatabase(
             put("index_error", message.take(300))
         }, "id=?", arrayOf(id))
         val status = if (permanent) StageStatus.FAILED_PERMANENT else StageStatus.FAILED_RETRYABLE
-        listOf(IndexStage.THUMBNAIL, IndexStage.OCR, IndexStage.ENRICHMENT).forEach {
+        listOf(IndexStage.THUMBNAIL, IndexStage.VIDEO_KEYFRAMES, IndexStage.OCR, IndexStage.ENRICHMENT).forEach {
             updateStage(db, id, it, status, "mlkit-mobile-v1", error = message)
         }
     }
@@ -338,6 +406,9 @@ class GalleryDatabase(
                         val id = cursor.getString(0)
                         val contentUri = cursor.getString(1)
                         if (!cursor.isNull(2)) previews += cursor.getString(2)
+                        db.rawQuery("SELECT preview_path FROM video_keyframe WHERE media_id=?", arrayOf(id)).use { frames ->
+                            while (frames.moveToNext()) previews += frames.getString(0)
+                        }
                         val tombstoneValues = ContentValues().apply {
                             put("stable_id", id)
                             put("content_uri", contentUri)
@@ -357,8 +428,8 @@ class GalleryDatabase(
         var previewFilesDeleted = 0
         previews.distinct().forEach { path ->
             val preview = java.io.File(path).canonicalFile
-            val allowedRoot = java.io.File(context.filesDir, "previews").canonicalFile
-            if (preview.toPath().startsWith(allowedRoot.toPath()) && preview.exists() && preview.delete()) previewFilesDeleted++
+            val allowedRoots = listOf("previews", "video-keyframes").map { java.io.File(context.filesDir, it).canonicalFile }
+            if (allowedRoots.any { preview.toPath().startsWith(it.toPath()) } && preview.exists() && preview.delete()) previewFilesDeleted++
         }
         rebuildEvents()
         return MediaRemovalResult(requested.size, matched, deleted, tombstones, previewFilesDeleted)
@@ -761,6 +832,9 @@ class GalleryDatabase(
             semanticFactsReady = items.count { it.tags.isNotEmpty() },
             ocrReady = items.count { it.source == MediaSource.DEMO_ASSET || it.indexState == IndexState.READY },
             visualLabelsReady = items.count { it.tags.isNotEmpty() },
+            videoKeyframesReady = readableDatabase.rawQuery(
+                "SELECT COUNT(*) FROM video_keyframe", null,
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
             facesScanned = readableDatabase.rawQuery(
                 "SELECT COUNT(*) FROM media_index_stage WHERE stage='FACES' AND status='COMPLETE'",
                 null,
@@ -1061,6 +1135,7 @@ class GalleryDatabase(
             IndexStage.DISCOVERY to StageStatus.COMPLETE,
             IndexStage.METADATA to StageStatus.COMPLETE,
             IndexStage.THUMBNAIL to if (complete) StageStatus.COMPLETE else StageStatus.PENDING,
+            IndexStage.VIDEO_KEYFRAMES to if (item.kind == MediaKind.VIDEO && !complete) StageStatus.PENDING else StageStatus.SKIPPED,
             IndexStage.EMBEDDING to StageStatus.PENDING,
             IndexStage.OCR to if (complete) StageStatus.COMPLETE else StageStatus.PENDING,
             IndexStage.FACES to StageStatus.SKIPPED,
@@ -1076,6 +1151,7 @@ class GalleryDatabase(
                     IndexStage.FACES -> "disabled-until-opt-in"
                     IndexStage.EVENTS -> "day-event-v1"
                     IndexStage.EMBEDDING -> "not-installed"
+                    IndexStage.VIDEO_KEYFRAMES -> if (item.kind == MediaKind.VIDEO) VideoKeyframePolicy.PRODUCER_VERSION else "not-video"
                     else -> if (item.source == MediaSource.DEMO_ASSET) "demo-sidecar-v1" else "media-compiler-v1"
                 })
                 put("attempt_count", 0)
@@ -1115,6 +1191,19 @@ class GalleryDatabase(
         "media_index_stage", arrayOf("attempt_count"), "media_id=? AND stage=?", arrayOf(mediaId, stage.name),
         null, null, null, "1",
     ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+
+    private fun cursorVideoKeyframe(cursor: android.database.Cursor) = VideoKeyframeRecord(
+        id = cursor.text("id"),
+        mediaId = cursor.text("media_id"),
+        timestampMs = cursor.getLong(cursor.getColumnIndexOrThrow("timestamp_ms")),
+        previewPath = cursor.text("preview_path"),
+        labels = cursor.text("labels").split(TAG_SEPARATOR).filter(String::isNotBlank),
+        ocrText = cursor.text("ocr_text"),
+        perceptualHash = java.lang.Long.parseUnsignedLong(cursor.text("perceptual_hash"), 16),
+        qualityScore = cursor.getFloat(cursor.getColumnIndexOrThrow("quality_score")),
+        producerVersion = cursor.text("producer_version"),
+        embeddingVersion = cursor.nullableText("embedding_version"),
+    )
 
     private fun peopleIndexEnabled(db: GallerySqlDatabase): Boolean = db.rawQuery(
         "SELECT enabled FROM people_settings WHERE singleton_id=1",

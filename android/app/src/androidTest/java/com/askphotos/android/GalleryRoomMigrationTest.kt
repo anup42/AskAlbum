@@ -54,7 +54,12 @@ class GalleryRoomMigrationTest {
             }
             database.query("SELECT COUNT(*) FROM media_index_stage").use { cursor ->
                 assertTrue(cursor.moveToFirst())
-                assertEquals(0, cursor.getInt(0))
+                assertEquals(1, cursor.getInt(0))
+            }
+            database.query("SELECT stage,status FROM media_index_stage WHERE media_id='legacy-media'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(IndexStage.VIDEO_KEYFRAMES.name, cursor.getString(0))
+                assertEquals(StageStatus.SKIPPED.name, cursor.getString(1))
             }
             database.query("PRAGMA table_info(media_item)").use { cursor ->
                 val columns = buildSet {
@@ -100,6 +105,10 @@ class GalleryRoomMigrationTest {
                 assertTrue(columns.containsAll(setOf("start_time", "end_time", "location_name", "event_type", "search_text", "producer_version", "user_corrected")))
             }
             database.query("SELECT COUNT(*) FROM event_correction").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+            database.query("SELECT COUNT(*) FROM video_keyframe").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals(0, cursor.getInt(0))
             }

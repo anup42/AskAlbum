@@ -16,6 +16,7 @@ import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
+import java.io.File
 
 class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     private val app = appContext as AskPhotosApplication
@@ -28,8 +29,9 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
         val producer = vectors.producerVersion() ?: return@withContext Result.success()
         repository.recoverInterruptedJobs()
         val candidates = repository.embeddingPendingItems(producer, BATCH_SIZE)
-        if (candidates.isEmpty()) {
-            vectors.reconcile(repository.accessibleIds())
+        val keyframeCandidates = repository.keyframeEmbeddingPendingItems(producer, KEYFRAME_BATCH_SIZE)
+        if (candidates.isEmpty() && keyframeCandidates.isEmpty()) {
+            vectors.reconcile(repository.accessibleVectorIds())
             return@withContext Result.success()
         }
 
@@ -66,10 +68,28 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
             }
         }
 
-        if (repository.embeddingPendingItems(producer, 1).isNotEmpty()) {
+        if (keyframeCandidates.isNotEmpty()) {
+            val preparedFrames = keyframeCandidates.map { frame -> frame to decodeKeyframeModelImage(frame) }
+            val embedded = runCatching {
+                val images = preparedFrames.map { it.second }
+                (engine as? LiteRtImageTextEmbeddingEngine)?.embedImages(images)
+                    ?: images.map { engine.embedImage(it) }
+            }.getOrElse { return@withContext Result.retry() }
+            preparedFrames.zip(embedded).forEach { (entry, vector) ->
+                val frame = entry.first
+                runCatching { vectors.upsert(frame.id, vector) }
+                    .onSuccess { repository.completeKeyframeEmbedding(frame.id, producer) }
+                    .onFailure { return@withContext Result.retry() }
+            }
+        }
+
+        if (
+            repository.embeddingPendingItems(producer, 1).isNotEmpty() ||
+            repository.keyframeEmbeddingPendingItems(producer, 1).isNotEmpty()
+        ) {
             EmbeddingIndexScheduler.scheduleContinuation(applicationContext)
         } else {
-            vectors.reconcile(repository.accessibleIds())
+            vectors.reconcile(repository.accessibleVectorIds())
         }
         Result.success()
     }
@@ -108,6 +128,14 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
         }
     }
 
+    private fun decodeKeyframeModelImage(frame: VideoKeyframeRecord): ModelImage {
+        val root = File(applicationContext.filesDir, "video-keyframes").canonicalFile
+        val file = File(frame.previewPath).canonicalFile
+        require(file.toPath().startsWith(root.toPath()) && file.isFile) { "Keyframe preview is unavailable" }
+        val bitmap = requireNotNull(BitmapFactory.decodeFile(file.absolutePath)) { "Keyframe preview is invalid" }
+        return bitmap.useAsModelImage()
+    }
+
     private fun Bitmap.useAsModelImage(): ModelImage = try {
         val pixels = IntArray(width * height)
         getPixels(pixels, 0, width, 0, 0, width, height)
@@ -122,7 +150,10 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
         if (!isRecycled) recycle()
     }
 
-    private companion object { const val BATCH_SIZE = 4 }
+    private companion object {
+        const val BATCH_SIZE = 4
+        const val KEYFRAME_BATCH_SIZE = 8
+    }
 }
 
 object EmbeddingIndexScheduler {
