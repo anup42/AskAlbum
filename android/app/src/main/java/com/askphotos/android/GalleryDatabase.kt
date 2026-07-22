@@ -169,6 +169,31 @@ class GalleryDatabase(
         }
     }
 
+    fun requestOcrReindex(producerVersion: String): Int {
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        val stageProducerVersion = "$producerVersion+document-facts-v2"
+        db.beginTransaction()
+        return try {
+            val changed = db.update(
+                "media_item",
+                ContentValues().apply { put("index_state", IndexState.PENDING.name); putNull("index_error") },
+                "id IN (SELECT media_id FROM media_index_stage WHERE stage='OCR' AND status='COMPLETE' " +
+                    "AND COALESCE(producer_version,'')!=?)",
+                arrayOf(stageProducerVersion),
+            )
+            db.execSQL(
+                "UPDATE media_index_stage SET status='PENDING',producer_version=?,updated_at=?,error=NULL " +
+                    "WHERE stage='OCR' AND status='COMPLETE' AND COALESCE(producer_version,'')!=?",
+                arrayOf(stageProducerVersion, now, stageProducerVersion),
+            )
+            db.setTransactionSuccessful()
+            changed
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> = readableDatabase.rawQuery(
         """SELECT m.* FROM media_item m
             JOIN media_index_stage s ON s.media_id=m.id AND s.stage='EMBEDDING'
@@ -298,6 +323,7 @@ class GalleryDatabase(
         blocks: List<OcrBlockRecord>,
         entities: List<OcrEntityRecord>,
         ocrAttempted: Boolean,
+        ocrProducerVersion: String?,
         visualFeatures: VisualFeatures,
         keyframes: List<VideoKeyframeRecord>,
     ) {
@@ -376,7 +402,7 @@ class GalleryDatabase(
                 id,
                 IndexStage.OCR,
                 if (ocrAttempted) StageStatus.COMPLETE else StageStatus.SKIPPED,
-                if (ocrAttempted) "mlkit-text-latin-v2+document-facts-v2" else "ocr-likelihood-gate-v1",
+                if (ocrAttempted) "${requireNotNull(ocrProducerVersion)}+document-facts-v2" else "ocr-likelihood-gate-v1",
             )
             updateStage(
                 db,

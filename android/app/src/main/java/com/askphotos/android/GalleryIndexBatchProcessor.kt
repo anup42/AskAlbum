@@ -8,8 +8,6 @@ import android.util.Size
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.label.ImageLabeling
 import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.tasks.await
 import java.io.FileNotFoundException
@@ -20,7 +18,8 @@ internal class GalleryIndexBatchProcessor(
 ) : AutoCloseable {
     private val appContext = context.applicationContext
     private val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
-    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    private val ocrRegistry = (appContext as AskPhotosApplication).services.ocrEngines
+    private var ocrLease: ModelEngineLease<OcrEngine>? = null
 
     suspend fun processBatch(
         allowedMediaIds: Set<String>? = null,
@@ -70,6 +69,7 @@ internal class GalleryIndexBatchProcessor(
                         blocks = blocks,
                         entities = entities,
                         ocrAttempted = analyses.any { it.ocrAttempted },
+                        ocrProducerVersion = analyses.firstNotNullOfOrNull { it.ocrProducerVersion },
                         visualFeatures = representative.visualFeatures,
                         keyframes = analyses.mapNotNull { it.asKeyframe(item.id) },
                     )
@@ -97,7 +97,8 @@ internal class GalleryIndexBatchProcessor(
 
     override fun close() {
         labeler.close()
-        recognizer.close()
+        ocrLease?.close()
+        ocrLease = null
     }
 
     private fun pendingItems(allowedMediaIds: Set<String>?, limit: Int): List<GalleryItem> {
@@ -136,20 +137,23 @@ internal class GalleryIndexBatchProcessor(
             .map { it.text.lowercase() }
             .distinct()
         val ocrDecision = OcrLikelihoodGate.decide(item, labels, pixels, bitmap.width, bitmap.height)
-        val text = if (ocrDecision.shouldRun) recognizer.process(input).await() else null
-        val blocks = text?.textBlocks.orEmpty().mapNotNull { block ->
-            val box = block.boundingBox ?: return@mapNotNull null
+        val ocr = if (ocrDecision.shouldRun) {
+            val lease = ocrLease ?: ocrRegistry.acquire().also { ocrLease = it }
+            lease to lease.engine.recognize(bitmap.toModelImage())
+        } else null
+        val blocks = ocr?.second?.blocks.orEmpty().mapNotNull { block ->
+            if (block.bounds.size != 4 || block.bounds[0] >= block.bounds[2] || block.bounds[1] >= block.bounds[3]) return@mapNotNull null
             OcrBlockRecord(
                 text = block.text,
                 normalizedText = block.text.lowercase().replace(Regex("\\s+"), " ").trim(),
-                language = block.recognizedLanguage.takeUnless(String::isBlank),
+                language = block.script ?: ocr?.second?.language,
                 pageIndex = pageIndex,
                 timestampMs = timestampMs,
-                confidence = block.lines.mapNotNull { it.confidence }.average().takeUnless(Double::isNaN)?.toFloat() ?: .8f,
-                left = box.left.toFloat() / bitmap.width,
-                top = box.top.toFloat() / bitmap.height,
-                right = box.right.toFloat() / bitmap.width,
-                bottom = box.bottom.toFloat() / bitmap.height,
+                confidence = block.confidence,
+                left = block.bounds[0],
+                top = block.bounds[1],
+                right = block.bounds[2],
+                bottom = block.bounds[3],
             )
         }
         return FrameAnalysis(
@@ -158,9 +162,10 @@ internal class GalleryIndexBatchProcessor(
             previewPath = previewPath,
             keyframeId = keyframeId,
             labels = labels,
-            ocrText = text?.text.orEmpty(),
+            ocrText = blocks.joinToString("\n") { it.text },
             blocks = blocks,
             ocrAttempted = ocrDecision.shouldRun,
+            ocrProducerVersion = ocr?.first?.descriptor?.producerVersion,
             visualFeatures = visual,
         )
     }
@@ -179,6 +184,18 @@ internal class GalleryIndexBatchProcessor(
         return scaled
     }
 
+    private fun Bitmap.toModelImage(): ModelImage {
+        val pixels = IntArray(width * height)
+        getPixels(pixels, 0, width, 0, 0, width, height)
+        val rgb = ByteArray(pixels.size * 3)
+        pixels.forEachIndexed { index, pixel ->
+            rgb[index * 3] = android.graphics.Color.red(pixel).toByte()
+            rgb[index * 3 + 1] = android.graphics.Color.green(pixel).toByte()
+            rgb[index * 3 + 2] = android.graphics.Color.blue(pixel).toByte()
+        }
+        return ModelImage(rgb, width, height)
+    }
+
     private data class FrameAnalysis(
         val bitmap: Bitmap,
         val timestampMs: Long?,
@@ -188,6 +205,7 @@ internal class GalleryIndexBatchProcessor(
         val ocrText: String,
         val blocks: List<OcrBlockRecord>,
         val ocrAttempted: Boolean,
+        val ocrProducerVersion: String?,
         val visualFeatures: VisualFeatures,
     ) {
         fun asKeyframe(mediaId: String): VideoKeyframeRecord? {

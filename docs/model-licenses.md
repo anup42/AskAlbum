@@ -21,3 +21,19 @@ The implementation follows OpenCV's five-landmark similarity alignment and produ
 The model is used only for familiar-person grouping. The application does not infer ethnicity, religion, health, sexuality, emotion, or other sensitive traits.
 
 References: [OpenCV SFace model card](https://huggingface.co/opencv/face_recognition_sface), [OpenCV DNN face tutorial](https://docs.opencv.org/4.x/d0/dd4/tutorial_dnn_face.html), and [SFace paper](https://arxiv.org/abs/2205.12010).
+
+## PaddleOCR PP-OCRv5 Mobile multilingual pack
+
+The optional OCR pack contains five official PaddlePaddle ONNX/config artifacts. Each repository declares Apache-2.0. The app downloads from immutable revisions, verifies the exact byte count and SHA-256 of every file, and activates the pack atomically in app-private storage. Model files are not committed to Git.
+
+| Target | Official repository | Revision | Bytes | SHA-256 |
+| --- | --- | --- | ---: | --- |
+| `det.onnx` | `PaddlePaddle/PP-OCRv5_mobile_det_onnx` | `e6f4fa85f00e168c862bc462aebca69eef9b3d3d` | 4,826,518 | `a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d` |
+| `latin.onnx` | `PaddlePaddle/latin_PP-OCRv5_mobile_rec_onnx` | `89d3a50e2c27e2e7cceeab0e944c25c807d5db4f` | 8,042,023 | `7888113072263cb471b93f66dd5e2ad70548dc526fa1ace760d0d973dd121498` |
+| `latin.yml` | same | same | 6,817 | `0bbe984570f597af3638e50bdf2e8276f3ab26a61966096538b3b0d1849f5c84` |
+| `devanagari.onnx` | `PaddlePaddle/devanagari_PP-OCRv5_mobile_rec_onnx` | `251aec19e36739540d35e2cc943f6aa7503b98e5` | 7,912,311 | `cb789212ce96c69d3e74728ae4309d179281d68cb3945d0616b67cafab41c986` |
+| `devanagari.yml` | same | same | 5,027 | `9bd172dd26440c8ce94d1cde5d5baea6aefdc7cf3c5c8492e0beedef656d4e54` |
+
+The embedded Android SDK source is pinned to PaddleOCR commit `2661c7c0ef5c613e8f93c6e93b2e052399f0f854` under Apache-2.0; provenance is recorded in `android/core/ocr-paddle/NOTICE.md`. The active configuration covers Latin-script languages and Hindi/Marathi/Nepali-family Devanagari text. Adding another OCR model requires a new `ModelEngineProvider<OcrEngine>`, not changes to the gallery indexer.
+
+References: [official PaddleOCR Android deployment guide](https://www.paddleocr.ai/latest/en/version3.x/inference_deployment/cross_platform/android_deployment.html), [PP-OCRv5 multilingual documentation](https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/algorithm/PP-OCRv5/PP-OCRv5_multi_languages.en.md), and [PaddleOCR repository](https://github.com/PaddlePaddle/PaddleOCR).

@@ -35,14 +35,20 @@ FIXTURES = {
     "synthetic_menu_transliterated": [
         "SYNTHETIC TEST MENU", "Masala chai  INR 80", "Aloo tikki  INR 140", "Nimbu pani  INR 70",
     ],
+    "synthetic_menu_hindi": [
+        "SYNTHETIC TEST MENU", "मसाला चाय  INR 80", "आलू टिक्की  INR 140", "नींबू पानी  INR 70",
+    ],
     "synthetic_calendar": [
         "SYNTHETIC CALENDAR", "Singapore trip", "12-18 March 2024", "Marina Bay on 13 March",
     ],
 }
 
 
-def _font(size: int, bold: bool = False) -> ImageFont.ImageFont:
-    candidates = [
+def _font(size: int, bold: bool = False, devanagari: bool = False) -> ImageFont.ImageFont:
+    candidates = ([
+        Path("C:/Windows/Fonts/Nirmala.ttc"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"),
+    ] if devanagari else []) + [
         Path("C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     ]
@@ -59,7 +65,8 @@ def render_document(path: Path, lines: list[str], accent: tuple[int, int, int] =
     draw.rectangle((70, 70, 1170, 210), fill=accent)
     y = 112
     for index, line in enumerate(lines):
-        font = _font(38 if index else 44, bold=index == 0 or "TOTAL" in line or "Password" in line)
+        has_devanagari = any("\u0900" <= character <= "\u097f" for character in line)
+        font = _font(38 if index else 44, bold=index == 0 or "TOTAL" in line or "Password" in line, devanagari=has_devanagari)
         fill = "white" if index == 0 else (20, 32, 29)
         if index == 1:
             y = 265

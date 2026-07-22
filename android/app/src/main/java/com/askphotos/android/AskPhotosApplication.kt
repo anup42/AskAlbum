@@ -7,9 +7,19 @@ class AppServices(private val application: AskPhotosApplication) {
     val modelPackManager by lazy { ModelPackManager(application) }
     val modelDownloader by lazy { GemmaModelDownloader(application, modelPackManager) }
     val retrievalModelPackManager by lazy { RetrievalModelPackManager(application) }
+    val ocrModelPackManager by lazy { OcrModelPackManager(application) }
+    val ocrModelDownloader by lazy { OcrModelDownloader(application, ocrModelPackManager) }
     val faceModelPackManager by lazy { FaceModelPackManager(application) }
     val faceModelDownloader by lazy { FaceModelDownloader(application, faceModelPackManager) }
     val faceVectorStore by lazy { FaceVectorStore(application) }
+    val ocrEngines by lazy {
+        PluggableModelEngineRegistry<OcrEngine>(
+            listOf(PaddleOcrEngineProvider(application, ocrModelPackManager), MlKitOcrEngineProvider()),
+        )
+    }
+    val faceEngines by lazy {
+        PluggableModelEngineRegistry<FaceEngine>(listOf(SFaceEngineProvider(faceModelPackManager)))
+    }
     val inferenceResources: InferenceResourceManager by lazy { SerializedInferenceResourceManager() }
     val embeddingEngine: ImageTextEmbeddingEngine by lazy {
         LiteRtImageTextEmbeddingEngine(retrievalModelPackManager, inferenceResources)

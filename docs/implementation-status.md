@@ -2977,3 +2977,37 @@ Limitations and next gate:
 - Detection currently depends on the bundled local ML Kit detector for landmarks; SFace embedding execution itself is ONNX Runtime and fully local.
 - People indexing was deliberately not enabled over the retained gallery because it could include unrelated accessible photos. No personal gallery item was modified or deleted.
 - Keep complete reviewed-identity acceptance separate from the retained 5k and 20k performance gates.
+
+## Phase 5B/8C - modular multilingual OCR and face-engine providers (22 July 2026)
+
+Status: **IMPLEMENTED AND HOST-VERIFIED; APP BUILD/INSTALL PASSED. Real Paddle multilingual inference was NOT RUN because the bounded safe-seeding acceptance exhausted two infrastructure attempts (Android 16 service-start rejection, then transient ADB disconnect).**
+
+Files changed:
+
+- `android/core/ocr-paddle/` (pinned official PaddleOCR Android SDK source and isolated Android library module)
+- `android/app/src/main/java/com/askphotos/android/{PluggableModelEngines,ProductionEngineProviders,OcrModelPack,MlKitOcrEngine,PaddleMultilingualOcrEngine}.kt`
+- OCR/face integration in `AskPhotosApplication`, `GalleryIndexBatchProcessor`, `PeopleIndexWorker`, `GalleryDatabase`, `GalleryRepository`, `GalleryViewModel`, and `MainActivity`
+- unit/instrumented tests and the CC0 `synthetic_menu_hindi` fixture
+
+Architecture decisions:
+
+- Both `OcrEngine` and `FaceEngine` are closeable capabilities acquired from an ordered `PluggableModelEngineRegistry`. Indexing workers no longer construct PaddleOCR, ML Kit OCR, or SFace directly. A replacement requires only a provider and descriptor registration.
+- The preferred OCR provider is official PP-OCRv5 Mobile detection plus separate Latin and Devanagari recognizers through ONNX Runtime/OpenCV. Results are script-scored and overlap-merged. When the verified pack is absent, the provider registry selects bundled ML Kit Latin.
+- Model downloads are user-started, immutable-revision pinned, resumable, exact-size and SHA-256 verified, and activated only in app-private storage. Offline builds support verified ZIP import and retain no Internet permission.
+- Installing a new OCR producer queues only OCR rows compiled by an older producer. The stage producer includes deterministic document-fact versioning, preventing repeated reindex loops.
+
+Commands/results:
+
+- `:app:testConsumerDebugUnitTest :app:compileConsumerDebugAndroidTestKotlin`: PASS, including provider-registry and immutable-model-catalog regressions.
+- Core corpus build: PASS, 84 items; license/checksum verification: PASS, 84 items and 19 license records.
+- ConsumerDebug assemble/install through the required Android helper: PASS on SM-F731U, Android 16/API 36, arm64-v8a, SM8550.
+- First safe acceptance: 84 items seeded, database import blocked by Android 16 background foreground-service policy; cleanup deleted 84/84 and left zero test items.
+- One lifecycle repair foregrounded the target before database import. The rerun lost ADB during chunk transfer before MediaStore publication; exact run transfer was aborted through the test content provider with `deleted=true`.
+- Direct Settings instrumentation reached the app but failed because the new test used a non-existent `Index Manager` content description. It was corrected to the established `Index` label/wait pattern and was not rerun after the two-cycle limit.
+- `RealPaddleOcrAcceptanceTest`: compiled but NOT RUN. No claim of successful real Paddle recognition is made.
+
+Artifacts/limitations:
+
+- `artifacts/device-runs/ocrmod_20260722/` and `artifacts/device-runs/ocrmod_20260722b/` contain preflight, seed, import, and cleanup/abort evidence.
+- The pre-existing real SFace acceptance remains valid. This change only replaces direct construction in `PeopleIndexWorker` with the generic provider registry; that routing change compiled and passed host tests but was not re-exercised on device.
+- Next narrow gate: rerun `PaddleOcrSettingsUiTest` and `RealPaddleOcrAcceptanceTest` with a stable USB transport and the run-scoped Hindi fixture.

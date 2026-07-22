@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 rootProject.name = "AskPhotosAndroid"
 include(":app")
 include(":benchmark")
+include(":core:ocr-paddle")

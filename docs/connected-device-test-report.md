@@ -271,3 +271,14 @@ Recovery disclosure:
 - Final release-candidate app install: PASS in 26 seconds. The combined engine/alignment/privacy/UI rerun reported `OK (5 tests)` in 6.114 seconds; the real engine again detected seven faces and completed its acceptance path in 1,384 ms. Full output: `artifacts/sface-final-device-tests-20260722-release-candidate.txt`.
 - ConsumerDebug was replace-installed and the UI screenshot at `artifacts/device-runs/sface_20260722/sface-settings.png` was visually inspected. No gallery seeding or cleanup was performed for this test; no personal media was modified.
 - The engine and storage path are working, but Q07/Q08 remain explicit pending gates until the app has a complete user-facing cluster review/labeling flow and a dedicated run-scoped consented identity corpus. Face/people indexing remains disabled until the user explicitly enables it.
+
+## Modular PaddleOCR/SFace integration attempt
+
+- Reference device: Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550, 7,293,424 KB total RAM and 189 GB free `/data`; serial is masked in stored preflight JSON.
+- ConsumerDebug assemble and replace-install: PASS in 99.3 seconds using the Android build/install helper.
+- The CC0/open-license core corpus now contains 84 items, including a synthetic Hindi/English menu. License/checksum verification passed for all 84 items and 19 license records.
+- Acceptance attempt `ocrmod_20260722`: MediaStore seeding completed for 84 items. Android 16 rejected the background import service start; run-scoped cleanup completed with 84 deleted and zero remaining.
+- Acceptance attempt `ocrmod_20260722b`: the device disconnected after 700/1,243 transfer chunks, before seed publication. After reconnection, the exact run transfer was aborted through `content://com.askphotos.android.testseed` and reported `state=ABORTED, deleted=true`.
+- Direct `PaddleOcrSettingsUiTest`: FAILED before assertions due to a test selector mismatch (`Index Manager` vs the app's `Index` navigation label). The test was corrected but not rerun after the two bounded acceptance attempts.
+- Real PaddleOCR pack download/recognition and post-change SFace provider-routing acceptance: NOT RUN. The compiled real test remains enabled and requires both Latin `TEST` and at least one Devanagari character from the run-scoped fixture.
+- Artifacts: `artifacts/device-runs/ocrmod_20260722/` and `artifacts/device-runs/ocrmod_20260722b/`. No personal gallery item was targeted, modified, or deleted.

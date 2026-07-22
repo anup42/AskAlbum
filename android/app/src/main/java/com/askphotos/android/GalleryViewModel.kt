@@ -37,6 +37,8 @@ data class GalleryUiState(
     val modelPack: ModelPackStatus = ModelPackStatus(installed = false),
     val modelDownload: GemmaDownloadProgress = GemmaDownloadProgress(),
     val retrievalPack: RetrievalPackStatus = RetrievalPackStatus(installed = false),
+    val ocrModel: OcrModelStatus = OcrModelStatus(),
+    val ocrModelDownload: OcrModelDownloadProgress = OcrModelDownloadProgress(),
     val faceModel: FaceModelStatus = FaceModelStatus(),
     val faceModelDownload: FaceModelDownloadProgress = FaceModelDownloadProgress(),
     val peopleIndex: PeopleIndexStatus = PeopleIndexStatus(),
@@ -56,9 +58,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val modelPacks = askPhotosApplication.modelPackManager
     private val modelDownloader = askPhotosApplication.services.modelDownloader
     private val retrievalPacks = askPhotosApplication.services.retrievalModelPackManager
+    private val ocrModelPacks = askPhotosApplication.services.ocrModelPackManager
+    private val ocrModelDownloader = askPhotosApplication.services.ocrModelDownloader
     private val faceModelPacks = askPhotosApplication.services.faceModelPackManager
     private val faceModelDownloader = askPhotosApplication.services.faceModelDownloader
     private var modelMonitorJob: Job? = null
+    private var ocrModelMonitorJob: Job? = null
     private var faceModelMonitorJob: Job? = null
     private var queryJob: Job? = null
     private var queryGeneration = 0L
@@ -85,6 +90,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     modelPack = modelPacks.status(),
                     modelDownload = modelDownloader.progress(modelPacks.selectedTier()),
                     retrievalPack = retrievalPacks.status(),
+                    ocrModel = ocrModelPacks.status(),
+                    ocrModelDownload = ocrModelDownloader.progress(),
                     faceModel = faceModelPacks.status(),
                     faceModelDownload = faceModelDownloader.progress(),
                     peopleIndex = initial.peopleIndex,
@@ -92,6 +99,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 )
                 monitorIndexing()
                 monitorModelDownload()
+                monitorOcrModelDownload()
                 monitorFaceModelDownload()
             }.onFailure { error ->
                 state = state.copy(loading = false, error = error.message ?: "Could not open local gallery memory")
@@ -226,6 +234,44 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 }
                 .onFailure { error -> state = state.copy(operationMessage = error.message ?: "SFace import failed") }
         }
+    }
+
+    fun importOcrModel(uri: Uri?) {
+        if (uri == null) return
+        state = state.copy(operationMessage = "Verifying the pinned PaddleOCR multilingual pack...")
+        viewModelScope.launch {
+            runCatching { ocrModelPacks.importArchive(uri) }
+                .onSuccess { status ->
+                    val changed = withContext(Dispatchers.IO) { repository.onOcrModelInstalled() }
+                    state = state.copy(
+                        ocrModel = status,
+                        ocrModelDownload = ocrModelDownloader.progress(),
+                        operationMessage = "PaddleOCR is ready; $changed previously indexed items were queued for multilingual OCR",
+                    )
+                    monitorIndexing()
+                }
+                .onFailure { error -> state = state.copy(operationMessage = error.message ?: "PaddleOCR import failed") }
+        }
+    }
+
+    fun downloadOcrModel() {
+        state = state.copy(operationMessage = "Preparing the PaddleOCR multilingual download...")
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { ocrModelDownloader.enqueue() } }
+                .onSuccess {
+                    state = state.copy(
+                        ocrModelDownload = OcrModelDownloadProgress(state = GemmaDownloadState.QUEUED),
+                        operationMessage = "PaddleOCR download queued; all files will remain in app-private storage",
+                    )
+                    monitorOcrModelDownload()
+                }
+                .onFailure { error -> state = state.copy(operationMessage = error.message ?: "PaddleOCR download could not start") }
+        }
+    }
+
+    fun cancelOcrModelDownload() {
+        ocrModelDownloader.cancel()
+        state = state.copy(operationMessage = "PaddleOCR download cancelled")
     }
 
     fun downloadFaceModel() {
@@ -400,6 +446,26 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     monitorIndexing()
                 }
                 state = state.copy(faceModel = status, faceModelDownload = progress, peopleIndex = people)
+                if (progress.state !in ACTIVE_DOWNLOAD_STATES) return@launch
+                delay(1_000)
+            }
+        }
+    }
+
+    private fun monitorOcrModelDownload() {
+        ocrModelMonitorJob?.cancel()
+        ocrModelMonitorJob = viewModelScope.launch {
+            repeat(7_200) {
+                val progress = withContext(Dispatchers.IO) { ocrModelDownloader.progress() }
+                val wasInstalled = state.ocrModel.installed
+                val status = if (progress.state == GemmaDownloadState.INSTALLED) {
+                    withContext(Dispatchers.IO) { ocrModelPacks.status() }
+                } else state.ocrModel
+                if (!wasInstalled && status.installed) {
+                    withContext(Dispatchers.IO) { repository.onOcrModelInstalled() }
+                    monitorIndexing()
+                }
+                state = state.copy(ocrModel = status, ocrModelDownload = progress)
                 if (progress.state !in ACTIVE_DOWNLOAD_STATES) return@launch
                 delay(1_000)
             }

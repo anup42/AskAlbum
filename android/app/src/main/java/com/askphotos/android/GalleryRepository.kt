@@ -25,10 +25,11 @@ class GalleryRepository(context: Context) {
         database.recoverInterruptedJobs()
         database.seedDemoIfEmpty()
         database.ensureStageRows()
+        services.ocrModelPackManager.current()?.let { database.requestOcrReindex(it.spec.producerVersion) }
         if (database.pendingItems(1).isNotEmpty()) IndexScheduler.schedule(appContext)
         if (services.retrievalModelPackManager.status().installed) EmbeddingIndexScheduler.schedule(appContext)
         if (database.peopleIndexStatus().enabled) {
-            services.faceModelPackManager.current()?.let { database.requestFaceEmbeddingReindex(it.spec.producerVersion) }
+            services.faceEngines.activeDescriptor()?.let { database.requestFaceEmbeddingReindex(it.producerVersion) }
             PeopleIndexScheduler.schedule(appContext)
         }
         return database.summary()
@@ -81,10 +82,17 @@ class GalleryRepository(context: Context) {
     }
 
     fun onFaceModelInstalled(): PeopleIndexStatus {
-        val installed = services.faceModelPackManager.current() ?: return database.peopleIndexStatus()
-        database.requestFaceEmbeddingReindex(installed.spec.producerVersion)
+        val engine = services.faceEngines.activeDescriptor() ?: return database.peopleIndexStatus()
+        database.requestFaceEmbeddingReindex(engine.producerVersion)
         PeopleIndexScheduler.schedule(appContext)
         return database.peopleIndexStatus()
+    }
+
+    fun onOcrModelInstalled(): Int {
+        val installed = services.ocrModelPackManager.current() ?: return 0
+        val changed = database.requestOcrReindex(installed.spec.producerVersion)
+        if (changed > 0) IndexScheduler.schedule(appContext)
+        return changed
     }
 
     fun saveReviewedPersonCluster(id: String, label: String, relationship: String?, aliases: List<String>): PeopleIndexStatus =
@@ -135,9 +143,13 @@ class GalleryRepository(context: Context) {
         blocks: List<OcrBlockRecord>,
         entities: List<OcrEntityRecord>,
         ocrAttempted: Boolean,
+        ocrProducerVersion: String?,
         visualFeatures: VisualFeatures,
         keyframes: List<VideoKeyframeRecord>,
-    ) = database.completeIndex(id, labels, description, ocrText, faceCount, previewPath, blocks, entities, ocrAttempted, visualFeatures, keyframes)
+    ) = database.completeIndex(
+        id, labels, description, ocrText, faceCount, previewPath, blocks, entities,
+        ocrAttempted, ocrProducerVersion, visualFeatures, keyframes,
+    )
     fun failIndex(id: String, message: String, permanent: Boolean) = database.failIndex(id, message, permanent)
     fun rebuildEvents() = database.rebuildEvents()
     fun events(): List<EventRecord> = database.events()

@@ -160,6 +160,9 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
     val retrievalModelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         viewModel.importRetrievalPack(uri)
     }
+    val ocrModelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        viewModel.importOcrModel(uri)
+    }
     val faceModelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         viewModel.importFaceModel(uri)
     }
@@ -225,6 +228,8 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     modelPack = state.modelPack,
                     modelDownload = state.modelDownload,
                     retrievalPack = state.retrievalPack,
+                    ocrModel = state.ocrModel,
+                    ocrModelDownload = state.ocrModelDownload,
                     faceModel = state.faceModel,
                     faceModelDownload = state.faceModelDownload,
                     operationMessage = state.operationMessage,
@@ -235,6 +240,11 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     onCancelModelDownload = viewModel::cancelModelDownload,
                     onImportRetrievalModel = {
                         retrievalModelPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                    },
+                    onDownloadOcrModel = viewModel::downloadOcrModel,
+                    onCancelOcrModelDownload = viewModel::cancelOcrModelDownload,
+                    onImportOcrModel = {
+                        ocrModelPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
                     },
                     onDownloadFaceModel = viewModel::downloadFaceModel,
                     onCancelFaceModelDownload = viewModel::cancelFaceModelDownload,
@@ -669,6 +679,8 @@ private fun IndexManagerScreen(
     modelPack: ModelPackStatus,
     modelDownload: GemmaDownloadProgress,
     retrievalPack: RetrievalPackStatus,
+    ocrModel: OcrModelStatus,
+    ocrModelDownload: OcrModelDownloadProgress,
     faceModel: FaceModelStatus,
     faceModelDownload: FaceModelDownloadProgress,
     operationMessage: String?,
@@ -678,6 +690,9 @@ private fun IndexManagerScreen(
     onDownloadModel: () -> Unit,
     onCancelModelDownload: () -> Unit,
     onImportRetrievalModel: () -> Unit,
+    onDownloadOcrModel: () -> Unit,
+    onCancelOcrModelDownload: () -> Unit,
+    onImportOcrModel: () -> Unit,
     onDownloadFaceModel: () -> Unit,
     onCancelFaceModelDownload: () -> Unit,
     onImportFaceModel: () -> Unit,
@@ -691,7 +706,12 @@ private fun IndexManagerScreen(
         IndexMetric("Media discovered", index.discovered, index.discovered, "Asset manifest")
         IndexMetric("Metadata ready", index.metadataReady, index.discovered, "demo-metadata-v1")
         IndexMetric("Semantic facts ready", index.semanticFactsReady, index.discovered, "demo-sidecar-v1")
-        IndexMetric("OCR ready or skipped", index.ocrReady, index.discovered, "demo skipped / ML Kit bundled")
+        IndexMetric(
+            "OCR ready or skipped",
+            index.ocrReady,
+            index.discovered,
+            ocrModel.producerVersion ?: "mlkit-text-latin-v2 fallback",
+        )
         IndexMetric("Visual labels ready", index.visualLabelsReady, index.discovered, "mlkit-image-label-v1 bundled")
         IndexMetric("Video keyframes", index.videoKeyframesReady, index.videoKeyframesReady, VideoKeyframePolicy.PRODUCER_VERSION)
         IndexMetric(
@@ -724,9 +744,58 @@ private fun IndexManagerScreen(
                 Spacer(Modifier.height(9.dp))
                 Text("Offline hybrid local runtime", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(7.dp))
-                Text("Bundled OCR, image labeling, face detection, PDF rendering, and bounded video keyframes run locally. Gemma, SigLIP2, and SFace identity embeddings use separate verified model packs.", color = Color(0xFFDCE8E2))
+                Text("OCR, image labeling, face detection, PDF rendering, and bounded video keyframes run locally. PaddleOCR, Gemma, SigLIP2, and SFace use separate verified model packs with deterministic fallbacks where available.", color = Color(0xFFDCE8E2))
                 Spacer(Modifier.height(12.dp))
                 Text("Local database: ${formatBytes(index.storageBytes)}", color = Color.White, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Column(Modifier.padding(20.dp)) {
+                Text("Multilingual OCR engine", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Spacer(Modifier.height(7.dp))
+                Text(if (ocrModel.installed) "${ocrModel.name} ${ocrModel.version}" else "ML Kit Latin fallback is active")
+                Text(
+                    "${ocrModel.license} - ${ocrModel.languages} - ${formatBytes(ocrModel.sizeBytes)} - verified SHA-256 files",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                )
+                Text(
+                    "The OCR worker selects an engine through a provider registry, so another OCR implementation can be registered without changing indexing code.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                )
+                ocrModel.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                if (!ocrModel.installed && BuildConfig.ALLOW_MODEL_DOWNLOAD) {
+                    Spacer(Modifier.height(10.dp))
+                    when (ocrModelDownload.state) {
+                        GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING -> {
+                            LinearProgressIndicator(
+                                progress = { ocrModelDownload.fraction },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = Forest,
+                                trackColor = Mist,
+                            )
+                            Text(
+                                if (ocrModelDownload.state == GemmaDownloadState.VERIFYING) "Verifying SHA-256 and activating..." else "${formatBytes(ocrModelDownload.bytesDownloaded)} of ${formatBytes(ocrModelDownload.totalBytes)}",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp,
+                            )
+                            TextButton(onClick = onCancelOcrModelDownload) { Text("Cancel download") }
+                        }
+                        else -> Button(
+                            onClick = onDownloadOcrModel,
+                            modifier = Modifier.fillMaxWidth().testTag("download-paddleocr"),
+                        ) { Text("Download PaddleOCR multilingual") }
+                    }
+                } else if (!ocrModel.installed) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Offline demo build: import the verified PaddleOCR ZIP locally.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                }
+                Spacer(Modifier.height(11.dp))
+                OutlinedButton(onClick = onImportOcrModel) {
+                    Text(if (ocrModel.installed) "Replace verified OCR pack" else "Import PaddleOCR ZIP")
+                }
             }
         }
         Spacer(Modifier.height(14.dp))

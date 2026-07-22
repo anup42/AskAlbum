@@ -22,19 +22,19 @@ class PeopleIndexWorker(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (!repository.peopleIndexStatus().enabled) return@withContext Result.success()
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
-        val installed = services.faceModelPackManager.current()
-        val detector = if (installed == null) MlKitFaceDetectionEngine() else null
-        val embedder = if (installed != null) OpenCvSFaceEngine(services.faceModelPackManager) else null
+        val faceLease = services.faceEngines.acquireOrNull()
+        val detector = if (faceLease == null) MlKitFaceDetectionEngine() else null
+        val embedder = faceLease?.engine
         var retryableFailure = false
         try {
-            if (installed != null) services.faceVectorStore.reconcile(repository.allEmbeddedFaceIds())
+            if (embedder != null) services.faceVectorStore.reconcile(repository.allEmbeddedFaceIds())
             repository.facePendingItems(BATCH_SIZE).forEach { item ->
                 if (isStopped || !repository.peopleIndexStatus().enabled) return@withContext Result.success()
                 if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
                 repository.markFaces(item.id)
                 runCatching {
                     val jpeg = imageLoader.loadJpeg(item)
-                    if (installed == null) {
+                    if (embedder == null) {
                         repository.completeFaces(item.id, requireNotNull(detector).detect(jpeg), MlKitFaceDetectionEngine.PRODUCER_VERSION)
                     } else {
                         val oldFaceIds = repository.faceIdsForMedia(item.id)
@@ -52,7 +52,7 @@ class PeopleIndexWorker(
                             repository.ensureAutomaticPersonCluster(clusterId)
                             clusterId
                         }
-                        repository.completeEmbeddedFaces(item.id, faces, clusters, installed.spec.producerVersion)
+                        repository.completeEmbeddedFaces(item.id, faces, clusters, requireNotNull(faceLease).descriptor.producerVersion)
                         oldFaceIds.forEach { services.faceVectorStore.delete(it) }
                         faces.forEachIndexed { index, face -> services.faceVectorStore.upsert("${item.id}:$index", face.embedding) }
                     }
@@ -70,7 +70,7 @@ class PeopleIndexWorker(
             if (retryableFailure) Result.retry() else Result.success()
         } finally {
             detector?.close()
-            embedder?.close()
+            faceLease?.close()
         }
     }
 

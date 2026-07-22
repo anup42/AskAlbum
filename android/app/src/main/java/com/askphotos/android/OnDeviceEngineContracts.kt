@@ -15,12 +15,14 @@ interface ImageTextEmbeddingEngine {
     suspend fun embedText(text: String): FloatArray
 }
 
-interface OcrEngine {
+interface OcrEngine : AutoCloseable {
     suspend fun recognize(image: ModelImage): OcrDocument
+    override fun close() = Unit
 }
 
-interface FaceEngine {
+interface FaceEngine : AutoCloseable {
     suspend fun detectAndEmbed(image: ModelImage): List<FaceInstance>
+    override fun close() = Unit
 }
 
 interface VectorIndex {

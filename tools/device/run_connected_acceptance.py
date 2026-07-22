@@ -108,6 +108,10 @@ def main() -> None:
         )
         seeded = True
         expected_count = len(json.loads((gallery / "gallery-manifest.json").read_text(encoding="utf-8"))["items"])
+        # Android 15+ may reject a foreground-service start while the target app is backgrounded.
+        # Bring the debug target to the foreground before asking its run-scoped seeder service to
+        # import the URI manifest. This does not grant permissions or touch unrelated media.
+        adb(serial, "shell", "am", "start", "-W", "-n", f"{args.package}/.MainActivity")
         run(
             [sys.executable, "tools/device/sync_seeded_gallery.py", "--serial", serial, "--package", args.package,
              "--run-id", run_id, "--action", "import", "--artifacts", str(artifacts.parent)],
