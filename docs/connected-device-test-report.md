@@ -171,3 +171,14 @@ Latest artifacts:
 - Two repair cycles were applied and tested: `verification` is now explicitly constrained to one scalar enum, and deterministic exact date/media/album slots replace conflicting model guesses instead of duplicating filters. Focused JVM tests pass. No unknown enum was coerced and the acceptance assertion was not weakened; the multilingual E2B planner suite remains FAILED.
 - Thermal returned to MODERATE (2), skin approximately 42.0 C, after the final planner attempt. Grounded-answer/visual-verifier tests and retained 5k heavy indexing were not run. The installed E2B pack, SigLIP2 q8 pack, 83-item core corpus, and 5k stress corpus remain available for continuation.
 - Artifacts: `artifacts/device-runs/model-packs/gemma-e2b-download.json`, `gemma-e2b-status.json`, and `gemma-e4b-status.json`.
+
+## Multilingual E2B planner resolution on SM-F731U
+
+- The earlier Hinglish `SemanticSubject.FAMILY` failure is resolved without accepting or coercing unknown enum values. Strict errors now name the field and allowed set; ordinary category/place searches use `terms`/`place` rather than unnecessary semantic-clause objects.
+- Final `RealGemmaPlannerAcceptanceTest`: PASS, 1 test in 45.364 seconds on the installed pinned E2B pack.
+- English: real GPU E2B, one call, no repair/fallback, valid typed plan, 11.226 seconds wall.
+- Hindi: real GPU E2B, one call, no repair/fallback, valid typed plan, 12.434 seconds wall.
+- Hinglish: real GPU E2B, one call, no repair/fallback, valid typed plan, 21.598 seconds wall.
+- Exact previous-year/2024 time ranges still came from Kotlin and were asserted. Required English/Hindi/Hinglish retrieval concepts were present, and every plan passed the production validator.
+- Peak observed post-close PSS across cases was 255,157 KB. Thermal status remained 1; skin rose from approximately 39.6 C to 41.1 C. No ANR, OOM, crash, or fallback was observed.
+- Grounded-answer and one-image visual-verifier acceptance remain separate outstanding gates; no claim is made for them here.

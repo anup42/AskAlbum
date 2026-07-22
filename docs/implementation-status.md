@@ -2610,3 +2610,42 @@ Failures and limitations:
 Next phase:
 
 - In a separate slice, diagnose `SemanticSubject.FAMILY` from the saved failure boundary and prove Hinglish without weakening the enum contract. After cooling again, run grounded-answer/one-image verifier acceptance, then resume bounded 5k indexing. Keep README replacement and 20k acceptance separate.
+
+## Phase 6E - Strict multilingual semantic-subject adherence (22 July 2026)
+
+Status: **PASSED on Samsung SM-F731U. English, Hindi, and Hinglish each compiled through real GPU E2B in one generation call, produced a valid typed plan, and used neither repair nor deterministic fallback.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/GemmaPlanCodec.kt`
+- `android/app/src/main/java/com/askphotos/android/LiteRtLmQueryPlanner.kt`
+- `android/app/src/test/java/com/askphotos/android/GemmaPlanCodecTest.kt`
+- `docs/implementation-status.md`
+- `docs/connected-device-test-report.md`
+
+Architecture decisions:
+
+- Unknown model enums remain hard failures. `FAMILY`, lowercase `trip`, and any other value outside `WHOLE_MEDIA|PERSON|EVENT|DOCUMENT` are not coerced into a supported value.
+- Strict enum parsing now returns a repairable error naming the exact JSON field, complete allowed-value set, and rejected value instead of Java's opaque `No enum constant` message.
+- The planning schema now distinguishes an evidence carrier from a search category. Family, trip, pet, food, clothing, and similar category concepts belong in `terms`, `text`, or `canonicalText`; they are never semantic-subject enum values.
+- Ordinary category, scene, activity, place, event-name, and free-text searches default to `terms` and `place` with `semanticClauses=[]`. Structured semantic clauses are reserved for relations, negation, comparison, and fine-grained visual conditions that terms cannot express. This reduces unnecessary model surface without narrowing supported hard visual queries.
+
+Verification actually run:
+
+- Focused `GemmaPlanCodecTest`: PASS after each bounded repair. Its regression proves that `subject=FAMILY` is rejected and that the one repair prompt contains the field name, exact allowed set, category-placement rule, and simple-query clause rule.
+- ConsumerDebug built and installed twice with the bundled Android workflow; both installs passed and preserved E2B, SigLIP2, Room state, and retained galleries.
+- First physical-device attempt in this new slice: English passed with real GPU E2B; Hindi safely fell back because the repair output used lowercase `trip` as subject. This confirmed strict rejection and motivated the final simple-query schema rule.
+- Final `RealGemmaPlannerAcceptanceTest`: PASS, 1 test in 45.364 seconds. All assertions covered real-model use, backend, tier, call bounds, typed validation, intent/scope, exact Kotlin calendar range, required retrieval terms, load/generate/close timing, and absence of fallback.
+- English: GPU, one call, no repair, load 5,159 ms, generation 5,664 ms, close 392 ms, wall 11,226 ms, PSS 76,874 KB before and 230,513 KB after close.
+- Hindi: GPU, one call, no repair, load 4,821 ms, generation 7,217 ms, close 389 ms, wall 12,434 ms, PSS 230,529 KB before and 255,157 KB after close.
+- Hinglish: GPU, one call, no repair, load 5,273 ms, generation 13,781 ms, close 390 ms, wall 21,598 ms, PSS 255,193 KB before and 246,512 KB after close.
+- Device thermal status was 1 before and after the final suite; recorded skin temperature was approximately 39.6 C before and 41.1 C after. No ANR, OOM, crash, or model fallback occurred.
+
+Failures and limitations:
+
+- This resolves the multilingual planner failure recorded in Phase 6D. It does not claim grounded-answer or one-image visual-verifier acceptance in this slice.
+- The retained 5k heavy index remains paused until a separate bounded indexing run, and every connected 20k gate remains outstanding.
+
+Next phase:
+
+- Run real E2B grounded-answer and targeted one-image verifier acceptance as a separate thermal-bounded slice. Then resume the retained 5k index and measure vector coverage/query latency.

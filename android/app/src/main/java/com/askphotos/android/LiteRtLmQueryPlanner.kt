@@ -166,7 +166,9 @@ class LiteRtLmQueryPlanner(
         Allowed intents: FIND_MEDIA,ANSWER_FACT,LIST,COUNT,SUM,MIN_MAX,COMPARE,TIMELINE,EVENT_SUMMARY,DOCUMENT_QA.
         Allowed mediaScope: ALL,IMAGES,VIDEOS,DOCUMENTS. limit is 1..100; terms and semanticClauses max 16; peopleClauses max 8.
         filter is {"op":"TRUE"}, {"op":"AND","clauses":[]}, {"op":"TIME_RANGE","startEpochMs":null,"endEpochMs":null}, {"op":"MEDIA_KIND","kind":"IMAGE"}, or {"op":"ALBUM","album":"name"}.
-        A semantic clause has text, optional canonicalText, polarity POSITIVE|NEGATIVE, hardness HARD|SOFT, subject WHOLE_MEDIA|PERSON|EVENT|DOCUMENT, optional relationToPerson.
+        Default to terms and place. For ordinary category, scene, activity, place, event-name, or free-text search, semanticClauses must be [].
+        Use semanticClauses only for relational, negative, comparative, or fine-grained visual conditions that terms cannot express.
+        A semantic clause has text, optional canonicalText, polarity POSITIVE|NEGATIVE, hardness HARD|SOFT, subject WHOLE_MEDIA|PERSON|EVENT|DOCUMENT, optional relationToPerson. Subject is the evidence carrier, not the search category: put family, pet, trip, food, clothing, and similar concepts in text/canonicalText and use WHOLE_MEDIA.
         A people clause has personId, mustBePresent, hardness. ocrClause has optional query,merchant,requestedField.
         verification is exactly one quoted scalar enum string: AUTO, REQUIRED, or NEVER. Never emit an array or object there.
         Preserve the user's language in text and add a short English canonicalText when useful for retrieval.

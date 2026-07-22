@@ -33,6 +33,23 @@ class GemmaPlanCodecTest {
     }
 
     @Test
+    fun rejectsCategoryAsSubjectWithExactRepairGuidance() {
+        val invalid = """{"intent":"FIND_MEDIA","terms":["family"],"semanticClauses":[{"text":"family","subject":"FAMILY"}]}"""
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            codec.decode("family photos", invalid, null)
+        }
+
+        assertTrue(error.message.orEmpty().contains("\"subject\" must be one of [WHOLE_MEDIA, PERSON, EVENT, DOCUMENT]"))
+        assertTrue(error.message.orEmpty().contains("received \"FAMILY\""))
+        val repair = codec.repairPrompt("family photos", invalid, error.message.orEmpty())
+        assertTrue(repair.contains("family, pet, trip, food, or clothing belong in text/canonicalText"))
+        assertTrue(repair.contains("never in subject"))
+        assertTrue(repair.contains("use terms/place and return semanticClauses as []"))
+        assertTrue(repair.contains("Use semanticClauses only for relational, negative, comparative, or fine-grained visual conditions"))
+    }
+
+    @Test
     fun boundedCompilerRepairsExactlyOnce() = runBlocking {
         var calls = 0
         val compiler = BoundedGemmaPlanCompiler(codec)

@@ -75,6 +75,8 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         Invalid response: ${JSONObject.quote(invalidResponse.take(1200))}
         Required shape: {"version":1,"intent":"FIND_MEDIA","mediaScope":"IMAGES","filter":{"op":"TRUE"},"semanticClauses":[],"peopleClauses":[],"grouping":"NONE","sort":"RELEVANCE","verification":"AUTO","answerMode":"RESULTS_AND_SUMMARY","limit":100,"terms":["search phrase"]}
         The root field "verification" must be exactly one quoted scalar string: "AUTO", "REQUIRED", or "NEVER". It must never be an array or object.
+        For ordinary category, scene, activity, place, event-name, or free-text search, use terms/place and return semanticClauses as []. Use semanticClauses only for relational, negative, comparative, or fine-grained visual conditions.
+        Each semanticClauses item uses subject "WHOLE_MEDIA", "PERSON", "EVENT", or "DOCUMENT" only. Categories such as family, pet, trip, food, or clothing belong in text/canonicalText, never in subject.
         Use integer version 1. Copy numbers as uninterrupted decimal digits. Omit optional fields instead of guessing them.
         Do not add SQL, code, paths, URIs, tool names, result IDs, or fields outside the supplied schema.
     """.trimIndent()
@@ -112,9 +114,16 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         return JSONObject(trimmed)
     }
 
-    private inline fun <reified T : Enum<T>> enum(json: JSONObject, key: String): T = enumValueOf(json.getString(key))
+    private inline fun <reified T : Enum<T>> enum(json: JSONObject, key: String): T {
+        val raw = json.getString(key)
+        return enumValues<T>().singleOrNull { it.name == raw }
+            ?: throw IllegalArgumentException(
+                "\"$key\" must be one of ${enumValues<T>().joinToString(prefix = "[", postfix = "]") { it.name }}; received ${JSONObject.quote(raw)}",
+            )
+    }
+
     private inline fun <reified T : Enum<T>> JSONObject.optEnum(key: String, default: T): T =
-        optNullableString(key)?.let { enumValueOf<T>(it) } ?: default
+        if (!has(key) || isNull(key)) default else enum(this, key)
 
     private fun defaultAggregation(intent: QueryIntent): AggregationSpec? = when (intent) {
         QueryIntent.COUNT -> AggregationSpec(AggregationOperation.COUNT)
