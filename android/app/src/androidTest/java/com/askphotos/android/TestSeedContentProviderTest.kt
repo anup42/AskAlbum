@@ -8,6 +8,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import java.security.MessageDigest
 
 @RunWith(AndroidJUnit4::class)
@@ -41,6 +42,34 @@ class TestSeedContentProviderTest {
             assertEquals("COMPLETE", finalized?.getString("state"))
             assertEquals(payload.size.toLong(), finalized?.getLong("size"))
             assertEquals(sha256, finalized?.getString("sha256"))
+        } finally {
+            resolver.call(uri, "abort", runId, null)
+        }
+    }
+
+    @Test
+    fun externalFileRoundTripRequiresExactHashesAndDeletesSource() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val resolver = context.contentResolver
+        val uri = Uri.parse("content://${context.packageName}.testseed")
+        val runId = "provider_external_01"
+        val payload = ByteArray(64 * 1024) { index -> (index * 19).toByte() }
+        val sha256 = payload.sha256()
+        try {
+            val prepared = resolver.call(uri, "prepare_external", runId, null)
+            assertEquals("READY", prepared?.getString("state"))
+            val external = File(requireNotNull(prepared?.getString("path")))
+            external.writeBytes(payload)
+            val adopted = resolver.call(uri, "adopt_external", runId, Bundle().apply {
+                putString("total_bytes", payload.size.toString())
+                putString("sha256", sha256)
+            })
+            assertEquals("COMPLETE", adopted?.getString("state"))
+            assertEquals(payload.size.toLong(), adopted?.getLong("size"))
+            assertEquals(sha256, adopted?.getString("sha256"))
+            assertEquals(false, external.exists())
+            val finalized = resolver.call(uri, "finalize", runId, null)
+            assertEquals("COMPLETE", finalized?.getString("state"))
         } finally {
             resolver.call(uri, "abort", runId, null)
         }

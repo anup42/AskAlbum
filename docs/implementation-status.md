@@ -2313,6 +2313,70 @@ Next phase:
 
 - As a separate transport task, implement a bounded large-file debug import route that does not depend on thousands of concurrent adb processes or Android `content write` stdin. It must verify the host/device SHA-256 before extraction, retain canonical app-owned staging, and pass a small/5k contract before attempting 20k.
 
+## Phase 2F - Canonical large-file adoption and incomplete-run cleanup (22 July 2026)
+
+Status: **Large-file transfer/adoption passed at the real 5k archive size; complete 5k MediaStore seeding remains NOT PASSED after two bounded lifecycle cycles. Exact incomplete-run cleanup passed with zero remaining rows.**
+
+Files changed:
+
+- `android/app/src/debug/java/com/askphotos/android/TestSeedContentProvider.kt`
+- `android/app/src/debug/java/com/askphotos/android/TestGallerySeederReceiver.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/TestSeedContentProviderTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/StressSeededGalleryTest.kt`
+- `tools/device/seed_gallery.py`
+- `tools/device/test_seed_gallery.py`
+- `docs/implementation-status.md`
+- `docs/connected-device-test-report.md`
+
+Architecture decisions:
+
+- The explicit `external-file --stage-only` debug transport asks the provider to create one canonical path under `getExternalFilesDir("test-seed-transfer")`. The host accepts only an absolute path ending in the exact package/run-ID suffix, with no traversal component. Final source refuses to launch the unaccepted long seeder from this route.
+- `adb push` writes the archive only to that app-owned path. Before private adoption the provider validates the declared size and SHA-256. It then copies to canonical app-private staging while independently recomputing byte count and SHA-256, atomically renames the verified private archive, and deletes the external source.
+- Provider abort/delete removes only the exact run's private input and external archive. The legacy resumable chunk transport remains the default; external-file staging must be requested explicitly with `--stage-only` because full 5k seeding is not yet accepted.
+- Cleanup now supports a run that never produced `seed-result.json`. It records URIs proven by both exact run path and `owner_package_name`, deletes only those URIs, and checks both permitted paths for zero remaining rows.
+- A stress-only instrumentation assertion was added to require the exact expected count under the app-owned image path. It is compiled but honestly NOT RUN because no 5k seed completed.
+- An attempted WorkManager resume implementation was removed before final build because device extraction did not complete reliably. No unproven resume behavior is enabled in the committed source.
+
+Host tests:
+
+- `tools/device`: 14 PASS, including canonical provider-path parsing, other-package rejection, traversal rejection, bounded-memory hashing, and prior seed-result rules.
+- Final ConsumerDebug build/install and ConsumerDebug Android-test assembly: PASS.
+
+Connected provider gate:
+
+- `TestSeedContentProviderTest`: PASS, 2 tests in 0.085 seconds on Samsung SM-F731U.
+- Both the legacy exact chunk round-trip and external-file size/hash/private-copy/finalize/delete contract passed on the final installed source.
+
+Real 5k attempt:
+
+- Host archive: 110,337,694 bytes, 5,001 ZIP entries, SHA-256 `b11b63cd176388c83e5adf9cba3f63ae363b3c8af5535dce43571d9aaeed74d9`; `media/stress_02416.jpg` and the final `media/stress_04999.jpg` were confirmed present.
+- External `adb push`, provider size/SHA verification, private copy verification, external deletion, and private adoption succeeded. The receiver observed the complete 110,337,694-byte private archive and began insertion.
+- Cycle 1: the long `goAsync` broadcast was terminated near 60 seconds after creating 2,346/5,000 items. No final seed result existed.
+- Cycle 2: a WorkManager/resume experiment reconstructed 2,347 exact owned rows but failed because mutable extracted staging was incomplete (`stress_02416.jpg` missing). The host archive itself remained complete and valid. Per the two-cycle rule no third seed repair was attempted, and the unproven worker/resume code was removed.
+
+Cleanup and safety:
+
+- Incomplete-run cleanup recovered 2,347 URIs using exact run paths plus `owner_package_name=com.askphotos.android`, wrote the orphan recovery record, deleted all 2,347, and reported `remainingCount=0`.
+- No personal-gallery URI or retained 83-item core-corpus URI was deleted or modified.
+- Final source was rebuilt/reinstalled after removal of the experiment; provider contracts passed again on that exact build.
+
+Artifacts:
+
+- `artifacts/device-runs/stress5k_external_20260722_f731u/seed-command.txt`
+- `artifacts/device-runs/stress5k_external_20260722_f731u/seed-resume-command.txt`
+- `artifacts/device-runs/stress5k_external_20260722_f731u/cleanup-command.txt`
+- `artifacts/device-runs/stress5k_external_20260722_f731u/cleanup-result.json`
+- `artifacts/device-runs/stress5k_external_20260722_f731u/provider-transport-tests-final-source.txt`
+
+Failures and limitations:
+
+- This proves large-file transport/adoption and failure cleanup, not complete 5k discovery, database indexing, recovery, embeddings, or query performance. `StressSeededGalleryTest` and every 20k device gate remain NOT RUN.
+- Debug MediaStore insertion still needs a lifecycle designed for multi-minute work with immutable extraction generations and durable per-file checkpoints. A long broadcast and a worker sharing mutable staging are both rejected designs.
+
+Next phase:
+
+- Implement the stress seeder as a debug foreground service with an immutable verified extraction generation, durable manifest-index checkpoint, and idempotent filename/owner reconciliation. Run a small process-death test, then one clean 5k seed/visibility/cleanup cycle before attempting database import or 20k.
+
 ## Phase 7B - Structured core evaluator and deterministic aggregation correction (22 July 2026)
 
 Status: **Implemented and host-verified; full Q01-Q13 device execution NOT RUN because the reference SM-F966B disconnected before the suite started.**

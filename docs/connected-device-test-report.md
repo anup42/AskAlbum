@@ -121,3 +121,12 @@ Latest artifacts:
 - Device cycle 1 stalled at 2,200/8,980 validated chunks; device cycle 2 was rejected at exact adoption because Android supplied 2,497,180/110,337,694 bytes. Neither cycle reached extraction, the seed broadcast, MediaStore insertion, or app database import.
 - The incomplete app-private input was aborted and verified absent. The connected app was rebuilt/reinstalled from the final source after the experimental transport was removed. The retained 83-item core corpus and personal gallery were not modified.
 - Stress transfer artifacts: `artifacts/device-runs/stress5k_actual_20260722_f731u/`.
+
+## Large-file transport follow-up
+
+- The 110,337,694-byte 5k archive successfully moved through an app-owned external-files path, exact provider size/SHA-256 validation, an independently hashed private copy, atomic private adoption, and external-source deletion.
+- Final provider contract: PASS, two tests in 0.085 seconds for chunked and external-file routes.
+- Complete 5k MediaStore seeding is still NOT PASSED. The long broadcast stopped after 2,346 items; one WorkManager/resume experiment recovered 2,347 rows but encountered incomplete mutable extraction. It was removed and no third repair was attempted.
+- Incomplete cleanup: PASS. Exactly 2,347 URIs proven by run path plus owner package were recovered and deleted; `remainingCount=0`.
+- The connected app was rebuilt/reinstalled from the final source and provider tests passed again. The retained 83-item core gallery and personal media were unchanged.
+- Artifacts: `artifacts/device-runs/stress5k_external_20260722_f731u/`.

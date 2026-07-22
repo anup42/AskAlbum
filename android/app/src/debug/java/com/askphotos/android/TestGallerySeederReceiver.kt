@@ -137,10 +137,9 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
 
     private fun cleanup(context: Context, runId: String) {
         val resultFile = child(runRoot(context, runId), "seed-result.json")
-        require(resultFile.isFile) { "No seed result exists for run $runId" }
-        val seed = JSONObject(resultFile.readText())
-        require(seed.getString("runId") == runId)
-        val uris = seed.getJSONArray("createdUris")
+        val seed = resultFile.takeIf(File::isFile)?.let { JSONObject(it.readText()) }
+        seed?.let { require(it.getString("runId") == runId) }
+        val uris = seed?.getJSONArray("createdUris") ?: JSONArray()
         var deleted = 0
         for (index in 0 until uris.length()) {
             val uri = Uri.parse(uris.getString(index))
@@ -157,7 +156,12 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         writeStatus(context, runId, "orphan-recovery.json", recoveryRecord)
         var recoveredDeleted = 0
         recovered.forEach { uri -> recoveredDeleted += context.contentResolver.delete(uri, null, null) }
-        val relativePaths = seed.getJSONArray("relativePaths")
+        val relativePaths = seed?.getJSONArray("relativePaths") ?: JSONArray(
+            listOf(
+                "Pictures/AgenticGalleryTest/$runId/",
+                "Documents/AgenticGalleryTest/$runId/",
+            ),
+        )
         var remaining = 0
         for (index in 0 until relativePaths.length()) {
             val relativePath = relativePaths.getString(index)

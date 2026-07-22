@@ -14,6 +14,24 @@ from pathlib import Path
 from common import adb, mask_serial, require_run_id, resolve_serial, retry_transient, run_as_read, wait_for_json
 
 
+def parse_external_path(response: str, package: str, run_id: str) -> str:
+    match = re.search(r"(?:^|[,\[{ ])path=([^,}\]]+)", response)
+    if not match:
+        raise RuntimeError(f"Provider did not return an external staging path: {response[-1000:]}")
+    path = match.group(1).strip()
+    expected_suffix = f"/Android/data/{package}/files/test-seed-transfer/{run_id}.zip"
+    if not path.startswith("/") or ".." in path.split("/") or not path.endswith(expected_suffix):
+        raise RuntimeError("Provider returned an unsafe external staging path")
+    return path
+
+
+def validate_transport_mode(transport: str, stage_only: bool) -> None:
+    if stage_only and transport != "external-file":
+        raise RuntimeError("--stage-only requires --transport external-file")
+    if transport == "external-file" and not stage_only:
+        raise RuntimeError("External-file transport is accepted for staging only until the foreground seeder gate passes")
+
+
 def parse_complete_seed(payload: bytes | None, run_id: str) -> dict[str, object] | None:
     if not payload:
         return None
@@ -57,6 +75,8 @@ def main() -> None:
     parser.add_argument("--run-id")
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts/device-runs"))
     parser.add_argument("--reset-transfer", action="store_true")
+    parser.add_argument("--transport", choices=("chunked", "external-file"), default="chunked")
+    parser.add_argument("--stage-only", action="store_true")
     args = parser.parse_args()
     serial = resolve_serial(args.serial)
     run_id = require_run_id(args.run_id or f"run_{uuid.uuid4().hex[:12]}")
@@ -114,7 +134,39 @@ def main() -> None:
     chunk_size = 12 * 1024
     chunk_count = math.ceil(total_bytes / chunk_size)
     archive_sha256 = sha256_file(archive)
+    transport = args.transport
+    validate_transport_mode(transport, args.stage_only)
     try:
+        if transport == "external-file":
+            if args.reset_transfer:
+                adb(serial, "shell", "content", "call", "--uri", provider_root, "--method", "abort", "--arg", run_id, check=False)
+            prepared_result = adb(
+                serial, "shell", "content", "call", "--uri", provider_root, "--method", "prepare_external", "--arg", run_id,
+            )
+            prepared = (prepared_result.stdout + prepared_result.stderr).decode(errors="replace")
+            if "Error while accessing provider" in prepared or "state=READY" not in prepared:
+                raise RuntimeError(f"Provider did not prepare external staging: {prepared[-1000:]}")
+            external_path = parse_external_path(prepared, args.package, run_id)
+            adb(serial, "push", str(archive), external_path, timeout_seconds=900)
+            adopted_result = adb(
+                serial, "shell", "content", "call", "--uri", provider_root, "--method", "adopt_external", "--arg", run_id,
+                "--extra", f"total_bytes:s:{total_bytes}", "--extra", f"sha256:s:{archive_sha256}", timeout_seconds=300,
+            )
+            adopted = (adopted_result.stdout + adopted_result.stderr).decode(errors="replace")
+            if "Error while accessing provider" in adopted or "state=COMPLETE" not in adopted or archive_sha256 not in adopted:
+                raise RuntimeError(f"Provider rejected external archive: {adopted[-1000:]}")
+            safe_result = {
+                "state": "STAGED",
+                "runId": run_id,
+                "transport": "external_file",
+                "size": total_bytes,
+                "sha256": archive_sha256,
+                "serial": mask_serial(serial),
+                "package": args.package,
+            }
+            (host / "staging-result.json").write_text(json.dumps(safe_result, indent=2) + "\n", encoding="utf-8")
+            print(json.dumps(safe_result, indent=2))
+            return
         if args.reset_transfer:
             adb(
                 serial, "shell", "content", "call", "--uri", provider_root,

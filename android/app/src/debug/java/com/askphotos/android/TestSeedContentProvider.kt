@@ -21,9 +21,12 @@ class TestSeedContentProvider : ContentProvider() {
     }
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
-        val root = inputRoot(runIdFrom(uri))
-        val existed = root.exists()
-        require(root.deleteRecursively()) { "Could not delete test seed input" }
+        val runId = runIdFrom(uri)
+        val root = inputRoot(runId)
+        val external = externalArchive(runId)
+        val existed = root.exists() || external.exists()
+        require(!root.exists() || root.deleteRecursively()) { "Could not delete test seed input" }
+        require(!external.exists() || external.delete()) { "Could not delete external test seed input" }
         return if (existed) 1 else 0
     }
 
@@ -35,13 +38,68 @@ class TestSeedContentProvider : ContentProvider() {
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle = when (method) {
         "init" -> initializeTransfer(requireRunId(arg), requireNotNull(extras))
         "write_chunk" -> writeChunk(requireRunId(arg), requireNotNull(extras))
+        "prepare_external" -> prepareExternal(requireRunId(arg))
+        "adopt_external" -> adoptExternal(requireRunId(arg), requireNotNull(extras))
         "finalize" -> finalizeTransfer(requireRunId(arg))
-        "abort" -> Bundle().apply {
-            val root = inputRoot(requireRunId(arg))
-            putBoolean("deleted", !root.exists() || root.deleteRecursively())
-            putString("state", "ABORTED")
-        }
+        "abort" -> abort(requireRunId(arg))
         else -> error("Unsupported test seed provider method")
+    }
+
+    private fun prepareExternal(runId: String): Bundle {
+        val archive = externalArchive(runId)
+        archive.parentFile?.mkdirs()
+        require(!archive.exists() || archive.delete()) { "Could not replace external test seed input" }
+        return Bundle().apply {
+            putString("state", "READY")
+            putString("path", archive.absolutePath)
+        }
+    }
+
+    private fun adoptExternal(runId: String, extras: Bundle): Bundle {
+        val totalBytes = requireNotNull(extras.getString("total_bytes")).toLong()
+        val expectedSha256 = requireNotNull(extras.getString("sha256")).lowercase()
+        require(totalBytes in 1..MAX_TRANSFER_BYTES)
+        require(expectedSha256.matches(Regex("[0-9a-f]{64}")))
+        val external = externalArchive(runId)
+        require(external.isFile && external.length() == totalBytes) {
+            "External archive has ${if (external.isFile) external.length() else -1} bytes; expected $totalBytes"
+        }
+        require(sha256(external) == expectedSha256) { "External archive SHA-256 mismatch" }
+        val root = inputRoot(runId)
+        if (root.exists()) require(root.deleteRecursively())
+        require(root.mkdirs())
+        val adopting = File(root, "gallery.adopting")
+        val digest = MessageDigest.getInstance("SHA-256")
+        var copied = 0L
+        external.inputStream().buffered().use { input ->
+            adopting.outputStream().buffered().use { output ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                    output.write(buffer, 0, count)
+                    copied += count
+                }
+            }
+        }
+        val copiedSha256 = digest.digest().joinToString("") { "%02x".format(it) }
+        require(copied == totalBytes && copiedSha256 == expectedSha256) { "Private archive copy did not verify" }
+        val archive = File(root, "gallery.zip")
+        require(adopting.renameTo(archive)) { "Could not adopt external seed archive" }
+        require(external.delete()) { "Could not delete adopted external seed archive" }
+        File(root, "transfer.json").writeText(
+            JSONObject().put("state", "COMPLETE").put("transport", "external_file")
+                .put("totalBytes", totalBytes).put("sha256", copiedSha256).toString(),
+        )
+        return completedBundle(totalBytes, copiedSha256)
+    }
+
+    private fun abort(runId: String): Bundle = Bundle().apply {
+        val root = inputRoot(runId)
+        val external = externalArchive(runId)
+        putBoolean("deleted", (!root.exists() || root.deleteRecursively()) && (!external.exists() || external.delete()))
+        putString("state", "ABORTED")
     }
 
     private fun initializeTransfer(runId: String, extras: Bundle): Bundle {
@@ -131,13 +189,13 @@ class TestSeedContentProvider : ContentProvider() {
         val root = inputRoot(runId)
         val metadata = JSONObject(File(root, "transfer.json").readText())
         val totalBytes = metadata.getLong("totalBytes")
-        val chunkSize = metadata.getInt("chunkSize")
-        val chunkCount = metadata.getInt("chunkCount")
         val expectedSha256 = metadata.getString("sha256")
         if (metadata.optString("state") == "COMPLETE") {
             require(verifiedArchive(root, totalBytes, expectedSha256)) { "Completed seed archive no longer verifies" }
             return completedBundle(totalBytes, expectedSha256)
         }
+        val chunkSize = metadata.getInt("chunkSize")
+        val chunkCount = metadata.getInt("chunkCount")
         val digest = MessageDigest.getInstance("SHA-256")
         val assembling = File(root, "gallery.assembling")
         var written = 0L
@@ -177,8 +235,12 @@ class TestSeedContentProvider : ContentProvider() {
     private fun verifiedArchive(root: File, expectedSize: Long, expectedSha256: String): Boolean {
         val archive = File(root, "gallery.zip")
         if (!archive.isFile || archive.length() != expectedSize) return false
+        return sha256(archive) == expectedSha256
+    }
+
+    private fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        archive.inputStream().buffered().use { input ->
+        file.inputStream().buffered().use { input ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             while (true) {
                 val count = input.read(buffer)
@@ -186,7 +248,7 @@ class TestSeedContentProvider : ContentProvider() {
                 digest.update(buffer, 0, count)
             }
         }
-        return digest.digest().joinToString("") { "%02x".format(it) } == expectedSha256
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun completedBundle(size: Long, sha256: String): Bundle = Bundle().apply {
@@ -209,6 +271,13 @@ class TestSeedContentProvider : ContentProvider() {
         val root = File(base, runId).canonicalFile
         require(root.toPath().startsWith(base.toPath())) { "Seed input escaped root" }
         return root
+    }
+
+    private fun externalArchive(runId: String): File {
+        val base = requireNotNull(requireNotNull(context).getExternalFilesDir("test-seed-transfer")).canonicalFile
+        val archive = File(base, "$runId.zip").canonicalFile
+        require(archive.toPath().startsWith(base.toPath())) { "External seed input escaped root" }
+        return archive
     }
 
     private companion object {
