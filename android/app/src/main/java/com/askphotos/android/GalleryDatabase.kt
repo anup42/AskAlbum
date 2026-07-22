@@ -136,6 +136,15 @@ class GalleryDatabase(
         limit.toString(),
     )
 
+    fun pendingItemsForIds(mediaIds: Set<String>, limit: Int): List<GalleryItem> = queryScoped(mediaIds, limit) { ids, remaining ->
+        queryItems(
+            "id IN (${ids.joinToString(",") { "?" }}) AND index_state IN ('PENDING','FAILED_RETRYABLE') AND source_kind != 'DEMO_ASSET'",
+            ids.toTypedArray(),
+            "modified_at DESC",
+            remaining.toString(),
+        )
+    }
+
     fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> = readableDatabase.rawQuery(
         """SELECT m.* FROM media_item m
             JOIN media_index_stage s ON s.media_id=m.id AND s.stage='EMBEDDING'
@@ -143,6 +152,18 @@ class GalleryDatabase(
             ORDER BY COALESCE(m.captured_at,0) DESC, m.id LIMIT ?""".trimIndent(),
         arrayOf(producerVersion, limit.toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorItem(cursor)) } }
+
+    fun embeddingPendingItemsForIds(producerVersion: String, mediaIds: Set<String>, limit: Int): List<GalleryItem> =
+        queryScoped(mediaIds, limit) { ids, remaining ->
+            readableDatabase.rawQuery(
+                """SELECT m.* FROM media_item m
+                    JOIN media_index_stage s ON s.media_id=m.id AND s.stage='EMBEDDING'
+                    WHERE m.access_state='ACCESSIBLE' AND m.id IN (${ids.joinToString(",") { "?" }})
+                    AND (s.status!='COMPLETE' OR s.producer_version!=?)
+                    ORDER BY COALESCE(m.captured_at,0) DESC, m.id LIMIT ?""".trimIndent(),
+                (ids + producerVersion + remaining.toString()).toTypedArray(),
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorItem(cursor)) } }
+        }
 
     fun accessibleIds(): Set<String> = readableDatabase.rawQuery(
         "SELECT id FROM media_item WHERE access_state='ACCESSIBLE'", null,
@@ -166,6 +187,31 @@ class GalleryDatabase(
         "SELECT v.* FROM video_keyframe v JOIN media_item m ON m.id=v.media_id WHERE m.access_state='ACCESSIBLE' AND (v.embedding_version IS NULL OR v.embedding_version!=?) ORDER BY COALESCE(m.captured_at,0) DESC,v.timestamp_ms LIMIT ?",
         arrayOf(producerVersion, limit.toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorVideoKeyframe(cursor)) } }
+
+    fun keyframeEmbeddingPendingItemsForIds(
+        producerVersion: String,
+        mediaIds: Set<String>,
+        limit: Int,
+    ): List<VideoKeyframeRecord> = queryScoped(mediaIds, limit) { ids, remaining ->
+        readableDatabase.rawQuery(
+            "SELECT v.* FROM video_keyframe v JOIN media_item m ON m.id=v.media_id " +
+                "WHERE m.access_state='ACCESSIBLE' AND m.id IN (${ids.joinToString(",") { "?" }}) " +
+                "AND (v.embedding_version IS NULL OR v.embedding_version!=?) " +
+                "ORDER BY COALESCE(m.captured_at,0) DESC,v.timestamp_ms LIMIT ?",
+            (ids + producerVersion + remaining.toString()).toTypedArray(),
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorVideoKeyframe(cursor)) } }
+    }
+
+    private fun <T> queryScoped(mediaIds: Set<String>, limit: Int, query: (List<String>, Int) -> List<T>): List<T> {
+        require(limit > 0)
+        if (mediaIds.isEmpty()) return emptyList()
+        val result = ArrayList<T>(minOf(limit, mediaIds.size))
+        for (ids in mediaIds.chunked(SQLITE_ID_CHUNK)) {
+            result += query(ids, limit - result.size)
+            if (result.size >= limit) break
+        }
+        return result
+    }
 
     fun completeKeyframeEmbedding(id: String, producerVersion: String) {
         writableDatabase.update("video_keyframe", ContentValues().apply { put("embedding_version", producerVersion) }, "id=?", arrayOf(id))
@@ -1250,6 +1296,7 @@ class GalleryDatabase(
     ).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) != 0 }
 
     companion object {
+        private const val SQLITE_ID_CHUNK = 800
         const val PEOPLE_CONSENT_VERSION = 1
         const val PRIMARY_QUERY_SESSION = "primary"
         private const val MAX_RESULT_SETS_PER_SESSION = 20

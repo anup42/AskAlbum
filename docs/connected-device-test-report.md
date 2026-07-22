@@ -200,3 +200,22 @@ Latest artifacts:
 - Diagnostics proved the immediate failure boundary: WorkManager attempted to start `SystemForegroundService` after the debug resume broadcast had moved to the background, and Android rejected both workers with `ForegroundServiceStartNotAllowedException`. No app fatal exception, ANR, OOM, or process death occurred, but the 5k completion gate is explicitly FAILED/INCOMPLETE.
 - The retained scheduling changes are correlated resume results, one unique continuation chain, cancellation of stale tagged work, and device-tier SigLIP batches. The failed foreground-WorkManager experiment was reverted before commit. The next required change is direct foreground-service ownership of reusable indexing processors; another background scheduler retry is not sufficient.
 - Local diagnostic bundle: `android-diagnostics/20260722_154257/`. Retained sample media, E2B, and SigLIP2 remain installed for continuation.
+
+## Direct foreground index and retained-sample recovery
+
+- Reference device: Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550, approximately 7.3 GB RAM; serial is masked in artifacts.
+- Retained datasets: `core_multidomain_20260722` (83 items across images, one video, and one PDF) and `fg_index5k_20260722` (5,000 images). Both remain only in exact `AgenticGalleryTest/<run-id>` MediaStore paths. The 5k recovery reused all 5,000 existing rows and created no duplicate media.
+- Core final state: 83 READY, 83 signed-q8 SigLIP2 vectors, 10 OCR-complete/73 OCR-skipped, 83 event and enrichment stages complete, zero running or failed rows. Completing the final 79 scoped vectors took 96.070 s in four direct foreground cycles at thermal status 0.
+- Stress final state: 5,000 imported/unique media, 50 READY, 24 real SigLIP2 vectors, zero running or failed rows. The final bounded cycle processed 24 gallery rows plus 24 vectors in 46.668 s at thermal status 0. Full 5k model indexing is **not complete**.
+- Installed E2B: 2,583,085,056 bytes, pinned revision `7fa1d78473894f7e736a21d920c3aa80f950c0db`, SHA-256 `ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42`, verified `INSTALLED`. E4B remains an explicit unsupported-device skip.
+- Installed SigLIP2: signed ONNX q8 pack `ba1f3b0-q8-core05`, 267,744,234-byte archive, host SHA-256 `5966d528a7ddf73be52a299251e5c0071d878ba1e0fcc70d39fcf38ec6a8f010`. Direct acceptance passed in 18.845 s with a 7.252 s encoder block and correct red/blue plus dog/football ordering.
+- Native FP16 exact-scan benchmark, direct instrumentation: 5k cold 45 ms/p95 27 ms; 20k cold 15 ms/p95 16 ms; backend `native-fp16`; test PASS. This is index-engine performance over deterministic vectors, not full 5k/20k gallery-model coverage.
+- Scoped starvation regression, direct instrumentation: 2 PASS in 0.3 s. A target remained selectable with 101 newer unrelated pending items.
+- Host verification: full ConsumerDebug unit suite PASS, ConsumerDebug lint PASS, sample-gallery harness 3 PASS, device harness 25 PASS, final assemble/install PASS.
+- Diagnostics: `android-diagnostics/20260722_172037/`; bounded checks found no target fatal exception, ANR, or OOM. Vendor thermal logs contain unrelated HAL capability errors, while Android's public thermal status remained 0.
+
+Recovery disclosure:
+
+- A passing Gradle `connectedConsumerDebugAndroidTest` benchmark uninstalled the target app during task cleanup. This erased app-private Room/vector/model state; it did not authorize or perform a broad gallery delete. Retained MediaStore rows were recovered using exact run-scoped paths, and future retained-state tests use direct test-APK install plus `am instrument` to avoid Gradle's uninstall lifecycle.
+- One temporary core duplicate publication occurred before normal media read access was restored after reinstall. Cleanup was restricted to individually validated MediaStore IDs in `AgenticGalleryTest/fg_core_20260722_f731u`; zero rows remained in that obsolete run before `core_multidomain_20260722` was seeded exactly once. No personal-gallery path or URI was targeted.
+- The former 606 stress vectors cannot survive app uninstall and are not claimed. Actual current stress vector coverage is 24. Full 5k completion and the connected 20k gallery/index gate remain pending.

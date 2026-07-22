@@ -80,6 +80,7 @@ class GalleryRepository(context: Context) {
         database.saveReviewedPersonCluster(id, label, relationship, aliases)
 
     fun pendingItems(limit: Int): List<GalleryItem> = database.pendingItems(limit)
+    fun pendingItemsForIds(mediaIds: Set<String>, limit: Int): List<GalleryItem> = database.pendingItemsForIds(mediaIds, limit)
     fun facePendingItems(limit: Int): List<GalleryItem> = database.facePendingItems(limit)
     fun markFaces(mediaId: String) = database.markFaces(mediaId)
     fun completeFaces(mediaId: String, detections: List<FaceDetectionRecord>, producerVersion: String) =
@@ -87,10 +88,17 @@ class GalleryRepository(context: Context) {
     fun failFaces(mediaId: String, message: String, permanent: Boolean) = database.failFaces(mediaId, message, permanent)
     fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> =
         database.embeddingPendingItems(producerVersion, limit)
+    fun embeddingPendingItemsForIds(producerVersion: String, mediaIds: Set<String>, limit: Int): List<GalleryItem> =
+        database.embeddingPendingItemsForIds(producerVersion, mediaIds, limit)
     fun accessibleIds(): Set<String> = database.accessibleIds()
     fun accessibleVectorIds(): Set<String> = database.accessibleVectorIds()
     fun keyframeEmbeddingPendingItems(producerVersion: String, limit: Int): List<VideoKeyframeRecord> =
         database.keyframeEmbeddingPendingItems(producerVersion, limit)
+    fun keyframeEmbeddingPendingItemsForIds(
+        producerVersion: String,
+        mediaIds: Set<String>,
+        limit: Int,
+    ): List<VideoKeyframeRecord> = database.keyframeEmbeddingPendingItemsForIds(producerVersion, mediaIds, limit)
     fun completeKeyframeEmbedding(id: String, producerVersion: String) = database.completeKeyframeEmbedding(id, producerVersion)
     fun markEmbedding(id: String, producerVersion: String) = database.markEmbedding(id, producerVersion)
     fun completeEmbedding(id: String, producerVersion: String) = database.completeEmbedding(id, producerVersion)

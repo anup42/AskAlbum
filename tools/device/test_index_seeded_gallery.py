@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 import unittest
 
-from index_seeded_gallery import parse_import_status, parse_operation_status, validate_coverage
+from index_seeded_gallery import (
+    parse_import_status,
+    parse_operation_status,
+    validate_coverage,
+    validate_foreground_cycles,
+)
 
 
 class SeededIndexHarnessTest(unittest.TestCase):
@@ -55,6 +60,14 @@ class SeededIndexHarnessTest(unittest.TestCase):
         }).encode()
         self.assertTrue(parse_operation_status(payload, "index_run", operation_id)["thermalAllowed"])
         self.assertIsNone(parse_operation_status(payload, "index_run", "d" * 32))
+
+    def test_foreground_cycle_limit_is_bounded(self) -> None:
+        self.assertEqual(1, validate_foreground_cycles(1))
+        self.assertEqual(5000, validate_foreground_cycles(5000))
+        with self.assertRaisesRegex(RuntimeError, "max-cycles"):
+            validate_foreground_cycles(0)
+        with self.assertRaisesRegex(RuntimeError, "max-cycles"):
+            validate_foreground_cycles(5001)
 
 
 if __name__ == "__main__":

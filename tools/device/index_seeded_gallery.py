@@ -14,6 +14,12 @@ EXPECTED_INDEX_STAGES = {
 }
 
 
+def validate_foreground_cycles(value: int) -> int:
+    if not 1 <= value <= 5000:
+        raise RuntimeError("--max-cycles must be between 1 and 5000")
+    return value
+
+
 def parse_import_status(payload: bytes | None, run_id: str, operation_id: str) -> dict[str, object] | None:
     if not payload:
         return None
@@ -108,12 +114,14 @@ def main() -> None:
     parser.add_argument("--serial")
     parser.add_argument("--package", default="com.askphotos.android")
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--action", choices=("import", "resume", "status"), required=True)
+    parser.add_argument("--action", choices=("import", "resume", "status", "foreground"), required=True)
     parser.add_argument("--timeout-seconds", type=int, default=900)
+    parser.add_argument("--max-cycles", type=int, default=2)
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts/device-runs"))
     args = parser.parse_args()
-    if not 30 <= args.timeout_seconds <= 3600:
-        raise RuntimeError("--timeout-seconds must be between 30 and 3600")
+    maximum_timeout = 21600 if args.action == "foreground" else 3600
+    if not 30 <= args.timeout_seconds <= maximum_timeout:
+        raise RuntimeError(f"--timeout-seconds must be between 30 and {maximum_timeout}")
     serial = resolve_serial(args.serial)
     run_id = require_run_id(args.run_id)
     if args.action == "import":
@@ -125,6 +133,18 @@ def main() -> None:
         )
         result = wait_for_import(serial, args.package, run_id, operation_id, args.timeout_seconds)
         filename = "index-import-result.json"
+    elif args.action == "foreground":
+        max_cycles = validate_foreground_cycles(args.max_cycles)
+        operation_id = uuid.uuid4().hex
+        adb(
+            serial, "shell", "am", "start-foreground-service", "-n", f"{args.package}/.TestGallerySeederService",
+            "-a", "com.askphotos.android.test.INDEX_SEEDED_FOREGROUND", "--es", "run_id", run_id,
+            "--es", "operation_id", operation_id, "--ei", "max_cycles", str(max_cycles),
+        )
+        result = wait_for_operation(
+            serial, args.package, run_id, operation_id, "foreground-index-status.json", args.timeout_seconds,
+        )
+        filename = "foreground-index-result.json"
     elif args.action == "resume":
         operation_id = uuid.uuid4().hex
         adb(

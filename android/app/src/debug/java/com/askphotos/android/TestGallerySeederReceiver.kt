@@ -70,16 +70,11 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
             .put("runId", runId)
             .put("createdUris", JSONArray(recovered.map(Uri::toString)))
             .put("createdCount", recovered.size)
-            .put("proof", "exact run-scoped path and owner_package_name=${context.packageName}")
+            .put("proof", "exact reserved run-scoped AgenticGalleryTest paths")
         writeStatus(context, runId, "orphan-recovery.json", recoveryRecord)
         var recoveredDeleted = 0
         recovered.forEach { uri -> recoveredDeleted += context.contentResolver.delete(uri, null, null) }
-        val relativePaths = seed?.getJSONArray("relativePaths") ?: JSONArray(
-            listOf(
-                "Pictures/AgenticGalleryTest/$runId/",
-                "Documents/AgenticGalleryTest/$runId/",
-            ),
-        )
+        val relativePaths = seed?.getJSONArray("relativePaths") ?: JSONArray(TestGalleryRunScope.relativePaths(runId))
         var remaining = 0
         for (index in 0 until relativePaths.length()) {
             val relativePath = relativePaths.getString(index)
@@ -103,16 +98,13 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
 
     private fun ownedRunUris(context: Context, runId: String): List<Uri> {
         val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val paths = listOf(
-            "Pictures/AgenticGalleryTest/$runId/",
-            "Documents/AgenticGalleryTest/$runId/",
-        )
+        val paths = TestGalleryRunScope.relativePaths(runId)
         return paths.flatMap { relativePath ->
             context.contentResolver.query(
                 collection,
                 arrayOf(MediaStore.MediaColumns._ID),
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?",
-                arrayOf(relativePath, context.packageName),
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+                arrayOf(relativePath),
                 null,
             )?.use { cursor ->
                 buildList {
@@ -213,7 +205,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         )
     }
 
-    private fun seededUris(context: Context, runId: String): List<Uri> {
+    internal fun seededUris(context: Context, runId: String): List<Uri> {
         val resultFile = child(runRoot(context, runId), "seed-result.json")
         require(resultFile.isFile) { "No seed result exists for run $runId" }
         val seed = JSONObject(resultFile.readText())

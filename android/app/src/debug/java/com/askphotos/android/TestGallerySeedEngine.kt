@@ -76,10 +76,13 @@ internal class TestGallerySeedEngine(
             val filename = safeFilename(item.getString("filename"))
             val mime = mimeType(filename)
             val matches = finalByKey[rowKey(relativePath(runId, mime), filename)].orEmpty()
-            require(matches.size == 1 && matches.single().pending == 0) { "Seed row is missing or duplicated: $filename" }
+            require(matches.size == 1 && matches.single().pending == 0) {
+                "Seed row validation failed: $filename matches=${matches.size} " +
+                    "pending=${matches.joinToString(prefix = "[", postfix = "]") { it.pending.toString() }}"
+            }
             orderedUris += matches.single().uri.toString()
         }
-        val paths = listOf(PICTURE_ROOT.format(runId), DOCUMENT_ROOT.format(runId))
+        val paths = TestGalleryRunScope.relativePaths(runId)
             .filter { path -> finalRows.any { it.relativePath == path } }
         val result = JSONObject()
             .put("state", "COMPLETE")
@@ -230,7 +233,7 @@ internal class TestGallerySeedEngine(
 
     private fun ownedRows(runId: String): List<MediaRow> {
         val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        return listOf(PICTURE_ROOT.format(runId), DOCUMENT_ROOT.format(runId)).flatMap { relativePath ->
+        return TestGalleryRunScope.relativePaths(runId).flatMap { relativePath ->
             resolver.query(
                 collection,
                 arrayOf(
@@ -240,8 +243,8 @@ internal class TestGallerySeedEngine(
                     MediaStore.MediaColumns.IS_PENDING,
                     MediaStore.MediaColumns.RELATIVE_PATH,
                 ),
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?",
-                arrayOf(relativePath, applicationContext.packageName),
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+                arrayOf(relativePath),
                 null,
             )?.use { cursor ->
                 buildList {
@@ -317,7 +320,7 @@ internal class TestGallerySeedEngine(
     }
 
     private fun relativePath(runId: String, mime: String): String =
-        if (mime == "application/pdf") DOCUMENT_ROOT.format(runId) else PICTURE_ROOT.format(runId)
+        TestGalleryRunScope.relativePath(runId, isDocument = mime == "application/pdf")
 
     private fun rowKey(relativePath: String, name: String): String = "$relativePath\u0000$name"
 
@@ -335,7 +338,5 @@ internal class TestGallerySeedEngine(
         const val MAX_ARCHIVE_ENTRIES = 20_001
         const val MAX_ARCHIVE_BYTES = 512L * 1024 * 1024
         const val MAX_EXTRACTED_BYTES = 1024L * 1024 * 1024
-        const val PICTURE_ROOT = "Pictures/AgenticGalleryTest/%s/"
-        const val DOCUMENT_ROOT = "Documents/AgenticGalleryTest/%s/"
     }
 }

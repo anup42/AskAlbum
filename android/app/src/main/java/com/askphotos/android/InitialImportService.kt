@@ -42,10 +42,40 @@ class InitialImportService : Service() {
         )
         if (importJob?.isActive != true) {
             importJob = scope.launch {
-                val result = runCatching { (application as AskPhotosApplication).repository.scanAccessibleGallery() }
+                val app = application as AskPhotosApplication
+                val result = runCatching {
+                    val imported = app.repository.scanAccessibleGallery()
+                    val indexed = ForegroundIndexCoordinator(this@InitialImportService).run(
+                        onProgress = { progress ->
+                            getSystemService(NotificationManager::class.java).notify(
+                                NOTIFICATION_ID,
+                                notification(
+                                    "Analyzed ${progress.galleryProcessed}; visual memory ${progress.embeddingsProcessed}",
+                                    indeterminate = true,
+                                ),
+                            )
+                        },
+                    )
+                    imported to indexed
+                }
                 val message = result.fold(
-                    onSuccess = { "$it gallery records reconciled; private indexing continues" },
-                    onFailure = { "Gallery import paused: ${it.javaClass.simpleName}" },
+                    onSuccess = { (imported, indexed) ->
+                        when (indexed.reason) {
+                            ForegroundIndexStopReason.COMPLETE -> "$imported gallery records indexed locally"
+                            ForegroundIndexStopReason.THERMAL ->
+                                "Indexed ${indexed.galleryProcessed}; paused to keep your phone cool"
+                            ForegroundIndexStopReason.RETRYABLE_FAILURE ->
+                                "Indexed ${indexed.galleryProcessed}; a retry is scheduled"
+                            else -> "Indexed ${indexed.galleryProcessed}; private indexing will resume"
+                        }
+                    },
+                    onFailure = { error ->
+                        IndexScheduler.schedule(this@InitialImportService)
+                        if (app.services.semanticVectorStore.producerVersion() != null) {
+                            EmbeddingIndexScheduler.schedule(this@InitialImportService)
+                        }
+                        "Gallery import paused: ${error.javaClass.simpleName}"
+                    },
                 )
                 getSystemService(NotificationManager::class.java).notify(
                     NOTIFICATION_ID,
@@ -55,7 +85,7 @@ class InitialImportService : Service() {
                 stopSelf()
             }
         }
-        return START_NOT_STICKY
+        return START_REDELIVER_INTENT
     }
 
     override fun onDestroy() {

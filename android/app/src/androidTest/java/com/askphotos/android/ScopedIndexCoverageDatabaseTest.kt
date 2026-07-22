@@ -51,6 +51,24 @@ class ScopedIndexCoverageDatabaseTest {
         }
     }
 
+    @Test
+    fun scopedPendingQueriesCannotBeStarvedByNewerUnrelatedRows() {
+        val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
+        val target = imported("target", "content://media/external_primary/file/1")
+        val unrelated = (2..102).map { index ->
+            imported("unrelated-$index", "content://media/external_primary/file/$index").copy(
+                modifiedAt = requireNotNull(target.modifiedAt) + index,
+            )
+        }
+        assertEquals(102, store.upsertImported(listOf(target) + unrelated))
+
+        assertEquals(listOf(target.stableId), store.pendingItemsForIds(setOf(target.stableId), 1).map { it.id })
+        assertEquals(
+            listOf(target.stableId),
+            store.embeddingPendingItemsForIds("siglip-test", setOf(target.stableId), 1).map { it.id },
+        )
+    }
+
     private fun imported(id: String, uri: String) = ImportedMedia(
         stableId = id,
         uri = uri,

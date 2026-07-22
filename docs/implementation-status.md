@@ -2746,3 +2746,59 @@ Failures and limitations:
 Next phase:
 
 - Extract reusable gallery/embedding batch processors and let the already-authorized user-started `InitialImportService` (plus the debug-only test foreground service) directly own the long-running initial index. WorkManager should remain the resumable incremental fallback. Verify this first on a small retained subset, then resume the same 5k run without reseeding.
+
+## Phase 3F - direct foreground indexing, reinstall-safe samples, and scoped retrieval repair (22 July 2026)
+
+Status: **CORE PASS; 5K PARTIAL.** Direct foreground-service ownership now sustains gallery and SigLIP2 batches on SM-F731U. The retained 83-item multi-domain corpus is completely indexed. The retained 5,000-image stress corpus is safely restored and imported, but only a bounded post-restore slice is indexed; full 5k model coverage is not claimed.
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/{IndexBatchResult,GalleryIndexBatchProcessor,EmbeddingIndexBatchProcessor,ForegroundIndexCoordinator}.kt`
+- `android/app/src/main/java/com/askphotos/android/{GalleryIndexWorker,EmbeddingIndexWorker,InitialImportService,GalleryDatabase,GalleryRepository}.kt`
+- `android/app/src/debug/java/com/askphotos/android/{TestGallerySeederReceiver,TestGallerySeederService,TestGallerySeedEngine,TestGalleryRunScope}.kt`
+- `android/app/src/test/java/com/askphotos/android/{ForegroundIndexRunLimitsTest,TestGalleryRunScopeTest,EmbeddingBatchPolicyTest}.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/ScopedIndexCoverageDatabaseTest.kt`
+- `tools/device/{index_seeded_gallery.py,test_index_seeded_gallery.py}`
+
+Architecture decisions:
+
+- The already-authorized `InitialImportService` and debug test foreground service execute reusable gallery/embedding batch processors directly. WorkManager remains the bounded incremental/retry fallback and no longer owns the user-started long import.
+- High-memory work is serialized, thermally gated, cancelable, and checkpointed. Event compilation is deferred to foreground-run completion instead of rebuilding after every 24-item gallery batch.
+- Scoped foreground runs now query pending rows with SQL `IN` filters before applying limits. This fixes starvation when a 5k global queue is newer than an 83-item requested scope. IDs are chunked at 800 to stay below SQLite bind limits.
+- Test-gallery recovery uses only the validated reserved paths `Pictures/Documents/AgenticGalleryTest/<run-id>/`. This survives an app reinstall that clears MediaStore `owner_package_name`; traversal and non-run paths remain rejected.
+- ONNX intra-op threads remain fixed at two. A four-thread microbenchmark improved one cycle (21.862 s to 18.247 s) but degraded sustained throughput, so the speculative change was removed.
+- Connected instrumentation is now run by direct APK install plus `am instrument`; Gradle's `connected...AndroidTest` lifecycle uninstalled the target package and erased app-private state after its passing benchmark. That destructive lifecycle is no longer used for retained-state tests.
+
+Commands and verification actually run:
+
+- ConsumerDebug build/install through the bundled Android workflow: PASS; final state-preserving target and test APK installs: PASS.
+- Full `:app:testConsumerDebugUnitTest` and `:app:lintConsumerDebug`: PASS.
+- Python harnesses: sample gallery 3 PASS; device harness 25 PASS.
+- Direct `ScopedIndexCoverageDatabaseTest`: 2 PASS, including 101 newer unrelated rows ahead of a scoped target.
+- Direct real SigLIP2 acceptance: 1 PASS in 18.845 s; encoder block 7.252 s; red/blue and dog/football rankings passed; no OOM.
+- Direct native FP16 benchmark: 1 PASS. 5k p95 27 ms (cold 45 ms); 20k p95 16 ms (cold 15 ms), native backend, both below the 500 ms gate.
+- Compact diagnostics: `android-diagnostics/20260722_172037/`; no target `FATAL EXCEPTION`, ANR, or `OutOfMemoryError` was observed in the bounded indexing window. Thermal status remained 0.
+
+Connected-device state:
+
+- Core run `core_multidomain_20260722`: 83/83 media READY, 83/83 parent vectors, OCR complete for 10 and skipped for 73 by gate, events/enrichment complete, faces skipped by default, zero running/failed rows. Final scoped embedding repair processed the remaining 79 vectors in four cycles/96.070 s.
+- Stress run `fg_index5k_20260722`: exactly 5,000 retained MediaStore rows were rediscovered with `reusedCount=5000`, then all 5,000 were reimported into the fresh Room database. A bounded foreground cycle processed 24 gallery rows and 24 real vectors in 46.668 s with zero failures. Current coverage: 50 READY, 4,950 pending; 24 vectors complete, 4,976 pending.
+- E2B was restored through the production Settings-equivalent downloader: 2,583,085,056 bytes, revision `7fa1d78473894f7e736a21d920c3aa80f950c0db`, verified SHA-256 `ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42`, state `INSTALLED`. E4B remains unsupported on this approximately 7.3 GB device.
+- The signed SigLIP2 pack is installed app-private from the pinned 267,744,234-byte archive with host SHA-256 `5966d528a7ddf73be52a299251e5c0071d878ba1e0fcc70d39fcf38ec6a8f010`.
+
+Failure/recovery disclosure:
+
+- The passing Gradle connected benchmark uninstalled the app afterward. MediaStore samples survived, but Room/vector/model app-private state did not. The core and 5k run manifests were recovered without duplicating retained rows; one temporary duplicate core run was collapsed only within its exact validated run directory, then a clean 83-item run was retained.
+- E2B and SigLIP2 were reinstalled and reverified. The core index was fully rebuilt. The prior 606 stress vectors were app-private and unrecoverable after uninstall; the report therefore resets stress vector coverage to the actual regenerated count of 24.
+- Full 5k embedding/OCR/event completion and every 20k connected media/index gate remain outstanding. Native synthetic 20k vector-scan performance is passed, but it is not a claim that 20,000 gallery items have been indexed on this device.
+
+Artifacts:
+
+- `artifacts/device-runs/core_multidomain_20260722/`
+- `artifacts/device-runs/fg_index5k_20260722/`
+- `artifacts/device-runs/model-packs/`
+- `android-diagnostics/20260722_172037/` (ignored local diagnostic bundle)
+
+Next phase:
+
+- Resume the retained 5k foreground index in user-visible bounded sessions until complete, then run real stored-vector semantic latency/recall. Keep the 20k MediaStore/index gate and people opt-in acceptance as separate slices.
