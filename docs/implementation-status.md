@@ -2183,6 +2183,70 @@ Limitation:
 - Run-scoped Q01-Q13 remained 10 PASS, 1 FAIL, 2 SKIP. Q03 correctly applied the 2025 filter and returned six seeded items: four Goa and two dog fixtures that leaked through Q02's broad semantic/event result set. A second hard lexical-narrowing experiment removed valid Marina Bay results (9 PASS, 2 FAIL, 2 SKIP) and was reverted rather than weakening assertions.
 - Remaining work is a calibrated follow-up retrieval policy that keeps true Marina Bay semantic matches while excluding unrelated event expansion. No full core-suite pass is claimed.
 
+## Phase 7C - Corroborated semantic follow-up refinement (22 July 2026)
+
+Status: **Implemented and passed the complete run-scoped Q01-Q13 evaluator on the connected physical device: 11 PASS, 0 FAIL, 2 explicit people-index SKIP.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/GalleryRepository.kt`
+- `android/app/src/main/java/com/askphotos/android/FollowUpRefinementPolicy.kt`
+- `android/app/src/test/java/com/askphotos/android/FollowUpRefinementPolicyTest.kt`
+- `docs/implementation-status.md`
+- `docs/connected-device-test-report.md`
+
+Architecture decisions:
+
+- A scoped semantic follow-up no longer retains every weak vector result merely because it clears the pack-wide recall threshold. When lexical or event retrieval independently corroborates semantic candidates, the executor uses `semantic AND (lexical OR event)` as the refinement set.
+- If no independent channel corroborates any semantic candidate, the executor preserves semantic-only fallback. This keeps natural visual refinements such as `Only bicycles` usable when no title, OCR, or event text contains the concept.
+- Initial searches are unchanged. The policy activates only for app-owned result-set scopes, keeps the parent result-set boundary, and does not put media IDs or retrieval policy into model output.
+- Acceptance expectations and the Q03 exact no-result assertion were not weakened.
+
+Commands run:
+
+```powershell
+.\gradlew.bat :app:testConsumerDebugUnitTest --tests com.askphotos.android.FollowUpRefinementPolicyTest --tests com.askphotos.android.SearchExecutionScopeTest --tests com.askphotos.android.ResultSetPlanPatchResolverTest --console=plain
+powershell -ExecutionPolicy Bypass -File <android-build-install> -Root <repo>\android -Module :app -Variant ConsumerDebug -Serial <masked>
+.\gradlew.bat :app:assembleConsumerDebugAndroidTest --console=plain
+adb -s <masked> install -r -t app-consumer-debug-androidTest.apk
+adb -s <masked> shell am instrument -w -r -e galleryRunId persistent_multidomain_20260722_f731u -e class com.askphotos.android.CoreCorpusEvaluationAcceptanceTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+Unit tests:
+
+- `FollowUpRefinementPolicyTest`, `SearchExecutionScopeTest`, and `ResultSetPlanPatchResolverTest`: PASS.
+- ConsumerDebug Android-test assembly: PASS.
+
+Connected-device tests:
+
+- App build/install: PASS on Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550.
+- `CoreCorpusEvaluationAcceptanceTest`: PASS, one test in 10.833 seconds.
+- Structured result: 11 PASS, 0 FAIL, 2 SKIP. Q07/Q08 remain explicit skips because face indexing is disabled and no reviewed identity pack is installed.
+- Q02 narrowed from 53 weakly fused results to 5 corroborated Marina Bay results, retained the expected item at rank 1, and retained local image-text evidence.
+- Q03 returned zero results in 37 ms, reported `EXACT`, and emitted no unsupported claim or evidence.
+- Bounded post-run logcat contained no app fatal exception, ANR, `OutOfMemoryError`, or SQLite exception.
+
+Device and backend:
+
+- The retained app-owned corpus is `persistent_multidomain_20260722_f731u`: 83 seeded items (81 images, one PDF, one video).
+- Retrieval used the installed signed SigLIP2 q8 pack `ba1f3b0-q8-core05` at minimum similarity `0.05`, plus local OCR/events and the deterministic fallback planner. E2B is not installed on this device and is not claimed for this run.
+- The database contained 314 ready gallery items, but every evaluator query was executor-scoped to the 83 recorded seed IDs; no personal item contributed to query results or metrics.
+
+Artifacts:
+
+- `artifacts/device-runs/persistent_multidomain_20260722_f731u/core-q01-q13-corroborated-followup.txt`
+- `artifacts/device-runs/persistent_multidomain_20260722_f731u/core-q01-q13-corroborated-followup.json`
+- `artifacts/device-runs/persistent_multidomain_20260722_f731u/core-q01-q13-corroborated-followup-errors.txt`
+
+Failures and limitations:
+
+- Q07/Q08 still require a reviewed open-source face-embedding pack, explicit opt-in, and connected identity acceptance.
+- This run does not demonstrate real E2B on SM-F731U, E4B, multilingual SigLIP retrieval, or 5k/20k sustained indexing/vector performance.
+
+Next phase:
+
+- Implement and accept the opt-in people/identity slice, then run the 5k and 20k performance/recovery gates as separate bounded tasks.
+
 ## Phase 7B - Structured core evaluator and deterministic aggregation correction (22 July 2026)
 
 Status: **Implemented and host-verified; full Q01-Q13 device execution NOT RUN because the reference SM-F966B disconnected before the suite started.**

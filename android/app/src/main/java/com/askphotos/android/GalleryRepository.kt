@@ -219,13 +219,19 @@ class GalleryRepository(context: Context) {
         val lexicalById = lexicalRanked.associateBy { it.item.id }
         val semanticById = semanticRanked.associateBy { it.mediaId }
         val itemById = allItems.associateBy { it.id }
+        val refinementIds = FollowUpRefinementPolicy.corroboratedSemanticIds(
+            scoped = plan.baseResultIds != null,
+            semanticIds = semanticRanked.map { it.mediaId },
+            lexicalIds = lexicalById.keys,
+            eventIds = eventByMedia.keys,
+        )
         val fused = HybridRankFusion.fuse(
             listOf(
                 RankedChannel(1.0, lexicalRanked.map { it.item.id }),
                 RankedChannel(0.85, semanticRanked.map { it.mediaId }),
                 RankedChannel(0.95, eventMediaRank),
             ),
-        )
+        ).let { ranked -> refinementIds?.let { eligible -> ranked.filter { it.first in eligible } } ?: ranked }
         val fusedHits = fused.mapNotNull { (id, score) ->
             val lexical = lexicalById[id]
             val semantic = semanticById[id]

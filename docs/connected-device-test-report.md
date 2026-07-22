@@ -61,7 +61,7 @@ Detailed commands, run IDs, failures, cleanup counts, and artifact paths are rec
 ## Current limitations and honest skips
 
 - E4B: NOT RUN. It is optional; no verified E4B pack is installed.
-- SigLIP2 q8 retrieval pack: INSTALLED and semantic smoke acceptance PASSED after the SentencePiece BPE repair. Full core Recall@K, no-match threshold calibration, multilingual retrieval, and 5k/20k performance gates remain pending.
+- SigLIP2 q8 retrieval pack: INSTALLED and semantic smoke acceptance PASSED after the SentencePiece BPE repair. The run-scoped core Q01-Q13 evaluator now passes every implemented case on SM-F731U; multilingual retrieval and 5k/20k performance gates remain pending.
 - Full release acceptance and universal performance claims: NOT CLAIMED.
 - The planner needed its permitted repair call for all three language fixtures; first-pass structured output remains an optimization target.
 
@@ -102,6 +102,12 @@ The same verified 83-item core corpus is retained on a connected Samsung SM-F731
 - MediaStore visibility instrumentation: PASS, 1 test in 0.032 s.
 - EXIF/event/follow-up instrumentation after repair: PASS, one test in 33.865 seconds. A protected GPS read can no longer discard a valid EXIF date.
 - Real signed q8 SigLIP2 without E2B preinstallation: PASS, one test in 19.117 seconds. Retrieval installation left Gemma selection/installation state unchanged.
-- Core Q01-Q13 with real SigLIP/OCR/events and deterministic fallback planner: 10 PASS, 1 FAIL, 2 explicit people-index skips. Q04 exact Swiggy total passes. The evaluator is now constrained to all 83 recorded run IDs, so personal media cannot contaminate these metrics. Q03 still fails because Q02 retains six in-corpus 2025 Goa/dog false positives through broad event/semantic expansion. A stricter experiment removed valid Marina Bay results and was reverted; this is not accepted as a core-suite pass.
+- Core Q01-Q13 with real SigLIP/OCR/events and deterministic fallback planner: PASS, 11 implemented cases passed, 0 failed, and Q07/Q08 were explicit people-index skips. The executor now corroborates scoped semantic refinements with lexical/event channels when available: Q02 narrowed from 53 hits to 5 Marina Bay results, while Q03 returned an exact empty result with no fabricated evidence. One instrumentation test completed in 10.833 seconds; bounded post-run logcat contained no fatal exception, ANR, OOM, or SQLite exception. The evaluator remained constrained to all 83 recorded run IDs, so personal media did not contribute to metrics.
 - Cleanup/reseed touched only run-scoped app-owned test URIs. The final 83-item corpus is intentionally retained; no personal-gallery row was modified.
 - This is a dataset availability gate only. No E2B/SigLIP result from the SM-F966B is attributed to this second device.
+
+Latest artifacts:
+
+- `artifacts/device-runs/persistent_multidomain_20260722_f731u/core-q01-q13-corroborated-followup.txt`
+- `artifacts/device-runs/persistent_multidomain_20260722_f731u/core-q01-q13-corroborated-followup.json`
+- `artifacts/device-runs/persistent_multidomain_20260722_f731u/core-q01-q13-corroborated-followup-errors.txt`
