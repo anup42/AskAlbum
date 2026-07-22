@@ -11,7 +11,34 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from common import adb, mask_serial, require_run_id, resolve_serial, retry_transient, wait_for_json
+from common import adb, mask_serial, require_run_id, resolve_serial, retry_transient, run_as_read, wait_for_json
+
+
+def parse_complete_seed(payload: bytes | None, run_id: str) -> dict[str, object] | None:
+    if not payload:
+        return None
+    try:
+        result = json.loads(payload)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if result.get("state") != "COMPLETE" or result.get("runId") != run_id:
+        return None
+    uris = result.get("createdUris")
+    if not isinstance(uris, list) or not uris or not all(
+        isinstance(uri, str) and uri.startswith("content://media/") for uri in uris
+    ):
+        return None
+    return result
+
+
+def device_mtime(serial: str, package: str, relative_path: str) -> int | None:
+    result = adb(serial, "shell", "run-as", package, "stat", "-c", "%Y", relative_path, check=False)
+    if result.returncode:
+        return None
+    try:
+        return int(result.stdout.decode().strip())
+    except ValueError:
+        return None
 
 
 def main() -> None:
@@ -39,6 +66,35 @@ def main() -> None:
             raise RuntimeError(f"Unsafe or missing gallery item: {filename}")
     host = args.artifacts / run_id
     host.mkdir(parents=True, exist_ok=True)
+    cleanup = run_as_read(serial, args.package, f"{base}/cleanup-status.json")
+    try:
+        cleanup_complete = bool(cleanup and json.loads(cleanup).get("state") == "COMPLETE")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        cleanup_complete = False
+    status_payload = run_as_read(serial, args.package, f"{base}/status.json")
+    try:
+        status = json.loads(status_payload) if status_payload else None
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        status = None
+    if not cleanup_complete and isinstance(status, dict) and status.get("state") == "RUNNING":
+        status = wait_for_json(serial, args.package, f"{base}/status.json", timeout_seconds=180)
+    status_mtime = device_mtime(serial, args.package, f"{base}/status.json")
+    cleanup_mtime = device_mtime(serial, args.package, f"{base}/cleanup-status.json")
+    cleanup_supersedes_seed = cleanup_complete and (
+        status_mtime is None or cleanup_mtime is None or cleanup_mtime >= status_mtime
+    )
+    existing = None if cleanup_supersedes_seed else parse_complete_seed(
+        json.dumps(status).encode("utf-8") if isinstance(status, dict) else status_payload,
+        run_id,
+    )
+    if existing is not None:
+        safe_result = {**existing, "retriedCalls": 0, "resumedExistingSeed": True,
+                       "serial": mask_serial(serial), "package": args.package}
+        (host / "seed-result.json").write_text(json.dumps(safe_result, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(safe_result, indent=2))
+        return
+    if cleanup_supersedes_seed and not args.reset_transfer:
+        raise RuntimeError("This run ID was already cleaned; use a new run ID or --reset-transfer")
     archive = host / "gallery-seed.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
         bundle.write(manifest_path, "gallery-manifest.json")

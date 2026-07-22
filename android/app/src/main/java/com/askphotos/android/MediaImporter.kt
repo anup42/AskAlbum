@@ -178,22 +178,14 @@ class MediaImporter(private val context: Context) {
                         ?: exif.getAttribute("OffsetTimeDigitized")
                         ?: exif.getAttribute("OffsetTime"),
                 )
-                val coordinates = FloatArray(2)
-                val hasCoordinates = exif.getLatLong(coordinates)
-                EmbeddedMetadata(
-                    capturedAt = capturedAt,
-                    latitude = coordinates[0].toDouble().takeIf { hasCoordinates },
-                    longitude = coordinates[1].toDouble().takeIf { hasCoordinates },
-                ).takeIf { it.capturedAt != null || hasCoordinates }
+                embeddedMetadata(capturedAt) {
+                    val coordinates = FloatArray(2)
+                    coordinates.takeIf { exif.getLatLong(it) }
+                        ?.let { it[0].toDouble() to it[1].toDouble() }
+                }
             }
         }.getOrNull()
     }
-
-    private data class EmbeddedMetadata(
-        val capturedAt: Long?,
-        val latitude: Double?,
-        val longitude: Double?,
-    )
 
     private fun android.database.Cursor.columnText(name: String): String? {
         val index = getColumnIndex(name)
@@ -213,4 +205,20 @@ class MediaImporter(private val context: Context) {
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+}
+
+internal data class EmbeddedMetadata(
+    val capturedAt: Long?,
+    val latitude: Double?,
+    val longitude: Double?,
+)
+
+/** Location may be redacted or malformed; that must not discard an independently valid EXIF date. */
+internal fun embeddedMetadata(
+    capturedAt: Long?,
+    coordinates: () -> Pair<Double, Double>?,
+): EmbeddedMetadata? {
+    val location = runCatching(coordinates).getOrNull()
+    return EmbeddedMetadata(capturedAt, location?.first, location?.second)
+        .takeIf { it.capturedAt != null || location != null }
 }

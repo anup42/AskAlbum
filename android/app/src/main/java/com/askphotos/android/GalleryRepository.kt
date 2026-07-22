@@ -183,12 +183,12 @@ class GalleryRepository(context: Context) {
                 MediaScope.VIDEOS -> item.kind == MediaKind.VIDEO
                 MediaScope.DOCUMENTS -> item.kind == MediaKind.PDF || item.ocrText.isNotBlank() || item.looksLikeDocument()
             }
-            inScope && GalleryFilterEvaluator.matches(item, plan.filter) && item.matchesRequiredMerchant(plan.ocrClause?.merchant)
+            inScope && (allowed == null || item.id in allowed) &&
+                GalleryFilterEvaluator.matches(item, plan.filter) && item.matchesRequiredMerchant(plan.ocrClause?.merchant)
         }
         val fullTextIds = database.fullTextMatches(terms)
         val lexicalRanked = allItems
             .asSequence()
-            .filter { allowed == null || it.id in allowed }
             .mapNotNull { item -> score(item, terms, item.id in fullTextIds) }
             .sortedWith(compareByDescending<SearchHit> { it.score }.thenBy { it.item.title })
             .toList()
@@ -531,11 +531,10 @@ class GalleryRepository(context: Context) {
 
     private fun GalleryItem.matchesRequiredMerchant(merchant: String?): Boolean {
         val required = merchant?.trim()?.lowercase(Locale.ROOT)?.takeIf(String::isNotEmpty) ?: return true
-        val indexedText = buildString {
-            append(title).append(' ').append(description).append(' ').append(ocrText).append(' ')
-            append(tags.joinToString(" "))
-        }.lowercase(Locale.ROOT)
-        return required in indexedText
+        val merchantEntities = database.ocrEntities(id, OcrEntityType.MERCHANT)
+            .flatMap { listOf(it.rawText, it.normalizedValue) }
+        val identityText = "$filename $title ${tags.joinToString(" ")}"
+        return matchesMerchantIdentity(required, merchantEntities, identityText)
     }
 
     private fun addDeterministicFactEvidence(hit: SearchHit): SearchHit {
@@ -551,6 +550,17 @@ class GalleryRepository(context: Context) {
         )
         return hit.copy(evidence = listOf(evidence) + hit.evidence)
     }
+}
+
+internal fun matchesMerchantIdentity(
+    required: String,
+    merchantEntities: List<String>,
+    documentIdentityText: String,
+): Boolean {
+    val normalized = required.trim().lowercase(Locale.ROOT)
+    if (normalized.isEmpty()) return true
+    return merchantEntities.any { normalized in it.lowercase(Locale.ROOT) } ||
+        normalized in documentIdentityText.lowercase(Locale.ROOT)
 }
 
 internal data class ResolvedSemanticHit(

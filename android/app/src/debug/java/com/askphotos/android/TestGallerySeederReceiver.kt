@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.ContentUris
 import android.net.Uri
 import android.provider.MediaStore
 import org.json.JSONArray
@@ -44,6 +45,24 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
     }
 
     private fun seed(context: Context, runId: String) {
+        val previousResultFile = child(runRoot(context, runId), "seed-result.json")
+        val previousResult = previousResultFile
+            .takeIf(File::isFile)
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+        val cleanupStatusFile = child(runRoot(context, runId), "cleanup-status.json")
+        val cleanupComplete = cleanupStatusFile
+            .takeIf(File::isFile)
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+            ?.optString("state") == "COMPLETE"
+        val activeCompletedSeed = previousResult?.optString("state") == "COMPLETE" &&
+            previousResult.optString("runId") == runId &&
+            (!cleanupComplete || previousResultFile.lastModified() > cleanupStatusFile.lastModified())
+        if (activeCompletedSeed) {
+            if (cleanupComplete) clearCompletedCleanupMarker(context, runId)
+            writeStatus(context, runId, "status.json", previousResult)
+            return
+        }
+        if (cleanupComplete) clearCompletedCleanupMarker(context, runId)
         val stagingRoot = extractStaging(context, runId)
         val manifestFile = child(stagingRoot, "gallery-manifest.json")
         val mediaRoot = child(stagingRoot, "media")
@@ -109,6 +128,13 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         }
     }
 
+    private fun clearCompletedCleanupMarker(context: Context, runId: String) {
+        listOf("cleanup-status.json", "cleanup-result.json").forEach { name ->
+            val file = child(runRoot(context, runId), name)
+            require(!file.exists() || file.delete()) { "Could not clear stale $name" }
+        }
+    }
+
     private fun cleanup(context: Context, runId: String) {
         val resultFile = child(runRoot(context, runId), "seed-result.json")
         require(resultFile.isFile) { "No seed result exists for run $runId" }
@@ -121,6 +147,16 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
             require(uri.scheme == "content" && uri.authority == MediaStore.AUTHORITY) { "Refusing non-MediaStore URI" }
             deleted += context.contentResolver.delete(uri, null, null)
         }
+        val recovered = ownedRunUris(context, runId)
+        val recoveryRecord = JSONObject()
+            .put("state", "RECOVERED")
+            .put("runId", runId)
+            .put("createdUris", JSONArray(recovered.map(Uri::toString)))
+            .put("createdCount", recovered.size)
+            .put("proof", "exact run-scoped path and owner_package_name=${context.packageName}")
+        writeStatus(context, runId, "orphan-recovery.json", recoveryRecord)
+        var recoveredDeleted = 0
+        recovered.forEach { uri -> recoveredDeleted += context.contentResolver.delete(uri, null, null) }
         val relativePaths = seed.getJSONArray("relativePaths")
         var remaining = 0
         for (index in 0 until relativePaths.length()) {
@@ -136,9 +172,31 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         }
         val cleanup = JSONObject().put("state", "COMPLETE").put("runId", runId)
             .put("relativePaths", relativePaths).put("requestedCount", uris.length())
-            .put("deletedCount", deleted).put("remainingCount", remaining)
+            .put("deletedCount", deleted).put("recoveredOrphanCount", recovered.size)
+            .put("recoveredOrphanDeletedCount", recoveredDeleted).put("remainingCount", remaining)
         writeStatus(context, runId, "cleanup-result.json", cleanup)
         writeStatus(context, runId, "cleanup-status.json", cleanup)
+    }
+
+    private fun ownedRunUris(context: Context, runId: String): List<Uri> {
+        val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val paths = listOf(
+            "Pictures/AgenticGalleryTest/$runId/",
+            "Documents/AgenticGalleryTest/$runId/",
+        )
+        return paths.flatMap { relativePath ->
+            context.contentResolver.query(
+                collection,
+                arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?",
+                arrayOf(relativePath, context.packageName),
+                null,
+            )?.use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) add(ContentUris.withAppendedId(collection, cursor.getLong(0)))
+                }
+            }.orEmpty()
+        }
     }
 
     private fun importSeeded(context: Context, runId: String) {

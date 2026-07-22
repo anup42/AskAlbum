@@ -95,10 +95,13 @@ Generated artifacts may be excluded from Git because they include bulky logs, sc
 
 ## Secondary-device persistent corpus
 
-The same verified 83-item core corpus was also seeded to a connected Samsung SM-F731U (Android 16/API 36, SM8550) under run ID `persistent_multidomain_20260722_f731u`.
+The same verified 83-item core corpus is retained on a connected Samsung SM-F731U (Android 16/API 36, SM8550) under run ID `persistent_multidomain_20260722_f731u`.
 
 - License/checksum validation: PASS, 83 items and 19 license records.
-- Safe MediaStore insertion: COMPLETE, 83 recorded URIs (81 images, one PDF, one video), staging removed, zero provider retries.
+- A timeout/retry initially produced 166 app-owned rows. Run-scoped recovery deleted 83 recorded URIs plus 83 reconstructed orphan URIs only after recording proof from the exact test path and owner package; zero remained. The clean reseed then created exactly 83 items, and an immediate repeat returned the existing manifest without transfer or insertion. Final audit: 83 app-owned rows and zero duplicate-suffixed names.
 - MediaStore visibility instrumentation: PASS, 1 test in 0.032 s.
-- Cleanup: NOT RUN; the corpus is intentionally retained in its run-specific test paths.
+- EXIF/event/follow-up instrumentation after repair: PASS, one test in 33.865 seconds. A protected GPS read can no longer discard a valid EXIF date.
+- Real signed q8 SigLIP2 without E2B preinstallation: PASS, one test in 19.117 seconds. Retrieval installation left Gemma selection/installation state unchanged.
+- Core Q01-Q13 with real SigLIP/OCR/events and deterministic fallback planner: 10 PASS, 1 FAIL, 2 explicit people-index skips. Q04 exact Swiggy total now passes. Q03 remains invalid because the evaluator did not isolate its initial search from unrelated personal media; this is not accepted as a core-suite pass.
+- Cleanup/reseed touched only run-scoped app-owned test URIs. The final 83-item corpus is intentionally retained; no personal-gallery row was modified.
 - This is a dataset availability gate only. No E2B/SigLIP result from the SM-F966B is attributed to this second device.

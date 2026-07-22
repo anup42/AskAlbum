@@ -26,7 +26,6 @@ class RealSiglip2RetrievalAcceptanceTest {
         val application = instrumentation.targetContext.applicationContext as AskPhotosApplication
         val incoming = File(application.filesDir, "host-import/siglip2-base-p16-224-q8.agretrieval")
         val e2bBefore = application.modelPackManager.status()
-        assertTrue("Verified E2B must remain installed", e2bBefore.installed && e2bBefore.tier == GemmaModelTier.E2B)
 
         try {
             val installed = if (incoming.isFile) {
@@ -99,7 +98,14 @@ class RealSiglip2RetrievalAcceptanceTest {
                 "Football query did not prefer the football fixture: $footballCorrect <= $footballWrong",
                 footballCorrect > footballWrong,
             )
-            assertTrue(application.modelPackManager.status().installed)
+            val e2bAfter = application.modelPackManager.status()
+            assertEquals("Retrieval installation changed Gemma installation state", e2bBefore.installed, e2bAfter.installed)
+            assertEquals("Retrieval installation changed the selected Gemma tier", e2bBefore.selectedTier, e2bAfter.selectedTier)
+            assertEquals("Retrieval installation changed installed Gemma tiers", e2bBefore.installedTiers, e2bAfter.installedTiers)
+            if (e2bBefore.installed) {
+                assertEquals("Retrieval installation changed the active Gemma pack", e2bBefore.packVersion, e2bAfter.packVersion)
+                assertEquals("Retrieval installation changed the active Gemma checksum", e2bBefore.sha256, e2bAfter.sha256)
+            }
 
             instrumentation.sendStatus(2, Bundle().apply {
                 putString(

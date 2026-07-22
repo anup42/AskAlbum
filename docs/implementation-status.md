@@ -2137,20 +2137,21 @@ Next phase:
 
 ## Phase 2D - Persistent licensed multi-domain corpus on second device (22 July 2026)
 
-Status: **Passed. The verified 83-item core corpus is retained on the connected Samsung SM-F731U for manual and automated feature testing.**
+Status: **Recovered and passed. The timed-out duplicate run was reconciled using exact recorded/recovered URIs, then reseeded as one verified 83-item set with demonstrated idempotency.**
 
 Scope and safety:
 
 - Reused the pinned, already-downloaded open-license corpus rather than fetching unreviewed media. It covers travel/landmarks, beaches/sunsets, architecture, food, flowers, pets, outdoor sport, street text, people/clothing, receipts, Wi-Fi, boarding pass, hotel, multilingual menus, calendar, PDF, and video.
 - License/checksum verification passed for all 83 gallery items and 19 license records.
 - Seeded only to run-scoped MediaStore paths `Pictures/AgenticGalleryTest/persistent_multidomain_20260722_f731u/` and `Documents/AgenticGalleryTest/persistent_multidomain_20260722_f731u/`.
-- The seed result records all 83 created content URIs: 81 images, one PDF, and one video. Staging was removed; cleanup was deliberately NOT RUN.
+- The second seed result initially recorded 83 created content URIs while an exact audit found 166 rows, all in the run-specific paths and owned by `com.askphotos.android`. Recovery removed 83 recorded rows plus 83 reconstructed orphan URIs after writing an app-private audit record; `remainingCount` was zero.
+- The clean reseed created 83 URIs (81 images, one PDF, one video). A repeated host invocation returned the existing manifest in one second with `resumedExistingSeed=true`; a second MediaStore audit proved exactly 83 app-owned rows and zero `(1)` duplicate names.
 - A direct Android instrumentation check confirmed that both run-scoped paths are visible through MediaStore (`SeededGalleryTest`, PASS, 1 test in 0.032 s).
 
 Device and commands:
 
 - Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550, approximately 7.0 GB RAM, approximately 193 GB free data storage.
-- The initial 180-second seed invocation timed out after checkpointing all 1,240 exact-size transfer chunks. One bounded resume completed successfully in 192.4 seconds with zero provider-call retries; no duplicate media was created.
+- The host harness and debug receiver now treat a completed active run as idempotent, distinguish a later cleanup marker by device modification time, reject accidental reuse of a cleaned run ID unless reset is explicit, and recover only orphan rows whose exact test path and owner package prove test ownership.
 
 ```powershell
 python tools\sample_gallery\verify_licenses.py --gallery build\sample-gallery\core
@@ -2164,6 +2165,7 @@ Artifacts:
 - `artifacts/device-runs/persistent_multidomain_20260722_f731u/preflight.json`
 - `artifacts/device-runs/persistent_multidomain_20260722_f731u/persistent_multidomain_20260722_f731u/seed-result.json`
 - `artifacts/device-runs/persistent_multidomain_20260722_f731u/seeded-gallery-test.txt`
+- `artifacts/device-runs/persistent_multidomain_20260722_f731u/run-scoped-mediastore-rows.txt`
 
 Retained dataset cleanup command for a future explicit cleanup request:
 
@@ -2174,6 +2176,10 @@ python tools\device\cleanup_gallery.py --serial <masked> --package com.askphotos
 Limitation:
 
 - The original SM-F966B reference device disconnected before the new Q01-Q13 evaluator could run. This second phone is documented only for corpus seeding/visibility; it is not being substituted for the original device's retained E2B/SigLIP acceptance state.
+- The first event/follow-up run failed because protected GPS extraction discarded intact 2024 EXIF dates. Pulled bytes matched the host SHA-256. GPS extraction is now isolated from date parsing; focused JVM tests pass, the app compiled/installed, and the physical-device event plus two-follow-up test passed in 33.865 seconds.
+- Signed SigLIP installation is now independent of Gemma availability. On SM-F731U the q8 pack installed with no E2B present and passed exact tokenizer plus red/blue/dog/football ranking in 19.117 seconds; measured inference block was 7.163 seconds and PSS moved from 261,192 KB to 538,849 KB.
+- First Q01-Q13 core run with fixture planner and real SigLIP/OCR/events: 9 PASS, 2 FAIL, 2 SKIP. Merchant filtering was corrected to use structured merchant/document identity instead of arbitrary OCR body mentions; Q04 then passed. Second run: 10 PASS, 1 FAIL, 2 SKIP.
+- Remaining Q03 failure is an evaluator-isolation defect: its valid 2025 filter returned four unrelated personal-gallery items because Q01 was not initially constrained to the run-specific 83 IDs. The persisted result is `EXACT`; the next cycle must scope the initial evaluation search rather than weaken the no-result assertion.
 
 ## Phase 7B - Structured core evaluator and deterministic aggregation correction (22 July 2026)
 

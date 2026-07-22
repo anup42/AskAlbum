@@ -58,10 +58,13 @@ class CoreCorpusEvaluationAcceptanceTest {
         records.evaluate("Q03") {
             val parent = requireNotNull(q02) { "Q02 did not produce a parent result set" }
             repository.searchInSession("What about last year?", session).also { outcome ->
-                assertEquals(parent.resultSetId, outcome.baseResultSetId)
-                assertTrue(outcome.hits.isEmpty())
-                assertTrue(outcome.answer.evidenceIds.isEmpty() && outcome.answer.claims.isEmpty())
-                assertEquals(ResultExactness.EXACT, outcome.answer.exactness)
+                assertEquals("Q03 did not retain Q02 as its parent", parent.resultSetId, outcome.baseResultSetId)
+                assertTrue("Q03 fabricated ${outcome.hits.size} out-of-period hits", outcome.hits.isEmpty())
+                assertTrue(
+                    "Q03 emitted unsupported evidence or claims",
+                    outcome.answer.evidenceIds.isEmpty() && outcome.answer.claims.isEmpty(),
+                )
+                assertEquals("Q03 result-set filter was not exact", ResultExactness.EXACT, outcome.answer.exactness)
                 assertEvidenceClosure(outcome)
             }.metrics()
         }
