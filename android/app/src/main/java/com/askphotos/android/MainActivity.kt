@@ -160,6 +160,9 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
     val retrievalModelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         viewModel.importRetrievalPack(uri)
     }
+    val faceModelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        viewModel.importFaceModel(uri)
+    }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         viewModel.scanAccessibleGallery()
     }
@@ -222,6 +225,8 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     modelPack = state.modelPack,
                     modelDownload = state.modelDownload,
                     retrievalPack = state.retrievalPack,
+                    faceModel = state.faceModel,
+                    faceModelDownload = state.faceModelDownload,
                     operationMessage = state.operationMessage,
                     onRetry = viewModel::retryIndexing,
                     onImportModel = { modelPicker.launch(arrayOf("application/octet-stream", "application/zip", "*/*")) },
@@ -230,6 +235,11 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     onCancelModelDownload = viewModel::cancelModelDownload,
                     onImportRetrievalModel = {
                         retrievalModelPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                    },
+                    onDownloadFaceModel = viewModel::downloadFaceModel,
+                    onCancelFaceModelDownload = viewModel::cancelFaceModelDownload,
+                    onImportFaceModel = {
+                        faceModelPicker.launch(arrayOf("application/octet-stream", "*/*"))
                     },
                 )
                 else -> PrivacyScreen(
@@ -659,6 +669,8 @@ private fun IndexManagerScreen(
     modelPack: ModelPackStatus,
     modelDownload: GemmaDownloadProgress,
     retrievalPack: RetrievalPackStatus,
+    faceModel: FaceModelStatus,
+    faceModelDownload: FaceModelDownloadProgress,
     operationMessage: String?,
     onRetry: () -> Unit,
     onImportModel: () -> Unit,
@@ -666,6 +678,9 @@ private fun IndexManagerScreen(
     onDownloadModel: () -> Unit,
     onCancelModelDownload: () -> Unit,
     onImportRetrievalModel: () -> Unit,
+    onDownloadFaceModel: () -> Unit,
+    onCancelFaceModelDownload: () -> Unit,
+    onImportFaceModel: () -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp, 8.dp, 18.dp, 32.dp),
@@ -683,7 +698,11 @@ private fun IndexManagerScreen(
             "Face stage complete",
             index.facesScanned,
             index.discovered,
-            if (peopleIndex.enabled) "mlkit-face-detection-v1; identity embeddings not installed" else "disabled-until-opt-in",
+            when {
+                !peopleIndex.enabled -> "disabled-until-opt-in"
+                faceModel.installed -> faceModel.producerVersion ?: FaceModelCatalog.sface.producerVersion
+                else -> "mlkit-face-detection-v1; SFace not installed"
+            },
         )
         IndexMetric("Pending", index.pending, index.discovered, "WorkManager resumable queue")
         IndexMetric("Events", index.events, index.events, "deterministic day grouping")
@@ -705,7 +724,7 @@ private fun IndexManagerScreen(
                 Spacer(Modifier.height(9.dp))
                 Text("Offline hybrid local runtime", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(7.dp))
-                Text("Bundled OCR, image labeling, face detection, PDF rendering, and bounded video keyframes run locally. Gemma, SigLIP2, and face identity embeddings still require separate compatible model packs.", color = Color(0xFFDCE8E2))
+                Text("Bundled OCR, image labeling, face detection, PDF rendering, and bounded video keyframes run locally. Gemma, SigLIP2, and SFace identity embeddings use separate verified model packs.", color = Color(0xFFDCE8E2))
                 Spacer(Modifier.height(12.dp))
                 Text("Local database: ${formatBytes(index.storageBytes)}", color = Color.White, fontWeight = FontWeight.SemiBold)
             }
@@ -779,6 +798,50 @@ private fun IndexManagerScreen(
         Spacer(Modifier.height(14.dp))
         Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
             Column(Modifier.padding(20.dp)) {
+                Text("Face identity model", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Spacer(Modifier.height(7.dp))
+                Text(if (faceModel.installed) "${faceModel.name} ${faceModel.version}" else "Not installed — face boxes only")
+                Text(
+                    "Apache-2.0 • 128 dimensions • ${formatBytes(faceModel.sizeBytes)} • pinned SHA-256 ${faceModel.sha256.take(12)}…",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                )
+                faceModel.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                if (!faceModel.installed && BuildConfig.ALLOW_MODEL_DOWNLOAD) {
+                    Spacer(Modifier.height(10.dp))
+                    when (faceModelDownload.state) {
+                        GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING -> {
+                            LinearProgressIndicator(
+                                progress = { faceModelDownload.fraction },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = Forest,
+                                trackColor = Mist,
+                            )
+                            Text(
+                                if (faceModelDownload.state == GemmaDownloadState.VERIFYING) "Verifying SHA-256 and activating…" else "${formatBytes(faceModelDownload.bytesDownloaded)} of ${formatBytes(faceModelDownload.totalBytes)}",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp,
+                            )
+                            TextButton(onClick = onCancelFaceModelDownload) { Text("Cancel download") }
+                        }
+                        else -> Button(
+                            onClick = onDownloadFaceModel,
+                            modifier = Modifier.fillMaxWidth().testTag("download-sface"),
+                        ) { Text("Download OpenCV SFace") }
+                    }
+                } else if (!faceModel.installed) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Offline demo build: import the pinned ONNX file locally.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                }
+                Spacer(Modifier.height(11.dp))
+                OutlinedButton(onClick = onImportFaceModel) {
+                    Text(if (faceModel.installed) "Replace pinned ONNX" else "Import pinned ONNX")
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Column(Modifier.padding(20.dp)) {
                 Text("SigLIP2 retrieval pack", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(7.dp))
                 Text(
@@ -809,7 +872,7 @@ private fun IndexManagerScreen(
                 Text(
                     "✓ App-private gallery memory\n" +
                         (if (BuildConfig.ALLOW_MODEL_DOWNLOAD) "✓ Network used only for selected model downloads\n" else "✓ No Internet permission\n") +
-                        "✓ No cloud inference\n✓ System Photo Picker and partial access\n✓ Evidence source shown per result\n✓ Face identity search remains opt-in and unavailable until its model pack is installed",
+                        "✓ No cloud inference\n✓ System Photo Picker and partial access\n✓ Evidence source shown per result\n✓ Face identity search remains opt-in; SFace embeddings stay app-private",
                     lineHeight = 25.sp,
                 )
             }
@@ -887,7 +950,7 @@ private fun PrivacyScreen(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Identity embeddings and automatic clustering are not active until a separately licensed compatible model pack is installed. The app does not infer sensitive traits.",
+                        "${if (peopleIndex.identityReadyFaceCount > 0) "SFace embeddings and local clusters are active." else "Identity embeddings will start after the verified SFace pack is installed."} The app does not infer sensitive traits.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
                     )

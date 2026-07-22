@@ -2930,3 +2930,50 @@ Verification and current state:
 - Dedicated retained-state harness tests: 3 PASS. The harness installs only the Android-test APK, validates an app-private preservation marker, rejects counts other than exactly 5,000, and performs no seeding, database removal, or MediaStore cleanup.
 - Instrumentation is intentionally NOT RUN until the strict vector-count precondition can pass; the assertion is not skipped or relaxed for partial coverage.
 - Durable checkpoint during the active foreground run: 5,000 unique media rows, 1,401 READY, 1,248 vector IDs visible (1,226 embedding stages complete and 22 in flight), zero retryable/permanent failures, thermal status 1. No media was reseeded, deleted, or modified.
+
+## Phase 8B - OpenCV SFace local identity embeddings (22 July 2026)
+
+Status: **The pinned real SFace model is implemented, installed, and passing focused physical-device acceptance. Face detection, five-landmark alignment, 128-dimensional normalized embedding inference, app-private FP16 persistence, reset, and reviewed-person query filtering are operational. Full Q07/Q08 identity acceptance remains pending because the product does not yet expose a complete cluster-review/labeling workflow and people indexing has not been enabled against unrelated accessible media.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/{FaceModelPack,OpenCvSFaceEngine,FaceVectorStore,MlKitFaceDetectionEngine,PeopleIndexWorker,GalleryDatabase,GalleryRepository,GalleryViewModel,MainActivity,AskPhotosApplication}.kt`
+- `android/app/src/test/java/com/askphotos/android/FaceModelCatalogTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/{RealSFaceAcceptanceTest,SFaceAlignmentInstrumentedTest,SFaceSettingsUiTest,PeoplePrivacyDatabaseTest}.kt`
+- `android/README.md`
+- `docs/model-licenses.md`
+
+Architecture decisions:
+
+- Selected the OpenCV SFace 2021dec FP32 ONNX pack. Its official model card declares Apache-2.0; the app's non-commercial intent is compatible but was not needed as a license exception.
+- Pin immutable revision `c140188d35b7d0050f2dcfdfb8fe3e98d516744f`, exact size `38,696,353`, and SHA-256 `0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79`. Model bytes remain outside Git and activate only after verification.
+- Use local ML Kit only for detection and the five required landmarks. Apply OpenCV's 112x112 similarity alignment, execute ONNX Runtime locally, require the exact `data -> fc1` tensor contract, and L2-normalize all 128 values.
+- Store embeddings in a versioned app-private memory-mapped FP16 index. Automatic nearest-neighbor groups use OpenCV's cosine threshold 0.363, but identity queries resolve only user-reviewed clusters and fail closed otherwise.
+- Matching excludes every face from the media item currently being compiled, preventing two co-occurring people from seeding each other's cluster. People indexing remains explicit opt-in and reset removes derived vectors, faces, clusters, aliases, and labels without touching gallery media.
+
+Commands and results actually run:
+
+- Focused host gate `:app:testConsumerDebugUnitTest :app:compileConsumerDebugAndroidTestKotlin`: PASS in 42 seconds after one visibility compile repair.
+- ConsumerDebug assemble and replace-install through the Android build/install workflow: PASS in 29 seconds on SM-F731U; app-private Gemma/SigLIP2 packs, vectors, Room data, and retained samples were preserved.
+- Direct `RealSFaceAcceptanceTest`: PASS, one test in 6.406 seconds. The openly licensed CC0 football fixture produced seven alignable faces; two embedding passes returned finite normalized 128-dimensional vectors and the repeated first face had cosine similarity above 0.999.
+- Device trace: SFace engine inference over the fixture took 1,268 ms; PSS moved from 91,317 KB to 186,682 KB; runtime producer was `onnxruntime-2021dec-fp32-v1`.
+- Direct focused device suite (`SFaceAlignmentInstrumentedTest`, two `PeoplePrivacyDatabaseTest` cases, and `SFaceSettingsUiTest`): PASS, four tests in 6.581 seconds.
+- Final post-review Consumer/offline host gate (`testConsumerDebugUnitTest`, `lintConsumerDebug`, Android-test compilation, `testOfflineDemoDebugUnitTest`, and `lintOfflineDemoDebug`): PASS, 85 tasks. The first execution window expired while Gradle was still active; the cached completion retry finished successfully in 8 seconds. Artifact: `artifacts/sface-final-host-gate-20260722-retry.txt`.
+- Final release-candidate host gate, including the people-polarity regression: PASS in 86 seconds. Required people are intersected and absent people are union-excluded from both lexical and vector execution scopes. Artifact: `artifacts/sface-final-host-gate-20260722-people-polarity.txt`.
+- Final ConsumerDebug assemble and replace-install: PASS in 26 seconds. The combined real SFace/alignment/privacy/UI instrumentation run then reported `OK (5 tests)` in 6.114 seconds; real SFace again found seven faces and completed in 1,384 ms. Artifact: `artifacts/sface-final-device-tests-20260722-release-candidate.txt`.
+- Direct app-private device verification reported the exact pinned SHA-256 and size for the installed model. The Settings screenshot was visually inspected and shows model name, version, Apache-2.0 license, dimension, size, and abbreviated hash.
+
+Artifacts:
+
+- `artifacts/sface-host-gate-20260722-retry.txt`
+- `artifacts/sface-device-acceptance-20260722.txt`
+- `artifacts/sface-focused-device-tests-20260722.txt`
+- `artifacts/device-runs/sface_20260722/sface-settings.png`
+- `artifacts/device-runs/sface_20260722/diagnostics/20260722_195052/`
+
+Limitations and next gate:
+
+- Incremental threshold clustering is a candidate-grouping aid, not proof of identity. A production cluster-review/merge/split/label UI and a run-scoped consented identity corpus are still required before Q07/Q08 can become PASS.
+- Detection currently depends on the bundled local ML Kit detector for landmarks; SFace embedding execution itself is ONNX Runtime and fully local.
+- People indexing was deliberately not enabled over the retained gallery because it could include unrelated accessible photos. No personal gallery item was modified or deleted.
+- Keep complete reviewed-identity acceptance separate from the retained 5k and 20k performance gates.

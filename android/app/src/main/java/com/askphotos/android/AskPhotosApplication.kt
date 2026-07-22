@@ -7,6 +7,9 @@ class AppServices(private val application: AskPhotosApplication) {
     val modelPackManager by lazy { ModelPackManager(application) }
     val modelDownloader by lazy { GemmaModelDownloader(application, modelPackManager) }
     val retrievalModelPackManager by lazy { RetrievalModelPackManager(application) }
+    val faceModelPackManager by lazy { FaceModelPackManager(application) }
+    val faceModelDownloader by lazy { FaceModelDownloader(application, faceModelPackManager) }
+    val faceVectorStore by lazy { FaceVectorStore(application) }
     val inferenceResources: InferenceResourceManager by lazy { SerializedInferenceResourceManager() }
     val embeddingEngine: ImageTextEmbeddingEngine by lazy {
         LiteRtImageTextEmbeddingEngine(retrievalModelPackManager, inferenceResources)

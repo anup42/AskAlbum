@@ -259,4 +259,15 @@ Recovery disclosure:
 - Added `tools/device/run_stored_5k_retrieval.py`; its three host contract tests pass. It installs only the test APK, verifies a target app-private marker remains, and never seeds or cleans gallery media.
 - The test requires all 5,000 recorded seed URIs, all 5,000 corresponding Room rows, and all 5,000 persisted signed-q8 vectors before it evaluates retrieval. It checks four deterministic source families, rank 1, precision@10 >= 0.60, and five-run warm text-to-results p95 <= 2,000 ms.
 - The test is NOT RUN because complete coverage is not yet true. Current checkpoint: 1,401 READY, 1,248 vector IDs visible (1,226 embedding stages complete and 22 running), zero failed rows/stages, thermal status 1.
-- The retained foreground operation continues against `fg_index5k_20260722`; no samples were reseeded or removed and no personal-gallery content was touched.
+- The retained `fg_index5k_20260722` operation was paused before the separate face-model device gate at 5,000 unique rows, 1,401 READY media, and 1,248 vector IDs with zero failed rows/stages. Its samples were not reseeded or removed, and no personal-gallery content was touched.
+
+## OpenCV SFace identity-engine acceptance
+
+- Date/device: 22 July 2026; Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550, approximately 7.3 GB RAM. Serial is masked in artifacts.
+- Installed pack: OpenCV SFace `2021dec-fp32-v1`, Apache-2.0, 38,696,353 bytes, SHA-256 `0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79`. The model is app-private and was verified on device.
+- `RealSFaceAcceptanceTest`: PASS, one test in 6.406 seconds. The retained openly licensed CC0 football image produced seven alignable detections. Every embedding was finite, L2-normalized, and exactly 128-dimensional; repeated inference for the first face exceeded 0.999 cosine similarity.
+- Runtime trace: 1,268 ms for the face detection/alignment/embedding acceptance path; PSS 91,317 KB before and 186,682 KB after; ONNX Runtime backend.
+- Alignment, privacy/database regression, and Settings UI suite: PASS, four tests in 6.581 seconds. The regression proves reviewed cluster labels/aliases retain their face assignments and unreviewed clusters fail closed.
+- Final release-candidate app install: PASS in 26 seconds. The combined engine/alignment/privacy/UI rerun reported `OK (5 tests)` in 6.114 seconds; the real engine again detected seven faces and completed its acceptance path in 1,384 ms. Full output: `artifacts/sface-final-device-tests-20260722-release-candidate.txt`.
+- ConsumerDebug was replace-installed and the UI screenshot at `artifacts/device-runs/sface_20260722/sface-settings.png` was visually inspected. No gallery seeding or cleanup was performed for this test; no personal media was modified.
+- The engine and storage path are working, but Q07/Q08 remain explicit pending gates until the app has a complete user-facing cluster review/labeling flow and a dedicated run-scoped consented identity corpus. Face/people indexing remains disabled until the user explicitly enables it.

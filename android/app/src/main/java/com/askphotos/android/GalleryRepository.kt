@@ -27,7 +27,10 @@ class GalleryRepository(context: Context) {
         database.ensureStageRows()
         if (database.pendingItems(1).isNotEmpty()) IndexScheduler.schedule(appContext)
         if (services.retrievalModelPackManager.status().installed) EmbeddingIndexScheduler.schedule(appContext)
-        if (database.peopleIndexStatus().enabled) PeopleIndexScheduler.schedule(appContext)
+        if (database.peopleIndexStatus().enabled) {
+            services.faceModelPackManager.current()?.let { database.requestFaceEmbeddingReindex(it.spec.producerVersion) }
+            PeopleIndexScheduler.schedule(appContext)
+        }
         return database.summary()
     }
 
@@ -73,7 +76,15 @@ class GalleryRepository(context: Context) {
 
     fun resetPeopleIndex(): PeopleIndexStatus {
         PeopleIndexScheduler.cancelAndWait(appContext)
+        kotlinx.coroutines.runBlocking { services.faceVectorStore.clear() }
         return database.resetPeopleIndex()
+    }
+
+    fun onFaceModelInstalled(): PeopleIndexStatus {
+        val installed = services.faceModelPackManager.current() ?: return database.peopleIndexStatus()
+        database.requestFaceEmbeddingReindex(installed.spec.producerVersion)
+        PeopleIndexScheduler.schedule(appContext)
+        return database.peopleIndexStatus()
     }
 
     fun saveReviewedPersonCluster(id: String, label: String, relationship: String?, aliases: List<String>): PeopleIndexStatus =
@@ -87,6 +98,12 @@ class GalleryRepository(context: Context) {
     fun markFaces(mediaId: String) = database.markFaces(mediaId)
     fun completeFaces(mediaId: String, detections: List<FaceDetectionRecord>, producerVersion: String) =
         database.completeFaces(mediaId, detections, producerVersion)
+    fun completeEmbeddedFaces(mediaId: String, faces: List<FaceInstance>, clusterIds: List<String>, producerVersion: String) =
+        database.completeEmbeddedFaces(mediaId, faces, clusterIds, producerVersion)
+    fun faceIdsForMedia(mediaId: String): List<String> = database.faceIdsForMedia(mediaId)
+    fun allEmbeddedFaceIds(): Set<String> = database.allEmbeddedFaceIds()
+    fun clusterIdForFace(faceId: String): String? = database.clusterIdForFace(faceId)
+    fun ensureAutomaticPersonCluster(id: String) = database.ensureAutomaticPersonCluster(id)
     fun failFaces(mediaId: String, message: String, permanent: Boolean) = database.failFaces(mediaId, message, permanent)
     fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> =
         database.embeddingPendingItems(producerVersion, limit)
@@ -187,9 +204,23 @@ class GalleryRepository(context: Context) {
             emit(QueryProgress.Completed(outcome))
             return@flow
         }
-        val allowed = resolveExecutionScope(plan.baseResultIds, activeResultIds)
+        val baseAllowed = resolveExecutionScope(plan.baseResultIds, activeResultIds)
+        val peopleScope = PeopleClauseResolver.resolve(plan.peopleClauses) { personId ->
+            database.mediaIdsForReviewedPeople(listOf(personId))
+        }
+        val requiredAllowed = when {
+            baseAllowed == null -> peopleScope.requiredIds
+            peopleScope.requiredIds == null -> baseAllowed
+            else -> baseAllowed intersect peopleScope.requiredIds
+        }
+        val databaseItems = database.allItems()
+        val allowed = if (peopleScope.excludedIds.isEmpty()) {
+            requiredAllowed
+        } else {
+            (requiredAllowed ?: databaseItems.mapTo(mutableSetOf(), GalleryItem::id)) - peopleScope.excludedIds
+        }
         val terms = RetrievalTerms.normalize(plan.terms)
-        val allItems = database.allItems().filter { item ->
+        val allItems = databaseItems.filter { item ->
             val inScope = when (plan.mediaScope) {
                 MediaScope.ALL -> true
                 MediaScope.IMAGES -> item.kind == MediaKind.IMAGE

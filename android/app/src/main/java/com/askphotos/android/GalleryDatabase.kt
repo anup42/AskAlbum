@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.provider.MediaStore
 import org.json.JSONArray
+import java.util.Locale
 import java.util.UUID
 
 class GalleryDatabase(
@@ -608,13 +609,20 @@ class GalleryDatabase(
             val now = System.currentTimeMillis()
             db.insertWithOnConflict("person_cluster", null, ContentValues().apply {
                 put("id", id)
+                putNull("label")
+                putNull("relationship")
+                put("aliases", "[]")
+                put("reviewed", 0)
+                put("created_at", now)
+                put("updated_at", now)
+            }, SQLiteDatabase.CONFLICT_IGNORE)
+            db.update("person_cluster", ContentValues().apply {
                 put("label", safeLabel)
                 if (safeRelationship == null) putNull("relationship") else put("relationship", safeRelationship)
                 put("aliases", JSONArray(safeAliases).toString())
                 put("reviewed", 1)
-                put("created_at", now)
                 put("updated_at", now)
-            }, SQLiteDatabase.CONFLICT_REPLACE)
+            }, "id=?", arrayOf(id))
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -672,6 +680,122 @@ class GalleryDatabase(
         } finally {
             db.endTransaction()
         }
+    }
+
+    fun completeEmbeddedFaces(
+        mediaId: String,
+        faces: List<FaceInstance>,
+        clusterIds: List<String>,
+        producerVersion: String,
+    ) {
+        require(faces.size == clusterIds.size && faces.size <= MAX_FACES_PER_MEDIA) { "Invalid embedded face batch" }
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            check(peopleIndexEnabled(db)) { "People indexing was disabled" }
+            db.delete("face_instance", "media_id=?", arrayOf(mediaId))
+            val now = System.currentTimeMillis()
+            faces.forEachIndexed { index, face ->
+                require(face.bounds.size == 4 && face.bounds.all { it in 0f..1f }) { "Face bounds must be normalized" }
+                require(face.bounds[0] < face.bounds[2] && face.bounds[1] < face.bounds[3]) { "Face bounds are invalid" }
+                require(face.embedding.size == FaceModelCatalog.sface.embeddingDimension && face.embedding.all { it.isFinite() }) {
+                    "Invalid SFace embedding"
+                }
+                db.insertOrThrow("face_instance", null, ContentValues().apply {
+                    put("id", "$mediaId:$index")
+                    put("media_id", mediaId)
+                    put("left_pos", face.bounds[0])
+                    put("top_pos", face.bounds[1])
+                    put("right_pos", face.bounds[2])
+                    put("bottom_pos", face.bounds[3])
+                    put("quality", face.quality.coerceIn(0f, 1f))
+                    put("embedding_offset", 0L)
+                    put("embedding_dimension", face.embedding.size)
+                    put("cluster_id", clusterIds[index])
+                    put("producer_version", producerVersion)
+                    put("created_at", now)
+                })
+            }
+            db.update("media_item", ContentValues().apply { put("face_count", faces.size) }, "id=?", arrayOf(mediaId))
+            updateStage(db, mediaId, IndexStage.FACES, StageStatus.COMPLETE, producerVersion)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun faceIdsForMedia(mediaId: String): List<String> = readableDatabase.rawQuery(
+        "SELECT id FROM face_instance WHERE media_id=? ORDER BY id",
+        arrayOf(mediaId),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    fun allEmbeddedFaceIds(): Set<String> = readableDatabase.rawQuery(
+        "SELECT id FROM face_instance WHERE embedding_dimension=? AND embedding_offset IS NOT NULL",
+        arrayOf(FaceModelCatalog.sface.embeddingDimension.toString()),
+    ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    fun clusterIdForFace(faceId: String): String? = readableDatabase.rawQuery(
+        "SELECT cluster_id FROM face_instance WHERE id=?",
+        arrayOf(faceId),
+    ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null }
+
+    fun ensureAutomaticPersonCluster(id: String) {
+        require(PERSON_ID.matches(id)) { "Invalid automatic cluster ID" }
+        val now = System.currentTimeMillis()
+        writableDatabase.insertWithOnConflict("person_cluster", null, ContentValues().apply {
+            put("id", id)
+            putNull("label")
+            putNull("relationship")
+            put("aliases", "[]")
+            put("reviewed", 0)
+            put("created_at", now)
+            put("updated_at", now)
+        }, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+
+    fun requestFaceEmbeddingReindex(producerVersion: String) {
+        if (!peopleIndexStatus().enabled) return
+        val now = System.currentTimeMillis()
+        writableDatabase.execSQL(
+            "UPDATE media_index_stage SET status='PENDING',producer_version=?,updated_at=?,error=NULL " +
+                "WHERE stage='FACES' AND media_id IN (SELECT id FROM media_item WHERE source_kind!='DEMO_ASSET' " +
+                "AND media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY') " +
+                "AND (producer_version IS NULL OR producer_version!=?)",
+            arrayOf(producerVersion, now, producerVersion),
+        )
+    }
+
+    fun mediaIdsForReviewedPeople(personIds: List<String>): Set<String> {
+        if (personIds.isEmpty()) return emptySet()
+        val db = readableDatabase
+        val clusterSets = personIds.distinct().map { requested ->
+            val needle = requested.trim().lowercase(Locale.ROOT)
+            val clusterIds = db.rawQuery(
+                "SELECT id,label,relationship,aliases FROM person_cluster WHERE reviewed=1",
+                null,
+            ).use { cursor ->
+                buildSet {
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getString(0)
+                        val label = if (cursor.isNull(1)) null else cursor.getString(1)
+                        val relationship = if (cursor.isNull(2)) null else cursor.getString(2)
+                        val aliases = runCatching {
+                            val json = JSONArray(cursor.getString(3))
+                            List(json.length()) { json.getString(it) }
+                        }.getOrDefault(emptyList())
+                        if (listOfNotNull(id, label, relationship).plus(aliases).any { it.lowercase(Locale.ROOT) == needle }) add(id)
+                    }
+                }
+            }
+            if (clusterIds.isEmpty()) emptySet() else {
+                val placeholders = clusterIds.joinToString(",") { "?" }
+                db.rawQuery(
+                    "SELECT DISTINCT media_id FROM face_instance WHERE cluster_id IN ($placeholders)",
+                    clusterIds.toTypedArray(),
+                ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+            }
+        }
+        return clusterSets.reduceOrNull { current, next -> current intersect next }.orEmpty()
     }
 
     fun failFaces(mediaId: String, message: String, permanent: Boolean) {

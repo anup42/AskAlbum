@@ -67,7 +67,33 @@ class PeoplePrivacyDatabaseTest {
         assertEquals("disabled-until-opt-in", faceStage.producerVersion)
     }
 
+    @Test
+    fun embeddedFaceCanBeReviewedWithoutLosingClusterAssignment() {
+        val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
+        store.seedDemoIfEmpty()
+        store.ensureStageRows()
+        val media = store.allItems().first { it.kind == MediaKind.IMAGE }
+        store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+        store.ensureAutomaticPersonCluster("person_fixture")
+        store.completeEmbeddedFaces(
+            media.id,
+            listOf(FaceInstance(listOf(.1f, .1f, .4f, .5f), normalizedEmbedding(), .8f)),
+            listOf("person_fixture"),
+            FaceModelCatalog.sface.producerVersion,
+        )
+
+        store.saveReviewedPersonCluster("person_fixture", "Fixture Person", "friend", listOf("Friend", "Dost"))
+
+        val status = store.peopleIndexStatus()
+        assertEquals(1, status.identityReadyFaceCount)
+        assertEquals(setOf(media.id), store.mediaIdsForReviewedPeople(listOf("friend")))
+        assertEquals(setOf(media.id), store.mediaIdsForReviewedPeople(listOf("dost")))
+        assertEquals("person_fixture", store.clusterIdForFace("${media.id}:0"))
+    }
+
     private fun face() = FaceDetectionRecord(.1f, .1f, .4f, .5f, .8f)
+
+    private fun normalizedEmbedding() = FloatArray(FaceModelCatalog.sface.embeddingDimension).also { it[0] = 1f }
 
     private companion object {
         const val TEST_DATABASE = "people-privacy-test.db"

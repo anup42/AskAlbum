@@ -37,6 +37,8 @@ data class GalleryUiState(
     val modelPack: ModelPackStatus = ModelPackStatus(installed = false),
     val modelDownload: GemmaDownloadProgress = GemmaDownloadProgress(),
     val retrievalPack: RetrievalPackStatus = RetrievalPackStatus(installed = false),
+    val faceModel: FaceModelStatus = FaceModelStatus(),
+    val faceModelDownload: FaceModelDownloadProgress = FaceModelDownloadProgress(),
     val peopleIndex: PeopleIndexStatus = PeopleIndexStatus(),
     val conversation: ConversationSearchState = ConversationSearchState(GalleryDatabase.PRIMARY_QUERY_SESSION),
 )
@@ -54,7 +56,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val modelPacks = askPhotosApplication.modelPackManager
     private val modelDownloader = askPhotosApplication.services.modelDownloader
     private val retrievalPacks = askPhotosApplication.services.retrievalModelPackManager
+    private val faceModelPacks = askPhotosApplication.services.faceModelPackManager
+    private val faceModelDownloader = askPhotosApplication.services.faceModelDownloader
     private var modelMonitorJob: Job? = null
+    private var faceModelMonitorJob: Job? = null
     private var queryJob: Job? = null
     private var queryGeneration = 0L
     var state by mutableStateOf(GalleryUiState())
@@ -80,11 +85,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     modelPack = modelPacks.status(),
                     modelDownload = modelDownloader.progress(modelPacks.selectedTier()),
                     retrievalPack = retrievalPacks.status(),
+                    faceModel = faceModelPacks.status(),
+                    faceModelDownload = faceModelDownloader.progress(),
                     peopleIndex = initial.peopleIndex,
                     conversation = initial.conversation,
                 )
                 monitorIndexing()
                 monitorModelDownload()
+                monitorFaceModelDownload()
             }.onFailure { error ->
                 state = state.copy(loading = false, error = error.message ?: "Could not open local gallery memory")
             }
@@ -199,6 +207,45 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 }
                 .onFailure { error -> state = state.copy(operationMessage = error.message ?: "Retrieval-pack import failed") }
         }
+    }
+
+    fun importFaceModel(uri: Uri?) {
+        if (uri == null) return
+        state = state.copy(operationMessage = "Verifying the pinned OpenCV SFace model…")
+        viewModelScope.launch {
+            runCatching { faceModelPacks.import(uri) }
+                .onSuccess { status ->
+                    val people = withContext(Dispatchers.IO) { repository.onFaceModelInstalled() }
+                    state = state.copy(
+                        faceModel = status,
+                        faceModelDownload = faceModelDownloader.progress(),
+                        peopleIndex = people,
+                        operationMessage = "OpenCV SFace is ready; local 128-dimensional face indexing is queued",
+                    )
+                    monitorIndexing()
+                }
+                .onFailure { error -> state = state.copy(operationMessage = error.message ?: "SFace import failed") }
+        }
+    }
+
+    fun downloadFaceModel() {
+        state = state.copy(operationMessage = "Preparing the OpenCV SFace download…")
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { faceModelDownloader.enqueue() } }
+                .onSuccess {
+                    state = state.copy(
+                        faceModelDownload = FaceModelDownloadProgress(state = GemmaDownloadState.QUEUED),
+                        operationMessage = "SFace download queued; the model will stay in app-private storage",
+                    )
+                    monitorFaceModelDownload()
+                }
+                .onFailure { error -> state = state.copy(operationMessage = error.message ?: "SFace download could not start") }
+        }
+    }
+
+    fun cancelFaceModelDownload() {
+        faceModelDownloader.cancel()
+        state = state.copy(operationMessage = "SFace download cancelled")
     }
 
     fun clearOperationMessage() {
@@ -332,6 +379,27 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     withContext(Dispatchers.IO) { modelPacks.status() }
                 } else state.modelPack
                 state = state.copy(modelPack = modelStatus, modelDownload = progress)
+                if (progress.state !in ACTIVE_DOWNLOAD_STATES) return@launch
+                delay(1_000)
+            }
+        }
+    }
+
+    private fun monitorFaceModelDownload() {
+        faceModelMonitorJob?.cancel()
+        faceModelMonitorJob = viewModelScope.launch {
+            repeat(7_200) {
+                val progress = withContext(Dispatchers.IO) { faceModelDownloader.progress() }
+                val wasInstalled = state.faceModel.installed
+                val status = if (progress.state == GemmaDownloadState.INSTALLED) {
+                    withContext(Dispatchers.IO) { faceModelPacks.status() }
+                } else state.faceModel
+                var people = state.peopleIndex
+                if (!wasInstalled && status.installed) {
+                    people = withContext(Dispatchers.IO) { repository.onFaceModelInstalled() }
+                    monitorIndexing()
+                }
+                state = state.copy(faceModel = status, faceModelDownload = progress, peopleIndex = people)
                 if (progress.state !in ACTIVE_DOWNLOAD_STATES) return@launch
                 delay(1_000)
             }
