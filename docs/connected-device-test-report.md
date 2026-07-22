@@ -102,6 +102,6 @@ The same verified 83-item core corpus is retained on a connected Samsung SM-F731
 - MediaStore visibility instrumentation: PASS, 1 test in 0.032 s.
 - EXIF/event/follow-up instrumentation after repair: PASS, one test in 33.865 seconds. A protected GPS read can no longer discard a valid EXIF date.
 - Real signed q8 SigLIP2 without E2B preinstallation: PASS, one test in 19.117 seconds. Retrieval installation left Gemma selection/installation state unchanged.
-- Core Q01-Q13 with real SigLIP/OCR/events and deterministic fallback planner: 10 PASS, 1 FAIL, 2 explicit people-index skips. Q04 exact Swiggy total now passes. Q03 remains invalid because the evaluator did not isolate its initial search from unrelated personal media; this is not accepted as a core-suite pass.
+- Core Q01-Q13 with real SigLIP/OCR/events and deterministic fallback planner: 10 PASS, 1 FAIL, 2 explicit people-index skips. Q04 exact Swiggy total passes. The evaluator is now constrained to all 83 recorded run IDs, so personal media cannot contaminate these metrics. Q03 still fails because Q02 retains six in-corpus 2025 Goa/dog false positives through broad event/semantic expansion. A stricter experiment removed valid Marina Bay results and was reverted; this is not accepted as a core-suite pass.
 - Cleanup/reseed touched only run-scoped app-owned test URIs. The final 83-item corpus is intentionally retained; no personal-gallery row was modified.
 - This is a dataset availability gate only. No E2B/SigLIP result from the SM-F966B is attributed to this second device.

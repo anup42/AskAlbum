@@ -29,13 +29,20 @@ class CoreCorpusEvaluationAcceptanceTest {
         assertEquals(0.05f, pack.manifest.minimumSimilarity, 0f)
 
         waitForIndex(repository, application)
+        val safeRunId = requireNotNull(runId)
+        val seedResult = JSONObject(File(application.filesDir, "test-seed/$safeRunId/seed-result.json").readText())
+        val seededUris = seedResult.getJSONArray("createdUris").let { array ->
+            (0 until array.length()).mapTo(mutableSetOf()) { array.getString(it) }
+        }
+        val seededIds = repository.allItems().filter { it.contentUri in seededUris }.mapTo(mutableSetOf()) { it.id }
+        assertEquals("Core evaluator must resolve every recorded seed URI", seedResult.getInt("createdCount"), seededIds.size)
         val records = mutableListOf<CaseRecord>()
-        val session = "core_eval_${requireNotNull(runId).take(40)}_${System.currentTimeMillis()}"
+        val session = "core_eval_${safeRunId.take(40)}_${System.currentTimeMillis()}"
         var q01: SearchOutcome? = null
         var q02: SearchOutcome? = null
 
         records.evaluate("Q01") {
-            repository.searchInSession("Show photos from my Singapore trip.", session).also { outcome ->
+            repository.searchInSession("Show photos from my Singapore trip.", session, seededIds).also { outcome ->
                 q01 = outcome
                 assertEquals(QueryIntent.FIND_MEDIA, outcome.plan.intent)
                 assertEquals(MediaScope.IMAGES, outcome.plan.mediaScope)
@@ -69,7 +76,7 @@ class CoreCorpusEvaluationAcceptanceTest {
             }.metrics()
         }
         records.evaluate("Q04") {
-            repository.search("What was the total on my latest Swiggy receipt?").also { outcome ->
+            repository.search("What was the total on my latest Swiggy receipt?", seededIds).also { outcome ->
                 assertEquals(QueryIntent.ANSWER_FACT, outcome.plan.intent)
                 assertEquals("INR 1,248", outcome.answer.headline.uppercase())
                 val receipt = requireNotNull(outcome.hits.firstOrNull { it.item.filename == "synthetic_swiggy_receipt.png" })
@@ -79,7 +86,7 @@ class CoreCorpusEvaluationAcceptanceTest {
             }.metrics(listOf("synthetic_swiggy_receipt"))
         }
         records.evaluate("Q05") {
-            repository.search("How many photos did I take in 2024?").also { outcome ->
+            repository.search("How many photos did I take in 2024?", seededIds).also { outcome ->
                 assertEquals(QueryIntent.COUNT, outcome.plan.intent)
                 assertEquals(MediaScope.IMAGES, outcome.plan.mediaScope)
                 assertTrue(outcome.plan.semanticClauses.isEmpty() && outcome.plan.terms.isEmpty())
@@ -89,7 +96,7 @@ class CoreCorpusEvaluationAcceptanceTest {
             }.metrics()
         }
         records.evaluate("Q06") {
-            repository.search("Show beach sunsets.").also { outcome ->
+            repository.search("Show beach sunsets.", seededIds).also { outcome ->
                 assertEquals(QueryIntent.FIND_MEDIA, outcome.plan.intent)
                 val rank = requireRank(outcome, listOf("goa_beach_01", "legacy_demo-beach"), 10)
                 assertTrue(outcome.hits[rank - 1].evidence.any { it.sourceField == "image_text_embedding" })
@@ -118,7 +125,7 @@ class CoreCorpusEvaluationAcceptanceTest {
         )
 
         records.evaluate("Q09") {
-            repository.search("Pichle saal Goa wali photos dikhao.").also { outcome ->
+            repository.search("Pichle saal Goa wali photos dikhao.", seededIds).also { outcome ->
                 assertEquals(QueryIntent.FIND_MEDIA, outcome.plan.intent)
                 assertEquals(MediaScope.IMAGES, outcome.plan.mediaScope)
                 val rank = requireRank(outcome, listOf("goa_beach_01"), 10)
@@ -127,7 +134,7 @@ class CoreCorpusEvaluationAcceptanceTest {
             }.metrics(listOf("goa_beach_01"))
         }
         records.evaluate("Q10") {
-            repository.search("Show a receipt from a merchant that does not exist.").also { outcome ->
+            repository.search("Show a receipt from a merchant that does not exist.", seededIds).also { outcome ->
                 assertEquals(QueryIntent.DOCUMENT_QA, outcome.plan.intent)
                 assertTrue(outcome.hits.isEmpty())
                 assertTrue(outcome.answer.evidenceIds.isEmpty() && outcome.answer.claims.isEmpty())
@@ -135,7 +142,7 @@ class CoreCorpusEvaluationAcceptanceTest {
             }.metrics()
         }
         records.evaluate("Q11") {
-            repository.search("Find the yellow bicycle in my video.").also { outcome ->
+            repository.search("Find the yellow bicycle in my video.", seededIds).also { outcome ->
                 assertEquals(MediaScope.VIDEOS, outcome.plan.mediaScope)
                 val video = requireNotNull(outcome.hits.firstOrNull { it.item.filename == "synthetic_video_screen_timeline.mp4" })
                 val evidence = requireNotNull(video.evidence.firstOrNull { it.sourceField == "video_keyframe" })
@@ -144,14 +151,14 @@ class CoreCorpusEvaluationAcceptanceTest {
             }.metrics(listOf("synthetic_video_screen_timeline"))
         }
         records.evaluate("Q12") {
-            repository.search("Show photos of my dog.").also { outcome ->
+            repository.search("Show photos of my dog.", seededIds).also { outcome ->
                 val rank = requireRank(outcome, listOf("domesticated_dog_01"), 5)
                 assertTrue(outcome.hits[rank - 1].evidence.any { it.sourceField == "image_text_embedding" })
                 assertEvidenceClosure(outcome)
             }.metrics(listOf("domesticated_dog_01"))
         }
         records.evaluate("Q13") {
-            repository.search("Show children playing football outdoors.").also { outcome ->
+            repository.search("Show children playing football outdoors.", seededIds).also { outcome ->
                 val rank = requireRank(outcome, listOf("children_football_01"), 5)
                 assertTrue(outcome.hits[rank - 1].evidence.any { it.sourceField == "image_text_embedding" })
                 assertEvidenceClosure(outcome)

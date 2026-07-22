@@ -131,7 +131,8 @@ class GalleryRepository(context: Context) {
     suspend fun searchInSession(
         query: String,
         sessionId: String = GalleryDatabase.PRIMARY_QUERY_SESSION,
-    ): SearchOutcome = searchProgressive(query, sessionId = sessionId)
+        initialScopeIds: Set<String>? = null,
+    ): SearchOutcome = searchProgressive(query, activeResultIds = initialScopeIds, sessionId = sessionId)
         .filterIsInstance<QueryProgress.Completed>().single().outcome
 
     fun searchProgressive(
@@ -174,7 +175,7 @@ class GalleryRepository(context: Context) {
             emit(QueryProgress.Completed(outcome))
             return@flow
         }
-        val allowed = plan.baseResultIds
+        val allowed = resolveExecutionScope(plan.baseResultIds, activeResultIds)
         val terms = RetrievalTerms.normalize(plan.terms)
         val allItems = database.allItems().filter { item ->
             val inScope = when (plan.mediaScope) {
@@ -551,6 +552,9 @@ class GalleryRepository(context: Context) {
         return hit.copy(evidence = listOf(evidence) + hit.evidence)
     }
 }
+
+internal fun resolveExecutionScope(planResultIds: Set<String>?, explicitScopeIds: Set<String>?): Set<String>? =
+    planResultIds ?: explicitScopeIds
 
 internal fun matchesMerchantIdentity(
     required: String,
