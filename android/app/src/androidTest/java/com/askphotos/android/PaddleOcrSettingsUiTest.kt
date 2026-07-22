@@ -15,9 +15,10 @@ class PaddleOcrSettingsUiTest {
     @Test
     fun settingsDiscloseModularMultilingualOcrAndLicense() {
         rule.waitUntil(timeoutMillis = 15_000) {
-            runCatching { rule.onNodeWithText("Ask your gallery").fetchSemanticsNode() }.isSuccess
+            runCatching { rule.onNodeWithText("Photos").fetchSemanticsNode() }.isSuccess
         }
-        rule.onNodeWithText("Index").performClick()
+        rule.onNodeWithText("Menu").performClick()
+        rule.onNodeWithText("Settings").performClick()
         rule.onNodeWithText("Multilingual OCR engine").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("Apache-2.0", substring = true).performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("Hindi/Devanagari", substring = true).performScrollTo().assertIsDisplayed()

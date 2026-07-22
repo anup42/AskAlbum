@@ -3049,3 +3049,47 @@ Status: **PASS on the connected Samsung SM-F731U.**
 - `EmbeddedSiglip2AcceptanceTest`: PASS. It verified pack ID/version, source/artifact revisions, 384,737,099 expanded bytes, and all declared artifacts in the active app-private generation.
 
 Limitation: embedding the archive increases APK size and installed storage because Android retains the APK asset as well as the expanded runtime files. This is the requested distribution tradeoff.
+
+## Gallery-first One UI redesign and application 0.0.4 (22 July 2026)
+
+Status: **IMPLEMENTED, HOST-VERIFIED, INSTALLED, AND VISUALLY CHECKED ON THE CONNECTED SAMSUNG DEVICE.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/MainActivity.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryViewModel.kt`
+- original gallery vector drawables under `android/app/src/main/res/drawable/`
+- Compose UI instrumentation tests under `android/app/src/androidTest/`
+- `s-Gallery/current-agentic/v0.0.4/` device captures
+
+Architecture and product decisions:
+
+- Primary navigation is now Photos, Albums, Ask, and Menu. Results remain an Ask-owned transient destination; model/index and privacy screens are accessible through Menu rather than permanent developer tabs.
+- Removed the global branded masthead and primary-screen instructional/privacy copy.
+- Photos uses a four-column, two-dp-gutter, date/place-grouped timeline with search/import overflow, video/duplicate badges, long-press selection, contextual Share/Ask/Clear actions, and an immersive media viewer.
+- Albums uses cover tiles with names/counts and opens a four-column album view. Ask uses a compact search surface and standard gallery thumbnails for progressive/final results. Menu exposes media categories, People, Privacy, and Settings.
+- The theme now supports neutral system-like light and dark palettes. All new navigation and action graphics are original Android vectors; no Samsung proprietary binary asset is shipped.
+- Version incremented to `0.0.4` (`versionCode` 4).
+
+Commands and results:
+
+- `:app:compileOfflineDemoDebugKotlin`: PASS after one RowScope repair.
+- `:app:testOfflineDemoDebugUnitTest`: task completed successfully during the combined host gate.
+- `:app:compileOfflineDemoDebugAndroidTestKotlin`: PASS after replacing one unavailable test assertion helper.
+- Android build/install helper, `OfflineDemoDebug`: PASS on Samsung SM-F731U, Android 16/API 36.
+- `connectedOfflineDemoDebugAndroidTest` scoped to `OneUiGalleryShellTest`: PASS, 1/1 tests.
+- Device package metadata: `versionName=0.0.4`, `versionCode=4`.
+- Direct device visual QA: Photos, Albums, Ask, and Menu captured and inspected; the obsolete masthead/card UI is absent.
+
+Artifacts:
+
+- `s-Gallery/current-agentic/v0.0.4/photos.png`
+- `s-Gallery/current-agentic/v0.0.4/albums.png`
+- `s-Gallery/current-agentic/v0.0.4/ask.png`
+- `s-Gallery/current-agentic/v0.0.4/menu.png`
+
+Known follow-up work:
+
+- Favorites are currently viewer-session state rather than a persisted database field.
+- Navigation still uses the existing typed application destination state; a full Navigation Compose nested graph and foldable two-pane viewer remain future structural improvements.
+- Media delete/edit and pinch-to-change-grid-density were not added in this visual slice because they require separate safe MediaStore mutation and gesture acceptance work.

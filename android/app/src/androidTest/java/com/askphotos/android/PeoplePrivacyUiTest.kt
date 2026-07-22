@@ -20,8 +20,9 @@ class PeoplePrivacyUiTest {
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as AskPhotosApplication
         assumeFalse("This non-mutating UI check requires people indexing to be off", app.repository.peopleIndexStatus().enabled)
         rule.waitUntil(timeoutMillis = 15_000) {
-            runCatching { rule.onNodeWithText("Ask your gallery").fetchSemanticsNode() }.isSuccess
+            runCatching { rule.onNodeWithText("Photos").fetchSemanticsNode() }.isSuccess
         }
+        rule.onNodeWithText("Menu").performClick()
         rule.onNodeWithText("Privacy").performClick()
         rule.onNodeWithText("People indexing off").performScrollTo().assertIsDisplayed()
 

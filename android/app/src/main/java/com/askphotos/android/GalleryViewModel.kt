@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class AppDestination { ONBOARDING, GALLERY, ASK, RESULTS, INDEX_MANAGER, PRIVACY }
+enum class AppDestination { ONBOARDING, GALLERY, ALBUMS, ASK, RESULTS, MENU, INDEX_MANAGER, PRIVACY }
 
 enum class QueryExecutionStage { UNDERSTANDING, SEARCHING, INITIAL_RESULTS, VERIFYING, COMPOSING }
 
@@ -32,7 +32,7 @@ data class GalleryUiState(
     val items: List<GalleryItem> = emptyList(),
     val index: IndexSummary = IndexSummary(),
     val selectedEvidence: SearchHit? = null,
-    val destination: AppDestination = AppDestination.ASK,
+    val destination: AppDestination = AppDestination.GALLERY,
     val operationMessage: String? = null,
     val modelPack: ModelPackStatus = ModelPackStatus(installed = false),
     val modelDownload: GemmaDownloadProgress = GemmaDownloadProgress(),

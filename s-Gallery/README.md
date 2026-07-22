@@ -1,6 +1,6 @@
 # Samsung Gallery reference set
 
-This folder contains a visual reference audit captured from the connected Samsung Galaxy and a redesign plan for Agentic Gallery. It is for design comparison only.
+This folder contains visual reference captures from the connected Samsung Galaxy and before/after captures of Agentic Gallery. It is for design comparison only.
 
 Samsung Gallery package observed on the reference device:
 
@@ -11,7 +11,7 @@ Samsung Gallery package observed on the reference device:
 - Main display used for capture: 1080 x 2640 at 480 dpi
 - Capture date: 22 July 2026
 
-Samsung's APK, fonts, icons, animations, and other proprietary binary assets are **not** copied into this repository. The screenshots and resource-name inventory are retained solely as implementation references. Agentic Gallery should use original or permissively licensed vector assets and Android system typography.
+Samsung's APK, fonts, icons, animations, and other proprietary binary assets are **not** copied into this repository. The screenshots are retained solely as implementation references. Agentic Gallery uses original vector assets and Android system typography.
 
 ## Samsung Gallery captures
 
@@ -36,6 +36,17 @@ These are the baseline screens used for the comparison:
 | Gallery | [PNG](current-agentic/gallery-before/gallery-before.png) | [XML](current-agentic/gallery-before/gallery-before.xml) |
 | Ask | [PNG](current-agentic/ask-before/ask-before.png) | [XML](current-agentic/ask-before/ask-before.xml) |
 | Index manager | [PNG](current-agentic/settings-before/settings-before.png) | [XML](current-agentic/settings-before/settings-before.xml) |
+
+## Agentic Gallery 0.0.4 implementation
+
+These captures were taken from the installed app after the gallery-first redesign:
+
+| Surface | Screenshot | Accessibility hierarchy |
+|---|---|---|
+| Photos | [PNG](current-agentic/v0.0.4/photos.png) | [XML](current-agentic/v0.0.4/photos.xml) |
+| Albums | [PNG](current-agentic/v0.0.4/albums.png) | Not retained |
+| Ask | [PNG](current-agentic/v0.0.4/ask.png) | Not retained |
+| Menu | [PNG](current-agentic/v0.0.4/menu.png) | Not retained |
 
 ## Official references
 

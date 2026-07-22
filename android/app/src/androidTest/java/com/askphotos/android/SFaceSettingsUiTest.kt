@@ -15,9 +15,10 @@ class SFaceSettingsUiTest {
     @Test
     fun settingsDisclosePinnedSFaceModelAndLicense() {
         rule.waitUntil(timeoutMillis = 15_000) {
-            runCatching { rule.onNodeWithText("Ask your gallery").fetchSemanticsNode() }.isSuccess
+            runCatching { rule.onNodeWithText("Photos").fetchSemanticsNode() }.isSuccess
         }
-        rule.onNodeWithText("Index").performClick()
+        rule.onNodeWithText("Menu").performClick()
+        rule.onNodeWithText("Settings").performClick()
         rule.onNodeWithText("Face identity model").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("OpenCV SFace 2021dec-fp32-v1").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("Replace pinned ONNX").performScrollTo().assertIsDisplayed()

@@ -32,9 +32,10 @@ class GemmaSettingsUiTest {
             it.supported && it.recommendedTier == GemmaModelTier.E4B
         }
         rule.waitUntil(timeoutMillis = 15_000) {
-            runCatching { rule.onNodeWithText("Ask your gallery").fetchSemanticsNode() }.isSuccess
+            runCatching { rule.onNodeWithText("Photos").fetchSemanticsNode() }.isSuccess
         }
-        rule.onNodeWithText("Index").performClick()
+        rule.onNodeWithText("Menu").performClick()
+        rule.onNodeWithText("Settings").performClick()
         rule.onNodeWithText("Gemma model pack").performScrollTo().assertIsDisplayed()
 
         rule.onNodeWithTag("gemma-tier-E2B").performScrollTo().performClick()

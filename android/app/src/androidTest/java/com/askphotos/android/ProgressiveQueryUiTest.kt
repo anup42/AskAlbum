@@ -19,8 +19,9 @@ class ProgressiveQueryUiTest {
     @Test
     fun activeQueryCanBeCancelledWithoutPublishingPartialAnswer() {
         rule.waitUntil(timeoutMillis = 15_000) {
-            runCatching { rule.onNodeWithText("Ask your gallery").fetchSemanticsNode() }.isSuccess
+            runCatching { rule.onNodeWithText("Photos").fetchSemanticsNode() }.isSuccess
         }
+        rule.onNodeWithText("Ask").performClick()
         rule.onNodeWithContentDescription("Gallery question")
             .performTextInput("Show the image where Person A has a yellow hat and Person B has a blue suit")
         rule.onNodeWithTag("submit-question").performClick()

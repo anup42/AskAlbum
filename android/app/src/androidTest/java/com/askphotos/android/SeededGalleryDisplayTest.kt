@@ -23,9 +23,8 @@ class SeededGalleryDisplayTest {
         assumeTrue("galleryExpectedCount was not supplied", expected != null)
 
         rule.waitUntil(timeoutMillis = 15_000) {
-            runCatching { rule.onNodeWithText("Ask your gallery").fetchSemanticsNode() }.isSuccess
+            runCatching { rule.onNodeWithText("Photos").fetchSemanticsNode() }.isSuccess
         }
-        rule.onNodeWithText("Gallery").performClick()
         rule.onNodeWithContentDescription("Gallery screen; $expected imported items").assertIsDisplayed()
     }
 }

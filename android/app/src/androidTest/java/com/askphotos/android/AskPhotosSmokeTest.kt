@@ -16,8 +16,9 @@ class AskPhotosSmokeTest {
     @Test
     fun localSearchProducesGroundedResults() {
         rule.waitUntil(timeoutMillis = 10_000) {
-            runCatching { rule.onNodeWithText("Ask your gallery").fetchSemanticsNode() }.isSuccess
+            runCatching { rule.onNodeWithText("Photos").fetchSemanticsNode() }.isSuccess
         }
+        rule.onNodeWithText("Ask").performClick()
         rule.onNodeWithContentDescription("Gallery question").performTextInput("Amsterdam")
         rule.onNodeWithContentDescription("Submit question").performClick()
         rule.waitUntil(timeoutMillis = 10_000) {
@@ -29,13 +30,14 @@ class AskPhotosSmokeTest {
     @Test
     fun privacyCanOpenOnboardingAndReturnToAsk() {
         rule.waitUntil(timeoutMillis = 10_000) {
-            runCatching { rule.onNodeWithText("Ask your gallery").fetchSemanticsNode() }.isSuccess
+            runCatching { rule.onNodeWithText("Photos").fetchSemanticsNode() }.isSuccess
         }
+        rule.onNodeWithText("Menu").performClick()
         rule.onNodeWithText("Privacy").performClick()
         rule.onNodeWithContentDescription("Privacy screen").assertIsDisplayed()
         rule.onNodeWithText("Review onboarding").performClick()
         rule.onNodeWithContentDescription("Onboarding screen").assertIsDisplayed()
-        rule.onNodeWithText("Continue to Ask").performClick()
-        rule.onNodeWithText("Ask your gallery").assertIsDisplayed()
+        rule.onNodeWithText("Continue to Photos").performClick()
+        rule.onNodeWithText("Photos").assertIsDisplayed()
     }
 }

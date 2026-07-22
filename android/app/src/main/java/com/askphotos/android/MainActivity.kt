@@ -2,6 +2,7 @@ package com.askphotos.android
 
 import android.graphics.BitmapFactory
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.widget.MediaController
 import android.widget.VideoView
@@ -10,6 +11,7 @@ import android.os.Build
 import android.util.Size
 import android.os.Bundle
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.viewModels
@@ -17,12 +19,17 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -49,8 +56,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -61,6 +72,8 @@ import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -74,6 +87,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -81,12 +95,19 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.fragment.app.FragmentActivity
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 
 class MainActivity : FragmentActivity() {
     private val galleryViewModel: GalleryViewModel by viewModels()
@@ -117,26 +138,39 @@ class MainActivity : FragmentActivity() {
 
 private val Forest = Color(0xFF173F35)
 private val Lime = Color(0xFFD9FF6F)
-private val Canvas = Color(0xFFF7F9F4)
+private val Canvas = Color(0xFFF5F6F8)
 private val Ink = Color(0xFF14201D)
-private val Mist = Color(0xFFE8EEE9)
+private val Mist = Color(0xFFE9E9EE)
+private val OneUiBlue = Color(0xFF4A63D8)
 
 @Composable
 private fun AskPhotosTheme(content: @Composable () -> Unit) {
+    val darkTheme = isSystemInDarkTheme()
     MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Forest,
-            onPrimary = Color.White,
-            primaryContainer = Lime,
-            onPrimaryContainer = Forest,
-            background = Canvas,
-            onBackground = Ink,
-            surface = Color.White,
-            onSurface = Ink,
-            surfaceVariant = Mist,
-            onSurfaceVariant = Color(0xFF53615D),
-            outline = Color(0xFFB7C3BC),
-        ),
+        colorScheme = if (darkTheme) {
+            darkColorScheme(
+                primary = Color(0xFFB9C3FF),
+                onPrimary = Color(0xFF142568),
+                primaryContainer = Color(0xFF2D438D),
+                background = Color(0xFF0B0B0C),
+                surface = Color(0xFF17171A),
+                surfaceVariant = Color(0xFF29292E),
+            )
+        } else {
+            lightColorScheme(
+                primary = OneUiBlue,
+                onPrimary = Color.White,
+                primaryContainer = Color(0xFFDDE2FF),
+                onPrimaryContainer = Color(0xFF142568),
+                background = Canvas,
+                onBackground = Color(0xFF19191D),
+                surface = Color.White,
+                onSurface = Color(0xFF19191D),
+                surfaceVariant = Mist,
+                onSurfaceVariant = Color(0xFF5E5E66),
+                outline = Color(0xFFC6C6CE),
+            )
+        },
         content = content,
     )
 }
@@ -188,12 +222,13 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { AppHeader() },
         bottomBar = {
-            AppNavigation(
-                selected = state.destination,
-                onSelect = viewModel::navigate,
-            )
+            if (state.destination != AppDestination.ONBOARDING) {
+                AppNavigation(
+                    selected = state.destination,
+                    onSelect = viewModel::navigate,
+                )
+            }
         },
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
@@ -206,7 +241,7 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                 state.loading -> LoadingState()
                 state.error != null -> ErrorState(state.error)
                 state.destination == AppDestination.ONBOARDING -> OnboardingScreen(
-                    onContinue = { viewModel.navigate(AppDestination.ASK) },
+                    onContinue = { viewModel.navigate(AppDestination.GALLERY) },
                 )
                 state.destination == AppDestination.ASK -> AskScreen(state, viewModel, evidenceGate::open)
                 state.destination == AppDestination.RESULTS -> ResultsScreen(
@@ -220,7 +255,23 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     onPickMedia = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
                     onPickDocuments = { documentPicker.launch(arrayOf("image/*", "video/*", "application/pdf")) },
                     onFullGallery = requestFullGallery,
+                    onSearch = { viewModel.navigate(AppDestination.ASK) },
                     operationMessage = state.operationMessage,
+                )
+                state.destination == AppDestination.ALBUMS -> AlbumsScreen(
+                    items = state.items,
+                    onSelect = evidenceGate::open,
+                    onPickMedia = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
+                )
+                state.destination == AppDestination.MENU -> GalleryMenuScreen(
+                    items = state.items,
+                    onPhotos = { viewModel.navigate(AppDestination.GALLERY) },
+                    onAlbums = { viewModel.navigate(AppDestination.ALBUMS) },
+                    onDocuments = { viewModel.ask("Show documents") },
+                    onVideos = { viewModel.ask("Show videos") },
+                    onPeople = { viewModel.navigate(AppDestination.PRIVACY) },
+                    onPlaces = { viewModel.ask("Show photos grouped by place") },
+                    onSettings = { viewModel.navigate(AppDestination.INDEX_MANAGER) },
                 )
                 state.destination == AppDestination.INDEX_MANAGER -> IndexManagerScreen(
                     index = state.index,
@@ -264,74 +315,76 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
             }
         }
     }
-    state.selectedEvidence?.let { EvidenceDialog(it, viewModel::dismissEvidence) }
-}
-
-@Composable
-private fun AppHeader() {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
-            .safeDrawingPadding()
-            .padding(horizontal = 20.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier
-                .size(38.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Forest),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("A", color = Lime, fontWeight = FontWeight.Black, fontSize = 21.sp)
-        }
-        Spacer(Modifier.width(11.dp))
-        Column {
-            Text("AskPhotos", fontWeight = FontWeight.Bold, fontSize = 20.sp)
-            Text("Private gallery intelligence", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-        }
-        Spacer(Modifier.weight(1f))
-        Surface(color = Mist, shape = CircleShape) {
-            Text("ON-DEVICE", modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), color = Forest, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        }
+    state.selectedEvidence?.let { hit ->
+        EvidenceDialog(
+            hit = hit,
+            onDismiss = viewModel::dismissEvidence,
+            onAsk = { item ->
+                viewModel.dismissEvidence()
+                viewModel.updateQuery("Tell me about ${item.title}")
+                viewModel.navigate(AppDestination.ASK)
+            },
+        )
     }
 }
 
 @Composable
 private fun AppNavigation(selected: AppDestination, onSelect: (AppDestination) -> Unit) {
-    NavigationBar(modifier = Modifier.navigationBarsPadding(), containerColor = Color.White) {
-        NavigationBarItem(
-            selected = selected == AppDestination.ASK,
-            onClick = { onSelect(AppDestination.ASK) },
-            icon = { Text("A") },
-            label = { Text("Ask") },
-        )
-        NavigationBarItem(
-            selected = selected == AppDestination.RESULTS,
-            onClick = { onSelect(AppDestination.RESULTS) },
-            icon = { Text("R") },
-            label = { Text("Results") },
-        )
-        NavigationBarItem(
-            selected = selected == AppDestination.GALLERY,
-            onClick = { onSelect(AppDestination.GALLERY) },
-            icon = { Text("G") },
-            label = { Text("Gallery") },
-        )
-        NavigationBarItem(
-            selected = selected == AppDestination.INDEX_MANAGER,
-            onClick = { onSelect(AppDestination.INDEX_MANAGER) },
-            icon = { Text("I") },
-            label = { Text("Index") },
-        )
-        NavigationBarItem(
-            selected = selected == AppDestination.PRIVACY || selected == AppDestination.ONBOARDING,
-            onClick = { onSelect(AppDestination.PRIVACY) },
-            icon = { Text("P") },
-            label = { Text("Privacy") },
-        )
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(34.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 8.dp,
+    ) {
+        NavigationBar(
+            modifier = Modifier.height(68.dp),
+            containerColor = Color.Transparent,
+            tonalElevation = 0.dp,
+        ) {
+            GalleryNavigationItem(
+                selected = selected == AppDestination.GALLERY,
+                label = "Photos",
+                icon = R.drawable.ic_gallery_photos,
+                onClick = { onSelect(AppDestination.GALLERY) },
+            )
+            GalleryNavigationItem(
+                selected = selected == AppDestination.ALBUMS,
+                label = "Albums",
+                icon = R.drawable.ic_gallery_albums,
+                onClick = { onSelect(AppDestination.ALBUMS) },
+            )
+            GalleryNavigationItem(
+                selected = selected == AppDestination.ASK || selected == AppDestination.RESULTS,
+                label = "Ask",
+                icon = R.drawable.ic_gallery_ask,
+                onClick = { onSelect(AppDestination.ASK) },
+            )
+            GalleryNavigationItem(
+                selected = selected == AppDestination.MENU || selected == AppDestination.INDEX_MANAGER || selected == AppDestination.PRIVACY,
+                label = "Menu",
+                icon = R.drawable.ic_gallery_menu,
+                onClick = { onSelect(AppDestination.MENU) },
+            )
+        }
     }
+}
+
+@Composable
+private fun RowScope.GalleryNavigationItem(
+    selected: Boolean,
+    label: String,
+    icon: Int,
+    onClick: () -> Unit,
+) {
+    NavigationBarItem(
+        selected = selected,
+        onClick = onClick,
+        icon = { Icon(painterResource(icon), contentDescription = label, modifier = Modifier.size(23.dp)) },
+        label = { Text(label, fontSize = 11.sp) },
+    )
 }
 
 @Composable
@@ -364,7 +417,7 @@ private val suggestions = listOf(
 )
 
 @Composable
-private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel, onEvidence: (SearchHit) -> Unit) {
+private fun LegacyAskScreen(state: GalleryUiState, viewModel: GalleryViewModel, onEvidence: (SearchHit) -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         modifier = Modifier.fillMaxSize().semantics { contentDescription = "Ask results" },
@@ -491,7 +544,7 @@ private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel, onEvid
 }
 
 @Composable
-private fun ResultsScreen(
+private fun LegacyResultsScreen(
     outcome: SearchOutcome?,
     onEvidence: (SearchHit) -> Unit,
     onAsk: () -> Unit,
@@ -523,7 +576,7 @@ private fun ResultsScreen(
 }
 
 @Composable
-private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
+private fun LegacyAnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Answer ${outcome.answer.headline}" },
         shape = RoundedCornerShape(22.dp),
@@ -573,7 +626,7 @@ private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
 }
 
 @Composable
-private fun FactPill(text: String) {
+private fun LegacyFactPill(text: String) {
     Surface(color = Color(0xFF2A574B), shape = CircleShape) {
         Text(text, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
     }
@@ -581,7 +634,7 @@ private fun FactPill(text: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ResultTile(hit: SearchHit, onClick: () -> Unit) {
+private fun LegacyResultTile(hit: SearchHit, onClick: () -> Unit) {
     Card(
         onClick = onClick,
         shape = RoundedCornerShape(18.dp),
@@ -630,7 +683,7 @@ private fun PrivacyCard(count: Int) {
 }
 
 @Composable
-private fun GalleryScreen(
+private fun LegacyGalleryScreen(
     items: List<GalleryItem>,
     onSelect: (SearchHit) -> Unit,
     onPickMedia: () -> Unit,
@@ -702,10 +755,9 @@ private fun IndexManagerScreen(
     onImportFaceModel: () -> Unit,
 ) {
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp, 8.dp, 18.dp, 32.dp),
+        Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(18.dp, 8.dp, 18.dp, 32.dp),
     ) {
-        Text("Gallery memory", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Forest)
-        Text("Progressive, versioned, and stored only on this phone", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("On-device AI", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
         Text(
             "Agentic Gallery ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -906,7 +958,7 @@ private fun IndexManagerScreen(
                         else -> Button(
                             onClick = onDownloadFaceModel,
                             modifier = Modifier.fillMaxWidth().testTag("download-sface"),
-                        ) { Text("Download OpenCV SFace") }
+                        ) { Text("Download SFace ONNX") }
                     }
                 } else if (!faceModel.installed) {
                     Spacer(Modifier.height(8.dp))
@@ -1025,7 +1077,7 @@ private fun PrivacyScreen(
     var confirmation by remember { mutableStateOf<PeopleConfirmation?>(null) }
     Column(
         Modifier.fillMaxSize().semantics { contentDescription = "Privacy screen" }
-            .verticalScroll(rememberScrollState()).padding(20.dp, 10.dp, 20.dp, 32.dp),
+            .safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp, 10.dp, 20.dp, 32.dp),
     ) {
         Text("Privacy", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Forest)
         Spacer(Modifier.height(8.dp))
@@ -1144,12 +1196,12 @@ private fun OnboardingScreen(onContinue: () -> Unit) {
             }
         }
         Spacer(Modifier.height(20.dp))
-        Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) { Text("Continue to Ask") }
+        Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) { Text("Continue to Photos") }
     }
 }
 
 @Composable
-internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit) {
+internal fun LegacyEvidenceDialog(hit: SearchHit, onDismiss: () -> Unit) {
     val playbackTimestamp = hit.evidence.mapNotNull { it.timestampMs }.minOrNull()
     var playing by remember(hit.item.id, playbackTimestamp) { mutableStateOf(false) }
     AlertDialog(
@@ -1218,7 +1270,11 @@ internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun AssetImage(item: GalleryItem, modifier: Modifier = Modifier) {
+private fun AssetImage(
+    item: GalleryItem,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
+) {
     val context = LocalContext.current
     val bitmap = remember(item.assetPath, item.contentUri, item.previewPath) {
         runCatching {
@@ -1239,11 +1295,539 @@ private fun AssetImage(item: GalleryItem, modifier: Modifier = Modifier) {
             bitmap = bitmap,
             contentDescription = item.description,
             modifier = modifier,
-            contentScale = ContentScale.Crop,
+            contentScale = contentScale,
         )
     } else {
         Box(modifier.background(Mist), contentAlignment = Alignment.Center) { Text("Image unavailable") }
     }
+}
+
+@Composable
+private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel, onEvidence: (SearchHit) -> Unit) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(4),
+        modifier = Modifier.fillMaxSize().semantics { contentDescription = "Ask results" },
+        contentPadding = PaddingValues(start = 2.dp, end = 2.dp, bottom = 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Column(Modifier.padding(start = 14.dp, top = 48.dp, end = 14.dp, bottom = 14.dp)) {
+                Text("Ask", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(14.dp))
+                state.conversation.activeResultSetId?.let {
+                    val count = state.conversation.activeResultIds.size
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("active-result-set"),
+                    ) {
+                        Text(
+                            if (count > 0) "Refining $count ${if (count == 1) "result" else "results"}" else "Previous search had no matches",
+                            Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+                OutlinedTextField(
+                    value = state.query,
+                    onValueChange = viewModel::updateQuery,
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Gallery question" },
+                    placeholder = { Text("Search photos or ask a question") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(28.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { viewModel.ask() }),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { viewModel.ask() },
+                            enabled = state.query.isNotBlank() && state.executionStatus == null,
+                            modifier = Modifier.testTag("submit-question").semantics { contentDescription = "Submit question" },
+                        ) {
+                            Icon(painterResource(R.drawable.ic_gallery_ask), contentDescription = null)
+                        }
+                    },
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    listOf("People", "Places", "Documents").forEach { category ->
+                        SuggestionChip(
+                            onClick = { viewModel.ask("Show $category") },
+                            label = { Text(category, maxLines = 1) },
+                        )
+                    }
+                }
+            }
+        }
+        state.executionStatus?.let { status ->
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(18.dp),
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        LinearProgressIndicator(modifier = Modifier.width(64.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(status, modifier = Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        TextButton(onClick = viewModel::cancelQuery, modifier = Modifier.testTag("cancel-query")) { Text("Cancel") }
+                    }
+                }
+            }
+        }
+        if (state.progressiveHits.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Text("Possible matches", Modifier.padding(14.dp, 14.dp, 14.dp, 8.dp), fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+            }
+            items(state.progressiveHits.take(24), key = { "progress-${it.item.id}" }) { hit ->
+                ResultTile(hit) { onEvidence(hit) }
+            }
+        }
+        state.operationMessage?.takeIf { state.executionStatus == null }?.let { message ->
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.padding(14.dp),
+                ) { Text(message, Modifier.padding(12.dp), fontSize = 13.sp, fontWeight = FontWeight.Medium) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResultsScreen(outcome: SearchOutcome?, onEvidence: (SearchHit) -> Unit, onAsk: () -> Unit) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(4),
+        modifier = Modifier.fillMaxSize().semantics { contentDescription = "Ask results" },
+        contentPadding = PaddingValues(start = 2.dp, top = 46.dp, end = 2.dp, bottom = 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        if (outcome == null) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("No results yet", fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(14.dp))
+                    Button(onClick = onAsk) { Text("Ask") }
+                }
+            }
+        } else {
+            item(span = { GridItemSpan(maxLineSpan) }) { AnswerCard(outcome, onAsk) }
+            items(outcome.hits, key = { it.item.id }) { hit -> ResultTile(hit) { onEvidence(hit) } }
+        }
+    }
+}
+
+@Composable
+private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(12.dp).semantics { contentDescription = "Answer ${outcome.answer.headline}" },
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 2.dp,
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Text(outcome.answer.headline, fontSize = 21.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold)
+            if (outcome.answer.detail.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(outcome.answer.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp)
+            }
+            if (outcome.resultSetId != null && outcome.hits.isNotEmpty()) {
+                TextButton(onClick = onRefine, modifier = Modifier.testTag("refine-results")) { Text("Refine") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FactPill(outcome.answer.exactness.name.replace('_', ' '))
+                FactPill(if (outcome.answer.requiresAuthentication) "Unlock required" else "${outcome.answer.evidenceIds.size} sources")
+            }
+        }
+    }
+}
+
+@Composable
+private fun FactPill(text: String) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = CircleShape) {
+        Text(text.lowercase(), Modifier.padding(horizontal = 9.dp, vertical = 5.dp), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun ResultTile(hit: SearchHit, onClick: () -> Unit) {
+    MediaThumbnail(hit.item, hit.duplicateIds.size, selected = false, onClick = onClick, onLongClick = onClick)
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MediaThumbnail(
+    item: GalleryItem,
+    duplicateCount: Int = 0,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .semantics { contentDescription = item.description },
+    ) {
+        AssetImage(item, Modifier.fillMaxSize())
+        item.durationMs?.takeIf { item.kind == MediaKind.VIDEO }?.let { duration ->
+            Surface(
+                modifier = Modifier.align(Alignment.BottomEnd).padding(5.dp),
+                color = Color.Black.copy(alpha = .68f),
+                shape = RoundedCornerShape(5.dp),
+            ) { Text(formatPlaybackTime(duration), Modifier.padding(horizontal = 5.dp, vertical = 2.dp), color = Color.White, fontSize = 10.sp) }
+        }
+        if (duplicateCount > 0) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopEnd).padding(5.dp),
+                color = Color.Black.copy(alpha = .68f),
+                shape = CircleShape,
+            ) { Text("+$duplicateCount", Modifier.padding(horizontal = 6.dp, vertical = 3.dp), color = Color.White, fontSize = 10.sp) }
+        }
+        if (selected) {
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = .3f)))
+            Surface(
+                modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary,
+            ) { Text("✓", Modifier.padding(horizontal = 6.dp, vertical = 3.dp), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+@Composable
+private fun GalleryScreen(
+    items: List<GalleryItem>,
+    onSelect: (SearchHit) -> Unit,
+    onPickMedia: () -> Unit,
+    onPickDocuments: () -> Unit,
+    onFullGallery: () -> Unit,
+    onSearch: () -> Unit,
+    operationMessage: String?,
+) {
+    var importMenu by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(emptySet<String>()) }
+    val context = LocalContext.current
+    val groups = remember(items) {
+        items.sortedWith(compareByDescending<GalleryItem> { it.capturedAt ?: it.modifiedAt ?: 0L }.thenBy { it.id })
+            .groupBy { galleryDayLabel(it.capturedAt ?: it.modifiedAt) }
+            .toList()
+    }
+    BackHandler(selectedIds.isNotEmpty()) { selectedIds = emptySet() }
+    Box(Modifier.fillMaxSize().semantics { contentDescription = "Gallery screen; ${items.count { it.source != MediaSource.DEMO_ASSET }} imported items" }) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(4),
+            contentPadding = PaddingValues(start = 2.dp, end = 2.dp, bottom = if (selectedIds.isEmpty()) 24.dp else 96.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(Modifier.padding(start = 14.dp, top = 42.dp, end = 8.dp, bottom = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (selectedIds.isEmpty()) {
+                            Spacer(Modifier.weight(1f))
+                            IconButton(onClick = onSearch) { Icon(painterResource(R.drawable.ic_gallery_search), "Search") }
+                            Box {
+                                IconButton(onClick = { importMenu = true }) { Icon(painterResource(R.drawable.ic_gallery_more), "More") }
+                                DropdownMenu(expanded = importMenu, onDismissRequest = { importMenu = false }) {
+                                    DropdownMenuItem(text = { Text("Pick photos and videos") }, onClick = { importMenu = false; onPickMedia() })
+                                    DropdownMenuItem(text = { Text("Import accessible gallery") }, onClick = { importMenu = false; onFullGallery() })
+                                    DropdownMenuItem(text = { Text("Add documents") }, onClick = { importMenu = false; onPickDocuments() })
+                                }
+                            }
+                        } else {
+                            Text("${selectedIds.size} selected", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { selectedIds = items.mapTo(mutableSetOf()) { it.id } }) { Text("All") }
+                            TextButton(onClick = { selectedIds = emptySet() }) { Text("Cancel") }
+                        }
+                    }
+                    operationMessage?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
+                }
+            }
+            groups.forEach { (label, groupItems) ->
+                item(key = "day-$label", span = { GridItemSpan(maxLineSpan) }) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+                        Text(label, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                        groupItems.firstOrNull()?.location?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        }
+                    }
+                }
+                items(groupItems, key = { it.id }) { item ->
+                    val selected = item.id in selectedIds
+                    MediaThumbnail(
+                        item = item,
+                        selected = selected,
+                        onClick = {
+                            if (selectedIds.isNotEmpty()) {
+                                selectedIds = if (selected) selectedIds - item.id else selectedIds + item.id
+                            } else {
+                                onSelect(item.asMetadataHit())
+                            }
+                        },
+                        onLongClick = { selectedIds = selectedIds + item.id },
+                    )
+                }
+            }
+        }
+        if (selectedIds.isNotEmpty()) {
+            SelectionToolbar(
+                count = selectedIds.size,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                onShare = { shareItems(context, items.filter { it.id in selectedIds }) },
+                onAsk = { selectedIds = emptySet(); onSearch() },
+                onClear = { selectedIds = emptySet() },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelectionToolbar(count: Int, modifier: Modifier = Modifier, onShare: () -> Unit, onAsk: () -> Unit, onClear: () -> Unit) {
+    Surface(
+        modifier = modifier.fillMaxWidth().padding(14.dp),
+        shape = RoundedCornerShape(30.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 8.dp,
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("$count", Modifier.padding(horizontal = 10.dp), fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onAsk) { Text("Ask") }
+            TextButton(onClick = onShare) { Text("Share") }
+            TextButton(onClick = onClear) { Text("Clear") }
+        }
+    }
+}
+
+@Composable
+private fun AlbumsScreen(items: List<GalleryItem>, onSelect: (SearchHit) -> Unit, onPickMedia: () -> Unit) {
+    var activeAlbum by remember { mutableStateOf<String?>(null) }
+    val albums = remember(items) {
+        items.groupBy { item -> item.album.ifBlank { item.location.ifBlank { "Other" } } }
+            .toList().sortedByDescending { (_, media) -> media.maxOfOrNull { it.capturedAt ?: it.modifiedAt ?: 0L } ?: 0L }
+    }
+    BackHandler(activeAlbum != null) { activeAlbum = null }
+    val visibleItems = activeAlbum?.let { name -> albums.firstOrNull { it.first == name }?.second }.orEmpty()
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(if (activeAlbum == null) 2 else 4),
+        modifier = Modifier.fillMaxSize().semantics { contentDescription = "Albums screen" },
+        contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (activeAlbum == null) 12.dp else 2.dp),
+        verticalArrangement = Arrangement.spacedBy(if (activeAlbum == null) 14.dp else 2.dp),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Row(Modifier.padding(start = 6.dp, top = 48.dp, end = 2.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (activeAlbum == null) {
+                    Text("Albums", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = onPickMedia) { Text("+", fontSize = 28.sp, fontWeight = FontWeight.Light) }
+                } else {
+                    TextButton(onClick = { activeAlbum = null }) { Text("Back") }
+                    Text(activeAlbum ?: "", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+        if (activeAlbum == null) {
+            items(albums, key = { it.first }) { (name, albumItems) ->
+                Column(Modifier.clickable { activeAlbum = name }) {
+                    AssetImage(albumItems.first(), Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(20.dp)))
+                    Text(name, Modifier.padding(top = 7.dp), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${albumItems.size}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                }
+            }
+        } else {
+            items(visibleItems, key = { it.id }) { item ->
+                MediaThumbnail(item, selected = false, onClick = { onSelect(item.asMetadataHit()) }, onLongClick = { onSelect(item.asMetadataHit()) })
+            }
+        }
+    }
+}
+
+private data class GalleryMenuAction(val label: String, val icon: Int, val count: Int? = null, val onClick: () -> Unit)
+
+@Composable
+private fun GalleryMenuScreen(
+    items: List<GalleryItem>,
+    onPhotos: () -> Unit,
+    onAlbums: () -> Unit,
+    onDocuments: () -> Unit,
+    onVideos: () -> Unit,
+    onPeople: () -> Unit,
+    onPlaces: () -> Unit,
+    onSettings: () -> Unit,
+) {
+    val actions = listOf(
+        GalleryMenuAction("Videos", R.drawable.ic_gallery_video, items.count { it.kind == MediaKind.VIDEO }, onVideos),
+        GalleryMenuAction("Recent", R.drawable.ic_gallery_photos, items.size, onPhotos),
+        GalleryMenuAction("Albums", R.drawable.ic_gallery_albums, null, onAlbums),
+        GalleryMenuAction("Documents", R.drawable.ic_gallery_search, items.count { it.kind == MediaKind.PDF }, onDocuments),
+        GalleryMenuAction("People", R.drawable.ic_gallery_people, null, onPeople),
+        GalleryMenuAction("Places", R.drawable.ic_gallery_search, items.map { it.location }.filter { it.isNotBlank() }.distinct().size, onPlaces),
+        GalleryMenuAction("Privacy", R.drawable.ic_gallery_privacy, null, onPeople),
+        GalleryMenuAction("Settings", R.drawable.ic_gallery_settings, null, onSettings),
+    )
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(4),
+        modifier = Modifier.fillMaxSize().semantics { contentDescription = "Gallery menu" },
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Text("Menu", Modifier.padding(top = 50.dp, bottom = 22.dp), fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+        }
+        items(actions, key = { it.label }) { action ->
+            Column(
+                modifier = Modifier.clickable(onClick = action.onClick).padding(vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
+                    Icon(painterResource(action.icon), action.label, Modifier.padding(17.dp).size(26.dp), tint = MaterialTheme.colorScheme.onSurface)
+                }
+                Spacer(Modifier.height(7.dp))
+                Text(action.label, fontSize = 12.sp, maxLines = 1)
+                action.count?.let { Text("$it", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp) }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit, onAsk: ((GalleryItem) -> Unit)? = null) {
+    val context = LocalContext.current
+    val playbackTimestamp = hit.evidence.mapNotNull { it.timestampMs }.minOrNull()
+    var playing by remember(hit.item.id, playbackTimestamp) { mutableStateOf(false) }
+    var detailsVisible by remember(hit.item.id) { mutableStateOf(false) }
+    var favorite by remember(hit.item.id) { mutableStateOf(false) }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Surface(Modifier.fillMaxSize(), color = Color.Black) {
+            Box(Modifier.fillMaxSize()) {
+                if (playing && hit.item.kind == MediaKind.VIDEO && hit.item.contentUri != null) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize().testTag("video-playback"),
+                        factory = { viewContext ->
+                            VideoView(viewContext).apply {
+                                val controls = MediaController(viewContext)
+                                controls.setAnchorView(this)
+                                setMediaController(controls)
+                                setVideoURI(Uri.parse(hit.item.contentUri))
+                                setOnPreparedListener {
+                                    seekTo((playbackTimestamp ?: 0L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt())
+                                    start()
+                                }
+                            }
+                        },
+                        onRelease = VideoView::stopPlayback,
+                    )
+                } else {
+                    AssetImage(hit.item, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                }
+                Row(
+                    Modifier.fillMaxWidth().safeDrawingPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(shape = CircleShape, color = Color.Black.copy(alpha = .55f)) {
+                        TextButton(onClick = onDismiss) { Text("Back", color = Color.White) }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Surface(shape = CircleShape, color = Color.Black.copy(alpha = .55f)) {
+                        IconButton(onClick = { detailsVisible = !detailsVisible }) {
+                            Icon(painterResource(R.drawable.ic_gallery_info), "Details and evidence", tint = Color.White)
+                        }
+                    }
+                }
+                if (!detailsVisible) {
+                    Surface(
+                        modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(14.dp),
+                        shape = RoundedCornerShape(30.dp),
+                        color = Color.Black.copy(alpha = .68f),
+                    ) {
+                        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            ViewerAction(if (favorite) "Favorited" else "Favorite", R.drawable.ic_gallery_photos) { favorite = !favorite }
+                            onAsk?.let { ask -> ViewerAction("Ask", R.drawable.ic_gallery_ask) { ask(hit.item) } }
+                            ViewerAction("Share", R.drawable.ic_gallery_share) { shareItems(context, listOf(hit.item)) }
+                            if (hit.item.kind == MediaKind.VIDEO && hit.item.contentUri != null) {
+                                ViewerAction("Play", R.drawable.ic_gallery_video) { playing = true }
+                            }
+                            ViewerAction("Details", R.drawable.ic_gallery_info) { detailsVisible = true }
+                        }
+                    }
+                } else {
+                    Surface(
+                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(.58f),
+                        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                    ) {
+                        Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp, 18.dp, 20.dp, 34.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(hit.item.title, modifier = Modifier.weight(1f), fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                                TextButton(onClick = { detailsVisible = false }) { Text("Close") }
+                            }
+                            Text(hit.item.location, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            hit.evidence.forEachIndexed { index, evidence ->
+                                if (index > 0) HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                                Text(evidence.sourceField.replace('_', ' '), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(evidence.text)
+                                Text("${(evidence.confidence * 100).toInt()}% confidence", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                            }
+                            if (hit.evidence.isEmpty()) Text("Supported by this item's local metadata record.")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ViewerAction(label: String, icon: Int, onClick: () -> Unit) {
+    Column(Modifier.clickable(onClick = onClick).padding(horizontal = 9.dp, vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(painterResource(icon), label, Modifier.size(22.dp), tint = Color.White)
+        Text(label, color = Color.White, fontSize = 10.sp)
+    }
+}
+
+private fun GalleryItem.asMetadataHit(): SearchHit = SearchHit(
+    item = this,
+    score = 1.0,
+    evidence = listOf(EvidenceRecord("$id:metadata", id, "metadata", title, 1f)),
+)
+
+private fun galleryDayLabel(epochMillis: Long?): String {
+    if (epochMillis == null || epochMillis <= 0L) return "Undated"
+    val zone = ZoneId.systemDefault()
+    val date = Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDate()
+    val today = java.time.LocalDate.now(zone)
+    return when (date) {
+        today -> "Today"
+        today.minusDays(1) -> "Yesterday"
+        else -> date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
+    }
+}
+
+private fun shareItems(context: android.content.Context, items: List<GalleryItem>) {
+    if (items.isEmpty()) return
+    val uris = ArrayList(items.mapNotNull { it.contentUri }.map(Uri::parse))
+    val intent = if (uris.size > 1) {
+        Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "*/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        }
+    } else {
+        Intent(Intent.ACTION_SEND).apply {
+            type = items.first().mimeType
+            if (uris.isNotEmpty()) putExtra(Intent.EXTRA_STREAM, uris.first())
+            else putExtra(Intent.EXTRA_TEXT, items.first().sourceUrl.ifBlank { items.first().title })
+        }
+    }.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    runCatching { context.startActivity(Intent.createChooser(intent, "Share from Gallery")) }
 }
 
 private fun formatBytes(bytes: Long): String = when {
