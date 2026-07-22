@@ -702,6 +702,12 @@ private fun IndexManagerScreen(
     ) {
         Text("Gallery memory", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Forest)
         Text("Progressive, versioned, and stored only on this phone", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Agentic Gallery ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp,
+            modifier = Modifier.testTag("app-version"),
+        )
         Spacer(Modifier.height(20.dp))
         IndexMetric("Media discovered", index.discovered, index.discovered, "Asset manifest")
         IndexMetric("Metadata ready", index.metadataReady, index.discovered, "demo-metadata-v1")

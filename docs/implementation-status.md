@@ -3027,3 +3027,11 @@ Status: **PASS for APK structure, host tests, install, and cold-launch smoke tes
 - The OpenCV SFace name remains model provenance only. SFace inference uses ONNX Runtime and does not package or call the OpenCV Android library.
 
 Limitation: real PaddleOCR recognition was not rerun during this narrow compatibility fix; the new preprocessing/postprocessing path is host-tested, while the existing run-scoped real-model device gate remains pending.
+
+## Application version baseline (22 July 2026)
+
+- Set Android package metadata to `versionName 0.0.1` and `versionCode 1`.
+- The Index screen exposes the installed version for device/test verification.
+- Added `docs/versioning.md` defining semantic-version increments for meaningful upgrades and mandatory monotonically increasing Android version codes for distributed APKs.
+- ConsumerDebug assemble and replace-install: PASS on SM-F731U, Android 16/API 36; 67 Gradle tasks completed in 57 seconds.
+- `aapt2 dump badging` verified the generated APK contains `versionCode='1' versionName='0.0.1'`. Device `dumpsys package` independently reported the same installed values.
