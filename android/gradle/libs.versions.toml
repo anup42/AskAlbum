@@ -2,7 +2,6 @@
 room = "2.8.4"
 litert = "2.1.0"
 onnxruntime = "1.23.2"
-opencv = "4.5.3"
 coroutines = "1.9.0"
 
 [libraries]
@@ -11,5 +10,4 @@ androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 google-ai-edge-litert = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
 microsoft-onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
-opencv-android = { module = "com.quickbirdstudios:opencv", name = "opencv", version.ref = "opencv" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }

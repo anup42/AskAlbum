@@ -2984,7 +2984,7 @@ Status: **IMPLEMENTED AND HOST-VERIFIED; APP BUILD/INSTALL PASSED. Real Paddle m
 
 Files changed:
 
-- `android/core/ocr-paddle/` (pinned official PaddleOCR Android SDK source and isolated Android library module)
+- `android/core/ocr-paddle/` (pinned Paddle configuration/session components and isolated Android library module)
 - `android/app/src/main/java/com/askphotos/android/{PluggableModelEngines,ProductionEngineProviders,OcrModelPack,MlKitOcrEngine,PaddleMultilingualOcrEngine}.kt`
 - OCR/face integration in `AskPhotosApplication`, `GalleryIndexBatchProcessor`, `PeopleIndexWorker`, `GalleryDatabase`, `GalleryRepository`, `GalleryViewModel`, and `MainActivity`
 - unit/instrumented tests and the CC0 `synthetic_menu_hindi` fixture
@@ -2992,7 +2992,7 @@ Files changed:
 Architecture decisions:
 
 - Both `OcrEngine` and `FaceEngine` are closeable capabilities acquired from an ordered `PluggableModelEngineRegistry`. Indexing workers no longer construct PaddleOCR, ML Kit OCR, or SFace directly. A replacement requires only a provider and descriptor registration.
-- The preferred OCR provider is official PP-OCRv5 Mobile detection plus separate Latin and Devanagari recognizers through ONNX Runtime/OpenCV. Results are script-scored and overlap-merged. When the verified pack is absent, the provider registry selects bundled ML Kit Latin.
+- The preferred OCR provider is official PP-OCRv5 Mobile detection plus separate Latin and Devanagari recognizers through ONNX Runtime. Bitmap/tensor preprocessing and DB-map connected-component postprocessing use Kotlin/Android APIs and require no OpenCV library. When the verified pack is absent, the provider registry selects bundled ML Kit Latin.
 - Model downloads are user-started, immutable-revision pinned, resumable, exact-size and SHA-256 verified, and activated only in app-private storage. Offline builds support verified ZIP import and retain no Internet permission.
 - Installing a new OCR producer queues only OCR rows compiled by an older producer. The stage producer includes deterministic document-fact versioning, preventing repeated reindex loops.
 
@@ -3011,3 +3011,19 @@ Artifacts/limitations:
 - `artifacts/device-runs/ocrmod_20260722/` and `artifacts/device-runs/ocrmod_20260722b/` contain preflight, seed, import, and cleanup/abort evidence.
 - The pre-existing real SFace acceptance remains valid. This change only replaces direct construction in `PeopleIndexWorker` with the generic provider registry; that routing change compiled and passed host tests but was not re-exercised on device.
 - Next narrow gate: rerun `PaddleOcrSettingsUiTest` and `RealPaddleOcrAcceptanceTest` with a stable USB transport and the run-scoped Hindi fixture.
+
+## 16 KB native-library compatibility and OpenCV removal (22 July 2026)
+
+Status: **PASS for APK structure, host tests, install, and cold-launch smoke test.**
+
+- The previous ConsumerDebug APK had two arm64 ELF files with 4 KB `LOAD` alignment: `libopencv_java4.so` and the `libc++_shared.so` bundled by the old OpenCV AAR. APK ZIP alignment itself already passed.
+- Removed the OpenCV Android dependency completely. PaddleOCR keeps its pinned PP-OCRv5 ONNX models, while resize/crop, tensor preparation, DB probability-map connected components, confidence filtering, coordinate scaling, and reading-order sorting now use Kotlin and Android `Bitmap` APIs.
+- Added `PaddleDbPostProcessorTest` for component extraction/scaling, rejection of weak or tiny candidates, and valid detector dimensions.
+- `:app:testConsumerDebugUnitTest :app:assembleConsumerDebug`: PASS, 74 tasks in 2 minutes 51 seconds.
+- `zipalign -c -P 16 -v 4`: PASS on the rebuilt ConsumerDebug APK.
+- NDK r28 `llvm-readelf -lW` inspection of every packaged arm64-v8a and x86_64 ELF: PASS. Every `LOAD` segment has at least `0x4000` alignment; no `libopencv_java4.so` is packaged.
+- Rebuilt APK replace-install through the Android helper: PASS on SM-F731U, Android 16/API 36. Cold launch reported `Status: ok`, `LaunchState: COLD`, and 547 ms total time.
+- Post-install diagnostics found no page-size compatibility message, linker error, `UnsatisfiedLinkError`, or fatal exception. Artifact: `android-diagnostics/20260722_213047/`.
+- The OpenCV SFace name remains model provenance only. SFace inference uses ONNX Runtime and does not package or call the OpenCV Android library.
+
+Limitation: real PaddleOCR recognition was not rerun during this narrow compatibility fix; the new preprocessing/postprocessing path is host-tested, while the existing run-scoped real-model device gate remains pending.

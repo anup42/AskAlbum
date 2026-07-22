@@ -6,3 +6,6 @@ Source files in this module were imported from `PaddlePaddle/PaddleOCR` commit
 
 Local changes add app-private filesystem model loading. The upstream API and
 preprocessing/postprocessing remain otherwise source-compatible.
+
+Local preprocessing and postprocessing use Kotlin and Android Bitmap APIs. This
+module deliberately has no OpenCV dependency.

@@ -36,4 +36,6 @@ The optional OCR pack contains five official PaddlePaddle ONNX/config artifacts.
 
 The embedded Android SDK source is pinned to PaddleOCR commit `2661c7c0ef5c613e8f93c6e93b2e052399f0f854` under Apache-2.0; provenance is recorded in `android/core/ocr-paddle/NOTICE.md`. The active configuration covers Latin-script languages and Hindi/Marathi/Nepali-family Devanagari text. Adding another OCR model requires a new `ModelEngineProvider<OcrEngine>`, not changes to the gallery indexer.
 
+The Paddle Android adapter has no OpenCV dependency. Bitmap resize/crop, DB-map connected-component extraction, tensor normalization, and reading-order sorting are implemented in Kotlin/Android APIs; ONNX Runtime performs only model inference.
+
 References: [official PaddleOCR Android deployment guide](https://www.paddleocr.ai/latest/en/version3.x/inference_deployment/cross_platform/android_deployment.html), [PP-OCRv5 multilingual documentation](https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/algorithm/PP-OCRv5/PP-OCRv5_multi_languages.en.md), and [PaddleOCR repository](https://github.com/PaddlePaddle/PaddleOCR).

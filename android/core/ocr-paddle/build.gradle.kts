@@ -26,7 +26,6 @@ kotlin {
 
 dependencies {
     implementation(libs.microsoft.onnxruntime.android)
-    implementation(libs.opencv.android)
     implementation(libs.kotlinx.coroutines.android)
     implementation("androidx.core:core-ktx:1.16.0")
 }

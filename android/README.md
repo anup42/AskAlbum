@@ -7,7 +7,7 @@ Native, local-only Android implementation of the Agentic Gallery architecture. I
 - Kotlin, Jetpack Compose, and app-private SQLite/FTS; no local HTTP server or cloud inference. The `offlineDemo` flavor has no `INTERNET` permission; `consumer` uses it only for user-started model downloads.
 - MediaStore full/partial access, Android Photo Picker, and SAF import for images, videos, and PDFs.
 - Idempotent per-item index states with constrained, resumable WorkManager batches.
-- Pluggable on-device OCR providers. A verified PP-OCRv5 Mobile pack uses the official PaddleOCR Android/ONNX SDK with Latin and Devanagari recognizers; bundled ML Kit Latin remains the fallback. OCR evidence retains normalized block regions.
+- Pluggable on-device OCR providers. A verified PP-OCRv5 Mobile pack uses ONNX Runtime with pure Kotlin/Android Bitmap preprocessing and Latin/Devanagari recognizers; bundled ML Kit Latin remains the fallback. OCR evidence retains normalized block regions.
 - Video thumbnails and first-page PDF rendering; imported previews remain app-private.
 - Typed `GalleryQueryPlan`, bounded validation, FTS/metadata/label/OCR retrieval, exact untruncated counts, receipt-total extraction, follow-up result-set filtering, and evidence records.
 - Gemma 4 E2B/E4B Settings selection, capability policy, resumable foreground download from immutable Google AI Edge Gallery revisions, pinned LFS SHA-256/size verification, signed `.agemma` import, app-private atomic activation/rollback, LiteRT-LM 0.14.0 GPU/CPU runtime, one bounded plan plus one repair, and deterministic fallback.

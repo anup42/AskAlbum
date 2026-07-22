@@ -282,3 +282,13 @@ Recovery disclosure:
 - Direct `PaddleOcrSettingsUiTest`: FAILED before assertions due to a test selector mismatch (`Index Manager` vs the app's `Index` navigation label). The test was corrected but not rerun after the two bounded acceptance attempts.
 - Real PaddleOCR pack download/recognition and post-change SFace provider-routing acceptance: NOT RUN. The compiled real test remains enabled and requires both Latin `TEST` and at least one Devanagari character from the run-scoped fixture.
 - Artifacts: `artifacts/device-runs/ocrmod_20260722/` and `artifacts/device-runs/ocrmod_20260722b/`. No personal gallery item was targeted, modified, or deleted.
+
+## 16 KB compatibility fix and OpenCV-free OCR path
+
+- Reference device: Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550. The device currently reports a 4 KB kernel page size, so compatibility was additionally verified statically against Android's 16 KB packaging and ELF requirements.
+- Root cause: the old OpenCV Android AAR contributed `libopencv_java4.so` and `libc++_shared.so` with 4 KB ELF `LOAD` alignment. Other packaged arm64 libraries were already aligned to 16 KB.
+- Resolution: removed the OpenCV Android library and replaced PaddleOCR image preprocessing and DB-map postprocessing with Kotlin/Android `Bitmap` code. The SFace ONNX model still runs through ONNX Runtime and does not depend on the OpenCV runtime.
+- Host gate: `:app:testConsumerDebugUnitTest :app:assembleConsumerDebug` PASS, including the new Paddle postprocessor regression tests.
+- Static rebuilt-APK gates: `zipalign -c -P 16 -v 4` PASS; NDK r28 `llvm-readelf` inspection PASS for every arm64-v8a and x86_64 shared library; OpenCV native library absent.
+- Connected-device gate: rebuilt ConsumerDebug APK replace-installed successfully. Cold launch PASS in 547 ms with an active app process and no linker, page-size, `UnsatisfiedLinkError`, or fatal-exception entry in the post-install diagnostic bundle.
+- Diagnostic artifact: `android-diagnostics/20260722_213047/`. Real multilingual Paddle inference was not rerun as part of this compatibility-only device gate.
