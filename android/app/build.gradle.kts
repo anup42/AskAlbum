@@ -107,6 +107,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.14.0")
     implementation(libs.google.ai.edge.litert)
+    implementation(libs.microsoft.onnxruntime.android)
     kapt(libs.androidx.room.compiler)
 
     testImplementation("junit:junit:4.13.2")

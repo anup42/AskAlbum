@@ -3,6 +3,7 @@ import java.nio.file.*;
 import java.security.*;
 import java.security.cert.Certificate;
 import java.util.Base64;
+import java.util.HexFormat;
 
 public final class PackManifestSigner {
   public static void main(String[] args) throws Exception {

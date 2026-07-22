@@ -29,6 +29,8 @@ data class RetrievalPackManifest(
     val sourceModel: String,
     val sourceRevision: String,
     val sourceLicense: String,
+    val artifactRepository: String?,
+    val artifactRevision: String?,
     val runtime: String,
     val runtimeVersion: String,
     val embeddingDimension: Int,
@@ -60,6 +62,7 @@ data class RetrievalPackManifest(
             require(bytes.size <= MAX_MANIFEST_BYTES) { "Manifest is too large" }
             val json = JSONObject(bytes.toString(Charsets.UTF_8))
             val source = json.getJSONObject("source")
+            val artifact = json.optJSONObject("artifact")
             val runtime = json.getJSONObject("runtime")
             val embedding = json.getJSONObject("embedding")
             val image = json.getJSONObject("image")
@@ -87,6 +90,8 @@ data class RetrievalPackManifest(
                 sourceModel = source.getString("model"),
                 sourceRevision = source.getString("revision"),
                 sourceLicense = source.getString("license"),
+                artifactRepository = artifact?.getString("repository"),
+                artifactRevision = artifact?.getString("revision"),
                 runtime = runtime.getString("name"),
                 runtimeVersion = runtime.getString("version"),
                 embeddingDimension = embedding.getInt("dimension"),
@@ -119,7 +124,15 @@ data class RetrievalPackManifest(
             require(sourceModel == "google/siglip2-base-patch16-224") { "Unsupported source model" }
             require(sourceRevision.matches(Regex("[0-9a-f]{40}"))) { "Source revision must be pinned" }
             require(sourceLicense == "apache-2.0") { "Unsupported source-model license" }
-            require(runtime == "LiteRT" && runtimeVersion == LITERT_VERSION) { "Unsupported LiteRT runtime" }
+            val isLiteRt = runtime == RETRIEVAL_RUNTIME_LITERT && runtimeVersion == LITERT_VERSION
+            val isOnnx = runtime == RETRIEVAL_RUNTIME_ONNX && runtimeVersion == ONNX_RUNTIME_VERSION
+            require(isLiteRt || isOnnx) { "Unsupported retrieval runtime" }
+            if (isOnnx) {
+                require(artifactRepository == ONNX_SIGLIP2_REPOSITORY) { "Unsupported ONNX artifact repository" }
+                require(artifactRevision?.matches(Regex("[0-9a-f]{40}")) == true) { "ONNX artifact revision must be pinned" }
+            } else {
+                require(artifactRepository == null && artifactRevision == null) { "LiteRT packs must not declare an ONNX artifact" }
+            }
             require(embeddingDimension in 128..2048 && normalized) { "Invalid embedding contract" }
             require(minimumSimilarity in -1f..1f) { "Invalid semantic similarity threshold" }
             require(imageSize in 128..512 && imageLayout in setOf("NCHW", "NHWC") && resizeMethod == "BICUBIC") {
@@ -137,8 +150,9 @@ data class RetrievalPackManifest(
                 require(it.sizeBytes in 1..MAX_ARTIFACT_BYTES) { "Invalid model-pack artifact size" }
                 require(sha256.matches(it.sha256)) { "Invalid artifact checksum" }
             }
-            require(file(ROLE_IMAGE_ENCODER).name.endsWith(".tflite")) { "Image encoder must be a .tflite file" }
-            require(file(ROLE_TEXT_ENCODER).name.endsWith(".tflite")) { "Text encoder must be a .tflite file" }
+            val encoderSuffix = if (isOnnx) ".onnx" else ".tflite"
+            require(file(ROLE_IMAGE_ENCODER).name.endsWith(encoderSuffix)) { "Image encoder has the wrong runtime format" }
+            require(file(ROLE_TEXT_ENCODER).name.endsWith(encoderSuffix)) { "Text encoder has the wrong runtime format" }
             file(ROLE_TOKENIZER)
             file(ROLE_LICENSE)
             require(files.sumOf { it.sizeBytes } <= MAX_PACK_BYTES) { "Model pack is too large" }
@@ -240,6 +254,8 @@ class RetrievalModelPackManager(
     }
 
     internal fun installVerified(zipFile: File): InstalledRetrievalPack {
+        require(root.mkdirs() || root.isDirectory) { "Could not create retrieval model directory" }
+        require(generations.mkdirs() || generations.isDirectory) { "Could not create retrieval generation directory" }
         ZipFile(zipFile).use { zip ->
             val entries = zip.entries().toList()
             require(entries.size <= MAX_PACK_FILES + 2) { "Retrieval pack has too many entries" }
@@ -343,6 +359,10 @@ private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 private fun String.hexToBytes(): ByteArray = chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 
 const val LITERT_VERSION = "2.1.0"
+const val ONNX_RUNTIME_VERSION = "1.23.2"
+const val RETRIEVAL_RUNTIME_LITERT = "LiteRT"
+const val RETRIEVAL_RUNTIME_ONNX = "ONNX Runtime"
+const val ONNX_SIGLIP2_REPOSITORY = "onnx-community/siglip2-base-patch16-224-ONNX"
 const val ROLE_IMAGE_ENCODER = "image_encoder"
 const val ROLE_TEXT_ENCODER = "text_encoder"
 const val ROLE_TOKENIZER = "tokenizer_vocab"

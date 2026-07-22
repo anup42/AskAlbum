@@ -1915,3 +1915,102 @@ Status: **Verified on the physical device.**
 - The test previously persisted E4B after finishing. An `@After` teardown now restores E2B through `ModelPackManager`, keeping the required default stable even when the test assertion fails.
 - Consumer Android-test assembly passed in 14 seconds. The rebuilt test APK installed with `adb install -r -t`; direct instrumentation passed 1 test in 1.375 seconds; the app-private preference then contained `tier=E2B`.
 - No verified `.litertlm` source remains on the host after the earlier Gradle uninstall erased the device copy. Real E2B inference remains pending a new app-managed download or verified external import; this test does not claim inference coverage.
+
+## Phase 6C - app-managed E2B restoration and real inference acceptance (22 July 2026)
+
+Status: **Passed on the physical device through the consumer Settings download flow and direct, state-preserving instrumentation.**
+
+Architecture and model-pack results:
+
+- The Settings screen offers E2B and E4B selection. E2B remains the default; E4B is optional and was not downloaded or executed in this gate.
+- The consumer build downloaded the pinned E2B LiteRT-LM artifact into app-private storage through WorkManager. Network access was used only for this explicit model action.
+- The active generation is `generation-7fa1d78473894f7e-*`. The installed model is exactly 2,583,085,056 bytes and its independently computed SHA-256 is `ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42`, matching the pinned catalog.
+- The generated installed manifest identifies Gemma 4 E2B, multimodal support, source revision `7fa1d78473894f7e736a21d920c3aa80f950c0db`, Gemma Terms, and LiteRT-LM 0.14.0.
+- Visual QA confirmed that Settings renders the installed Gemma revision, tier, size, signed SHA prefix, and replacement action. The nearby `Not installed - fixture semantics remain active` message belongs to the separate SigLIP2 retrieval pack, which remains a known gap.
+
+Commands run (serial masked):
+
+```powershell
+adb -s <masked> shell input tap <Download-Gemma-4-E2B-button>
+adb -s <masked> shell run-as com.askphotos.android cat files/models/gemma/current
+adb -s <masked> shell run-as com.askphotos.android stat -c '%s' <active-model-path>
+adb -s <masked> shell run-as com.askphotos.android sha256sum <active-model-path>
+adb -s <masked> shell am instrument -w -r -e class com.askphotos.android.RealGemmaPlannerAcceptanceTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+adb -s <masked> shell am instrument -w -r -e class com.askphotos.android.RealGemmaVisualVerifierAcceptanceTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+adb -s <masked> shell am instrument -w -r -e class com.askphotos.android.RealGemmaGroundedAnswerAcceptanceTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+adb -s <masked> shell dumpsys thermalservice
+adb -s <masked> logcat -d -t 3000
+```
+
+Physical-device results:
+
+- Device: Samsung SM-F966B, Android 16/API 36, arm64-v8a, SM8750, approximately 11.4 GB RAM. Full serial is omitted.
+- Real planner: 1 JUnit test passed in 59.486 seconds. English, Hindi, and Hinglish cases all used E2B on GPU, returned valid `FIND_MEDIA`/`IMAGES` plans without fixture fallback, and each used the single allowed repair pass. Per-case wall times were 19.679, 15.685, and 24.011 seconds.
+- Real visual verifier: 1 JUnit test passed in 11.764 seconds. It used one GPU model call, no repair, accepted one candidate, and produced three verified evidence conditions.
+- Real grounded answer: 2 JUnit tests passed in 5.940 seconds. The model-backed answer cited two existing evidence records with no fallback; the no-answer case bypassed Gemma and could not fabricate evidence.
+- Model traces reported post-close PSS of approximately 282-315 MB. Current thermal readings after the run were status 0, approximately 37.2 C AP and 37.4 C skin.
+- The bounded final log window contained no target-app `FATAL EXCEPTION`, ANR, `OutOfMemoryError`, or native fatal-signal marker.
+
+Artifacts:
+
+- `artifacts/device-runs/phase6_e2b_restore_20260722/installed-pack-proof.txt`
+- `artifacts/device-runs/phase6_e2b_restore_20260722/real-gemma-planner.txt`
+- `artifacts/device-runs/phase6_e2b_restore_20260722/real-gemma-verifier.txt`
+- `artifacts/device-runs/phase6_e2b_restore_20260722/real-gemma-grounded-answer.txt`
+- `artifacts/device-runs/phase6_e2b_restore_20260722/gemma-e2b-installed.png`
+- `artifacts/device-runs/phase6_e2b_restore_20260722/download-diagnostics/20260722_095559/`
+
+Failures and limitations:
+
+- E4B remains an explicit, honest skip: the device recommends it, but no verified E4B pack was installed or benchmarked.
+- The SigLIP2 retrieval pack is not installed, so real image/text embedding acceptance and target-scale semantic retrieval are not demonstrated by this phase.
+- All three planner cases required the bounded repair call. The contract is satisfied, but improving first-pass JSON conformance would reduce latency.
+
+Next phase:
+
+- Restore and benchmark the pinned SigLIP2 image/text retrieval pack without disturbing the verified E2B generation, then run core/5k/20k semantic retrieval gates. Keep E4B optional.
+
+## Phase 4C - quantized SigLIP2 pack installation (22 July 2026)
+
+Status: **The signed q8 pack is installed and both towers execute on the physical device, but semantic acceptance failed. This capability is not reported as retrieval-quality complete. Repairs stopped after two device cycles as required.**
+
+Source selection and architecture:
+
+- Repository research found LibrePhotos using separate SigLIP2 ONNX vision/text towers for semantic gallery features. The selected artifacts are the HF-staff `onnx-community/siglip2-base-patch16-224-ONNX` q8 dual towers, not an image-only LiteRT release.
+- Artifact commit: `ba1f3b0843f24bc5417d38e19c37b287d719b2f4`; source checkpoint revision: `022b6f71160ffb0169ca4709e2d7e25be659598a`; license: Apache-2.0.
+- The app retains the existing LiteRT retrieval-pack path and adds pinned ONNX Runtime Mobile 1.23.2 support. Signed manifests declare and validate the runtime, exact artifact repository/revision, tensor preprocessing, tokenizer contract, file sizes, and SHA-256 values.
+- Model weights remain ignored build/device artifacts. No ONNX file or generated `.agretrieval` archive is committed.
+
+Files changed:
+
+- `android/gradle/libs.versions.toml`
+- `android/app/build.gradle.kts`
+- `android/app/src/main/java/com/askphotos/android/RetrievalModelPack.kt`
+- `android/app/src/main/java/com/askphotos/android/LiteRtImageTextEmbeddingEngine.kt`
+- `android/app/src/test/java/com/askphotos/android/RetrievalPackValidationTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/RealSiglip2RetrievalAcceptanceTest.kt`
+- `tools/model-conversion/build_onnx_retrieval_pack.py`
+- `tools/model-conversion/PackManifestSigner.java`
+
+Verification and device results:
+
+- Host inspection confirmed q8 vision input `[N,3,224,224]`/output `[N,768]` and text input `[N,64] INT64`/output `[N,768]`. Source file hashes are recorded in the installed manifest.
+- Pack creation validated deterministic finite encoder outputs, exported the 256k SentencePiece vocabulary, signed the manifest with the APK key, and produced a 267,744,226-byte ignored archive with SHA-256 `34cb0f0ade3891f5b683997c426677efa04a36f1a51c406c211b4a26be9b4f2b`.
+- Focused JVM manifest/tokenizer tests, Android-test compilation, and ConsumerDebug/test APK assembly passed in 1 minute 24 seconds. ConsumerDebug installed state-preservingly; the E2B generation pointer remained unchanged.
+- First physical run failed before inference because the atomic installer called `StatFs` before ensuring its private root existed. The installer now owns creation of its root/generation directories.
+- Final allowed run installed and activated `generation-ba1f3b0-q8-*`, loaded both q8 ONNX towers, returned finite normalized 768-dimensional embeddings, and completed four encoder calls in approximately 7.6 seconds without crash, ANR, or OOM.
+- The semantic assertion failed: text `This is a photo of a red square.` scored the red image `0.060938284` and blue image `0.06414157`. The assertion was not weakened and no third repair cycle was attempted.
+- Settings visual QA shows both the verified E2B pack and `siglip2-base-p16-224-q8 ba1f3b0-q8`, 366.9 MB, 768 dimensions, in app-private storage.
+
+Artifacts:
+
+- `artifacts/device-runs/phase4_siglip2_q8_20260722/real-siglip2-retrieval.txt`
+- `artifacts/device-runs/phase4_siglip2_q8_20260722/real-siglip2-retrieval-final.txt`
+- `artifacts/device-runs/phase4_siglip2_q8_20260722/installed-retrieval-manifest.json`
+- `artifacts/device-runs/phase4_siglip2_q8_20260722/siglip2-installed.png`
+
+Failures and limitations:
+
+- Installation and tensor execution are proven; cross-modal semantic correctness is not. Likely follow-up areas are tokenizer parity against the exported ONNX processor, prompt/preprocessing parity, and a labeled natural-image Recall@K calibration rather than synthetic solid colors.
+- The initial `minimumSimilarity=0.1` is not calibrated and must not be presented as an accepted no-match threshold.
+- The active q8 pack should be treated as experimental until a later, separately authorized repair slice passes natural-image and multilingual retrieval evaluation.

@@ -1,5 +1,8 @@
 package com.askphotos.android
 
+import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
@@ -7,6 +10,8 @@ import com.google.ai.edge.litert.TensorBuffer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.FloatBuffer
+import java.nio.LongBuffer
 import java.text.Normalizer
 import java.util.Base64
 import kotlin.math.abs
@@ -30,7 +35,11 @@ class LiteRtImageTextEmbeddingEngine(
             withContext(Dispatchers.Default) {
                 val pack = modelPacks.current() ?: error("No verified retrieval model pack is installed")
                 val pixels = images.map { Siglip2ImagePreprocessor.preprocess(it, pack.manifest) }
-                runFloatModels(pack.artifact(ROLE_IMAGE_ENCODER), pixels, pack.manifest.embeddingDimension)
+                when (pack.manifest.runtime) {
+                    RETRIEVAL_RUNTIME_LITERT -> runLiteRtFloatModels(pack.artifact(ROLE_IMAGE_ENCODER), pixels, pack.manifest.embeddingDimension)
+                    RETRIEVAL_RUNTIME_ONNX -> runOnnxImageModels(pack.artifact(ROLE_IMAGE_ENCODER), pixels, pack.manifest)
+                    else -> error("Unsupported retrieval runtime")
+                }
             }
         }
 
@@ -40,12 +49,16 @@ class LiteRtImageTextEmbeddingEngine(
                 val pack = modelPacks.current() ?: error("No verified retrieval model pack is installed")
                 val tokenizer = tokenizerFor(pack)
                 val tokenIds = tokenizer.encode(text, pack.manifest)
-                runTextModel(
-                    modelFile = pack.artifact(ROLE_TEXT_ENCODER),
-                    tokenIds = tokenIds,
-                    inputType = pack.manifest.textInputType,
-                    dimension = pack.manifest.embeddingDimension,
-                )
+                when (pack.manifest.runtime) {
+                    RETRIEVAL_RUNTIME_LITERT -> runLiteRtTextModel(
+                        modelFile = pack.artifact(ROLE_TEXT_ENCODER),
+                        tokenIds = tokenIds,
+                        inputType = pack.manifest.textInputType,
+                        dimension = pack.manifest.embeddingDimension,
+                    )
+                    RETRIEVAL_RUNTIME_ONNX -> runOnnxTextModel(pack.artifact(ROLE_TEXT_ENCODER), tokenIds, pack.manifest)
+                    else -> error("Unsupported retrieval runtime")
+                }
             }
         }
 
@@ -57,7 +70,7 @@ class LiteRtImageTextEmbeddingEngine(
         }
     }
 
-    private fun runFloatModels(modelFile: File, inputs: List<FloatArray>, dimension: Int): List<FloatArray> {
+    private fun runLiteRtFloatModels(modelFile: File, inputs: List<FloatArray>, dimension: Int): List<FloatArray> {
         require(modelFile.isFile) { "LiteRT encoder artifact is unavailable" }
         Environment.create().use { environment ->
             CompiledModel.create(modelFile.absolutePath, CompiledModel.Options(Accelerator.CPU), environment).use { model ->
@@ -78,8 +91,8 @@ class LiteRtImageTextEmbeddingEngine(
         }
     }
 
-    private fun runTextModel(modelFile: File, tokenIds: IntArray, inputType: String, dimension: Int): FloatArray =
-        runModel(modelFile, dimension) { buffer ->
+    private fun runLiteRtTextModel(modelFile: File, tokenIds: IntArray, inputType: String, dimension: Int): FloatArray =
+        runLiteRtModel(modelFile, dimension) { buffer ->
             when (inputType) {
                 "INT32" -> buffer.writeInt(tokenIds)
                 "INT64" -> buffer.writeLong(LongArray(tokenIds.size) { tokenIds[it].toLong() })
@@ -87,7 +100,7 @@ class LiteRtImageTextEmbeddingEngine(
             }
         }
 
-    private inline fun runModel(
+    private inline fun runLiteRtModel(
         modelFile: File,
         dimension: Int,
         writeInput: (TensorBuffer) -> Unit,
@@ -112,6 +125,61 @@ class LiteRtImageTextEmbeddingEngine(
                 }
             }
         }
+    }
+
+    private fun runOnnxImageModels(
+        modelFile: File,
+        inputs: List<FloatArray>,
+        manifest: RetrievalPackManifest,
+    ): List<FloatArray> {
+        require(modelFile.isFile) { "ONNX image encoder artifact is unavailable" }
+        val environment = OrtEnvironment.getEnvironment()
+        OrtSession.SessionOptions().use { options ->
+            options.setIntraOpNumThreads(2)
+            environment.createSession(modelFile.absolutePath, options).use { session ->
+                require(session.inputNames == setOf(ONNX_IMAGE_INPUT)) { "Unexpected ONNX image inputs" }
+                require(ONNX_POOLER_OUTPUT in session.outputNames) { "ONNX image encoder has no pooler output" }
+                val shape = longArrayOf(1, 3, manifest.imageSize.toLong(), manifest.imageSize.toLong())
+                return inputs.map { values ->
+                    OnnxTensor.createTensor(environment, FloatBuffer.wrap(values), shape).use { input ->
+                        session.run(mapOf(ONNX_IMAGE_INPUT to input)).use { result ->
+                            normalizeEmbedding(readOnnxEmbedding(result, manifest.embeddingDimension), manifest.embeddingDimension)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun runOnnxTextModel(
+        modelFile: File,
+        tokenIds: IntArray,
+        manifest: RetrievalPackManifest,
+    ): FloatArray {
+        require(modelFile.isFile) { "ONNX text encoder artifact is unavailable" }
+        require(manifest.textInputType == "INT64") { "ONNX SigLIP2 text input must be INT64" }
+        val environment = OrtEnvironment.getEnvironment()
+        OrtSession.SessionOptions().use { options ->
+            options.setIntraOpNumThreads(2)
+            environment.createSession(modelFile.absolutePath, options).use { session ->
+                require(session.inputNames == setOf(ONNX_TEXT_INPUT)) { "Unexpected ONNX text inputs" }
+                require(ONNX_POOLER_OUTPUT in session.outputNames) { "ONNX text encoder has no pooler output" }
+                val longs = LongArray(tokenIds.size) { tokenIds[it].toLong() }
+                OnnxTensor.createTensor(environment, LongBuffer.wrap(longs), longArrayOf(1, tokenIds.size.toLong())).use { input ->
+                    session.run(mapOf(ONNX_TEXT_INPUT to input)).use { result ->
+                        return normalizeEmbedding(readOnnxEmbedding(result, manifest.embeddingDimension), manifest.embeddingDimension)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun readOnnxEmbedding(result: OrtSession.Result, dimension: Int): FloatArray {
+        val tensor = result.get(ONNX_POOLER_OUTPUT).orElseThrow { IllegalArgumentException("Missing ONNX pooler output") } as? OnnxTensor
+            ?: error("ONNX pooler output is not a tensor")
+        val buffer = tensor.floatBuffer
+        require(buffer.remaining() == dimension) { "ONNX encoder returned the wrong embedding size" }
+        return FloatArray(dimension).also(buffer::get)
     }
 
     private fun normalizeEmbedding(values: FloatArray, dimension: Int): FloatArray {
@@ -268,3 +336,6 @@ internal class Siglip2VocabTokenizer private constructor(
 
 private const val UNKNOWN_TOKEN_ID = 3
 private const val UNKNOWN_SCORE = -100.0
+private const val ONNX_IMAGE_INPUT = "pixel_values"
+private const val ONNX_TEXT_INPUT = "input_ids"
+private const val ONNX_POOLER_OUTPUT = "pooler_output"

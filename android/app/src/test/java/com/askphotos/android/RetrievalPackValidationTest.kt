@@ -3,9 +3,11 @@ package com.askphotos.android
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
 import java.security.Signature
+import java.util.Base64
 
 class RetrievalPackValidationTest {
     @Test
@@ -66,8 +68,61 @@ class RetrievalPackValidationTest {
         assertEquals(1f, output[2 * 224 * 224], 1e-6f)
     }
 
+    @Test
+    fun pinnedOnnxQuantizedDualEncoderManifestIsAccepted() {
+        val keys = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+        val manifest = RetrievalPackManifest.parse(onnxManifestBytes(sha256(keys.public.encoded)))
+
+        assertEquals(RETRIEVAL_RUNTIME_ONNX, manifest.runtime)
+        assertEquals(ONNX_RUNTIME_VERSION, manifest.runtimeVersion)
+        assertEquals(ONNX_SIGLIP2_REPOSITORY, manifest.artifactRepository)
+        assertEquals("ba1f3b0843f24bc5417d38e19c37b287d719b2f4", manifest.artifactRevision)
+    }
+
+    @Test
+    fun onnxRuntimeRejectsTfliteArtifacts() {
+        val keys = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+        val invalid = onnxManifestBytes(sha256(keys.public.encoded)).toString(Charsets.UTF_8)
+            .replace("vision_model_quantized.onnx", "vision_model_quantized.tflite")
+
+        assertTrue(runCatching { RetrievalPackManifest.parse(invalid.toByteArray()) }.isFailure)
+    }
+
+    @Test
+    fun exportedTokenizerUsesSentencePieceWordBoundary() {
+        val keys = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+        val manifest = RetrievalPackManifest.parse(onnxManifestBytes(sha256(keys.public.encoded)))
+        val vocab = File.createTempFile("siglip-tokenizer-", ".vocab")
+        try {
+            vocab.bufferedWriter().use { output ->
+                output.appendLine("AGTOK1")
+                repeat(1_000) { id ->
+                    val piece = when (id) {
+                        10 -> "\u2581hello"
+                        11 -> "\u2581world"
+                        else -> "unused$id"
+                    }
+                    output.append(id.toString()).append('\t').append((-id).toString()).append('\t')
+                        .append(Base64.getEncoder().encodeToString(piece.toByteArray())).appendLine()
+                }
+            }
+
+            val ids = Siglip2VocabTokenizer.load(vocab).encode("Hello world", manifest)
+
+            assertEquals(10, ids[0])
+            assertEquals(11, ids[1])
+            assertEquals(1, ids[2])
+        } finally {
+            vocab.delete()
+        }
+    }
+
     private fun manifestBytes(keyFingerprint: String): ByteArray = """
         {"schemaVersion":1,"packId":"siglip2-base-p16-224","packVersion":"test-1","source":{"model":"google/siglip2-base-patch16-224","revision":"0123456789012345678901234567890123456789","license":"apache-2.0"},"runtime":{"name":"LiteRT","version":"2.1.0"},"embedding":{"dimension":768,"normalized":true,"minimumSimilarity":0.1},"image":{"size":224,"layout":"NCHW","resize":"BICUBIC","mean":[0.5,0.5,0.5],"std":[0.5,0.5,0.5]},"text":{"length":64,"lowercase":true,"padTokenId":0,"eosTokenId":1,"inputType":"INT64"},"signing":{"algorithm":"SHA256withRSA","keySha256":"$keyFingerprint"},"files":[{"role":"image_encoder","name":"image_encoder.tflite","sizeBytes":1,"sha256":"${"00".repeat(32)}"},{"role":"text_encoder","name":"text_encoder.tflite","sizeBytes":1,"sha256":"${"11".repeat(32)}"},{"role":"tokenizer_vocab","name":"tokenizer.vocab","sizeBytes":1,"sha256":"${"22".repeat(32)}"},{"role":"license","name":"LICENSE.txt","sizeBytes":1,"sha256":"${"33".repeat(32)}"}]}
+    """.trimIndent().toByteArray()
+
+    private fun onnxManifestBytes(keyFingerprint: String): ByteArray = """
+        {"schemaVersion":1,"packId":"siglip2-base-p16-224-q8","packVersion":"ba1f3b0-q8","source":{"model":"google/siglip2-base-patch16-224","revision":"75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2","license":"apache-2.0"},"artifact":{"repository":"onnx-community/siglip2-base-patch16-224-ONNX","revision":"ba1f3b0843f24bc5417d38e19c37b287d719b2f4"},"runtime":{"name":"ONNX Runtime","version":"1.23.2"},"embedding":{"dimension":768,"normalized":true,"minimumSimilarity":0.1},"image":{"size":224,"layout":"NCHW","resize":"BICUBIC","mean":[0.5,0.5,0.5],"std":[0.5,0.5,0.5]},"text":{"length":64,"lowercase":true,"padTokenId":0,"eosTokenId":1,"inputType":"INT64"},"signing":{"algorithm":"SHA256withRSA","keySha256":"$keyFingerprint"},"files":[{"role":"image_encoder","name":"vision_model_quantized.onnx","sizeBytes":1,"sha256":"${"00".repeat(32)}"},{"role":"text_encoder","name":"text_model_quantized.onnx","sizeBytes":1,"sha256":"${"11".repeat(32)}"},{"role":"tokenizer_vocab","name":"tokenizer.vocab","sizeBytes":1,"sha256":"${"22".repeat(32)}"},{"role":"license","name":"LICENSE.txt","sizeBytes":1,"sha256":"${"33".repeat(32)}"}]}
     """.trimIndent().toByteArray()
 
     private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
