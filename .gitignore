@@ -3,6 +3,7 @@
 .model-download-venv/
 .run/
 artifacts/
+/android-diagnostics/
 /build/
 models/
 backups/

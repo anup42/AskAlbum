@@ -182,3 +182,12 @@ Latest artifacts:
 - Exact previous-year/2024 time ranges still came from Kotlin and were asserted. Required English/Hindi/Hinglish retrieval concepts were present, and every plan passed the production validator.
 - Peak observed post-close PSS across cases was 255,157 KB. Thermal status remained 1; skin rose from approximately 39.6 C to 41.1 C. No ANR, OOM, crash, or fallback was observed.
 - Grounded-answer and one-image visual-verifier acceptance remain separate outstanding gates; no claim is made for them here.
+
+## Grounded answer and targeted visual verification on SM-F731U
+
+- `RealGemmaGroundedAnswerAcceptanceTest`: PASS, 2 tests in 10.831 seconds. The evidence-backed case used GPU E2B once, produced two claims citing only the two supplied evidence IDs, preserved deterministic exactness/coverage, and required no repair or fallback. The empty-evidence case bypassed Gemma and emitted no claims or evidence.
+- Grounded-answer timing: load 5.693 s, generation 4.700 s, close 0.372 s, wall 10.774 s. PSS rose from 76,905 KB before inference to 237,793 KB after close.
+- `RealGemmaVisualVerifierAcceptanceTest`: PASS, 1 test in 15.638 seconds. One locally generated CC0 synthetic image was checked against three hard relationship/negation conditions in one GPU E2B call; all three passed, the candidate was accepted, exactly three provenance-linked evidence records were created, and failures were empty.
+- Visual timing: load 5.672 s, generation 9.288 s, close 0.548 s, wall 15.551 s. PSS rose from 84,748 KB to 269,504 KB after close.
+- Thermal status remained 1; post-run skin temperature was approximately 39.2 C. Compact diagnostics at `android-diagnostics/20260722_152435/` contained zero target fatal exceptions, ANRs, OOMs, or crash markers and recorded normal instrumentation exit.
+- These gates use bounded synthetic/local evidence and do not claim exhaustive real-gallery visual accuracy. Retained-5k indexing, people identity, and 20k connected acceptance remain outstanding.

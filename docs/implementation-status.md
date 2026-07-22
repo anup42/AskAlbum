@@ -2649,3 +2649,45 @@ Failures and limitations:
 Next phase:
 
 - Run real E2B grounded-answer and targeted one-image verifier acceptance as a separate thermal-bounded slice. Then resume the retained 5k index and measure vector coverage/query latency.
+
+## Phase 7C - Real E2B grounded answers and targeted visual verification (22 July 2026)
+
+Status: **PASSED on Samsung SM-F731U. Evidence-only answer composition, empty-evidence no-fabrication behavior, and one-image/three-condition multimodal verification all passed with the installed pinned E2B pack.**
+
+Source changes:
+
+- No production-code repair was required. The existing grounded-answer and visual-verifier implementations passed their strict connected-device acceptance contracts.
+- Updated `docs/implementation-status.md` and `docs/connected-device-test-report.md` with exact commands, timings, memory, thermal state, and limitations.
+
+Grounded-answer acceptance:
+
+- `RealGemmaGroundedAnswerAcceptanceTest`: PASS, 2 tests in 10.831 seconds.
+- Evidence-backed case: real GPU E2B, one generation call, no repair/fallback, two input evidence records, two output claims, load 5,693 ms, generation 4,700 ms, close 372 ms, elapsed 10,771 ms, wall 10,774 ms.
+- Memory: PSS 76,905 KB before inference and 237,793 KB after model close.
+- Every claim cited at least one existing evidence ID; every answer-level evidence ID belonged to the supplied packet. Exactness and indexed/eligible coverage were preserved from deterministic input.
+- Empty-evidence case bypassed Gemma, retained the deterministic no-match answer, emitted no claims, and could not fabricate evidence.
+
+Targeted visual-verifier acceptance:
+
+- `RealGemmaVisualVerifierAcceptanceTest`: PASS, 1 test in 15.638 seconds.
+- The test generated one local CC0 synthetic 1,200×900 relationship image and deleted its cache file in `finally`. No gallery or network content was used.
+- One candidate and exactly three hard conditions were sent to E2B: Person A wears a yellow hat, Person B wears a blue suit, and no other visible person wears a yellow hat.
+- Real GPU E2B, one generation call, zero repaired candidates, load 5,672 ms, generation 9,288 ms, close 548 ms, elapsed 15,545 ms, wall 15,551 ms.
+- Memory: PSS 84,748 KB before inference and 269,504 KB after model close.
+- The sole candidate was accepted only after all three condition IDs (`c1`, `c2`, `c3`) returned satisfied with bounded confidence. The result produced exactly three evidence records with the candidate media ID, `visual_verification` source field, and E2B producer version; failures were empty.
+
+Diagnostics and resource state:
+
+- Device thermal status was 1 before grounded composition, before visual verification, and after both; post-run skin temperature was approximately 39.2 C.
+- Compact package-focused diagnostics were collected under `android-diagnostics/20260722_152435/`. Filtered counts: zero `FATAL EXCEPTION`, zero target ANR, zero `OutOfMemoryError`, and zero target crash markers. Instrumentation exited with result code 0.
+- LiteRT loaded the text, vision encoder, and vision adapter locally. GPU delegation was active; a missing optional OpenCL sampler shared library used LiteRT's statically linked sampler fallback without failing inference.
+- Installed E2B, SigLIP2 q8, the retained 83-item core gallery, and the retained 5k stress gallery were preserved. No cloud endpoint or personal-media byte was used by these tests.
+
+Failures and limitations:
+
+- This proves one evidence-grounded relationship answer and one targeted single-image relationship/negation verifier case. It does not prove visual verification over every real-gallery condition or device tier.
+- Full retained-5k OCR/embedding/event completion, vector-query performance, people identity Q07/Q08, and every connected 20k gate remain outstanding.
+
+Next phase:
+
+- Resume the retained 5k index under the thermal admission policy, measure stage/vector progress and query latency, and stop automatically if the device reaches MODERATE. Keep people identity and 20k acceptance as separate slices.
