@@ -16,6 +16,9 @@ object GroundedEvidencePacketBuilder {
 
     fun build(input: GroundedAnswerInput): GroundedEvidencePacket {
         val baseline = requireNotNull(input.deterministicAnswer) { "A deterministic baseline answer is required" }
+        require(input.hits.none(SensitiveEvidencePolicy::requiresAuthentication)) {
+            "Sensitive OCR requires device authentication before an evidence packet can be built"
+        }
         val activeMediaIds = input.hits.mapTo(mutableSetOf()) { it.item.id }
         val evidence = input.hits.asSequence()
             .flatMap { it.evidence.asSequence() }

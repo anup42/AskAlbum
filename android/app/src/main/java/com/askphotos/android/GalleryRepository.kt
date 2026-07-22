@@ -306,7 +306,10 @@ class GalleryRepository(context: Context) {
 
         val matchCount = if (verification.applied) verified.size else ranked.size
         val deterministicAnswer = buildAnswer(plan, hits, allItems, matchCount, verification)
-        val answer = if (shouldComposeGroundedAnswer(plan, hits, verification)) {
+        val requiresAuthentication = hits.any(SensitiveEvidencePolicy::requiresAuthentication)
+        val answer = if (requiresAuthentication) {
+            SensitiveEvidencePolicy.lock(deterministicAnswer)
+        } else if (shouldComposeGroundedAnswer(plan, hits, verification)) {
             emit(QueryProgress.ComposingAnswer)
             groundedAnswerComposer.compose(GroundedAnswerInput(plan, hits, deterministicAnswer)).answer
         } else {

@@ -32,6 +32,25 @@ class ResultPresentationRankerTest {
     }
 
     @Test
+    fun identicalVisualHashesDoNotCollapseDocumentsWithDifferentOcr() {
+        val distinct = DuplicateCollapse.collapse(
+            listOf(
+                hit("wifi", hash = 42, ocrText = "Password: mango-tree-2048"),
+                hit("hotel", hash = 42, ocrText = "Booking: TEST-SG-1203"),
+            ),
+        )
+        val duplicate = DuplicateCollapse.collapse(
+            listOf(
+                hit("wifi-a", hash = 42, ocrText = "Password: mango-tree-2048"),
+                hit("wifi-b", hash = 42, ocrText = "  password:  MANGO-TREE-2048 "),
+            ),
+        )
+
+        assertEquals(listOf("wifi", "hotel"), distinct.map { it.item.id })
+        assertEquals(1, duplicate.size)
+    }
+
+    @Test
     fun eventDiversitySpreadsFirstScreenWithoutDroppingResults() {
         val hits = listOf(hit("e1a"), hit("e1b"), hit("e2"), hit("e3"))
         val events = mapOf("e1a" to 1L, "e1b" to 1L, "e2" to 2L, "e3" to 3L)
@@ -47,6 +66,7 @@ class ResultPresentationRankerTest {
         hash: Long? = null,
         capturedAt: Long? = null,
         quality: Float? = null,
+        ocrText: String = "",
     ) = SearchHit(
         item = GalleryItem(
             id = id,
@@ -66,6 +86,7 @@ class ResultPresentationRankerTest {
             height = 100,
             perceptualHash = hash,
             qualityScore = quality,
+            ocrText = ocrText,
         ),
         score = 1.0,
         evidence = emptyList(),

@@ -229,3 +229,14 @@ Recovery disclosure:
 - Host gate: ConsumerDebug unit tests, lint, and Android-test assembly PASS in one 87.5-second Gradle invocation.
 - Latest stress snapshot: 5,000 unique rows, 578 READY, 528 real signed-q8 vectors persisted, 4,422 pending gallery rows, one 24-vector embedding batch in flight, zero permanent/retryable failures, thermal status 0. Full 5k coverage remains incomplete.
 - No sample cleanup was run in this slice. No personal media was deleted or modified. Derived PDF previews are app-private and deletion is restricted to the exact validated PDF preview directory.
+
+## Sensitive OCR pre-authentication acceptance
+
+- Date/device: 22 July 2026; Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550. Serial is masked in artifacts.
+- `SensitiveOcrRedactionAcceptanceTest`: PASS, one test in 32.3 seconds after final repair.
+- The retained `synthetic_wifi_card.png` was READY and its on-device OCR contained the fictitious CC0 credential `mango-tree-2048`. Real E2B produced a valid `ANSWER_FACT` plan and the repaired retrieval path returned that item.
+- Before authentication, the answer contained only a locked headline/detail, `requiresAuthentication=true`, zero claims, and zero evidence IDs. Building a Gemma evidence packet from the sensitive hit failed closed. Raw credential text was inspected only inside the instrumented local-process assertion and was not emitted to reports or network services.
+- Root cause of the initial retrieval miss: identical coarse perceptual hashes collapsed visually similar synthetic documents despite different OCR. Production duplicate collapse now requires matching normalized OCR when either item contains text; focused JVM regressions pass.
+- ConsumerDebug unit tests and lint: PASS in 77.3 seconds. Final app/test replace-install preserved E2B, SigLIP2, Room/vector state, and both retained run-scoped sample galleries.
+- BiometricPrompt interaction itself was not automated; device-auth success/error callbacks remain framework-driven and the test proves the pre-authentication failure-closed boundary.
+- The independently running 5k checkpoint reached 945 READY media and 864 persisted real SigLIP2 vectors at thermal status 0 with zero failures; indexing remains active and incomplete.

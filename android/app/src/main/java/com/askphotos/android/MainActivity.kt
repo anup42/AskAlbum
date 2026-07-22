@@ -202,7 +202,7 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                 state.destination == AppDestination.ONBOARDING -> OnboardingScreen(
                     onContinue = { viewModel.navigate(AppDestination.ASK) },
                 )
-                state.destination == AppDestination.ASK -> AskScreen(state, viewModel)
+                state.destination == AppDestination.ASK -> AskScreen(state, viewModel, evidenceGate::open)
                 state.destination == AppDestination.RESULTS -> ResultsScreen(
                     outcome = state.outcome,
                     onEvidence = evidenceGate::open,
@@ -342,7 +342,7 @@ private val suggestions = listOf(
 )
 
 @Composable
-private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel) {
+private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel, onEvidence: (SearchHit) -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         modifier = Modifier.fillMaxSize().semantics { contentDescription = "Ask results" },
@@ -448,7 +448,7 @@ private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel) {
                 }
             }
             items(state.progressiveHits.take(8), key = { "progress-${it.item.id}" }) { hit ->
-                ResultTile(hit, onClick = { viewModel.showEvidence(hit) })
+                ResultTile(hit, onClick = { onEvidence(hit) })
             }
         }
 
@@ -540,7 +540,7 @@ private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FactPill(outcome.answer.exactness.name.replace('_', ' '))
                 FactPill("${outcome.elapsedMs} ms")
-                FactPill("${outcome.answer.evidenceIds.size} evidence")
+                FactPill(if (outcome.answer.requiresAuthentication) "AUTH REQUIRED" else "${outcome.answer.evidenceIds.size} evidence")
             }
             if (outcome.plan.baseResultIds != null) {
                 Spacer(Modifier.height(10.dp))

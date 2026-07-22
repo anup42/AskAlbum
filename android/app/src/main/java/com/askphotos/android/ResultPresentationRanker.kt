@@ -28,6 +28,7 @@ object DuplicateCollapse {
             val aHash = a.perceptualHash ?: continue
             val bHash = b.perceptualHash ?: continue
             if (a.kind != b.kind) continue
+            if (!ocrContentCompatible(a.ocrText, b.ocrText)) continue
             val distance = VisualFeatureExtractor.hammingDistance(aHash, bHash)
             val samePixels = aHash == bHash
             val sameBurst = a.capturedAt != null && b.capturedAt != null && abs(a.capturedAt - b.capturedAt) <= BURST_WINDOW_MS
@@ -44,6 +45,15 @@ object DuplicateCollapse {
             representative.copy(duplicateIds = members.filter { it != representativeIndex }.map { hits[it].item.id })
         }
     }
+
+    private fun ocrContentCompatible(left: String, right: String): Boolean {
+        val normalizedLeft = normalizeOcr(left)
+        val normalizedRight = normalizeOcr(right)
+        if (normalizedLeft.isEmpty() && normalizedRight.isEmpty()) return true
+        return normalizedLeft.isNotEmpty() && normalizedLeft == normalizedRight
+    }
+
+    private fun normalizeOcr(value: String): String = value.lowercase().replace(Regex("\\s+"), " ").trim()
 }
 
 object EventDiversity {

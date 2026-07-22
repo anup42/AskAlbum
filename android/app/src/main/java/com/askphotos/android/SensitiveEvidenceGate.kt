@@ -5,16 +5,6 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 
-object SensitiveContentClassifier {
-    private val patterns = listOf(
-        Regex("(?i)\\b(password|passcode|pin|cvv|account number|medical record|diagnosis)\\b"),
-        Regex("\\b(?:\\d[ -]*?){13,19}\\b"),
-        Regex("(?i)\\b(aadhaar|passport|social security|ssn)\\b"),
-    )
-
-    fun isSensitive(text: String): Boolean = text.isNotBlank() && patterns.any { it.containsMatchIn(text) }
-}
-
 class SensitiveEvidenceGate(
     private val activity: FragmentActivity,
     private val onAuthorized: (SearchHit) -> Unit,
@@ -36,7 +26,7 @@ class SensitiveEvidenceGate(
     )
 
     fun open(hit: SearchHit) {
-        if (!SensitiveContentClassifier.isSensitive(hit.item.ocrText)) {
+        if (!SensitiveEvidencePolicy.requiresAuthentication(hit)) {
             onAuthorized(hit)
             return
         }

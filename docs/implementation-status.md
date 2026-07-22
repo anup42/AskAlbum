@@ -2837,3 +2837,39 @@ Connected-device state and limitations:
 Next phase:
 
 - Continue the same checkpointed 5k foreground run to full coverage, then run stored-vector retrieval metrics. Keep the 20k MediaStore/index and licensed people-identity gates as independent work.
+
+## Phase 9B - sensitive OCR authentication boundary and document-recall repair (22 July 2026)
+
+Status: **PASS on the connected reference device.** High-risk OCR is withheld from Gemma and answer cards until device authentication, including progressive early-result entry points.
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/{SensitiveEvidencePolicy,SensitiveEvidenceGate,GalleryRepository,GalleryModels,GroundedAnswerCodec,MainActivity,ResultPresentationRanker}.kt`
+- `android/app/src/test/java/com/askphotos/android/{GroundedAnswerCodecTest,ResultPresentationRankerTest}.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/SensitiveOcrRedactionAcceptanceTest.kt`
+
+Architecture decisions:
+
+- Sensitive classification is now a pure policy shared by retrieval, answer composition, and the biometric/device-credential UI gate. Locked answers expose no factual value, claim, or evidence ID.
+- `GroundedEvidencePacketBuilder` rejects an input hit containing password, payment-card, identity-number, or medical-pattern OCR. This is a defense-in-depth boundary before any Gemma prompt is constructed.
+- Gallery, final-result, and progressive early-result tiles all route through the same `SensitiveEvidenceGate`; early candidates no longer bypass authentication.
+- Exact pHash equality is insufficient for text-bearing media. Duplicate collapse now requires normalized OCR equality whenever either candidate has OCR, preventing visually similar white documents from hiding distinct credentials or facts.
+
+Commands and tests actually run:
+
+- Focused `GroundedAnswerCodecTest` and `ResultPresentationRankerTest`, plus Android-test Kotlin compilation: PASS.
+- Full `:app:testConsumerDebugUnitTest :app:lintConsumerDebug`: PASS in 77.3 seconds. Lint report: `android/app/build/reports/lint-results-consumerDebug.html`.
+- ConsumerDebug assemble and replace-install through the bundled Android workflow: PASS; retained models, Room state, vectors, and sample MediaStore rows survived.
+- Direct `SensitiveOcrRedactionAcceptanceTest`: PASS, one test in 32.3 seconds. Real E2B produced an `ANSWER_FACT` plan; the indexed synthetic Wi-Fi card was retrieved; raw `mango-tree-2048` stayed only in local OCR/hit evidence; the rendered answer was locked with no claims/evidence IDs; evidence-packet construction rejected the hit.
+
+Failure and repair evidence:
+
+- The first test build exposed a non-`Unit` JUnit signature and did not execute product logic. After correction, the test proved the Wi-Fi row and credential OCR existed but retrieval omitted it.
+- Diagnostic output showed other visually similar synthetic documents replacing the Wi-Fi card. Root cause was unconditional collapse for exact pHash matches. The OCR-compatibility regression now proves distinct text documents remain separate while normalized OCR duplicates still collapse.
+- One adb streamed replace-install returned an empty transport failure despite 189 GB free; an isolated retry succeeded. This was not counted as a product pass until instrumentation completed.
+
+Limitations:
+
+- Authentication prompt success/cancellation uses AndroidX BiometricPrompt with strong biometric or device credential. Automated acceptance proves pre-auth redaction and prompt routing; it does not automate a user's biometric gesture.
+- Sensitive OCR remains stored app-private as required for local search. Database-at-rest encryption remains a separate outstanding hardening gate.
+- Concurrent retained-5k progress after this gate: 945 READY, 864 persisted signed-q8 SigLIP2 vectors, zero retryable/permanent failures, thermal status 0. Full coverage remains incomplete.

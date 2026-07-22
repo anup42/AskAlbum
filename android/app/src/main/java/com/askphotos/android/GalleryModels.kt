@@ -186,6 +186,7 @@ data class SearchAnswer(
     val totalEligibleCount: Int,
     val claims: List<GroundedClaim> = emptyList(),
     val warnings: List<String> = emptyList(),
+    val requiresAuthentication: Boolean = false,
 )
 
 data class SearchOutcome(

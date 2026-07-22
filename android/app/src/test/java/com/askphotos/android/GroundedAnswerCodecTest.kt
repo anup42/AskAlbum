@@ -64,6 +64,28 @@ class GroundedAnswerCodecTest {
     }
 
     @Test
+    fun sensitiveEvidenceIsLockedAndRejectedBeforeGemmaPacketConstruction() {
+        val item = item("private").copy(ocrText = "Wi-Fi password: mango-tree-2048")
+        val hit = SearchHit(
+            item,
+            1.0,
+            listOf(evidence("PRIVATE", item.id, "Password: mango-tree-2048")),
+        )
+        val locked = SensitiveEvidencePolicy.lock(baseline())
+
+        assertTrue(SensitiveEvidencePolicy.requiresAuthentication(hit))
+        assertTrue(locked.requiresAuthentication)
+        assertTrue(locked.evidenceIds.isEmpty())
+        assertTrue(locked.claims.isEmpty())
+        assertFalse(locked.headline.contains("mango", ignoreCase = true))
+        assertThrows(IllegalArgumentException::class.java) {
+            GroundedEvidencePacketBuilder.build(
+                GroundedAnswerInput(plan(), listOf(hit), baseline()),
+            )
+        }
+    }
+
+    @Test
     fun boundedCompilerUsesAtMostOneRepair() = runBlocking {
         var calls = 0
         val decoded = BoundedGemmaAnswerCompiler(codec).compile(packet, "initial") {
