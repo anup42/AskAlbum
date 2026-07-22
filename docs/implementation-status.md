@@ -2247,6 +2247,72 @@ Next phase:
 
 - Implement and accept the opt-in people/identity slice, then run the 5k and 20k performance/recovery gates as separate bounded tasks.
 
+## Phase 2E - Seedable 5k/20k stress profiles and transfer-scale audit (22 July 2026)
+
+Status: **Host corpus generation/verification passed. Physical-device stress seeding is NOT PASSED; two bounded transport repair cycles failed before MediaStore insertion, so further transport work stopped.**
+
+Files changed:
+
+- `tools/sample_gallery/generate_stress_gallery.py`
+- `tools/sample_gallery/test_generate_stress_gallery.py`
+- `tools/device/seed_gallery.py`
+- `tools/device/test_seed_gallery.py`
+- `android/app/src/debug/java/com/askphotos/android/TestGallerySeederReceiver.kt`
+- `docs/implementation-status.md`
+- `docs/connected-device-test-report.md`
+
+Architecture decisions:
+
+- Stress profiles now emit the same `gallery-manifest.json` contract required by the safe MediaStore seeder, instead of producing media plus an unusable mapping only.
+- Every stress item preserves the licensed source ID, exact core derivative ID, license, synthetic marker, labels, event/album, capture timestamp, and GPS. The profile also retains `stress-mapping.json` for evaluation lineage.
+- Stress generation fails closed when the destination media directory is nonempty, preventing stale files from silently diverging from the manifest.
+- The shared checksum ledger is updated profile-by-profile without deleting core or other stress-profile entries. Archive hashing in the device harness is streamed in 1 MiB blocks instead of loading a possible 500 MiB archive into host memory.
+- The debug receiver's extraction ceiling is now exactly 20,001 entries (20,000 media plus one manifest). Archive-size, extracted-size, canonical-path, filename, MIME, and run-ID checks remain enforced.
+- An experimental binary provider stream was tested, failed at real scale, and was removed from final source. The verified small chunk transport remains the only enabled path.
+
+Host verification actually run:
+
+```powershell
+python -m unittest discover -p 'test_*.py'  # tools/sample_gallery: 3 PASS
+python -m unittest discover -p 'test_*.py'  # tools/device: 12 PASS
+python tools/sample_gallery/build_sample_gallery.py --profile stress-5k --output build/sample-gallery/stress-5k
+python tools/sample_gallery/build_sample_gallery.py --profile stress-20k --output build/sample-gallery/stress-20k
+python tools/sample_gallery/verify_licenses.py --gallery build/sample-gallery/stress-5k
+python tools/sample_gallery/verify_licenses.py --gallery build/sample-gallery/stress-20k
+```
+
+Generated profiles:
+
+| Profile | Items | Media bytes | Mapping SHA-256 | Verification |
+|---|---:|---:|---|---|
+| stress-5k | 5,000 | 107,139,872 | `96598e0c4b54844ade1f4a1811f360412f268219d4a1e904171f88c61b2e2234` | manifest/media, 19 license records, checksums, EXIF/GPS PASS |
+| stress-20k | 20,000 | 428,313,795 | `d5e6fb280dd639ae25d647ff18f333a78f6f6a3d5a5cb154631ddcc7e96fb04e` | manifest/media, 19 license records, checksums, EXIF/GPS PASS |
+
+Connected-device work:
+
+- Final ConsumerDebug source build/install: PASS on Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550. Device free space was approximately 190 GiB, so storage was not the blocker.
+- Transfer cycle 1 used the existing SHA-256-validated, resumable chunk provider. It reached 2,200 of 8,980 chunks with 24 successful transient retries, then eight parallel adb calls remained stuck beyond their 30-second command timeout. The single host seed process was terminated; no seed receiver broadcast or MediaStore insertion had begun.
+- Transfer cycle 2 tested a binary `content write` provider route after its small on-device hash/size contract passed. At real scale Android delivered only 2,497,180 of the expected 110,337,694 archive bytes. Exact adoption rejected the partial file before extraction or MediaStore insertion.
+- Per the two-cycle rule, no third transfer repair was attempted. The experimental route was removed, the provider `abort` call deleted this run's app-private input, and final read-only checks proved `InputDirectoryExists=false` and `SeedStatusExists=false`.
+- The retained 83-item corpus and personal media were not modified. No 5k/20k MediaStore/index/recovery result is claimed.
+
+Artifacts:
+
+- `artifacts/device-runs/stress5k_actual_20260722_f731u/seed-command.txt`
+- `artifacts/device-runs/stress5k_actual_20260722_f731u/transfer-progress.json`
+- `artifacts/device-runs/stress5k_actual_20260722_f731u/seed-stream-command.txt`
+- `artifacts/device-runs/stress5k_actual_20260722_f731u/provider-transport-tests.txt`
+- `artifacts/device-runs/stress5k_actual_20260722_f731u/provider-transport-tests-final.txt`
+
+Failures and limitations:
+
+- The profiles are reproducible, licensed, checksum-verified, and now seed-contract compatible, but actual 5k/20k MediaStore discovery, database import, process-death recovery, full embedding indexing, ANR/OOM, and end-to-end latency remain unproven.
+- The previously accepted 5k/20k native FP16 vector benchmark remains valid but must not be presented as proof of gallery-scale media ingestion.
+
+Next phase:
+
+- As a separate transport task, implement a bounded large-file debug import route that does not depend on thousands of concurrent adb processes or Android `content write` stdin. It must verify the host/device SHA-256 before extraction, retain canonical app-owned staging, and pass a small/5k contract before attempting 20k.
+
 ## Phase 7B - Structured core evaluator and deterministic aggregation correction (22 July 2026)
 
 Status: **Implemented and host-verified; full Q01-Q13 device execution NOT RUN because the reference SM-F966B disconnected before the suite started.**

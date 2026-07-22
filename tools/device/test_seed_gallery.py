@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from seed_gallery import parse_complete_seed
+from seed_gallery import parse_complete_seed, sha256_file
 
 
 class ExistingSeedResultTest(unittest.TestCase):
@@ -23,6 +25,12 @@ class ExistingSeedResultTest(unittest.TestCase):
             "runId": "sample_run",
             "createdUris": ["file:///sdcard/picture.jpg"],
         }).encode(), "sample_run"))
+
+    def test_streaming_sha256_does_not_load_the_archive_contract_into_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "archive.zip"
+            archive.write_bytes(b"agentic-gallery-stress")
+            self.assertEqual("66552056b52576f7c98899c56a0366b3c5add5f1fc724844c80bd715b6bd872b", sha256_file(archive))
 
 
 if __name__ == "__main__":

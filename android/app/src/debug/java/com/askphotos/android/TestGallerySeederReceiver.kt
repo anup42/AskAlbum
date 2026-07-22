@@ -389,7 +389,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         const val ACTION_VERIFY_RECOVERY = "com.askphotos.android.test.VERIFY_INDEX_RECOVERY"
         const val EXTRA_RUN_ID = "run_id"
         val RUN_ID = Regex("[A-Za-z0-9_-]{6,64}")
-        const val MAX_ARCHIVE_ENTRIES = 256
+        const val MAX_ARCHIVE_ENTRIES = 20_001
         const val MAX_ARCHIVE_BYTES = 512L * 1024 * 1024
         const val MAX_EXTRACTED_BYTES = 1024L * 1024 * 1024
     }

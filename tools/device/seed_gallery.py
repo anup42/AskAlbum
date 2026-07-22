@@ -41,6 +41,14 @@ def device_mtime(serial: str, package: str, relative_path: str) -> int | None:
         return None
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--serial")
@@ -105,7 +113,7 @@ def main() -> None:
     total_bytes = archive.stat().st_size
     chunk_size = 12 * 1024
     chunk_count = math.ceil(total_bytes / chunk_size)
-    archive_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
+    archive_sha256 = sha256_file(archive)
     try:
         if args.reset_transfer:
             adb(

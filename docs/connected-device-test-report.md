@@ -64,6 +64,7 @@ Detailed commands, run IDs, failures, cleanup counts, and artifact paths are rec
 - SigLIP2 q8 retrieval pack: INSTALLED and semantic smoke acceptance PASSED after the SentencePiece BPE repair. The run-scoped core Q01-Q13 evaluator now passes every implemented case on SM-F731U; multilingual retrieval and 5k/20k performance gates remain pending.
 - Full release acceptance and universal performance claims: NOT CLAIMED.
 - The planner needed its permitted repair call for all three language fixtures; first-pass structured output remains an optimization target.
+- Actual stress-gallery ingestion: NOT PASSED. The generated 5k/20k profiles now verify and satisfy the seeder manifest contract, but the 5k device transfer stopped after two failed transport cycles before any MediaStore insertion. Existing native FP16 5k/20k measurements prove vector scanning only, not media ingestion.
 
 ## Persistent multi-domain test gallery
 
@@ -111,3 +112,12 @@ Latest artifacts:
 - `artifacts/device-runs/persistent_multidomain_20260722_f731u/core-q01-q13-corroborated-followup.txt`
 - `artifacts/device-runs/persistent_multidomain_20260722_f731u/core-q01-q13-corroborated-followup.json`
 - `artifacts/device-runs/persistent_multidomain_20260722_f731u/core-q01-q13-corroborated-followup-errors.txt`
+
+## Stress-profile generation and device-transfer audit
+
+- Host `stress-5k`: 5,000 verified items, 107,139,872 media bytes, mapping SHA-256 `96598e0c4b54844ade1f4a1811f360412f268219d4a1e904171f88c61b2e2234`.
+- Host `stress-20k`: 20,000 verified items, 428,313,795 media bytes, mapping SHA-256 `d5e6fb280dd639ae25d647ff18f333a78f6f6a3d5a5cb154631ddcc7e96fb04e`.
+- Both profiles passed manifest/media equality, the 19-record license whitelist, SHA-256 checksums, EXIF dates/offsets, and declared GPS checks.
+- Device cycle 1 stalled at 2,200/8,980 validated chunks; device cycle 2 was rejected at exact adoption because Android supplied 2,497,180/110,337,694 bytes. Neither cycle reached extraction, the seed broadcast, MediaStore insertion, or app database import.
+- The incomplete app-private input was aborted and verified absent. The connected app was rebuilt/reinstalled from the final source after the experimental transport was removed. The retained 83-item core corpus and personal gallery were not modified.
+- Stress transfer artifacts: `artifacts/device-runs/stress5k_actual_20260722_f731u/`.
