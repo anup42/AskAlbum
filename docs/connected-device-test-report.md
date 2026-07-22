@@ -252,3 +252,10 @@ Recovery disclosure:
 - An earlier lock-screen cold measurement is invalid and discarded. A separate four-iteration cold run lost adb instrumentation before producing a result and is also excluded.
 - Host artifacts: `artifacts/macrobenchmark-gallery-scroll-unlocked-20260722.txt`, `artifacts/macrobenchmark-cold-unlocked-20260722-retry.txt`, and `artifacts/macrobenchmark-fixture-query-20260722-retry.txt`. Diagnostic bundles are local at `android-diagnostics/20260722_183557/` and `android-diagnostics/20260722_183744/`.
 - Latest retained 5k checkpoint before resuming foreground work: 5,000 unique rows, 1,281 READY, 1,128 real signed-q8 vectors, 24 embeddings running, zero failures. No sample cleanup or personal-gallery mutation was performed.
+
+## Persisted 5k semantic-retrieval gate preflight
+
+- Added and compiled `StoredStressVectorRetrievalAcceptanceTest`; compilation passed in 17 seconds.
+- The test requires all 5,000 recorded seed URIs, all 5,000 corresponding Room rows, and all 5,000 persisted signed-q8 vectors before it evaluates retrieval. It checks four deterministic source families, rank 1, precision@10 >= 0.60, and five-run warm text-to-results p95 <= 2,000 ms.
+- The test is NOT RUN because complete coverage is not yet true. Current checkpoint: 1,401 READY, 1,248 vector IDs visible (1,226 embedding stages complete and 22 running), zero failed rows/stages, thermal status 1.
+- The retained foreground operation continues against `fg_index5k_20260722`; no samples were reseeded or removed and no personal-gallery content was touched.

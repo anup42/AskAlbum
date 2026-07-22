@@ -2907,3 +2907,24 @@ Artifacts and limitations:
 - Phase 9C remains incomplete until the fixture-query flow passes and focused host verification is rerun.
 - The scaffold is intentionally incomplete: the enabled fixture-query test and the combined host gate must pass before Phase 9C can be marked complete.
 - Retained 5k checkpoint before the final resume: 5,000 unique rows, 1,281 READY, 1,128 persisted signed-q8 SigLIP2 vectors, 24 embeddings in flight, zero failed rows/stages, thermal status 1. The direct foreground run was resumed after benchmarking without reseeding or deleting media.
+
+## Phase 4D - persisted 5k semantic-retrieval acceptance gate (22 July 2026)
+
+Status: **COMPILED; NOT RUN.** The gate intentionally requires complete run-scoped coverage, while the retained index is still progressing.
+
+Files changed:
+
+- `android/app/src/androidTest/java/com/askphotos/android/StoredStressVectorRetrievalAcceptanceTest.kt`
+
+Acceptance contract:
+
+- Resolve exactly the 5,000 URIs recorded by the run-scoped seed manifest and require a one-to-one Room row set.
+- Require a persisted signed-q8 SigLIP2 vector for every one of those 5,000 IDs before semantic evaluation begins.
+- Evaluate Singapore/Marina Bay, beach sunset, dog, and football queries against the deterministic `stress_NNNNN.jpg` mapping (81 ordered core raster sources), requiring the correct source family at rank 1 and at least 0.60 precision@10.
+- Measure five warm text-to-stored-results searches over the real 5k allowed-ID set and enforce p95 <= 2,000 ms. Emit aggregate latency, memory, precision, and producer data only; no media bytes, OCR text, or device serial are reported.
+
+Verification and current state:
+
+- `:app:compileConsumerDebugAndroidTestKotlin`: PASS in 17 seconds with the explicit installed Android SDK path. Full output: `artifacts/stored-5k-test-compile-20260722.txt`.
+- Instrumentation is intentionally NOT RUN until the strict vector-count precondition can pass; the assertion is not skipped or relaxed for partial coverage.
+- Durable checkpoint during the active foreground run: 5,000 unique media rows, 1,401 READY, 1,248 vector IDs visible (1,226 embedding stages complete and 22 in flight), zero retryable/permanent failures, thermal status 1. No media was reseeded, deleted, or modified.
