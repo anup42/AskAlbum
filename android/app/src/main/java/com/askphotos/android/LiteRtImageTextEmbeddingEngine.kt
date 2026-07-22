@@ -12,7 +12,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
-import java.text.Normalizer
 import java.util.Base64
 import kotlin.math.abs
 import kotlin.math.floor
@@ -254,54 +253,61 @@ internal class Siglip2VocabTokenizer private constructor(
     private val maxPieceChars: Int,
 ) {
     fun encode(text: String, manifest: RetrievalPackManifest): IntArray {
-        var normalized = Normalizer.normalize(text, Normalizer.Form.NFKC)
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        if (manifest.lowercaseText) normalized = normalized.lowercase()
-        normalized = "▁" + normalized.replace(' ', '▁')
+        // The pinned SigLIP2 model uses SentencePiece's identity normalizer with
+        // add_dummy_prefix=false, remove_extra_whitespaces=false and
+        // escape_whitespaces=true. Do not trim, collapse, or NFKC-normalize here.
+        var normalized = if (manifest.lowercaseText) text.lowercase() else text
+        normalized = normalized.replace(' ', '▁')
 
-        val best = arrayOfNulls<Path>(normalized.length + 1)
-        best[0] = Path(score = 0.0, previous = null, tokenIds = intArrayOf(), position = 0)
-        for (start in normalized.indices) {
-            val path = best[start] ?: continue
-            val limit = (start + maxPieceChars).coerceAtMost(normalized.length)
-            for (end in start + 1..limit) {
-                val piece = pieces[normalized.substring(start, end)] ?: continue
-                update(best, end, path, intArrayOf(piece.id), piece.score)
+        val symbols = mutableListOf<Symbol>()
+        var position = 0
+        while (position < normalized.length) {
+            val codePoint = normalized.codePointAt(position)
+            val surface = String(Character.toChars(codePoint))
+            val piece = pieces[surface]
+            if (piece != null) {
+                symbols += Symbol(surface, piece.id)
+            } else {
+                surface.toByteArray(Charsets.UTF_8).forEach { byte ->
+                    symbols += Symbol(null, bytePieces[byte.toInt() and 0xff] ?: UNKNOWN_TOKEN_ID)
+                }
             }
-            val codePoint = normalized.codePointAt(start)
-            val next = start + Character.charCount(codePoint)
-            val fallback = String(Character.toChars(codePoint)).toByteArray(Charsets.UTF_8)
-                .map { bytePieces[it.toInt() and 0xff] ?: UNKNOWN_TOKEN_ID }
-                .toIntArray()
-            update(best, next, path, fallback, UNKNOWN_SCORE)
+            position += Character.charCount(codePoint)
         }
-        val terminal = best[normalized.length] ?: error("Tokenizer could not segment input")
-        val reversed = ArrayDeque<Int>()
-        var node: Path? = terminal
-        while (node?.previous != null) {
-            for (index in node.tokenIds.indices.reversed()) reversed.addFirst(node.tokenIds[index])
-            node = node.previous
+
+        // This pinned tokenizer is SentencePiece BPE (model_type=2), not
+        // unigram. Repeatedly merge the highest-scoring adjacent vocabulary
+        // piece; equal scores are resolved left-to-right, matching SentencePiece.
+        while (symbols.size > 1) {
+            var bestIndex = -1
+            var bestPiece: Piece? = null
+            var bestSurface: String? = null
+            for (index in 0 until symbols.lastIndex) {
+                val left = symbols[index].surface ?: continue
+                val right = symbols[index + 1].surface ?: continue
+                if (left.length + right.length > maxPieceChars) continue
+                val combined = left + right
+                val candidate = pieces[combined] ?: continue
+                if (bestPiece == null || candidate.score > bestPiece.score) {
+                    bestIndex = index
+                    bestPiece = candidate
+                    bestSurface = combined
+                }
+            }
+            if (bestIndex < 0) break
+            symbols[bestIndex] = Symbol(requireNotNull(bestSurface), requireNotNull(bestPiece).id)
+            symbols.removeAt(bestIndex + 1)
         }
-        val ids = reversed.toMutableList()
+
+        val ids = symbols.mapTo(mutableListOf(), Symbol::id)
         val usable = (manifest.textLength - 1).coerceAtLeast(0)
         if (ids.size > usable) ids.subList(usable, ids.size).clear()
         ids.add(manifest.eosTokenId)
         return IntArray(manifest.textLength) { index -> ids.getOrElse(index) { manifest.padTokenId } }
     }
 
-    private fun update(best: Array<Path?>, end: Int, previous: Path, tokenIds: IntArray, scoreDelta: Double) {
-        val candidate = Path(previous.score + scoreDelta, previous, tokenIds, end)
-        if (best[end] == null || candidate.score > best[end]!!.score) best[end] = candidate
-    }
-
     private data class Piece(val id: Int, val score: Double)
-    private data class Path(
-        val score: Double,
-        val previous: Path?,
-        val tokenIds: IntArray,
-        val position: Int,
-    )
+    private data class Symbol(val surface: String?, val id: Int)
 
     companion object {
         fun load(file: File): Siglip2VocabTokenizer {
@@ -319,15 +325,20 @@ internal class Siglip2VocabTokenizer private constructor(
                     val id = columns[0].toInt()
                     val score = columns[1].toDouble()
                     val piece = Base64.getDecoder().decode(columns[2]).toString(Charsets.UTF_8)
-                    require(pieces.put(piece, Piece(id, score)) == null) { "Duplicate tokenizer piece" }
-                    Regex("<0x([0-9A-Fa-f]{2})>").matchEntire(piece)?.let {
-                        bytePieces[it.groupValues[1].toInt(16)] = id
+                    val byteMatch = Regex("<0x([0-9A-Fa-f]{2})>").matchEntire(piece)
+                    if (byteMatch != null) {
+                        require(bytePieces.put(byteMatch.groupValues[1].toInt(16), id) == null) {
+                            "Duplicate tokenizer byte piece"
+                        }
+                    } else if (id !in SPECIAL_TOKEN_IDS) {
+                        require(pieces.put(piece, Piece(id, score)) == null) { "Duplicate tokenizer piece" }
+                        maxChars = maxOf(maxChars, piece.length)
                     }
-                    maxChars = maxOf(maxChars, piece.length)
                     count++
                     require(count <= 300_000) { "Tokenizer vocabulary is too large" }
                 }
                 require(count >= 1_000) { "Tokenizer vocabulary is incomplete" }
+                require(bytePieces.size == 256) { "Tokenizer byte fallback is incomplete" }
             }
             return Siglip2VocabTokenizer(pieces, bytePieces, maxChars)
         }
@@ -335,7 +346,7 @@ internal class Siglip2VocabTokenizer private constructor(
 }
 
 private const val UNKNOWN_TOKEN_ID = 3
-private const val UNKNOWN_SCORE = -100.0
+private val SPECIAL_TOKEN_IDS = setOf(0, 1, 2, 3)
 private const val ONNX_IMAGE_INPUT = "pixel_values"
 private const val ONNX_TEXT_INPUT = "input_ids"
 private const val ONNX_POOLER_OUTPUT = "pooler_output"

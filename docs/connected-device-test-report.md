@@ -33,6 +33,20 @@ Direct instrumentation was used instead of Gradle's uninstalling connected-test 
 
 After the run, thermal status remained 0 and the bounded log window contained no target-app fatal exception, ANR, OOM, or native fatal signal.
 
+## Real SigLIP2 retrieval acceptance
+
+The installed signed `siglip2-base-p16-224-q8` ONNX pack now passes tokenizer and cross-modal retrieval acceptance after correcting the Android SentencePiece implementation to the checkpoint's BPE contract.
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Exact tokenizer IDs | PASS | Red and blue prompts match official SentencePiece IDs exactly |
+| Synthetic color controls | PASS | Red 0.13278 > 0.09285; blue 0.14374 > 0.08645 |
+| Retained CC0 dog query | PASS | Dog 0.07813 > football 0.01419 |
+| Retained CC0 football query | PASS | Football 0.11568 > dog -0.03187 |
+| Stability | PASS | One test in 9.99 s; no fatal exception, ANR, or OOM; thermal status 0 |
+
+The E2B and SigLIP2 generation pointers remained unchanged after state-preserving installation. The persistent 83-item gallery also remains on the device.
+
 ## Other demonstrated connected gates
 
 - ConsumerDebug build/install and deterministic Compose UI flow.
@@ -47,7 +61,7 @@ Detailed commands, run IDs, failures, cleanup counts, and artifact paths are rec
 ## Current limitations and honest skips
 
 - E4B: NOT RUN. It is optional; no verified E4B pack is installed.
-- SigLIP2 q8 retrieval pack: INSTALLED and both ONNX towers executed, but semantic acceptance FAILED. The red-query fixture scored the blue image 0.06414 versus red 0.06094. Recall@K, threshold calibration, and 5k/20k gates remain pending.
+- SigLIP2 q8 retrieval pack: INSTALLED and semantic smoke acceptance PASSED after the SentencePiece BPE repair. Full core Recall@K, no-match threshold calibration, multilingual retrieval, and 5k/20k performance gates remain pending.
 - Full release acceptance and universal performance claims: NOT CLAIMED.
 - The planner needed its permitted repair call for all three language fixtures; first-pass structured output remains an optimization target.
 
@@ -74,5 +88,6 @@ Two direct Android 16 shell MediaStore queries failed on projection/selection pa
 - `artifacts/device-runs/phase8_events_exif_20260722/`
 - `artifacts/device-runs/phase9_network_privacy_20260722/`
 - `artifacts/device-runs/persistent_multidomain_20260722/`
+- `artifacts/device-runs/phase4_siglip2_tokenizer_20260722/`
 
 Generated artifacts may be excluded from Git because they include bulky logs, screenshots, and device-run outputs. The repository-tracked status report preserves their paths and summarized results.

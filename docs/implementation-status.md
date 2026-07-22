@@ -2076,3 +2076,61 @@ python tools\device\cleanup_gallery.py --serial <masked> --package com.askphotos
 Next phase:
 
 - Use Q01-Q13 against this retained corpus while repairing SentencePiece parity for the experimental SigLIP2 q8 pack. Do not reseed or clean this run unless explicitly requested.
+
+## Phase 4D - SigLIP2 SentencePiece BPE parity and semantic acceptance (22 July 2026)
+
+Status: **Passed on the physical device. The installed q8 SigLIP2 image/text pack now has demonstrated tokenizer parity and cross-modal ranking over both synthetic controls and retained CC0 natural images.**
+
+Root cause and architecture correction:
+
+- The pinned `tokenizer.model` reports SentencePiece `model_type=2` (BPE), identity normalization, `add_dummy_prefix=false`, `remove_extra_whitespaces=false`, `escape_whitespaces=true`, and complete UTF-8 byte fallback.
+- The earlier Android implementation incorrectly treated vocabulary scores as unigram whole-path scores, added a dummy prefix, collapsed/trimmed whitespace, applied NFKC, and allowed byte fallback to compete with known pieces. This produced `th + is` instead of the checkpoint's `this` token and invalid text embeddings.
+- Android now preserves the pinned normalizer contract, creates code-point/byte symbols, and repeatedly merges the highest-scoring adjacent BPE pair with deterministic left-to-right tie handling. Byte pieces are excluded from ordinary merges and are used only for otherwise unknown code points.
+- The tokenizer loader now rejects incomplete byte-fallback vocabularies. JVM fixtures cover no dummy prefix, repeated spaces, leading spaces, tab byte fallback, and BPE merge ordering.
+- Real-device acceptance asserts the exact red/blue prompt token IDs emitted by the official SentencePiece processor before running ONNX inference.
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/LiteRtImageTextEmbeddingEngine.kt`
+- `android/app/src/test/java/com/askphotos/android/RetrievalPackValidationTest.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/RealSiglip2RetrievalAcceptanceTest.kt`
+- `tools/model-conversion/README.md`
+- `docs/implementation-status.md`
+- `docs/connected-device-test-report.md`
+
+Verification:
+
+- Host ONNX/SentencePiece oracle: the official q8 towers prefer red for the red prompt and blue for the blue prompt; retained dog and football fixtures also rank correctly.
+- Focused JVM pack/tokenizer suite: PASS (`RetrievalPackValidationTest`), 7 tests.
+- ConsumerDebug assemble/install: PASS on one physical device, state-preserving.
+- ConsumerDebug Android-test assembly and direct test-APK install: PASS.
+- Real SigLIP2 instrumentation: PASS, 1 test in 9.99 seconds. The four synthetic encoder calls took 5.031 seconds.
+- Synthetic similarities: red `0.13278` vs blue `0.09285` for the red prompt; blue `0.14374` vs red `0.08645` for the blue prompt.
+- Retained natural-image similarities: dog `0.07813` vs football `0.01419` for the dog prompt; football `0.11568` vs dog `-0.03187` for the football prompt.
+- PSS trace: 626,837 KB before the measured synthetic block and 288,875 KB after it. Thermal status remained 0; post-run skin was approximately 37.9 C. The bounded diagnostic window contained no target-app fatal exception, ANR, or OOM.
+- E2B and retrieval generation pointers were unchanged after state-preserving app/test installation. The retained `persistent_multidomain_20260722` gallery was not reseeded or cleaned.
+
+Commands run:
+
+```powershell
+.\gradlew.bat :app:testConsumerDebugUnitTest --tests com.askphotos.android.RetrievalPackValidationTest --console=plain
+powershell -ExecutionPolicy Bypass -File <android-build-install-skill> -Root <repo>\android -Module :app -Variant ConsumerDebug -Serial <masked>
+.\gradlew.bat :app:assembleConsumerDebugAndroidTest --console=plain
+adb -s <masked> install -r -t app\build\outputs\apk\androidTest\consumer\debug\app-consumer-debug-androidTest.apk
+adb -s <masked> shell am instrument -w -r -e class com.askphotos.android.RealSiglip2RetrievalAcceptanceTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+Artifacts:
+
+- `artifacts/device-runs/phase4_siglip2_tokenizer_20260722/real-siglip2-retrieval.txt` (first-cycle failure proving the BPE mismatch)
+- `artifacts/device-runs/phase4_siglip2_tokenizer_20260722/real-siglip2-retrieval-final.txt` (passing final gate)
+- `artifacts/device-runs/phase4_siglip2_tokenizer_20260722/diagnostics/20260722_110424/`
+
+Remaining limitations:
+
+- This proves correct dual-encoder behavior on two synthetic controls and two retained natural-image domains. Core Recall@K calibration, the no-match threshold, multilingual retrieval, and 5k/20k latency remain separate required gates.
+- The simple BPE merge implementation prioritizes correctness for short gallery queries. A priority-queue optimization should be benchmarked only if profiling shows tokenizer time matters.
+
+Next phase:
+
+- Run the Q01-Q13 core retrieval evaluation with the corrected encoder, then benchmark exact vector scan/index recovery on the 5k and 20k profiles without changing the accepted tokenizer contract.

@@ -14,6 +14,12 @@ The pack must be signed by the same certificate as the installed APK. The app re
 unknown signatures, changed files, extra ZIP entries, unsafe names, unsupported tensor
 contracts, non-pinned source revisions, and failed conversion parity.
 
+The pinned SigLIP2 tokenizer is SentencePiece BPE (`model_type=2`) with identity
+normalization, no dummy prefix, preserved whitespace, escaped ASCII spaces, and
+UTF-8 byte fallback. Android must merge the highest-scoring adjacent BPE pair;
+unigram/Viterbi segmentation is not compatible with this checkpoint. Device
+acceptance asserts exact token IDs before checking cross-modal ranking.
+
 ## Signed Gemma pack
 
 Wrap an externally obtained, license-compliant LiteRT-LM Gemma 4 model in the app's signed `.agemma` format:

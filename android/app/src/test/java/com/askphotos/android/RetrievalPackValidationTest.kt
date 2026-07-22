@@ -89,7 +89,7 @@ class RetrievalPackValidationTest {
     }
 
     @Test
-    fun exportedTokenizerUsesSentencePieceWordBoundary() {
+    fun exportedTokenizerMatchesPinnedSentencePieceNormalizationAndFallbackRules() {
         val keys = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
         val manifest = RetrievalPackManifest.parse(onnxManifestBytes(sha256(keys.public.encoded)))
         val vocab = File.createTempFile("siglip-tokenizer-", ".vocab")
@@ -98,20 +98,53 @@ class RetrievalPackValidationTest {
                 output.appendLine("AGTOK1")
                 repeat(1_000) { id ->
                     val piece = when (id) {
-                        10 -> "\u2581hello"
-                        11 -> "\u2581world"
+                        0 -> "<pad>"
+                        1 -> "<eos>"
+                        2 -> "<bos>"
+                        3 -> "<unk>"
+                        in 4..259 -> "<0x${(id - 4).toString(16).uppercase().padStart(2, '0')}>"
+                        300 -> "h"
+                        301 -> "e"
+                        302 -> "l"
+                        303 -> "o"
+                        304 -> "\u2581"
+                        305 -> "w"
+                        306 -> "r"
+                        307 -> "d"
+                        310 -> "he"
+                        311 -> "hel"
+                        312 -> "hell"
+                        313 -> "hello"
+                        320 -> "wo"
+                        321 -> "wor"
+                        322 -> "worl"
+                        323 -> "world"
+                        331 -> "\u2581world"
+                        332 -> "\u2581\u2581"
+                        333 -> "\u2581hello"
                         else -> "unused$id"
                     }
-                    output.append(id.toString()).append('\t').append((-id).toString()).append('\t')
+                    val score = when (id) {
+                        310, 320 -> -1
+                        311, 321 -> -2
+                        312, 322 -> -3
+                        313, 323 -> -4
+                        331 -> -5
+                        332 -> -1
+                        333 -> -5
+                        else -> -id
+                    }
+                    output.append(id.toString()).append('\t').append(score.toString()).append('\t')
                         .append(Base64.getEncoder().encodeToString(piece.toByteArray())).appendLine()
                 }
             }
 
-            val ids = Siglip2VocabTokenizer.load(vocab).encode("Hello world", manifest)
+            val tokenizer = Siglip2VocabTokenizer.load(vocab)
 
-            assertEquals(10, ids[0])
-            assertEquals(11, ids[1])
-            assertEquals(1, ids[2])
+            assertTrue(tokenizer.encode("Hello world", manifest).take(3) == listOf(313, 331, 1))
+            assertTrue(tokenizer.encode("Hello  world", manifest).take(4) == listOf(313, 332, 323, 1))
+            assertTrue(tokenizer.encode(" hello", manifest).take(2) == listOf(333, 1))
+            assertTrue(tokenizer.encode("hello\tworld", manifest).take(4) == listOf(313, 13, 323, 1))
         } finally {
             vocab.delete()
         }
