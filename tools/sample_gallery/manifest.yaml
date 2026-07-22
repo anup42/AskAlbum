@@ -42,6 +42,46 @@
         "album": "Goa 2025",
         "labels": ["goa", "beach", "travel", "family", "sunset"]
       }
+    },
+    {
+      "id": "domesticated_dog_01",
+      "provider": "wikimedia_commons",
+      "file_title": "File:Domesticated dog.jpg",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Domesticated_dog.jpg",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1f/Domesticated_dog.jpg/1920px-Domesticated_dog.jpg",
+      "local_cache_name": "domesticated-dog.jpg",
+      "license": "CC0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "author": "Raizkgh",
+      "sha256": "24d01bab4976ec52558be4afc86130ddb4697660e99e9ee6b8092feb5ecf2919",
+      "width": 1920,
+      "height": 2560,
+      "fixture": {
+        "captured_at": "2025-04-19T09:15:00+05:30",
+        "gps": null,
+        "album": "Home and Pets 2025",
+        "labels": ["dog", "pet", "animal", "home", "outdoors"]
+      }
+    },
+    {
+      "id": "children_football_01",
+      "provider": "wikimedia_commons",
+      "file_title": "File:Children playing football during the weekend.jpg",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Children_playing_football_during_the_weekend.jpg",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/8/80/Children_playing_football_during_the_weekend.jpg",
+      "local_cache_name": "children-football.jpg",
+      "license": "CC0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "author": "Samson Ssemakadde",
+      "sha256": "7b53d762554583bba3c8a3fdc88d85dcbadc0211c059363680383a2c51ff475f",
+      "width": 1366,
+      "height": 1647,
+      "fixture": {
+        "captured_at": "2024-11-10T16:30:00+05:30",
+        "gps": null,
+        "album": "Weekend Sports 2024",
+        "labels": ["football", "soccer", "sports", "children", "group", "outdoors", "action"]
+      }
     }
   ],
   "synthetic_license": "CC0 1.0",

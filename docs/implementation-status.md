@@ -2014,3 +2014,65 @@ Failures and limitations:
 - Installation and tensor execution are proven; cross-modal semantic correctness is not. Likely follow-up areas are tokenizer parity against the exported ONNX processor, prompt/preprocessing parity, and a labeled natural-image Recall@K calibration rather than synthetic solid colors.
 - The initial `minimumSimilarity=0.1` is not calibrated and must not be presented as an accepted no-match threshold.
 - The active q8 pack should be treated as experimental until a later, separately authorized repair slice passes natural-image and multilingual retrieval evaluation.
+
+## Phase 2C - persistent multi-domain acceptance gallery (22 July 2026)
+
+Status: **Passed for corpus construction, license/checksum validation, safe physical-device seeding, and app import. The run-scoped gallery is intentionally retained on the device for later functional testing.**
+
+Files changed:
+
+- `tools/sample_gallery/manifest.yaml`
+- `tools/sample_gallery/expected_queries.yaml`
+- `docs/implementation-status.md`
+- `docs/connected-device-test-report.md`
+
+Architecture decisions:
+
+- The existing 75-item core already covered travel/location, beaches and sunsets, city/street scenes, food, flowers, text signs, duplicate variants, people/clothing relations, screenshots, receipts, boarding passes, Wi-Fi, menus, calendar, PDF, no-answer behavior, and video keyframes.
+- Two pinned Wikimedia Commons CC0 sources were added for missing real-image domains: a domestic dog/pet and children playing football outdoors. Four deterministic metadata-preserving variants of each source bring the core corpus to 83 items without exceeding the 60-100 core profile gate.
+- The source download batch was stopped after Wikimedia returned HTTP 429 on later candidates. Existing indoor and document fixtures cover those functions, so no redundant download retry was made.
+- The retained device dataset is isolated under run ID `persistent_multidomain_20260722` in `Pictures/AgenticGalleryTest/` and `Documents/AgenticGalleryTest/`. Cleanup was deliberately not run. Only the exact URI list in the seed artifact may be removed later.
+
+Commands run:
+
+```powershell
+python tools\sample_gallery\build_sample_gallery.py --profile core --output build\sample-gallery\core
+python tools\sample_gallery\verify_licenses.py --gallery build\sample-gallery\core
+python -m unittest test_fixture_metadata.py
+python tools\device\preflight.py --serial <masked> --output artifacts\device-runs\persistent_multidomain_20260722\preflight.json
+python tools\device\seed_gallery.py --serial <masked> --package com.askphotos.android --gallery build\sample-gallery\core --run-id persistent_multidomain_20260722 --artifacts artifacts\device-runs\persistent_multidomain_20260722\seed
+python tools\device\sync_seeded_gallery.py --serial <masked> --package com.askphotos.android --run-id persistent_multidomain_20260722 --action import --artifacts artifacts\device-runs\persistent_multidomain_20260722\import
+```
+
+Verification and device results:
+
+- Corpus: 83 items total: 81 images, one two-page PDF, and one video; 19 license records; 67 images dated 2024 for deterministic aggregation ground truth.
+- License and generated-checksum verifier: PASS for all 83 gallery items and all 19 license records.
+- Fixture metadata tests: PASS, 2 tests.
+- Physical device preflight: Samsung SM-F966B, Android 16/API 36, arm64-v8a, SM8750, approximately 11.4 GB RAM, approximately 157 GB free data storage.
+- Safe MediaStore seeder: COMPLETE, 83 created URIs, zero transfer retries, staging removed. No personal-gallery URI was targeted.
+- App import: COMPLETE, 83 requested, 83 changed, 83 imported.
+- App launch completed in 94 ms in the captured diagnostic window. WorkManager processed the retained video and its embedding worker returned success. The bounded launch window showed no target-app crash, ANR, or OOM.
+
+Failures and limitations:
+
+- Two direct Android 16 `adb shell content query` attempts failed because the shell provider rejected projection/selection syntax. This path was stopped after the two allowed repair attempts. Seeder and importer structured results remain the authoritative count evidence.
+- The diagnostics helper produced a non-decodable screenshot file on Windows, so visual QA is not claimed for this slice.
+- This slice seeds and imports the representative corpus; it does not claim that the still-experimental SigLIP2 tokenizer issue or every real-model acceptance query is fixed.
+
+Artifacts:
+
+- `artifacts/device-runs/persistent_multidomain_20260722/preflight.json`
+- `artifacts/device-runs/persistent_multidomain_20260722/seed/persistent_multidomain_20260722/seed-result.json`
+- `artifacts/device-runs/persistent_multidomain_20260722/import/persistent_multidomain_20260722/database-import-result.json`
+- `artifacts/device-runs/persistent_multidomain_20260722/diagnostics/20260722_104740/`
+
+Retained dataset cleanup command for a future explicit cleanup request:
+
+```powershell
+python tools\device\cleanup_gallery.py --serial <masked> --package com.askphotos.android --run-id persistent_multidomain_20260722 --artifacts artifacts\device-runs\persistent_multidomain_20260722\cleanup
+```
+
+Next phase:
+
+- Use Q01-Q13 against this retained corpus while repairing SentencePiece parity for the experimental SigLIP2 q8 pack. Do not reseed or clean this run unless explicitly requested.

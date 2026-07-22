@@ -11,6 +11,8 @@
     {"id":"Q08","query":"Show the image where Person A has a yellow hat and Person B has a blue suit.","intent":"FIND_MEDIA","required_people":["fixture_person_a","fixture_person_b"],"required_hard_conditions":["fixture_person_a wears yellow hat","fixture_person_b wears blue suit"],"expected_ids":["synthetic_people_relation"],"evidence_types":["people","visual_verification"],"exactness":"COMPLETE_MODEL_SCAN"},
     {"id":"Q09","query":"Pichle saal Goa wali photos dikhao.","intent":"FIND_MEDIA","required_filters":{"year":2025,"event":"Goa 2025"},"expected_ids_prefix":["goa_beach_01"],"evidence_types":["metadata","event"],"exactness":"COMPLETE_MODEL_SCAN"},
     {"id":"Q10","query":"Show a receipt from a merchant that does not exist.","intent":"DOCUMENT_QA","expected_ids":[],"expected_no_match":true,"evidence_types":[],"exactness":"COMPLETE_MODEL_SCAN"},
-    {"id":"Q11","query":"Find the yellow bicycle in my video.","intent":"FIND_MEDIA","required_filters":{"media_scope":"VIDEOS"},"expected_ids":["synthetic_video_timeline"],"evidence_types":["video_keyframe"],"required_timestamp_range_ms":[5000,13000],"exactness":"COMPLETE_MODEL_SCAN"}
+    {"id":"Q11","query":"Find the yellow bicycle in my video.","intent":"FIND_MEDIA","required_filters":{"media_scope":"VIDEOS"},"expected_ids":["synthetic_video_timeline"],"evidence_types":["video_keyframe"],"required_timestamp_range_ms":[5000,13000],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q12","query":"Show photos of my dog.","intent":"FIND_MEDIA","required_filters":{"semantic":["dog","pet"]},"expected_ids_prefix":["domesticated_dog_01"],"evidence_types":["semantic"],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q13","query":"Show children playing football outdoors.","intent":"FIND_MEDIA","required_filters":{"semantic":["children","football","outdoors"]},"expected_ids_prefix":["children_football_01"],"evidence_types":["semantic"],"exactness":"COMPLETE_MODEL_SCAN"}
   ]
 }

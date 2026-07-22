@@ -51,6 +51,21 @@ Detailed commands, run IDs, failures, cleanup counts, and artifact paths are rec
 - Full release acceptance and universal performance claims: NOT CLAIMED.
 - The planner needed its permitted repair call for all three language fixtures; first-pass structured output remains an optimization target.
 
+## Persistent multi-domain test gallery
+
+Run `persistent_multidomain_20260722` is intentionally retained on the reference device for continued acceptance work.
+
+- Core corpus: 83 items (81 images, one PDF, one video).
+- Verified licensing: 19 records; public domain, CC0/CC0 1.0, or approved CC BY-SA 4.0 sources plus locally generated CC0 fixtures.
+- Added real-image domains: domestic dog/pet and children playing football outdoors.
+- Existing domains retained: Singapore/Goa travel, beaches/sunsets, architecture, street text, food, flowers, duplicates, synthetic people/clothing, receipts/OCR, Wi-Fi, boarding pass, hotel, multilingual menus, calendar, PDF, and video timeline.
+- Safe seed result: 83 exact created URIs, zero transfer retries, staging removed.
+- App import result: 83 requested and 83 imported.
+- Device paths: `Pictures/AgenticGalleryTest/persistent_multidomain_20260722/` and `Documents/AgenticGalleryTest/persistent_multidomain_20260722/`.
+- Cleanup was NOT RUN so the dataset remains available. Future cleanup must use the run-scoped cleanup harness and URI manifest; no broad shared-storage deletion is permitted.
+
+Two direct Android 16 shell MediaStore queries failed on projection/selection parsing and were not retried further. The structured seeder/importer results are the count evidence for this run. The Windows diagnostics helper also emitted a non-decodable screenshot, so this slice does not claim screenshot-based visual QA.
+
 ## Artifacts
 
 - `artifacts/device-runs/phase6_e2b_restore_20260722/`
@@ -58,5 +73,6 @@ Detailed commands, run IDs, failures, cleanup counts, and artifact paths are rec
 - `artifacts/device-runs/phase8_video_direct2_20260722/`
 - `artifacts/device-runs/phase8_events_exif_20260722/`
 - `artifacts/device-runs/phase9_network_privacy_20260722/`
+- `artifacts/device-runs/persistent_multidomain_20260722/`
 
 Generated artifacts may be excluded from Git because they include bulky logs, screenshots, and device-run outputs. The repository-tracked status report preserves their paths and summarized results.
