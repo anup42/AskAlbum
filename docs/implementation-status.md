@@ -1906,3 +1906,12 @@ Failures and limitations:
 Next phase:
 
 - Re-import the E2B model pack and rerun the real-model planner/verifier/answer suite through the corrected non-uninstalling harness. Keep E4B an explicit skip until a valid pack is installed and benchmarked.
+
+## Phase 6B - model selection state hygiene (22 July 2026)
+
+Status: **Verified on the physical device.**
+
+- `GemmaSettingsUiTest` passed through direct instrumentation and proved the consumer Settings screen offers E2B download while applying the device capability policy to E4B.
+- The test previously persisted E4B after finishing. An `@After` teardown now restores E2B through `ModelPackManager`, keeping the required default stable even when the test assertion fails.
+- Consumer Android-test assembly passed in 14 seconds. The rebuilt test APK installed with `adb install -r -t`; direct instrumentation passed 1 test in 1.375 seconds; the app-private preference then contained `tier=E2B`.
+- No verified `.litertlm` source remains on the host after the earlier Gradle uninstall erased the device copy. Real E2B inference remains pending a new app-managed download or verified external import; this test does not claim inference coverage.

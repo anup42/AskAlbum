@@ -10,12 +10,19 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 
 class GemmaSettingsUiTest {
     @get:Rule
     val rule = createAndroidComposeRule<MainActivity>()
+
+    @After
+    fun restoreDefaultTier() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as AskPhotosApplication
+        context.modelPackManager.selectTier(GemmaModelTier.E2B)
+    }
 
     @Test
     fun consumerSettingsOfferE2bAndApplyDevicePolicyToE4b() {
