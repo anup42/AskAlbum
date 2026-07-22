@@ -2802,3 +2802,38 @@ Artifacts:
 Next phase:
 
 - Resume the retained 5k foreground index in user-visible bounded sessions until complete, then run real stored-vector semantic latency/recall. Keep the 20k MediaStore/index gate and people opt-in acceptance as separate slices.
+
+## Phase 5B - multi-page PDF OCR and page-grounded evidence (22 July 2026)
+
+Status: **PASS on the connected reference device.** PDFs are no longer limited to page 1 during indexing.
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/{PdfPageRenderer,GalleryIndexBatchProcessor,GalleryDatabase,GalleryRepository,GalleryModels,GroundedAnswerCodec,MainActivity}.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/PdfMultiPageOcrAcceptanceTest.kt`
+- `tools/sample_gallery/expected_queries.yaml`
+
+Architecture decisions:
+
+- Render and OCR up to 64 pages per PDF, checking coroutine cancellation between pages. Derived images live under an item-specific SHA-256-named app-private directory.
+- Persist each OCR block's zero-based `pageIndex`, carry it into `EvidenceRecord` and grounded-answer packets, and show the human page number in the evidence inspector.
+- Reindex requests reset only gallery-derived stages and preserve the independent SigLIP2 embedding stage. Removing a PDF deletes all files in only its validated app-private page directory.
+- Added Q14, `What known fact is written on page 2 of my PDF?`, with the exact CC0 fixture answer `evidence stays on device` and required page index 1.
+
+Commands and results:
+
+- `:app:compileConsumerDebugKotlin :app:compileConsumerDebugAndroidTestKotlin`: PASS.
+- `:app:testConsumerDebugUnitTest :app:lintConsumerDebug :app:assembleConsumerDebugAndroidTest`: PASS in 87.5 seconds; lint report at `android/app/build/reports/lint-results-consumerDebug.html`.
+- ConsumerDebug build and replace-install through the bundled Android workflow: PASS on SM-F731U; app-private models, vectors, and retained MediaStore samples were preserved.
+- Direct `PdfMultiPageOcrAcceptanceTest`: PASS twice; final run 1 test in 29.689 seconds. Page 1 contained `PDF-TEST-204`; page 2 contained `evidence stays on device`; the query returned OCR evidence with `pageIndex=1`.
+- Direct real signed-q8 `RealSiglip2RetrievalAcceptanceTest`: PASS, 1 test in 18.342 seconds. Runtime was ONNX Runtime; encoder block 8.903 seconds; red/blue, dog, and football ranking checks passed.
+
+Connected-device state and limitations:
+
+- Retained multi-domain core and 5k stress galleries were not cleaned or reseeded. No personal-gallery path was modified.
+- Latest 5k snapshot: 5,000/5,000 unique imported rows, 578 READY, 528 persisted real SigLIP2 vectors, one 24-vector embedding batch in flight, zero failed media or stages, thermal status 0. Full 5k indexing is still incomplete and no full-coverage semantic latency/recall result is claimed.
+- Multi-page OCR is bounded to 64 pages by product policy. People identity/clustering remains blocked on selecting a redistributable biometric model with unambiguous model-weight and training-data terms; ML Kit face-box detection remains opt-in and local.
+
+Next phase:
+
+- Continue the same checkpointed 5k foreground run to full coverage, then run stored-vector retrieval metrics. Keep the 20k MediaStore/index and licensed people-identity gates as independent work.

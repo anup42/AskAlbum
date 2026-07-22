@@ -183,6 +183,7 @@ internal fun GroundedEvidencePacket.toPromptJson(): JSONObject = JSONObject().ap
                 put("type", record.sourceField)
                 put("text", record.text.take(500))
                 put("confidence", record.confidence.toDouble())
+                record.pageIndex?.let { put("pageIndex", it) }
             })
         }
     })

@@ -81,6 +81,8 @@ class GalleryRepository(context: Context) {
 
     fun pendingItems(limit: Int): List<GalleryItem> = database.pendingItems(limit)
     fun pendingItemsForIds(mediaIds: Set<String>, limit: Int): List<GalleryItem> = database.pendingItemsForIds(mediaIds, limit)
+    fun requestGalleryReindex(mediaIds: Set<String>) = database.requestGalleryReindex(mediaIds)
+    fun ocrBlocks(mediaId: String): List<OcrBlockRecord> = database.ocrBlocks(mediaId)
     fun facePendingItems(limit: Int): List<GalleryItem> = database.facePendingItems(limit)
     fun markFaces(mediaId: String) = database.markFaces(mediaId)
     fun completeFaces(mediaId: String, detections: List<FaceDetectionRecord>, producerVersion: String) =
@@ -396,6 +398,7 @@ class GalleryRepository(context: Context) {
                     producerVersion = "mlkit-text-v2",
                     region = matchingBlock?.let { listOf(it.left, it.top, it.right, it.bottom) },
                     timestampMs = matchingBlock?.timestampMs,
+                    pageIndex = matchingBlock?.pageIndex,
                 )
             }
         }

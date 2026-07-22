@@ -160,6 +160,7 @@ data class EvidenceRecord(
     val producerVersion: String = "demo-sidecar-v1",
     val region: List<Float>? = null,
     val timestampMs: Long? = null,
+    val pageIndex: Int? = null,
 )
 
 data class SearchHit(

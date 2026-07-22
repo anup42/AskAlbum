@@ -3,7 +3,6 @@ package com.askphotos.android
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.util.Size
 import com.google.mlkit.vision.common.InputImage
@@ -13,7 +12,6 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.tasks.await
-import java.io.File
 import java.io.FileNotFoundException
 
 internal class GalleryIndexBatchProcessor(
@@ -44,13 +42,17 @@ internal class GalleryIndexBatchProcessor(
             }
             repository.markIndexing(item.id)
             try {
-                val analyses = if (item.kind == MediaKind.VIDEO) {
-                    VideoKeyframeExtractor(appContext).extract(item).map { frame ->
-                        analyze(item, frame.bitmap, frame.timestampMs, frame.previewPath, frame.id, frame.visualFeatures)
+                val analyses = when (item.kind) {
+                    MediaKind.VIDEO -> VideoKeyframeExtractor(appContext).extract(item).map { frame ->
+                        analyze(item, frame.bitmap, 0, frame.timestampMs, frame.previewPath, frame.id, frame.visualFeatures)
                     }
-                } else {
-                    val (bitmap, previewPath) = prepareBitmap(item)
-                    listOf(analyze(item, bitmap, null, previewPath, null, null))
+                    MediaKind.PDF -> PdfPageRenderer(appContext).render(item).map { page ->
+                        analyze(item, page.bitmap, page.pageIndex, null, page.previewPath, null, null)
+                    }
+                    MediaKind.IMAGE -> {
+                        val (bitmap, previewPath) = prepareBitmap(item)
+                        listOf(analyze(item, bitmap, 0, null, previewPath, null, null))
+                    }
                 }
                 val labels = analyses.flatMap { it.labels }.distinct().take(24)
                 val blocks = analyses.flatMap { it.blocks }
@@ -105,7 +107,6 @@ internal class GalleryIndexBatchProcessor(
     }
 
     private fun prepareBitmap(item: GalleryItem): Pair<Bitmap, String?> {
-        if (item.kind == MediaKind.PDF) return renderPdf(item)
         val uri = Uri.parse(requireNotNull(item.contentUri))
         val bitmap = runCatching {
             appContext.contentResolver.loadThumbnail(uri, Size(1024, 1024), null)
@@ -118,6 +119,7 @@ internal class GalleryIndexBatchProcessor(
     private suspend fun analyze(
         item: GalleryItem,
         bitmap: Bitmap,
+        pageIndex: Int,
         timestampMs: Long?,
         previewPath: String?,
         keyframeId: String?,
@@ -141,7 +143,7 @@ internal class GalleryIndexBatchProcessor(
                 text = block.text,
                 normalizedText = block.text.lowercase().replace(Regex("\\s+"), " ").trim(),
                 language = block.recognizedLanguage.takeUnless(String::isBlank),
-                pageIndex = 0,
+                pageIndex = pageIndex,
                 timestampMs = timestampMs,
                 confidence = block.lines.mapNotNull { it.confidence }.average().takeUnless(Double::isNaN)?.toFloat() ?: .8f,
                 left = box.left.toFloat() / bitmap.width,
@@ -161,30 +163,6 @@ internal class GalleryIndexBatchProcessor(
             ocrAttempted = ocrDecision.shouldRun,
             visualFeatures = visual,
         )
-    }
-
-    private fun renderPdf(item: GalleryItem): Pair<Bitmap, String> {
-        val uri = Uri.parse(requireNotNull(item.contentUri))
-        val descriptor = requireNotNull(appContext.contentResolver.openFileDescriptor(uri, "r"))
-        descriptor.use { pfd ->
-            PdfRenderer(pfd).use { renderer ->
-                require(renderer.pageCount > 0) { "PDF has no pages" }
-                renderer.openPage(0).use { page ->
-                    val scale = (1400f / page.width).coerceAtMost(2f)
-                    val bitmap = Bitmap.createBitmap(
-                        (page.width * scale).toInt(),
-                        (page.height * scale).toInt(),
-                        Bitmap.Config.ARGB_8888,
-                    )
-                    bitmap.eraseColor(android.graphics.Color.WHITE)
-                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    val previewDir = File(appContext.filesDir, "previews").apply { mkdirs() }
-                    val preview = File(previewDir, "${item.id}.png")
-                    preview.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 92, it) }
-                    return bitmap to preview.absolutePath
-                }
-            }
-        }
     }
 
     private fun scaleDown(source: Bitmap): Bitmap {

@@ -1028,6 +1028,7 @@ internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit) {
                         if (index > 0) HorizontalDivider(Modifier.padding(vertical = 9.dp))
                         Text(evidence.sourceField.replace('_', ' ').uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(evidence.text, fontWeight = FontWeight.SemiBold)
+                        evidence.pageIndex?.let { Text("PDF page ${it + 1}", fontSize = 11.sp, color = Forest) }
                         Text("Confidence ${(evidence.confidence * 100).toInt()}% • ${evidence.producerVersion}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         evidence.region?.let { region ->
                             Text("Region ${region.joinToString(prefix = "[", postfix = "]") { "%.2f".format(it) }}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

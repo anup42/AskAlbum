@@ -145,6 +145,29 @@ class GalleryDatabase(
         )
     }
 
+    fun requestGalleryReindex(mediaIds: Set<String>) {
+        if (mediaIds.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            mediaIds.chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                val placeholders = ids.joinToString(",") { "?" }
+                db.execSQL(
+                    "UPDATE media_item SET index_state='PENDING', index_error=NULL WHERE id IN ($placeholders)",
+                    ids.toTypedArray(),
+                )
+                db.execSQL(
+                    "UPDATE media_index_stage SET status='PENDING', producer_version='requested-reindex', error=NULL " +
+                        "WHERE media_id IN ($placeholders) AND stage IN ('THUMBNAIL','OCR','EVENTS','ENRICHMENT')",
+                    ids.toTypedArray(),
+                )
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> = readableDatabase.rawQuery(
         """SELECT m.* FROM media_item m
             JOIN media_index_stage s ON s.media_id=m.id AND s.stage='EMBEDDING'
@@ -474,8 +497,16 @@ class GalleryDatabase(
         var previewFilesDeleted = 0
         previews.distinct().forEach { path ->
             val preview = java.io.File(path).canonicalFile
-            val allowedRoots = listOf("previews", "video-keyframes").map { java.io.File(context.filesDir, it).canonicalFile }
-            if (allowedRoots.any { preview.toPath().startsWith(it.toPath()) } && preview.exists() && preview.delete()) previewFilesDeleted++
+            val allowedRoots = listOf("previews", "video-keyframes", "pdf-pages").map { java.io.File(context.filesDir, it).canonicalFile }
+            val pdfRoot = java.io.File(context.filesDir, "pdf-pages").canonicalFile
+            if (preview.toPath().startsWith(pdfRoot.toPath()) && preview.parentFile?.parentFile == pdfRoot) {
+                preview.parentFile?.listFiles()?.filter { it.isFile }?.forEach { file ->
+                    if (file.delete()) previewFilesDeleted++
+                }
+                preview.parentFile?.delete()
+            } else if (allowedRoots.any { preview.toPath().startsWith(it.toPath()) } && preview.exists() && preview.delete()) {
+                previewFilesDeleted++
+            }
         }
         rebuildEvents()
         return MediaRemovalResult(requested.size, matched, deleted, tombstones, previewFilesDeleted)

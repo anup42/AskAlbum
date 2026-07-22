@@ -219,3 +219,13 @@ Recovery disclosure:
 - A passing Gradle `connectedConsumerDebugAndroidTest` benchmark uninstalled the target app during task cleanup. This erased app-private Room/vector/model state; it did not authorize or perform a broad gallery delete. Retained MediaStore rows were recovered using exact run-scoped paths, and future retained-state tests use direct test-APK install plus `am instrument` to avoid Gradle's uninstall lifecycle.
 - One temporary core duplicate publication occurred before normal media read access was restored after reinstall. Cleanup was restricted to individually validated MediaStore IDs in `AgenticGalleryTest/fg_core_20260722_f731u`; zero rows remained in that obsolete run before `core_multidomain_20260722` was seeded exactly once. No personal-gallery path or URI was targeted.
 - The former 606 stress vectors cannot survive app uninstall and are not claimed. Actual current stress vector coverage is 24. Full 5k completion and the connected 20k gallery/index gate remain pending.
+
+## Multi-page PDF OCR and real stored-vector retrieval
+
+- Date/device: 22 July 2026; Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550. Serial is masked in artifacts.
+- Final ConsumerDebug APK was assembled and replace-installed without clearing app data. The retained `core_multidomain_20260722` and `fg_index5k_20260722` datasets remain in their exact test-only MediaStore paths.
+- `PdfMultiPageOcrAcceptanceTest`: PASS, one test in 29.689 seconds. The two-page synthetic CC0 PDF was reindexed on device; OCR blocks on page 0 contained `PDF-TEST-204`, blocks on page 1 contained `evidence stays on device`, and the page-2 query returned citation evidence carrying `pageIndex=1`.
+- `RealSiglip2RetrievalAcceptanceTest`: PASS, one test in 18.342 seconds using the installed signed q8 SigLIP2 pack. ONNX encoder time was 8.903 seconds; test PSS increased from 251,664 KB to 519,569 KB; semantic ordering checks for red/blue, dog, and football passed.
+- Host gate: ConsumerDebug unit tests, lint, and Android-test assembly PASS in one 87.5-second Gradle invocation.
+- Latest stress snapshot: 5,000 unique rows, 578 READY, 528 real signed-q8 vectors persisted, 4,422 pending gallery rows, one 24-vector embedding batch in flight, zero permanent/retryable failures, thermal status 0. Full 5k coverage remains incomplete.
+- No sample cleanup was run in this slice. No personal media was deleted or modified. Derived PDF previews are app-private and deletion is restricted to the exact validated PDF preview directory.
