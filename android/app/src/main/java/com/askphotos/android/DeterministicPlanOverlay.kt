@@ -20,6 +20,8 @@ class DeterministicPlanOverlay(
             deterministic.sort == SortSpec.QUALITY && deterministic.terms.isEmpty()
         val filterOnlyFollowUp = deterministic.baseResultIds != null &&
             deterministic.filter != FilterExpression.True && deterministic.terms.isEmpty()
+        val deterministicAggregationOnly = deterministic.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
+            deterministic.aggregation != null && deterministic.semanticClauses.isEmpty() && deterministic.terms.isEmpty()
         val merged = modelPlan.copy(
             intent = if (deterministic.intent != QueryIntent.FIND_MEDIA) deterministic.intent else modelPlan.intent,
             mediaScope = if (deterministic.mediaScope != MediaScope.ALL) deterministic.mediaScope else modelPlan.mediaScope,
@@ -27,8 +29,9 @@ class DeterministicPlanOverlay(
             ocrClause = mergeOcrClause(modelPlan.ocrClause, deterministic.ocrClause),
             grouping = if (modelPlan.grouping == Grouping.NONE) deterministic.grouping else modelPlan.grouping,
             sort = if (deterministic.sort != SortSpec.RELEVANCE) deterministic.sort else modelPlan.sort,
-            semanticClauses = if (qualityOnlyFollowUp || filterOnlyFollowUp) emptyList() else modelPlan.semanticClauses,
-            terms = if (qualityOnlyFollowUp || filterOnlyFollowUp) emptyList() else modelPlan.terms,
+            aggregation = deterministic.aggregation ?: modelPlan.aggregation,
+            semanticClauses = if (qualityOnlyFollowUp || filterOnlyFollowUp || deterministicAggregationOnly) emptyList() else modelPlan.semanticClauses,
+            terms = if (qualityOnlyFollowUp || filterOnlyFollowUp || deterministicAggregationOnly) emptyList() else modelPlan.terms,
             place = deterministic.place ?: modelPlan.place,
             baseResultIds = modelPlan.baseResultIds ?: deterministic.baseResultIds,
         )

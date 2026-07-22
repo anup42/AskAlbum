@@ -192,13 +192,17 @@ class GalleryRepository(context: Context) {
             .mapNotNull { item -> score(item, terms, item.id in fullTextIds) }
             .sortedWith(compareByDescending<SearchHit> { it.score }.thenBy { it.item.title })
             .toList()
-        val rawSemanticRanked = runCatching {
-            semanticVectors.searchText(
-                plan.originalQuery,
-                topK = plan.limit.coerceIn(20, 100),
-                allowedIds = allowed?.let(database::vectorIdsForMedia),
-            )
-        }.getOrDefault(emptyList())
+        val rawSemanticRanked = if (plan.semanticClauses.isNotEmpty() || plan.terms.isNotEmpty()) {
+            runCatching {
+                semanticVectors.searchText(
+                    plan.originalQuery,
+                    topK = plan.limit.coerceIn(20, 100),
+                    allowedIds = allowed?.let(database::vectorIdsForMedia),
+                )
+            }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
         val semanticKeyframes = database.videoKeyframesByIds(rawSemanticRanked.mapTo(mutableSetOf()) { it.mediaId })
         val resolvedSemanticHits = resolveSemanticVideoHits(rawSemanticRanked, semanticKeyframes)
         val semanticRanked = resolvedSemanticHits.map { it.hit }
@@ -409,8 +413,11 @@ class GalleryRepository(context: Context) {
         val usedSemanticRetrieval = hits.any { hit -> hit.evidence.any { it.sourceField == "image_text_embedding" } }
         val deterministicResultSetFilter = plan.baseResultIds != null && plan.terms.isEmpty() &&
             plan.semanticClauses.isEmpty() && plan.filter != FilterExpression.True && !verification.applied
+        val deterministicAggregation = plan.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
+            plan.aggregation != null && plan.semanticClauses.isEmpty() && !usedSemanticRetrieval && !verification.applied
         val exactness = when {
             readyItems < totalItems -> ResultExactness.PARTIAL_INDEX
+            deterministicAggregation -> ResultExactness.EXACT
             deterministicResultSetFilter -> ResultExactness.EXACT
             usedSemanticRetrieval || verification.applied -> ResultExactness.ESTIMATED_FROM_RETRIEVAL
             else -> ResultExactness.COMPLETE_MODEL_SCAN

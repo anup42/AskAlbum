@@ -39,10 +39,11 @@ class RealSiglip2RetrievalAcceptanceTest {
             val status = application.services.retrievalModelPackManager.status()
             assertTrue(status.installed)
             assertEquals("siglip2-base-p16-224-q8", status.packId)
-            assertEquals("ba1f3b0-q8", status.packVersion)
+            assertEquals("ba1f3b0-q8-core05", status.packVersion)
             assertEquals(768, status.embeddingDimension)
             assertEquals(RETRIEVAL_RUNTIME_ONNX, installed.manifest.runtime)
             assertEquals(ONNX_SIGLIP2_REPOSITORY, installed.manifest.artifactRepository)
+            assertEquals(0.05f, installed.manifest.minimumSimilarity, 0f)
 
             val tokenizer = Siglip2VocabTokenizer.load(installed.artifact(ROLE_TOKENIZER))
             assertArrayEquals(

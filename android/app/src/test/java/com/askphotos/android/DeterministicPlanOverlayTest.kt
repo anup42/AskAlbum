@@ -93,6 +93,20 @@ class DeterministicPlanOverlayTest {
         assertEquals(active, result.plan.baseResultIds)
     }
 
+    @Test
+    fun exactYearCountOverridesInventedModelSemanticsAndAggregation() {
+        val model = plan(FilterExpression.True, null)
+
+        val result = overlay.apply("How many photos did I take in 2024?", model, null)
+
+        assertEquals(QueryIntent.COUNT, result.plan.intent)
+        assertEquals(MediaScope.IMAGES, result.plan.mediaScope)
+        assertEquals(AggregationSpec(AggregationOperation.COUNT), result.plan.aggregation)
+        assertEquals(FilterExpression.TimeRange(1704067200000, 1735689599999), result.plan.filter)
+        assertTrue(result.plan.terms.isEmpty())
+        assertTrue(result.plan.semanticClauses.isEmpty())
+    }
+
     private fun plan(filter: FilterExpression, place: String?) = GalleryQueryPlan(
         originalQuery = "fixture",
         intent = QueryIntent.FIND_MEDIA,

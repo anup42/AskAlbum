@@ -2134,3 +2134,66 @@ Remaining limitations:
 Next phase:
 
 - Run the Q01-Q13 core retrieval evaluation with the corrected encoder, then benchmark exact vector scan/index recovery on the 5k and 20k profiles without changing the accepted tokenizer contract.
+
+## Phase 2D - Persistent licensed multi-domain corpus on second device (22 July 2026)
+
+Status: **Passed. The verified 83-item core corpus is retained on the connected Samsung SM-F731U for manual and automated feature testing.**
+
+Scope and safety:
+
+- Reused the pinned, already-downloaded open-license corpus rather than fetching unreviewed media. It covers travel/landmarks, beaches/sunsets, architecture, food, flowers, pets, outdoor sport, street text, people/clothing, receipts, Wi-Fi, boarding pass, hotel, multilingual menus, calendar, PDF, and video.
+- License/checksum verification passed for all 83 gallery items and 19 license records.
+- Seeded only to run-scoped MediaStore paths `Pictures/AgenticGalleryTest/persistent_multidomain_20260722_f731u/` and `Documents/AgenticGalleryTest/persistent_multidomain_20260722_f731u/`.
+- The seed result records all 83 created content URIs: 81 images, one PDF, and one video. Staging was removed; cleanup was deliberately NOT RUN.
+- A direct Android instrumentation check confirmed that both run-scoped paths are visible through MediaStore (`SeededGalleryTest`, PASS, 1 test in 0.032 s).
+
+Device and commands:
+
+- Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550, approximately 7.0 GB RAM, approximately 193 GB free data storage.
+- The initial 180-second seed invocation timed out after checkpointing all 1,240 exact-size transfer chunks. One bounded resume completed successfully in 192.4 seconds with zero provider-call retries; no duplicate media was created.
+
+```powershell
+python tools\sample_gallery\verify_licenses.py --gallery build\sample-gallery\core
+python tools\device\preflight.py --serial <masked> --output artifacts\device-runs\persistent_multidomain_20260722_f731u\preflight.json
+python tools\device\seed_gallery.py --serial <masked> --package com.askphotos.android --gallery build\sample-gallery\core --run-id persistent_multidomain_20260722_f731u --artifacts artifacts\device-runs\persistent_multidomain_20260722_f731u
+adb -s <masked> shell am instrument -w -r -e galleryRunId persistent_multidomain_20260722_f731u -e class com.askphotos.android.SeededGalleryTest com.askphotos.android.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+Artifacts:
+
+- `artifacts/device-runs/persistent_multidomain_20260722_f731u/preflight.json`
+- `artifacts/device-runs/persistent_multidomain_20260722_f731u/persistent_multidomain_20260722_f731u/seed-result.json`
+- `artifacts/device-runs/persistent_multidomain_20260722_f731u/seeded-gallery-test.txt`
+
+Retained dataset cleanup command for a future explicit cleanup request:
+
+```powershell
+python tools\device\cleanup_gallery.py --serial <masked> --package com.askphotos.android --run-id persistent_multidomain_20260722_f731u --artifacts artifacts\device-runs\persistent_multidomain_20260722_f731u\cleanup
+```
+
+Limitation:
+
+- The original SM-F966B reference device disconnected before the new Q01-Q13 evaluator could run. This second phone is documented only for corpus seeding/visibility; it is not being substituted for the original device's retained E2B/SigLIP acceptance state.
+
+## Phase 7B - Structured core evaluator and deterministic aggregation correction (22 July 2026)
+
+Status: **Implemented and host-verified; full Q01-Q13 device execution NOT RUN because the reference SM-F966B disconnected before the suite started.**
+
+Implementation:
+
+- Added a structured Q01-Q13 instrumentation evaluator that writes per-query PASS/FAIL/SKIP JSON even when an individual case fails. It checks expected plan fields, follow-up scoping, top-K media, exact receipt/count results, required evidence types, evidence closure, and no-match behavior.
+- Q07/Q08 intentionally report SKIP until an approved identity-embedding pack is installed and people indexing is explicitly enabled; the existing real-Gemma visual verifier remains a separate demonstrated gate.
+- Corrected deterministic count planning so explicit year and generic media words do not become semantic constraints. The deterministic overlay now removes invented model semantics from metadata-only aggregations, semantic retrieval is bypassed for those plans, and exact deterministic COUNT/SUM/MIN_MAX results report `EXACT`.
+- Host calibration over the complete 81-image core set selected a provisional core-only SigLIP minimum similarity of `0.05`; this retains valid Marina Bay/dog candidates while the stronger beach/football domains remain well separated. The signed installed pack version is `ba1f3b0-q8-core05`.
+
+Verification actually run:
+
+- Focused JVM tests for query compilation and deterministic plan overlay: PASS.
+- ConsumerDebug Android-test assembly: PASS.
+- Recalibrated SigLIP2 pack installation and direct real-device semantic acceptance on SM-F966B: PASS, 1 test in 12.561 s; exact tokenizer IDs and red/blue/dog/football comparisons passed.
+- Q01-Q13 full evaluator: NOT RUN. `adb` reported the reference serial absent immediately before instrumentation; the connected SM-F731U was not substituted because it did not carry the reference device's installed E2B/SigLIP generations and indexed gallery state.
+
+Remaining acceptance gaps:
+
+- Reconnect the SM-F966B and run `CoreCorpusEvaluationAcceptanceTest` against `persistent_multidomain_20260722`, or explicitly install/import the same verified model packs and index state on another capable device.
+- Install a reviewed face-embedding pack and obtain explicit people-search opt-in before converting Q07/Q08 from structured skips into identity acceptance.

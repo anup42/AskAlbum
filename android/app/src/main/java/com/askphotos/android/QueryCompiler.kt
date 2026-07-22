@@ -12,7 +12,7 @@ class QueryCompiler(
     private val stopWords = setOf(
         "a", "an", "and", "are", "did", "do", "find", "from", "gallery", "how", "i", "many",
         "amount", "have", "in", "is", "latest", "me", "my", "of", "on", "only", "photo", "photos", "picture", "pictures",
-        "please", "show", "the", "this", "to", "was", "were", "what", "where", "with",
+        "please", "show", "take", "took", "the", "this", "to", "was", "were", "what", "where", "with",
         "bas", "dikhao", "dikhाओ", "ke", "ki", "ka", "pichle", "saal", "sirf", "wali", "wala",
         "दिखाओ", "फोटो", "फोटोस", "के", "की", "का", "पिछले", "साल", "वाली", "वाला", "सिर्फ", "सिर्फ़", "केवल",
     )
@@ -61,7 +61,11 @@ class QueryCompiler(
         }
         val temporalOnlyFollowUp = isFollowUp && timeFilter != FilterExpression.True &&
             candidateTerms.all { it in TEMPORAL_FOLLOW_UP_WORDS || it.matches(Regex("(?:19|20)\\d{2}")) }
-        val originalTerms = if (temporalOnlyFollowUp) emptyList() else candidateTerms
+        val originalTerms = if (temporalOnlyFollowUp) {
+            emptyList()
+        } else {
+            candidateTerms.filterNot { term -> explicitYear != null && term == explicitYear.toString() }
+        }
         val terms = originalTerms.map { aliases[it] ?: it }.distinct()
         val place = listOf("singapore", "goa", "amsterdam", "netherlands", "california", "francisco", "marshall", "rockaway")
             .firstOrNull { candidate -> candidate in terms }
@@ -83,6 +87,7 @@ class QueryCompiler(
             mediaScope = when {
                 "video" in terms || "videos" in terms -> MediaScope.VIDEOS
                 "pdf" in terms || "receipt" in terms || "document" in terms -> MediaScope.DOCUMENTS
+                normalized.split(' ').any { it in setOf("photo", "photos", "picture", "pictures", "image", "images") } -> MediaScope.IMAGES
                 else -> MediaScope.ALL
             },
             filter = timeFilter,

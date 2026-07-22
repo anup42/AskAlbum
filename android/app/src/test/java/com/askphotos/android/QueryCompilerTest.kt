@@ -15,9 +15,24 @@ class QueryCompilerTest {
     fun countQueryProducesBoundedTypedPlan() {
         val plan = compiler.compile("How many beach photos do I have?")
         assertEquals(QueryIntent.COUNT, plan.intent)
+        assertEquals(MediaScope.IMAGES, plan.mediaScope)
         assertEquals(listOf("beach"), plan.terms)
         assertEquals(100, plan.limit)
         assertNull(plan.baseResultIds)
+    }
+
+    @Test
+    fun exactYearPhotoCountContainsNoSemanticPredicate() {
+        val fixed = QueryCompiler(clock = Clock.fixed(Instant.parse("2026-07-22T00:00:00Z"), ZoneOffset.UTC))
+
+        val plan = fixed.compile("How many photos did I take in 2024?")
+
+        assertEquals(QueryIntent.COUNT, plan.intent)
+        assertEquals(MediaScope.IMAGES, plan.mediaScope)
+        assertEquals(AggregationSpec(AggregationOperation.COUNT), plan.aggregation)
+        assertEquals(FilterExpression.TimeRange(1704067200000, 1735689599999), plan.filter)
+        assertTrue(plan.terms.isEmpty())
+        assertTrue(plan.semanticClauses.isEmpty())
     }
 
     @Test

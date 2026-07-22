@@ -89,5 +89,16 @@ Two direct Android 16 shell MediaStore queries failed on projection/selection pa
 - `artifacts/device-runs/phase9_network_privacy_20260722/`
 - `artifacts/device-runs/persistent_multidomain_20260722/`
 - `artifacts/device-runs/phase4_siglip2_tokenizer_20260722/`
+- `artifacts/device-runs/persistent_multidomain_20260722_f731u/`
 
 Generated artifacts may be excluded from Git because they include bulky logs, screenshots, and device-run outputs. The repository-tracked status report preserves their paths and summarized results.
+
+## Secondary-device persistent corpus
+
+The same verified 83-item core corpus was also seeded to a connected Samsung SM-F731U (Android 16/API 36, SM8550) under run ID `persistent_multidomain_20260722_f731u`.
+
+- License/checksum validation: PASS, 83 items and 19 license records.
+- Safe MediaStore insertion: COMPLETE, 83 recorded URIs (81 images, one PDF, one video), staging removed, zero provider retries.
+- MediaStore visibility instrumentation: PASS, 1 test in 0.032 s.
+- Cleanup: NOT RUN; the corpus is intentionally retained in its run-specific test paths.
+- This is a dataset availability gate only. No E2B/SigLIP result from the SM-F966B is attributed to this second device.
