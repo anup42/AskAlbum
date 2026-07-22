@@ -1,5 +1,6 @@
 package com.askphotos.android
 
+import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -32,7 +33,13 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         val producer = vectors.producerVersion() ?: return@withContext Result.success()
         repository.recoverInterruptedJobs()
-        val candidates = repository.embeddingPendingItems(producer, BATCH_SIZE)
+        val activityManager = applicationContext.getSystemService(ActivityManager::class.java)
+        val memoryInfo = ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo)
+        val batchSize = EmbeddingBatchPolicy.forDevice(
+            memoryClassMb = activityManager.memoryClass,
+            totalRamMb = (memoryInfo.totalMem / (1024L * 1024L)).toInt(),
+        )
+        val candidates = repository.embeddingPendingItems(producer, batchSize)
         val keyframeCandidates = repository.keyframeEmbeddingPendingItems(producer, KEYFRAME_BATCH_SIZE)
         if (candidates.isEmpty() && keyframeCandidates.isEmpty()) {
             vectors.reconcile(repository.accessibleVectorIds())
@@ -160,8 +167,15 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
     }
 
     private companion object {
-        const val BATCH_SIZE = 4
         const val KEYFRAME_BATCH_SIZE = 8
+    }
+}
+
+internal object EmbeddingBatchPolicy {
+    fun forDevice(memoryClassMb: Int, totalRamMb: Int): Int = when {
+        memoryClassMb <= 192 || totalRamMb < 4_096 -> 4
+        memoryClassMb <= 256 || totalRamMb < 6_144 -> 12
+        else -> 24
     }
 }
 
@@ -173,7 +187,17 @@ object EmbeddingIndexScheduler {
     }
 
     fun scheduleContinuation(context: Context) {
-        WorkManager.getInstance(context).enqueue(request())
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            UNIQUE_WORK,
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            request(),
+        )
+    }
+
+    fun restart(context: Context) {
+        val workManager = WorkManager.getInstance(context)
+        workManager.cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
+        workManager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.REPLACE, request())
     }
 
     private fun request() = OneTimeWorkRequestBuilder<EmbeddingIndexWorker>()

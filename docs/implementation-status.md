@@ -2691,3 +2691,58 @@ Failures and limitations:
 Next phase:
 
 - Resume the retained 5k index under the thermal admission policy, measure stage/vector progress and query latency, and stop automatically if the device reaches MODERATE. Keep people identity and 20k acceptance as separate slices.
+
+## Phase 3E - User-started indexing admission audit and retained-5k resume (22 July 2026)
+
+Status: **PARTIAL IMPLEMENTATION; CONNECTED 5K COMPLETION NOT PASSED. The retained gallery advanced to 216 fully analyzed items and 24 persisted SigLIP2 vectors, but two bounded foreground-WorkManager repair cycles did not provide sustained execution on Samsung SM-F731U.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/IndexScheduler.kt`
+- `android/app/src/main/java/com/askphotos/android/EmbeddingIndexWorker.kt`
+- `android/app/src/debug/java/com/askphotos/android/TestGallerySeederReceiver.kt`
+- `android/app/src/test/java/com/askphotos/android/EmbeddingBatchPolicyTest.kt`
+- `tools/device/index_seeded_gallery.py`
+- `tools/device/test_index_seeded_gallery.py`
+
+Architecture changes retained:
+
+- Gallery and embedding continuations now remain in one named WorkManager chain with `APPEND_OR_REPLACE`; the prior loose `enqueue()` continuation could create duplicate jobs after repeated resume attempts.
+- SigLIP2 batch selection now considers both application heap and physical RAM: 4 on constrained devices, 12 on intermediate devices, and 24 only with sufficient heap and at least 6 GB RAM.
+- The debug resume command carries a random operation ID and polls only for the matching run-scoped result. Stale status files can no longer be misreported as a successful resume.
+- Resume cancels old tagged/duplicate work before inserting one replacement per pipeline. The foreground-WorkManager experiment and unbounded multi-batch loop were removed after device evidence showed that they could not satisfy Android foreground-service admission and could repeatedly select retryable rows.
+
+Commands and tests actually run:
+
+- Focused `EmbeddingBatchPolicyTest` and `BackgroundWorkAdmissionPolicyTest`: PASS.
+- `python -m unittest test_index_seeded_gallery.py`: 3 PASS.
+- `:app:assembleConsumerDebug` and `:app:installConsumerDebug` through the bundled Android build/install workflow: PASS during both bounded experiments; replace-install preserved Room rows, retained media, E2B, and SigLIP2. Final retained-code verification is listed below.
+- Correlated `index_seeded_gallery.py --action resume`: PASS as a scheduling command at thermal status 0. This is not an indexing-completion pass.
+- After reverting the failed foreground experiment: full `:app:testConsumerDebugUnitTest` PASS, all 24 device-harness Python tests PASS, `git diff --check` PASS, and final `assembleConsumerDebug` plus replace-install PASS on SM-F731U.
+- Final post-install scoped status again proved 5,000/5,000 unique rows, 216 ready, 24 real vectors, no failed/running database rows, and the same signed SigLIP2 producer. Thermal remained status 0 (AP approximately 39.3 C, skin 37.7 C).
+
+Connected-device evidence:
+
+- Baseline after recovery: exactly 5,000 scoped media rows; four vector rows were present and four embedding stages were recovered from `RUNNING`.
+- Before the repair was installed, bringing the app foreground allowed bounded progress from 29 to 216 metadata/thumbnail/enrichment completions and from 12 to 24 persisted vectors. OCR records were complete for 5 items and intentionally skipped for 211; 192 event stages were complete.
+- After both repair cycles, counters remained exactly: 5,000 media, 216 `READY`, 4,784 `PENDING`, 24 embedding stages/vectors complete, 4,976 embedding stages pending, zero failed media/stages, and no `RUNNING`/`INDEXING` rows.
+- Thermal status remained 0 throughout the final attempt, AP approximately 35.8-38.0 C and skin approximately 36.1-37.3 C. Final idle PSS was 79,416 KB and RSS 155,400 KB.
+- Samsung JobScheduler continued to mark background work restricted for thermal policy even while the public thermal service reported status 0. More importantly, both foreground-capable WorkManager requests were rejected before worker logic with `ForegroundServiceStartNotAllowedException`: the debug resume broadcast was already background when WorkManager tried to start `SystemForegroundService`.
+- Package diagnostics contained zero app `FATAL EXCEPTION`, target ANR, `OutOfMemoryError`, process-death, or OOM markers. The worker-start exceptions are nevertheless a real acceptance failure and are not hidden as a skip.
+
+Artifacts:
+
+- `artifacts/device-runs/fg_index5k_20260722/index-resume-result.json`
+- `artifacts/device-runs/fg_index5k_20260722/index-coverage-result.json`
+- `android-diagnostics/20260722_154257/` (local ignored diagnostic bundle)
+
+Failures and limitations:
+
+- Full 5k OCR, events, and embeddings are not complete; only 24 real stress-gallery vectors exist. Therefore no 5k semantic-query latency or recall claim is made in this phase.
+- Marking a WorkManager job foreground after it starts cannot solve Android 12+ foreground-service start restrictions when the job itself was triggered from an already-background broadcast. The correct next repair is not another scheduler retry.
+- That failed foreground-WorkManager experiment was reverted before commit; production workers remain thermal-constrained, bounded WorkManager jobs.
+- The retained 5k and 83-item core datasets remain on device. No cleanup or personal-gallery mutation was performed.
+
+Next phase:
+
+- Extract reusable gallery/embedding batch processors and let the already-authorized user-started `InitialImportService` (plus the debug-only test foreground service) directly own the long-running initial index. WorkManager should remain the resumable incremental fallback. Verify this first on a small retained subset, then resume the same 5k run without reseeding.

@@ -32,6 +32,20 @@ def parse_import_status(payload: bytes | None, run_id: str, operation_id: str) -
     return result
 
 
+def parse_operation_status(payload: bytes | None, run_id: str, operation_id: str) -> dict[str, object] | None:
+    if not payload:
+        return None
+    try:
+        result = json.loads(payload)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if result.get("runId") != run_id or result.get("operationId") != operation_id:
+        return None
+    if result.get("state") == "FAILED":
+        raise RuntimeError(f"Device operation failed: {result.get('error')}")
+    return result if result.get("state") == "COMPLETE" else None
+
+
 def validate_coverage(result: dict[str, object]) -> None:
     if result.get("state") != "COMPLETE":
         raise RuntimeError("Index coverage report is incomplete")
@@ -59,6 +73,24 @@ def wait_for_import(serial: str, package: str, run_id: str, operation_id: str, t
             return result
         time.sleep(0.25)
     raise RuntimeError("Timed out waiting for matching run-scoped import")
+
+
+def wait_for_operation(
+    serial: str,
+    package: str,
+    run_id: str,
+    operation_id: str,
+    filename: str,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    relative_path = f"files/test-seed/{run_id}/{filename}"
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        result = parse_operation_status(run_as_read(serial, package, relative_path), run_id, operation_id)
+        if result is not None:
+            return result
+        time.sleep(0.25)
+    raise RuntimeError(f"Timed out waiting for matching run-scoped {filename}")
 
 
 def read_complete_status(serial: str, package: str, run_id: str, filename: str) -> dict[str, object]:
@@ -93,21 +125,29 @@ def main() -> None:
         )
         result = wait_for_import(serial, args.package, run_id, operation_id, args.timeout_seconds)
         filename = "index-import-result.json"
+    elif args.action == "resume":
+        operation_id = uuid.uuid4().hex
+        adb(
+            serial, "shell", "am", "broadcast", "-n", f"{args.package}/.TestGallerySeederReceiver",
+            "-a", "com.askphotos.android.test.RESUME_INDEXING", "--es", "run_id", run_id,
+            "--es", "operation_id", operation_id,
+        )
+        result = wait_for_operation(
+            serial, args.package, run_id, operation_id, "index-resume-status.json", args.timeout_seconds,
+        )
+        filename = "index-resume-result.json"
     else:
         action = (
-            "com.askphotos.android.test.RESUME_INDEXING"
-            if args.action == "resume"
-            else "com.askphotos.android.test.REPORT_INDEX_COVERAGE"
+            "com.askphotos.android.test.REPORT_INDEX_COVERAGE"
         )
         adb(
             serial, "shell", "am", "broadcast", "-n", f"{args.package}/.TestGallerySeederReceiver",
             "-a", action, "--es", "run_id", run_id,
         )
-        status_name = "index-resume-status.json" if args.action == "resume" else "index-coverage-status.json"
+        status_name = "index-coverage-status.json"
         result = read_complete_status(serial, args.package, run_id, status_name)
-        filename = "index-resume-result.json" if args.action == "resume" else "index-coverage-result.json"
-        if args.action == "status":
-            validate_coverage(result)
+        filename = "index-coverage-result.json"
+        validate_coverage(result)
     safe_result = {**result, "serial": mask_serial(serial), "package": args.package}
     host = args.artifacts / run_id
     host.mkdir(parents=True, exist_ok=True)

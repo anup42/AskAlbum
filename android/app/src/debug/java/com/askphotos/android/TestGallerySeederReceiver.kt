@@ -29,7 +29,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
                     ACTION_PREPARE_INTERRUPTION -> prepareIndexInterruption(context, runId)
                     ACTION_VERIFY_RECOVERY -> verifyIndexRecovery(context, runId)
                     ACTION_REPORT_INDEX -> reportIndexCoverage(context, runId)
-                    ACTION_RESUME_INDEX -> resumeIndexing(context, runId)
+                    ACTION_RESUME_INDEX -> resumeIndexing(context, runId, intent.getStringExtra(EXTRA_OPERATION_ID))
                     else -> error("Unsupported test action")
                 }
             } catch (error: Throwable) {
@@ -173,11 +173,14 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         )
     }
 
-    private fun resumeIndexing(context: Context, runId: String) {
+    internal fun resumeIndexing(context: Context, runId: String, operationId: String? = null) {
+        operationId?.let { require(OPERATION_ID.matches(it)) { "Invalid resume operation ID" } }
         val application = context.applicationContext as AskPhotosApplication
         application.repository.recoverInterruptedJobs()
-        IndexScheduler.schedule(context)
-        if (application.services.semanticVectorStore.producerVersion() != null) EmbeddingIndexScheduler.schedule(context)
+        IndexScheduler.restart(context)
+        if (application.services.semanticVectorStore.producerVersion() != null) {
+            EmbeddingIndexScheduler.restart(context)
+        }
         val admission = BackgroundWorkAdmissionPolicy(context).evaluate()
         writeStatus(
             context,
@@ -185,7 +188,9 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
             "index-resume-status.json",
             JSONObject().put("state", "COMPLETE").put("runId", runId)
                 .put("thermalAllowed", admission.allowed).put("thermalStatus", admission.thermalStatus)
-                .put("thermalReason", admission.reason),
+                .put("thermalReason", admission.reason).also {
+                    operationId?.let { value -> it.put("operationId", value) }
+                },
         )
     }
 
@@ -308,6 +313,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         const val ACTION_REPORT_INDEX = "com.askphotos.android.test.REPORT_INDEX_COVERAGE"
         const val ACTION_RESUME_INDEX = "com.askphotos.android.test.RESUME_INDEXING"
         const val EXTRA_RUN_ID = "run_id"
+        const val EXTRA_OPERATION_ID = "operation_id"
         val RUN_ID = Regex("[A-Za-z0-9_-]{6,64}")
         val OPERATION_ID = Regex("[a-f0-9]{32}")
     }

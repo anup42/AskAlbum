@@ -191,3 +191,12 @@ Latest artifacts:
 - Visual timing: load 5.672 s, generation 9.288 s, close 0.548 s, wall 15.551 s. PSS rose from 84,748 KB to 269,504 KB after close.
 - Thermal status remained 1; post-run skin temperature was approximately 39.2 C. Compact diagnostics at `android-diagnostics/20260722_152435/` contained zero target fatal exceptions, ANRs, OOMs, or crash markers and recorded normal instrumentation exit.
 - These gates use bounded synthetic/local evidence and do not claim exhaustive real-gallery visual accuracy. Retained-5k indexing, people identity, and 20k connected acceptance remain outstanding.
+
+## Retained 5k resume admission audit on SM-F731U
+
+- The retained run remained exactly scoped to 5,000 app-seeded images. It advanced to 216 analyzed/ready media and 24 real signed-q8 SigLIP2 vectors; no unrelated media was queried or modified.
+- Two bounded WorkManager foreground repair cycles did not sustain the initial index. Final coverage remained 216 ready, 4,784 pending, 24 embedding-complete, and 4,976 embedding-pending, with no failed or running database rows.
+- Thermal was safe throughout the final attempt: status 0, AP approximately 35.8-38.0 C, skin approximately 36.1-37.3 C. Idle PSS was 79,416 KB and RSS 155,400 KB.
+- Diagnostics proved the immediate failure boundary: WorkManager attempted to start `SystemForegroundService` after the debug resume broadcast had moved to the background, and Android rejected both workers with `ForegroundServiceStartNotAllowedException`. No app fatal exception, ANR, OOM, or process death occurred, but the 5k completion gate is explicitly FAILED/INCOMPLETE.
+- The retained scheduling changes are correlated resume results, one unique continuation chain, cancellation of stale tagged work, and device-tier SigLIP batches. The failed foreground-WorkManager experiment was reverted before commit. The next required change is direct foreground-service ownership of reusable indexing processors; another background scheduler retry is not sufficient.
+- Local diagnostic bundle: `android-diagnostics/20260722_154257/`. Retained sample media, E2B, and SigLIP2 remain installed for continuation.

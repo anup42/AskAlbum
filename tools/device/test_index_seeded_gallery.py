@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from index_seeded_gallery import parse_import_status, validate_coverage
+from index_seeded_gallery import parse_import_status, parse_operation_status, validate_coverage
 
 
 class SeededIndexHarnessTest(unittest.TestCase):
@@ -44,6 +44,17 @@ class SeededIndexHarnessTest(unittest.TestCase):
         missing = {**valid, "stages": {key: value for key, value in valid["stages"].items() if key != "OCR"}}
         with self.assertRaisesRegex(RuntimeError, "exact stage set"):
             validate_coverage(missing)
+
+    def test_resume_accepts_only_the_correlated_complete_result(self) -> None:
+        operation_id = "c" * 32
+        payload = json.dumps({
+            "state": "COMPLETE",
+            "runId": "index_run",
+            "operationId": operation_id,
+            "thermalAllowed": True,
+        }).encode()
+        self.assertTrue(parse_operation_status(payload, "index_run", operation_id)["thermalAllowed"])
+        self.assertIsNone(parse_operation_status(payload, "index_run", "d" * 32))
 
 
 if __name__ == "__main__":
