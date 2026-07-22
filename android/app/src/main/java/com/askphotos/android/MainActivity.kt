@@ -228,7 +228,7 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     modelPack = state.modelPack,
                     modelDownload = state.modelDownload,
                     retrievalPack = state.retrievalPack,
-                    retrievalDownload = state.retrievalDownload,
+                    retrievalProvision = state.retrievalProvision,
                     ocrModel = state.ocrModel,
                     ocrModelDownload = state.ocrModelDownload,
                     faceModel = state.faceModel,
@@ -242,8 +242,7 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     onImportRetrievalModel = {
                         retrievalModelPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
                     },
-                    onDownloadRetrievalModel = viewModel::downloadRetrievalModel,
-                    onCancelRetrievalModelDownload = viewModel::cancelRetrievalModelDownload,
+                    onInstallEmbeddedRetrievalModel = viewModel::installEmbeddedRetrievalModel,
                     onDownloadOcrModel = viewModel::downloadOcrModel,
                     onCancelOcrModelDownload = viewModel::cancelOcrModelDownload,
                     onImportOcrModel = {
@@ -682,7 +681,7 @@ private fun IndexManagerScreen(
     modelPack: ModelPackStatus,
     modelDownload: GemmaDownloadProgress,
     retrievalPack: RetrievalPackStatus,
-    retrievalDownload: RetrievalDownloadProgress,
+    retrievalProvision: RetrievalProvisionProgress,
     ocrModel: OcrModelStatus,
     ocrModelDownload: OcrModelDownloadProgress,
     faceModel: FaceModelStatus,
@@ -694,8 +693,7 @@ private fun IndexManagerScreen(
     onDownloadModel: () -> Unit,
     onCancelModelDownload: () -> Unit,
     onImportRetrievalModel: () -> Unit,
-    onDownloadRetrievalModel: () -> Unit,
-    onCancelRetrievalModelDownload: () -> Unit,
+    onInstallEmbeddedRetrievalModel: () -> Unit,
     onDownloadOcrModel: () -> Unit,
     onCancelOcrModelDownload: () -> Unit,
     onImportOcrModel: () -> Unit,
@@ -939,38 +937,34 @@ private fun IndexManagerScreen(
                         fontSize = 11.sp,
                     )
                 }
-                if (!retrievalPack.installed && BuildConfig.ALLOW_MODEL_DOWNLOAD) {
+                if (!retrievalPack.installed) {
                     Spacer(Modifier.height(10.dp))
-                    when (retrievalDownload.state) {
+                    when (retrievalProvision.state) {
                         GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING -> {
                             LinearProgressIndicator(
-                                progress = { retrievalDownload.fraction },
+                                progress = { retrievalProvision.fraction },
                                 modifier = Modifier.fillMaxWidth(),
                                 color = Forest,
                                 trackColor = Mist,
                             )
                             Text(
-                                if (retrievalDownload.state == GemmaDownloadState.VERIFYING) {
-                                    "Verifying archive and every model artifact..."
+                                if (retrievalProvision.state == GemmaDownloadState.VERIFYING) {
+                                    "Verifying embedded archive and every model artifact..."
                                 } else {
-                                    "${formatBytes(retrievalDownload.bytesDownloaded)} of ${formatBytes(retrievalDownload.totalBytes)}"
+                                    "Installing ${formatBytes(retrievalProvision.bytesCopied)} of ${formatBytes(retrievalProvision.totalBytes)} from the APK"
                                 },
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 11.sp,
                             )
-                            TextButton(onClick = onCancelRetrievalModelDownload) { Text("Cancel download") }
                         }
                         else -> {
                             Button(
-                                onClick = onDownloadRetrievalModel,
-                                modifier = Modifier.fillMaxWidth().testTag("download-siglip2"),
-                            ) { Text("Download SigLIP2 Base quantized") }
-                            retrievalDownload.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                                onClick = onInstallEmbeddedRetrievalModel,
+                                modifier = Modifier.fillMaxWidth().testTag("install-embedded-siglip2"),
+                            ) { Text("Install embedded SigLIP2") }
+                            retrievalProvision.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
                         }
                     }
-                } else if (!retrievalPack.installed) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("Offline demo build: import the verified SigLIP2 pack locally.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                 }
                 Spacer(Modifier.height(11.dp))
                 OutlinedButton(onClick = onImportRetrievalModel) {

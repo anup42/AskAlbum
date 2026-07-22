@@ -1,4 +1,17 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.api.tasks.Sync
+
+val embeddedSiglipArchive = rootProject.layout.projectDirectory.file("../build/siglip2-base-p16-224-q8-core05.agretrieval")
+val generatedEmbeddedSiglipAssets = layout.buildDirectory.dir("generated/embeddedSiglip2Assets")
+val prepareEmbeddedSiglip2Assets by tasks.registering(Sync::class) {
+    from(embeddedSiglipArchive)
+    into(generatedEmbeddedSiglipAssets.map { it.dir("models/retrieval") })
+    doFirst {
+        require(embeddedSiglipArchive.asFile.isFile) {
+            "Missing pinned embedded SigLIP2 archive: ${embeddedSiglipArchive.asFile}"
+        }
+    }
+}
 
 plugins {
     id("com.android.application")
@@ -21,8 +34,8 @@ android {
         applicationId = "com.askphotos.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.0.2"
+        versionCode = 3
+        versionName = "0.0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -82,10 +95,16 @@ android {
     }
 
     sourceSets["main"].assets.srcDir("../../demo-assets")
+    sourceSets["main"].assets.srcDir(generatedEmbeddedSiglipAssets)
+    androidResources.noCompress += "agretrieval"
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
+}
+
+tasks.configureEach {
+    if (name.startsWith("merge") && name.endsWith("Assets")) dependsOn(prepareEmbeddedSiglip2Assets)
 }
 
 kotlin {

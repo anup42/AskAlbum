@@ -13,7 +13,7 @@ Native, local-only Android implementation of the Agentic Gallery architecture. I
 - Gemma 4 E2B/E4B Settings selection, capability policy, resumable foreground download from immutable Google AI Edge Gallery revisions, pinned LFS SHA-256/size verification, signed `.agemma` import, app-private atomic activation/rollback, LiteRT-LM 0.14.0 GPU/CPU runtime, one bounded plan plus one repair, and deterministic fallback.
 - Sensitive OCR classification with biometric/device-credential gating.
 - Ask, Library, Index Manager, coverage/exactness, execution status, and “Why this answer?” interfaces.
-- Verified SigLIP2 retrieval and OpenCV SFace identity model packs. SFace is selected through the same provider-registry pattern used by OCR, runs through ONNX Runtime, produces normalized 128-dimensional embeddings, stores them in an app-private FP16 index, and remains opt-in for people indexing.
+- SigLIP2 Base quantized retrieval is embedded in the APK, verified by pinned archive and per-artifact SHA-256 values, and expanded atomically into app-private storage on first launch. SFace remains a separate modular, opt-in identity model.
 - A checksum-pinned, openly licensed multi-domain core gallery plus deterministic 5k/20k stress profiles for repeatable offline tests.
 
 ## Deliberate capability reporting
@@ -23,6 +23,8 @@ The app reports installed capabilities rather than pretending interfaces are mod
 See [the requirements audit](../docs/ANDROID_REQUIREMENTS_AUDIT.md) for the exact implementation matrix.
 
 ## Build and test
+
+Place the pinned `siglip2-base-p16-224-q8-core05.agretrieval` archive at `../build/` relative to this Android directory. Gradle embeds that local, ignored model artifact into every APK; model weights are not committed to Git.
 
 ```powershell
 .\gradlew.bat :app:testOfflineDemoDebugUnitTest :app:assembleOfflineDemoDebug

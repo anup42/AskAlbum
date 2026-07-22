@@ -3035,17 +3035,17 @@ Limitation: real PaddleOCR recognition was not rerun during this narrow compatib
 - Added `docs/versioning.md` defining semantic-version increments for meaningful upgrades and mandatory monotonically increasing Android version codes for distributed APKs.
 - ConsumerDebug assemble and replace-install: PASS on SM-F731U, Android 16/API 36; 67 Gradle tasks completed in 57 seconds.
 - `aapt2 dump badging` verified the generated APK contains `versionCode='1' versionName='0.0.1'`. Device `dumpsys package` independently reported the same installed values.
-## SigLIP2 catalog downloader and application 0.0.2 (22 July 2026)
+## Embedded SigLIP2 and application 0.0.3 (22 July 2026)
 
-Status: **IMPLEMENTED; focused JVM gate passed. Connected download/install gate pending the published release asset and final device run.**
+Status: **PASS on the connected Samsung SM-F731U.**
 
-- Added a consumer-build Settings action for the pinned `siglip2-base-p16-224-q8` pack with WorkManager-backed resumable download, foreground progress, cancellation, storage admission, HTTPS host allowlisting, and app-private activation.
-- The catalog pins release URL, 267,744,234-byte archive size, SHA-256 `5966d528a7ddf73be52a299251e5c0071d878ba1e0fcc70d39fcf38ec6a8f010`, Google source revision, ONNX artifact revision, and 384,737,099 installed bytes.
-- Catalog downloads trust only that exact outer archive hash and then revalidate the manifest, declared artifact set, per-file sizes, and per-file SHA-256 values. Manual `.agretrieval` imports retain the stricter APK-signing-certificate signature verification path.
-- Successful activation schedules the versioned embedding index. The `offlineDemo` variant remains import-only and retains no Internet permission.
-- Incremented the distributed application to `0.0.2` (`versionCode` 2).
+- Removed the SigLIP2 network downloader. Gradle now embeds the exact local `siglip2-base-p16-224-q8-core05.agretrieval` archive as an uncompressed APK asset without committing model weights to Git.
+- First launch schedules resumable local extraction through WorkManager. Activation requires the pinned 267,744,234-byte archive size, SHA-256 `5966d528a7ddf73be52a299251e5c0071d878ba1e0fcc70d39fcf38ec6a8f010`, expected Google and ONNX revisions, exact manifest file set, per-file sizes, and every per-file SHA-256 value.
+- Installation is atomic and app-private. Successful activation schedules the versioned embedding index. Manual `.agretrieval` replacement imports retain APK-signing-certificate verification.
+- Incremented the distributed application to `0.0.3` (`versionCode` 3).
+- Focused JVM pack/spec tests: PASS in 39 seconds.
+- Bundled Android build/install workflow: PASS in 51 seconds. The generated ConsumerDebug APK is 587,174,724 bytes and installed successfully on Samsung SM-F731U, Android 16/API 36.
+- First launch copied the embedded 267,744,234-byte archive and activated generation `ba1f3b0-q8-core05`. Device package metadata reports `versionName=0.0.3` and `versionCode=3`.
+- `EmbeddedSiglip2AcceptanceTest`: PASS. It verified pack ID/version, source/artifact revisions, 384,737,099 expanded bytes, and all declared artifacts in the active app-private generation.
 
-Commands run:
-
-- `:app:testConsumerDebugUnitTest --tests com.askphotos.android.RetrievalModelCatalogTest --tests com.askphotos.android.RetrievalPackValidationTest`: PASS in 53 seconds.
-- Bundled Android build/install workflow (`:app:assembleConsumerDebug :app:installConsumerDebug`): PASS in 52 seconds on Samsung SM-F731U, Android 16/API 36. The 0.0.2 consumer APK replaced the previous install without clearing app-private data.
+Limitation: embedding the archive increases APK size and installed storage because Android retains the APK asset as well as the expanded runtime files. This is the requested distribution tradeoff.

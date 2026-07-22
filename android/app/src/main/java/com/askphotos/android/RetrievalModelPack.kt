@@ -254,22 +254,22 @@ class RetrievalModelPackManager(
     }
 
     internal fun installVerified(zipFile: File): InstalledRetrievalPack {
-        return installArchive(zipFile, requireApkSignature = true, catalogSpec = null)
+        return installArchive(zipFile, requireApkSignature = true, embeddedSpec = null)
     }
 
-    internal fun installCatalogDownload(
-        spec: RetrievalDownloadSpec,
+    internal fun installEmbedded(
+        spec: EmbeddedRetrievalSpec,
         zipFile: File,
     ): InstalledRetrievalPack {
-        require(zipFile.length() == spec.archiveSizeBytes) { "Downloaded retrieval pack has the wrong size" }
-        require(zipFile.sha256Hex() == spec.archiveSha256) { "Downloaded retrieval pack failed SHA-256 verification" }
-        return installArchive(zipFile, requireApkSignature = false, catalogSpec = spec)
+        require(zipFile.length() == spec.archiveSizeBytes) { "Embedded retrieval pack has the wrong size" }
+        require(zipFile.sha256Hex() == spec.archiveSha256) { "Embedded retrieval pack failed SHA-256 verification" }
+        return installArchive(zipFile, requireApkSignature = false, embeddedSpec = spec)
     }
 
     private fun installArchive(
         zipFile: File,
         requireApkSignature: Boolean,
-        catalogSpec: RetrievalDownloadSpec?,
+        embeddedSpec: EmbeddedRetrievalSpec?,
     ): InstalledRetrievalPack {
         require(root.mkdirs() || root.isDirectory) { "Could not create retrieval model directory" }
         require(generations.mkdirs() || generations.isDirectory) { "Could not create retrieval generation directory" }
@@ -287,7 +287,7 @@ class RetrievalModelPackManager(
                 Base64.getDecoder().decode(input.readBytesLimited(MAX_SIGNATURE_BYTES).toString(Charsets.US_ASCII).trim())
             }
             if (requireApkSignature) verifier.verify(manifestBytes, signatureBytes, manifest)
-            catalogSpec?.validate(manifest)
+            embeddedSpec?.validate(manifest)
             val allowed = manifest.files.mapTo(mutableSetOf()) { it.name }.apply { add(MANIFEST_NAME); add(SIGNATURE_NAME) }
             require(entries.all { !it.isDirectory && it.name in allowed }) { "Retrieval pack contains an unlisted entry" }
             require(entries.map { it.name }.toSet() == allowed) { "Retrieval pack is missing an artifact" }

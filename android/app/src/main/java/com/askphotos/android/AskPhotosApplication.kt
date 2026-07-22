@@ -7,7 +7,9 @@ class AppServices(private val application: AskPhotosApplication) {
     val modelPackManager by lazy { ModelPackManager(application) }
     val modelDownloader by lazy { GemmaModelDownloader(application, modelPackManager) }
     val retrievalModelPackManager by lazy { RetrievalModelPackManager(application) }
-    val retrievalModelDownloader by lazy { RetrievalModelDownloader(application, retrievalModelPackManager) }
+    val embeddedRetrievalModelProvisioner by lazy {
+        EmbeddedRetrievalModelProvisioner(application, retrievalModelPackManager)
+    }
     val ocrModelPackManager by lazy { OcrModelPackManager(application) }
     val ocrModelDownloader by lazy { OcrModelDownloader(application, ocrModelPackManager) }
     val faceModelPackManager by lazy { FaceModelPackManager(application) }
@@ -41,4 +43,9 @@ class AskPhotosApplication : Application() {
     val services by lazy { AppServices(this) }
     val modelPackManager get() = services.modelPackManager
     val repository get() = services.repository
+
+    override fun onCreate() {
+        super.onCreate()
+        runCatching { services.embeddedRetrievalModelProvisioner.enqueueIfNeeded() }
+    }
 }

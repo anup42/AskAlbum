@@ -37,7 +37,7 @@ data class GalleryUiState(
     val modelPack: ModelPackStatus = ModelPackStatus(installed = false),
     val modelDownload: GemmaDownloadProgress = GemmaDownloadProgress(),
     val retrievalPack: RetrievalPackStatus = RetrievalPackStatus(installed = false),
-    val retrievalDownload: RetrievalDownloadProgress = RetrievalDownloadProgress(),
+    val retrievalProvision: RetrievalProvisionProgress = RetrievalProvisionProgress(),
     val ocrModel: OcrModelStatus = OcrModelStatus(),
     val ocrModelDownload: OcrModelDownloadProgress = OcrModelDownloadProgress(),
     val faceModel: FaceModelStatus = FaceModelStatus(),
@@ -59,13 +59,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val modelPacks = askPhotosApplication.modelPackManager
     private val modelDownloader = askPhotosApplication.services.modelDownloader
     private val retrievalPacks = askPhotosApplication.services.retrievalModelPackManager
-    private val retrievalModelDownloader = askPhotosApplication.services.retrievalModelDownloader
+    private val retrievalProvisioner = askPhotosApplication.services.embeddedRetrievalModelProvisioner
     private val ocrModelPacks = askPhotosApplication.services.ocrModelPackManager
     private val ocrModelDownloader = askPhotosApplication.services.ocrModelDownloader
     private val faceModelPacks = askPhotosApplication.services.faceModelPackManager
     private val faceModelDownloader = askPhotosApplication.services.faceModelDownloader
     private var modelMonitorJob: Job? = null
-    private var retrievalModelMonitorJob: Job? = null
+    private var retrievalProvisionMonitorJob: Job? = null
     private var ocrModelMonitorJob: Job? = null
     private var faceModelMonitorJob: Job? = null
     private var queryJob: Job? = null
@@ -93,7 +93,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     modelPack = modelPacks.status(),
                     modelDownload = modelDownloader.progress(modelPacks.selectedTier()),
                     retrievalPack = retrievalPacks.status(),
-                    retrievalDownload = retrievalModelDownloader.progress(),
+                    retrievalProvision = retrievalProvisioner.progress(),
                     ocrModel = ocrModelPacks.status(),
                     ocrModelDownload = ocrModelDownloader.progress(),
                     faceModel = faceModelPacks.status(),
@@ -103,7 +103,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 )
                 monitorIndexing()
                 monitorModelDownload()
-                monitorRetrievalModelDownload()
+                monitorRetrievalProvision()
                 monitorOcrModelDownload()
                 monitorFaceModelDownload()
             }.onFailure { error ->
@@ -222,24 +222,19 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun downloadRetrievalModel() {
-        state = state.copy(operationMessage = "Preparing the pinned SigLIP2 Base quantized download...")
+    fun installEmbeddedRetrievalModel() {
+        state = state.copy(operationMessage = "Preparing the embedded SigLIP2 Base model...")
         viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { retrievalModelDownloader.enqueue() } }
+            runCatching { withContext(Dispatchers.IO) { retrievalProvisioner.enqueueIfNeeded() } }
                 .onSuccess {
                     state = state.copy(
-                        retrievalDownload = RetrievalDownloadProgress(state = GemmaDownloadState.QUEUED),
-                        operationMessage = "SigLIP2 download queued; the model stays in app-private storage",
+                        retrievalProvision = RetrievalProvisionProgress(state = GemmaDownloadState.QUEUED),
+                        operationMessage = "Embedded SigLIP2 installation queued in app-private storage",
                     )
-                    monitorRetrievalModelDownload()
+                    monitorRetrievalProvision()
                 }
-                .onFailure { error -> state = state.copy(operationMessage = error.message ?: "SigLIP2 download could not start") }
+                .onFailure { error -> state = state.copy(operationMessage = error.message ?: "Embedded SigLIP2 installation could not start") }
         }
-    }
-
-    fun cancelRetrievalModelDownload() {
-        retrievalModelDownloader.cancel()
-        state = state.copy(operationMessage = "SigLIP2 download cancelled")
     }
 
     fun importFaceModel(uri: Uri?) {
@@ -456,11 +451,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun monitorRetrievalModelDownload() {
-        retrievalModelMonitorJob?.cancel()
-        retrievalModelMonitorJob = viewModelScope.launch {
+    private fun monitorRetrievalProvision() {
+        retrievalProvisionMonitorJob?.cancel()
+        retrievalProvisionMonitorJob = viewModelScope.launch {
             repeat(7_200) {
-                val progress = withContext(Dispatchers.IO) { retrievalModelDownloader.progress() }
+                val progress = withContext(Dispatchers.IO) { retrievalProvisioner.progress() }
                 val wasInstalled = state.retrievalPack.installed
                 val status = if (progress.state == GemmaDownloadState.INSTALLED) {
                     withContext(Dispatchers.IO) { retrievalPacks.status() }
@@ -469,7 +464,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     EmbeddingIndexScheduler.schedule(getApplication())
                     monitorIndexing()
                 }
-                state = state.copy(retrievalPack = status, retrievalDownload = progress)
+                state = state.copy(retrievalPack = status, retrievalProvision = progress)
                 if (progress.state !in ACTIVE_DOWNLOAD_STATES) return@launch
                 delay(1_000)
             }
