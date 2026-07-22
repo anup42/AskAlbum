@@ -240,3 +240,15 @@ Recovery disclosure:
 - ConsumerDebug unit tests and lint: PASS in 77.3 seconds. Final app/test replace-install preserved E2B, SigLIP2, Room/vector state, and both retained run-scoped sample galleries.
 - BiometricPrompt interaction itself was not automated; device-auth success/error callbacks remain framework-driven and the test proves the pre-authentication failure-closed boundary.
 - The independently running 5k checkpoint reached 945 READY media and 864 persisted real SigLIP2 vectors at thermal status 0 with zero failures; indexing remains active and incomplete.
+
+## Isolated Macrobenchmark checkpoint
+
+- Date/device: 22 July 2026; Samsung SM-F731U, Android 16/API 36, arm64-v8a, SM8550. Thermal status was 1 during valid measurements.
+- The benchmark target is installed separately as `com.askphotos.android.benchmark`; it does not replace or clear `com.askphotos.android` and its retained E2B, SigLIP2, Room/vector state, or sample galleries.
+- Unlock-aware cold startup: PASS, five iterations. Time to initial display was 437.5 ms minimum, 447.1 ms median, and 484.5 ms maximum. Five Perfetto traces were produced.
+- Gallery scroll frame timing: PASS, five iterations. CPU frame duration p50/p90/p95/p99 was 7.650/13.995/21.649/63.924 ms; frame overrun was -5.831/11.743/31.252/90.488 ms. Five Perfetto traces were produced.
+- Fixture query to first answer: FAILED. A transient package-compile failure occurred first; after direct compiler verification, the retry reached Ask and submitted the query but did not expose an answer semantics node within 30 seconds. The two-cycle repair limit was reached, so the assertion remains enabled and no query latency is claimed.
+- A combined host unit/lint/assembly rerun did not complete: sandboxed Gradle download access failed first, then the approved retry lacked an SDK location. The two-cycle limit stopped further retries; `artifacts/phase9c-host-gate-20260722.txt` records the failure and no new host pass is claimed.
+- An earlier lock-screen cold measurement is invalid and discarded. A separate four-iteration cold run lost adb instrumentation before producing a result and is also excluded.
+- Host artifacts: `artifacts/macrobenchmark-gallery-scroll-unlocked-20260722.txt`, `artifacts/macrobenchmark-cold-unlocked-20260722-retry.txt`, and `artifacts/macrobenchmark-fixture-query-20260722-retry.txt`. Diagnostic bundles are local at `android-diagnostics/20260722_183557/` and `android-diagnostics/20260722_183744/`.
+- Latest retained 5k checkpoint before resuming foreground work: 5,000 unique rows, 1,281 READY, 1,128 real signed-q8 vectors, 24 embeddings running, zero failures. No sample cleanup or personal-gallery mutation was performed.

@@ -2873,3 +2873,37 @@ Limitations:
 - Authentication prompt success/cancellation uses AndroidX BiometricPrompt with strong biometric or device credential. Automated acceptance proves pre-auth redaction and prompt routing; it does not automate a user's biometric gesture.
 - Sensitive OCR remains stored app-private as required for local search. Database-at-rest encryption remains a separate outstanding hardening gate.
 - Concurrent retained-5k progress after this gate: 945 READY, 864 persisted signed-q8 SigLIP2 vectors, zero retryable/permanent failures, thermal status 0. Full coverage remains incomplete.
+
+## Phase 9C - isolated Macrobenchmark scaffold (22 July 2026)
+
+Status: **PARTIAL.** Cold startup and gallery scrolling pass on the connected device. The fixture-query benchmark remains enabled and failing; this phase is not complete.
+
+Files changed:
+
+- `android/{settings.gradle.kts,build.gradle.kts}`
+- `android/app/{build.gradle.kts,src/benchmark/AndroidManifest.xml}`
+- `android/benchmark/{build.gradle.kts,src/main/AndroidManifest.xml,src/main/java/com/askphotos/benchmark/AskPhotosMacrobenchmark.kt}`
+
+Architecture decisions:
+
+- Added an isolated `com.android.test` Macrobenchmark module using stable AndroidX Benchmark Macro 1.4.1 and UI Automator 2.4.0. The non-debuggable benchmark target is a separate `com.askphotos.android.benchmark` installation, so measurement does not clear or replace the retained consumer app, models, database, vectors, or sample gallery.
+- The target is explicitly profileable by shell only in the benchmark build. The runner is self-instrumenting and keeps benchmark accuracy checks enabled.
+- Setup wakes and unlocks the device before each iteration. Metrics from an earlier lock-screen run were discarded and are not reported as application performance.
+
+Commands and connected-device results:
+
+- `:benchmark:assembleOfflineDemoBenchmark :app:assembleOfflineDemoBenchmark`: PASS.
+- A later combined host gate (`testConsumerDebugUnitTest`, `lintConsumerDebug`, and both benchmark assemblies) was NOT RUN to completion: the sandbox first denied Gradle distribution access, and the approved retry lacked an Android SDK location. Per the two-cycle limit, no third attempt was made and no new host-test pass is claimed. Output: `artifacts/phase9c-host-gate-20260722.txt`.
+- Direct `galleryScrollFrames`: PASS, five iterations in 60.304 seconds. CPU frame duration p50 7.650 ms, p90 13.995 ms, p95 21.649 ms, p99 63.924 ms. Frame overrun p50 -5.831 ms, p90 11.743 ms, p95 31.252 ms, p99 90.488 ms.
+- Direct unlock-aware `coldStartup`: PASS on the second transport attempt, five iterations in 30.758 seconds. Time to initial display: 437.5 ms minimum, 447.1 ms median, 484.5 ms maximum.
+- Direct `fixtureQueryToFirstAnswer`: FAILED. The first attempt hit a transient empty-output package-compile failure; the package compiler then passed directly. The single retry reached the Ask UI and submitted `Show Amsterdam photos`, but no answer semantics node appeared within 30 seconds. Repairs stopped after two unsuccessful cycles; the assertion was not weakened or skipped.
+- Thermal status was 1 for valid measurements. Each successful benchmark produced five on-device Perfetto traces under the benchmark package's Android media directory.
+
+Artifacts and limitations:
+
+- Host summaries: `artifacts/macrobenchmark-gallery-scroll-unlocked-20260722.txt`, `artifacts/macrobenchmark-cold-unlocked-20260722-retry.txt`, and `artifacts/macrobenchmark-fixture-query-20260722-retry.txt`.
+- Query diagnostics: `android-diagnostics/20260722_183557/` and `android-diagnostics/20260722_183744/` (local ignored bundles).
+- The earlier locked-screen cold result and incomplete four-iteration transport run are invalid and intentionally excluded from performance claims.
+- Phase 9C remains incomplete until the fixture-query flow passes and focused host verification is rerun.
+- The scaffold is intentionally incomplete: the enabled fixture-query test and the combined host gate must pass before Phase 9C can be marked complete.
+- Retained 5k checkpoint before the final resume: 5,000 unique rows, 1,281 READY, 1,128 persisted signed-q8 SigLIP2 vectors, 24 embeddings in flight, zero failed rows/stages, thermal status 1. The direct foreground run was resumed after benchmarking without reseeding or deleting media.
