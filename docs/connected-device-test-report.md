@@ -256,6 +256,7 @@ Recovery disclosure:
 ## Persisted 5k semantic-retrieval gate preflight
 
 - Added and compiled `StoredStressVectorRetrievalAcceptanceTest`; compilation passed in 17 seconds.
+- Added `tools/device/run_stored_5k_retrieval.py`; its three host contract tests pass. It installs only the test APK, verifies a target app-private marker remains, and never seeds or cleans gallery media.
 - The test requires all 5,000 recorded seed URIs, all 5,000 corresponding Room rows, and all 5,000 persisted signed-q8 vectors before it evaluates retrieval. It checks four deterministic source families, rank 1, precision@10 >= 0.60, and five-run warm text-to-results p95 <= 2,000 ms.
 - The test is NOT RUN because complete coverage is not yet true. Current checkpoint: 1,401 READY, 1,248 vector IDs visible (1,226 embedding stages complete and 22 running), zero failed rows/stages, thermal status 1.
 - The retained foreground operation continues against `fg_index5k_20260722`; no samples were reseeded or removed and no personal-gallery content was touched.

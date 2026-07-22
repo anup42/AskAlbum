@@ -2915,6 +2915,7 @@ Status: **COMPILED; NOT RUN.** The gate intentionally requires complete run-scop
 Files changed:
 
 - `android/app/src/androidTest/java/com/askphotos/android/StoredStressVectorRetrievalAcceptanceTest.kt`
+- `tools/device/{run_stored_5k_retrieval.py,test_run_stored_5k_retrieval.py}`
 
 Acceptance contract:
 
@@ -2926,5 +2927,6 @@ Acceptance contract:
 Verification and current state:
 
 - `:app:compileConsumerDebugAndroidTestKotlin`: PASS in 17 seconds with the explicit installed Android SDK path. Full output: `artifacts/stored-5k-test-compile-20260722.txt`.
+- Dedicated retained-state harness tests: 3 PASS. The harness installs only the Android-test APK, validates an app-private preservation marker, rejects counts other than exactly 5,000, and performs no seeding, database removal, or MediaStore cleanup.
 - Instrumentation is intentionally NOT RUN until the strict vector-count precondition can pass; the assertion is not skipped or relaxed for partial coverage.
 - Durable checkpoint during the active foreground run: 5,000 unique media rows, 1,401 READY, 1,248 vector IDs visible (1,226 embedding stages complete and 22 in flight), zero retryable/permanent failures, thermal status 1. No media was reseeded, deleted, or modified.
