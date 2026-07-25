@@ -1230,70 +1230,94 @@ private fun PeopleScreen(
     val toReview = clusters.filter { !it.reviewed && !it.hidden }
     val named = clusters.filter { it.reviewed && !it.hidden }
     val hidden = clusters.filter(PersonClusterReviewItem::hidden)
-    Column(
-        Modifier.fillMaxSize()
-            .safeDrawingPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp, 10.dp, 20.dp, 32.dp),
+    androidx.compose.foundation.lazy.LazyColumn(
+        modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp, 10.dp, 20.dp, 32.dp),
     ) {
-        Text("People", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
-        Text("Review and correct local face clusters. Original photos are never changed.")
-        Spacer(Modifier.height(12.dp))
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
-            Column(Modifier.padding(16.dp)) {
-                Text("People identity status", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                Spacer(Modifier.height(8.dp))
-                Text("${toReview.size} to review • ${named.size} named • ${hidden.size} hidden")
-                Spacer(Modifier.height(6.dp))
-                if (!peopleIndex.enabled) {
-                    Text("People indexing is currently off. Enable it in Privacy first.")
+        item(key = "people-header") {
+            Text("People", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            Text("Review and correct local face clusters. Original photos are never changed.")
+            Spacer(Modifier.height(12.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("People identity status", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("${toReview.size} to review • ${named.size} named • ${hidden.size} hidden")
+                    Spacer(Modifier.height(6.dp))
+                    if (!peopleIndex.enabled) {
+                        Text("People indexing is currently off. Enable it in Privacy first.")
+                    }
                 }
             }
+            Spacer(Modifier.height(12.dp))
         }
-        Spacer(Modifier.height(12.dp))
         if (!peopleIndex.enabled) {
-            Text("No review is possible while people indexing is disabled.")
+            item(key = "people-disabled") {
+                Text("No review is possible while people indexing is disabled.")
+            }
         } else if (clusters.isEmpty()) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Face clusters are still being processed.", fontWeight = FontWeight.SemiBold)
-                    Text("Indexed clusters will appear here without restarting face indexing.")
+            item(key = "people-processing") {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Face clusters are still being processed.", fontWeight = FontWeight.SemiBold)
+                        Text("Indexed clusters will appear here without restarting face indexing.")
+                    }
                 }
             }
         } else {
             if (toReview.isNotEmpty()) {
-                Text("To review", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(8.dp))
-                toReview.forEach { cluster ->
+                item(key = "to-review-heading") {
+                    Text("To review", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                }
+                items(
+                    count = toReview.size,
+                    key = { index -> "review-${toReview[index].id}" },
+                ) { index ->
+                    val cluster = toReview[index]
                     PersonClusterCard(cluster, "Tag this person", { editingCluster = cluster }, onSetHidden)
                 }
             }
             if (named.isNotEmpty()) {
-                Spacer(Modifier.height(14.dp))
-                Text("Named people", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(8.dp))
-                named.forEach { cluster ->
+                item(key = "named-heading") {
+                    Spacer(Modifier.height(14.dp))
+                    Text("Named people", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                }
+                items(
+                    count = named.size,
+                    key = { index -> "named-${named[index].id}" },
+                ) { index ->
+                    val cluster = named[index]
                     PersonClusterCard(cluster, "Edit person", { editingCluster = cluster }, onSetHidden)
                 }
             }
             if (hidden.isNotEmpty()) {
-                Spacer(Modifier.height(14.dp))
-                Text("Hidden", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(8.dp))
-                hidden.forEach { cluster ->
+                item(key = "hidden-heading") {
+                    Spacer(Modifier.height(14.dp))
+                    Text("Hidden", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                }
+                items(
+                    count = hidden.size,
+                    key = { index -> "hidden-${hidden[index].id}" },
+                ) { index ->
+                    val cluster = hidden[index]
                     PersonClusterCard(cluster, "Edit", { editingCluster = cluster }, onSetHidden)
                 }
             }
         }
         operationMessage?.let { message ->
-            Spacer(Modifier.height(12.dp))
-            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                Text(message, Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.SemiBold)
+            item(key = "people-operation") {
+                Spacer(Modifier.height(12.dp))
+                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                    Text(message, Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
     }
@@ -1430,29 +1454,90 @@ private fun PersonClusterCard(
 @Composable
 private fun FaceCropImage(face: PersonFaceReviewItem, modifier: Modifier) {
     val context = LocalContext.current
-    val crop = remember(face.id, face.item.previewPath, face.item.assetPath, face.item.contentUri) {
-        runCatching {
-            val source = when {
-                face.item.previewPath != null -> BitmapFactory.decodeFile(face.item.previewPath)
-                face.item.assetPath != null -> context.assets.open(face.item.assetPath).use(BitmapFactory::decodeStream)
-                face.item.contentUri != null -> context.contentResolver.openInputStream(Uri.parse(face.item.contentUri)).use(BitmapFactory::decodeStream)
-                else -> null
-            } ?: return@runCatching null
-            val faceWidth = (face.right - face.left).coerceAtLeast(.01f)
-            val faceHeight = (face.bottom - face.top).coerceAtLeast(.01f)
-            val left = ((face.left - faceWidth * .25f).coerceIn(0f, 1f) * source.width).toInt()
-            val top = ((face.top - faceHeight * .3f).coerceIn(0f, 1f) * source.height).toInt()
-            val right = ((face.right + faceWidth * .25f).coerceIn(0f, 1f) * source.width).toInt().coerceAtLeast(left + 1)
-            val bottom = ((face.bottom + faceHeight * .35f).coerceIn(0f, 1f) * source.height).toInt().coerceAtLeast(top + 1)
-            android.graphics.Bitmap.createBitmap(source, left, top, right - left, bottom - top).asImageBitmap()
-        }.getOrNull()
+    val crop by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(
+        initialValue = null,
+        key1 = face.id,
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            decodeFaceThumbnail(context.applicationContext, face)
+        }
     }
     if (crop != null) {
-        Image(crop, face.item.description, modifier, contentScale = ContentScale.Crop)
+        Image(requireNotNull(crop), face.item.description, modifier, contentScale = ContentScale.Crop)
     } else {
         Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
             Text("Face", fontSize = 10.sp)
         }
+    }
+}
+
+private fun decodeFaceThumbnail(
+    context: android.content.Context,
+    face: PersonFaceReviewItem,
+): androidx.compose.ui.graphics.ImageBitmap? = runCatching {
+    fun openSource(): java.io.InputStream? = when {
+        face.item.previewPath != null -> java.io.File(face.item.previewPath).inputStream()
+        face.item.assetPath != null -> context.assets.open(face.item.assetPath)
+        face.item.contentUri != null -> context.contentResolver.openInputStream(Uri.parse(face.item.contentUri))
+        else -> null
+    }
+
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    openSource()?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return@runCatching null
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+    val sample = FaceCropSamplingPolicy.sampleSize(bounds.outWidth, bounds.outHeight)
+    val source = openSource()?.use {
+        BitmapFactory.decodeStream(
+            it,
+            null,
+            BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+            },
+        )
+    } ?: return@runCatching null
+    val faceWidth = (face.right - face.left).coerceAtLeast(.01f)
+    val faceHeight = (face.bottom - face.top).coerceAtLeast(.01f)
+    val left = ((face.left - faceWidth * .25f).coerceIn(0f, 1f) * source.width)
+        .toInt()
+        .coerceIn(0, source.width - 1)
+    val top = ((face.top - faceHeight * .3f).coerceIn(0f, 1f) * source.height)
+        .toInt()
+        .coerceIn(0, source.height - 1)
+    val right = ((face.right + faceWidth * .25f).coerceIn(0f, 1f) * source.width)
+        .toInt()
+        .coerceIn(left + 1, source.width)
+    val bottom = ((face.bottom + faceHeight * .35f).coerceIn(0f, 1f) * source.height)
+        .toInt()
+        .coerceIn(top + 1, source.height)
+    val cropped = android.graphics.Bitmap.createBitmap(source, left, top, right - left, bottom - top)
+    if (cropped !== source) source.recycle()
+    val maxEdge = maxOf(cropped.width, cropped.height)
+    val output = if (maxEdge <= FaceCropSamplingPolicy.OUTPUT_MAX_EDGE) {
+        cropped
+    } else {
+        val scale = FaceCropSamplingPolicy.OUTPUT_MAX_EDGE.toFloat() / maxEdge
+        val scaled = android.graphics.Bitmap.createScaledBitmap(
+            cropped,
+            (cropped.width * scale).toInt().coerceAtLeast(1),
+            (cropped.height * scale).toInt().coerceAtLeast(1),
+            true,
+        )
+        if (scaled !== cropped) cropped.recycle()
+        scaled
+    }
+    output.asImageBitmap()
+}.getOrNull()
+
+internal object FaceCropSamplingPolicy {
+    const val SOURCE_MAX_EDGE = 1024
+    const val OUTPUT_MAX_EDGE = 256
+
+    fun sampleSize(width: Int, height: Int): Int {
+        if (width <= 0 || height <= 0) return 1
+        var sample = 1
+        while (maxOf(width / sample, height / sample) > SOURCE_MAX_EDGE) sample *= 2
+        return sample
     }
 }
 

@@ -846,71 +846,125 @@ class GalleryDatabase(
     fun personClustersPendingReview(): List<PersonClusterReviewItem> =
         personClusterSummaries(includeHidden = false).filterNot(PersonClusterReviewItem::reviewed)
 
-    fun personClusterSummaries(includeHidden: Boolean = false): List<PersonClusterReviewItem> = readableDatabase.rawQuery(
-        "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(f.id) AS face_count, MAX(f.media_id) AS sample_media_id " +
-            ", c.reviewed, c.hidden " +
-            "FROM person_cluster c LEFT JOIN face_instance f ON c.id = f.cluster_id " +
-            (if (includeHidden) "" else "WHERE c.hidden = 0 ") +
-            "GROUP BY c.id, c.label, c.relationship, c.aliases " +
-            "ORDER BY c.hidden ASC, c.reviewed ASC, face_count DESC, c.updated_at DESC, c.id",
-        null,
-    ).use { cursor ->
-        buildList {
-            while (cursor.moveToNext()) {
-                val id = cursor.getString(0)
-                val label = if (cursor.isNull(1)) null else cursor.getString(1)
-                val relationship = if (cursor.isNull(2)) null else cursor.getString(2)
-                val aliases = runCatching {
-                    val json = JSONArray(cursor.getString(3))
-                    List(json.length()) { json.getString(it) }
-                }.getOrDefault(emptyList())
-                val faceCount = cursor.getInt(4)
-                val sampleMediaId = if (cursor.isNull(5)) null else cursor.getString(5)
-                val reviewed = cursor.getInt(6) != 0
-                val hidden = cursor.getInt(7) != 0
-                val faces = personFacesForCluster(id, 4)
-                add(
-                    PersonClusterReviewItem(
-                        id,
-                        label,
-                        relationship,
-                        aliases,
-                        faceCount,
-                        sampleMediaId,
-                        reviewed,
-                        hidden,
-                        faces.firstOrNull(),
-                        faces,
-                    ),
-                )
+    fun personClusterSummaries(includeHidden: Boolean = false): List<PersonClusterReviewItem> {
+        val summaries = readableDatabase.rawQuery(
+            "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(f.id) AS face_count, MAX(f.media_id) AS sample_media_id " +
+                ", c.reviewed, c.hidden " +
+                "FROM person_cluster c LEFT JOIN face_instance f ON c.id = f.cluster_id " +
+                (if (includeHidden) "" else "WHERE c.hidden = 0 ") +
+                "GROUP BY c.id, c.label, c.relationship, c.aliases " +
+                "ORDER BY c.hidden ASC, c.reviewed ASC, face_count DESC, c.updated_at DESC, c.id",
+            null,
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        PersonClusterReviewItem(
+                            id = cursor.getString(0),
+                            label = if (cursor.isNull(1)) null else cursor.getString(1),
+                            relationship = if (cursor.isNull(2)) null else cursor.getString(2),
+                            aliases = runCatching {
+                                val json = JSONArray(cursor.getString(3))
+                                List(json.length()) { json.getString(it) }
+                            }.getOrDefault(emptyList()),
+                            faceCount = cursor.getInt(4),
+                            sampleMediaId = if (cursor.isNull(5)) null else cursor.getString(5),
+                            reviewed = cursor.getInt(6) != 0,
+                            hidden = cursor.getInt(7) != 0,
+                        ),
+                    )
+                }
             }
+        }
+        val facesByCluster = personFacesForClusters(
+            summaries.mapTo(linkedSetOf(), PersonClusterReviewItem::id),
+            limitPerCluster = 4,
+        )
+        return summaries.map { summary ->
+            val faces = facesByCluster[summary.id].orEmpty()
+            summary.copy(representativeFace = faces.firstOrNull(), supportingFaces = faces)
         }
     }
 
     fun personFacesForCluster(clusterId: String, limit: Int = 20): List<PersonFaceReviewItem> {
         require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
-        return readableDatabase.rawQuery(
-            "SELECT id,media_id,left_pos,top_pos,right_pos,bottom_pos,quality,user_corrected " +
-                "FROM face_instance WHERE cluster_id=? ORDER BY quality DESC,created_at DESC LIMIT ?",
-            arrayOf(clusterId, limit.coerceIn(1, 100).toString()),
-        ).use { cursor ->
-            buildList {
+        return personFacesForClusters(setOf(clusterId), limit)[clusterId].orEmpty()
+    }
+
+    private fun personFacesForClusters(
+        clusterIds: Set<String>,
+        limitPerCluster: Int,
+    ): Map<String, List<PersonFaceReviewItem>> {
+        if (clusterIds.isEmpty()) return emptyMap()
+        data class PendingFace(
+            val id: String,
+            val mediaId: String,
+            val clusterId: String,
+            val left: Float,
+            val top: Float,
+            val right: Float,
+            val bottom: Float,
+            val quality: Float,
+            val userCorrected: Boolean,
+        )
+
+        val boundedLimit = limitPerCluster.coerceIn(1, 100)
+        val pendingByCluster = linkedMapOf<String, MutableList<PendingFace>>()
+        clusterIds.chunked(800).forEach { clusterChunk ->
+            val placeholders = clusterChunk.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT id,media_id,cluster_id,left_pos,top_pos,right_pos,bottom_pos,quality,user_corrected " +
+                    "FROM face_instance WHERE cluster_id IN ($placeholders) " +
+                    "ORDER BY cluster_id,quality DESC,created_at DESC",
+                clusterChunk.toTypedArray(),
+            ).use { cursor ->
                 while (cursor.moveToNext()) {
-                    val item = itemById(cursor.getString(1)) ?: continue
-                    add(
-                        PersonFaceReviewItem(
-                            id = cursor.getString(0),
-                            mediaId = cursor.getString(1),
-                            item = item,
-                            left = cursor.getFloat(2),
-                            top = cursor.getFloat(3),
-                            right = cursor.getFloat(4),
-                            bottom = cursor.getFloat(5),
-                            quality = cursor.getFloat(6),
-                            userCorrected = cursor.getInt(7) != 0,
-                        ),
+                    val clusterId = cursor.getString(2)
+                    val faces = pendingByCluster.getOrPut(clusterId) { mutableListOf() }
+                    if (faces.size >= boundedLimit) continue
+                    faces += PendingFace(
+                        id = cursor.getString(0),
+                        mediaId = cursor.getString(1),
+                        clusterId = clusterId,
+                        left = cursor.getFloat(3),
+                        top = cursor.getFloat(4),
+                        right = cursor.getFloat(5),
+                        bottom = cursor.getFloat(6),
+                        quality = cursor.getFloat(7),
+                        userCorrected = cursor.getInt(8) != 0,
                     )
                 }
+            }
+        }
+        val mediaById = pendingByCluster.values.asSequence()
+            .flatten()
+            .map(PendingFace::mediaId)
+            .distinct()
+            .chunked(800)
+            .flatMap { mediaChunk ->
+                val placeholders = mediaChunk.joinToString(",") { "?" }
+                queryItems(
+                    selection = "id IN ($placeholders)",
+                    args = mediaChunk.toTypedArray(),
+                    order = null,
+                    limit = null,
+                ).asSequence()
+            }
+            .associateBy(GalleryItem::id)
+        return pendingByCluster.mapValues { (_, faces) ->
+            faces.mapNotNull { face ->
+                val item = mediaById[face.mediaId] ?: return@mapNotNull null
+                PersonFaceReviewItem(
+                    id = face.id,
+                    mediaId = face.mediaId,
+                    item = item,
+                    left = face.left,
+                    top = face.top,
+                    right = face.right,
+                    bottom = face.bottom,
+                    quality = face.quality,
+                    userCorrected = face.userCorrected,
+                )
             }
         }
     }
