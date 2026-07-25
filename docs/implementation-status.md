@@ -3253,3 +3253,20 @@ Status: **IMPLEMENTED; VALIDATION RESULTS RECORDED AFTER EXECUTION.**
 - Android build/install helper for `OfflineDemoDebug`: PASS on SM-S928B using replacement install. Post-install read-only database verification retained 10,482 face rows, 232 clusters, one reviewed cluster, and the `Pooja` label; no uninstall, clear-data, people reset, face reindex, or MediaStore mutation was performed.
 - APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-system-back-cluster-fix-20260725.apk`; 628,855,330 bytes; SHA-256 `19319B66D5C9AEE5138A12A106439B8FD3F85FF41E39DAF1C7630D3FE32910C5`.
 - Connected visual/system-Back interaction: NOT RUN because the device remained active in another application.
+
+## Photo-grid scrolling performance - 25 July 2026
+
+Status: **IMPLEMENTED, TARGETED-TESTED, BUILT, AND REPLACEMENT-INSTALLED.**
+
+- Replaced main-thread bitmap decoding in `AssetImage` with a cancellation-aware `Dispatchers.IO` loader, bounded to three concurrent decodes.
+- Four-column photo and album grids now request reusable 384-pixel thumbnail buckets instead of decoding every item at 720 pixels or full source resolution.
+- Added an app-level memory-bounded LRU cache keyed by media revision and requested size. Bitmap uploads are prepared off the main thread before Compose draws them.
+- File, bundled-asset, and MediaStore fallback images are sampled before allocation; grid fallbacks use `RGB_565` to reduce bitmap pressure.
+- Lazy photo and album cells now provide stable content types for more efficient Compose node reuse.
+- The immersive image viewer requests a separate 1536-pixel image so grid optimization does not reduce detail-view quality.
+- Initial validation: FAIL before source compilation because `ANDROID_HOME` was absent from the shell. The same gate was rerun with the existing SDK path.
+- First source compile: FAIL on an empty Compose `Box` overload; corrected without changing loader behavior.
+- `GalleryThumbnailLoaderTest` plus CI and `OfflineDemoDebug` Kotlin compilation: PASS.
+- `OfflineDemoDebug` assemble and replacement install: PASS on SM-S928B. No uninstall, package-data clear, people reset, reindex, or MediaStore mutation was performed.
+- APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-smooth-grid-20260725.apk`; 628,869,446 bytes; SHA-256 `ED2801E3AA4EE8B65EDE3AE2577E87D5551E8722A7CF78501A11F3CC747E4FB5`.
+- Direct device frame-time scrolling measurement: NOT RUN because the foreground activity could not be established without taking over the user's device session.

@@ -8,7 +8,6 @@ import android.widget.MediaController
 import android.widget.VideoView
 import android.net.Uri
 import android.os.Build
-import android.util.Size
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
@@ -1828,34 +1827,9 @@ private fun AssetImage(
     item: GalleryItem,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
+    requestedEdgePx: Int = 384,
 ) {
-    val context = LocalContext.current
-    val bitmap = remember(item.assetPath, item.contentUri, item.previewPath) {
-        runCatching {
-            when {
-                item.previewPath != null -> BitmapFactory.decodeFile(item.previewPath)
-                item.assetPath != null -> context.assets.open(item.assetPath).use(BitmapFactory::decodeStream)
-                item.contentUri != null -> {
-                    val uri = Uri.parse(item.contentUri)
-                    runCatching { context.contentResolver.loadThumbnail(uri, Size(720, 720), null) }.getOrNull()
-                        ?: context.contentResolver.openInputStream(uri).use(BitmapFactory::decodeStream)
-                }
-                else -> null
-            }?.asImageBitmap()
-        }.getOrNull()
-    }
-    if (bitmap != null) {
-        Image(
-            bitmap = bitmap,
-            contentDescription = item.description,
-            modifier = modifier,
-            contentScale = contentScale,
-        )
-    } else {
-        Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-            Text("Image unavailable", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
+    CachedGalleryImage(item, modifier, contentScale, requestedEdgePx)
 }
 
 @Composable
@@ -2128,7 +2102,7 @@ private fun GalleryScreen(
                         }
                     }
                 }
-                items(groupItems, key = { it.id }) { item ->
+                items(groupItems, key = { it.id }, contentType = { "gallery-media" }) { item ->
                     val selected = item.id in selectedIds
                     MediaThumbnail(
                         item = item,
@@ -2211,7 +2185,7 @@ private fun AlbumsScreen(items: List<GalleryItem>, onSelect: (SearchHit) -> Unit
                 }
             }
         } else {
-            items(visibleItems, key = { it.id }) { item ->
+            items(visibleItems, key = { it.id }, contentType = { "gallery-media" }) { item ->
                 MediaThumbnail(item, selected = false, onClick = { onSelect(item.asMetadataHit()) }, onLongClick = { onSelect(item.asMetadataHit()) })
             }
         }
@@ -2303,7 +2277,12 @@ internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit, onAsk: ((Gall
                         onRelease = VideoView::stopPlayback,
                     )
                 } else {
-                    AssetImage(hit.item, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    AssetImage(
+                        hit.item,
+                        Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit,
+                        requestedEdgePx = 1536,
+                    )
                 }
                 Row(
                     Modifier.fillMaxWidth().safeDrawingPadding().padding(horizontal = 12.dp, vertical = 8.dp),
