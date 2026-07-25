@@ -54,11 +54,11 @@ kapt {
 }
 
 android {
-    namespace = "com.askphotos.android"
+    namespace = "com.samsung.agenticgallery"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.askphotos.android"
+        applicationId = "com.samsung.agenticgallery"
         minSdk = 29
         targetSdk = 36
         versionCode = 6

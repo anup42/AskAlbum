@@ -20,14 +20,14 @@
             android:exported="true"
             android:permission="android.permission.DUMP">
             <intent-filter>
-                <action android:name="com.askphotos.android.test.SEED_GALLERY" />
-                <action android:name="com.askphotos.android.test.CLEANUP_GALLERY" />
-                <action android:name="com.askphotos.android.test.IMPORT_SEEDED" />
-                <action android:name="com.askphotos.android.test.REMOVE_IMPORTED" />
-                <action android:name="com.askphotos.android.test.PREPARE_INDEX_INTERRUPTION" />
-                <action android:name="com.askphotos.android.test.VERIFY_INDEX_RECOVERY" />
-                <action android:name="com.askphotos.android.test.REPORT_INDEX_COVERAGE" />
-                <action android:name="com.askphotos.android.test.RESUME_INDEXING" />
+                <action android:name="com.samsung.agenticgallery.test.SEED_GALLERY" />
+                <action android:name="com.samsung.agenticgallery.test.CLEANUP_GALLERY" />
+                <action android:name="com.samsung.agenticgallery.test.IMPORT_SEEDED" />
+                <action android:name="com.samsung.agenticgallery.test.REMOVE_IMPORTED" />
+                <action android:name="com.samsung.agenticgallery.test.PREPARE_INDEX_INTERRUPTION" />
+                <action android:name="com.samsung.agenticgallery.test.VERIFY_INDEX_RECOVERY" />
+                <action android:name="com.samsung.agenticgallery.test.REPORT_INDEX_COVERAGE" />
+                <action android:name="com.samsung.agenticgallery.test.RESUME_INDEXING" />
             </intent-filter>
         </receiver>
         <receiver
@@ -36,9 +36,9 @@
             android:exported="true"
             android:permission="android.permission.DUMP">
             <intent-filter>
-                <action android:name="com.askphotos.android.test.DOWNLOAD_GEMMA" />
-                <action android:name="com.askphotos.android.test.REPORT_GEMMA" />
-                <action android:name="com.askphotos.android.test.CANCEL_GEMMA" />
+                <action android:name="com.samsung.agenticgallery.test.DOWNLOAD_GEMMA" />
+                <action android:name="com.samsung.agenticgallery.test.REPORT_GEMMA" />
+                <action android:name="com.samsung.agenticgallery.test.CANCEL_GEMMA" />
             </intent-filter>
         </receiver>
         <activity

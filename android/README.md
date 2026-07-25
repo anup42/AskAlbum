@@ -1,4 +1,4 @@
-# AskPhotos Android
+# Agentic Gallery Android
 
 Native, local-only Android implementation of the Agentic Gallery architecture. It is separate from the legacy GPU-server proof of concept in the repository root.
 

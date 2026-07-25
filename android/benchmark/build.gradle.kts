@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.askphotos.benchmark"
+    namespace = "com.samsung.agenticgallery.benchmark"
     compileSdk = 36
 
     defaultConfig {
