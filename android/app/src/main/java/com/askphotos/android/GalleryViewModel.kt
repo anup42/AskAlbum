@@ -280,6 +280,38 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         state = state.copy(operationMessage = "${GemmaModelCatalog.require(tier).displayName} download cancelled")
     }
 
+    fun requestSemanticEnrichment() {
+        val model = state.modelPack
+        if (!model.installed || !model.multimodal) {
+            state = state.copy(
+                operationMessage = "Import a verified multimodal Gemma pack before building semantic memory",
+            )
+            return
+        }
+        state = state.copy(operationMessage = "Selecting representative media for Gemma semantic memory...")
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val plan = repository.requestSemanticEnrichment()
+                    plan.jobs.size to repository.indexSummary()
+                }
+            }.onSuccess { (jobCount, summary) ->
+                state = state.copy(
+                    index = summary,
+                    operationMessage = if (jobCount > 0) {
+                        "Queued $jobCount representative analyses. Existing gallery and people indexes are unchanged."
+                    } else {
+                        "No eligible representative media needs semantic enrichment"
+                    },
+                )
+            }.onFailure { error ->
+                state = state.copy(
+                    operationMessage = error.message ?: "Semantic memory could not be scheduled",
+                )
+            }
+        }
+    }
+
     fun importRetrievalPack(uri: Uri?) {
         if (uri == null) return
         state = state.copy(operationMessage = "Verifying the signed retrieval pack…")

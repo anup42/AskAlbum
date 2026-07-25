@@ -294,6 +294,7 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     onSelectModelTier = viewModel::selectModelTier,
                     onDownloadModel = viewModel::downloadSelectedModel,
                     onCancelModelDownload = viewModel::cancelModelDownload,
+                    onBuildSemanticMemory = viewModel::requestSemanticEnrichment,
                     onImportRetrievalModel = {
                         retrievalModelPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
                     },
@@ -767,6 +768,7 @@ private fun IndexManagerScreen(
     onSelectModelTier: (GemmaModelTier) -> Unit,
     onDownloadModel: () -> Unit,
     onCancelModelDownload: () -> Unit,
+    onBuildSemanticMemory: () -> Unit,
     onImportRetrievalModel: () -> Unit,
     onInstallEmbeddedRetrievalModel: () -> Unit,
     onDownloadOcrModel: () -> Unit,
@@ -789,7 +791,13 @@ private fun IndexManagerScreen(
         Spacer(Modifier.height(20.dp))
         IndexMetric("Media discovered", index.discovered, index.discovered, "Asset manifest")
         IndexMetric("Metadata ready", index.metadataReady, index.discovered, "demo-metadata-v1", inProgress = indexingActive && index.metadataReady < index.discovered)
-        IndexMetric("Semantic facts ready", index.semanticFactsReady, index.discovered, "demo-sidecar-v1", inProgress = indexingActive && index.semanticFactsReady < index.discovered)
+        IndexMetric(
+            "Cached Gemma fact coverage",
+            index.semanticFactsReady,
+            index.discovered,
+            modelPack.packVersion ?: "No verified Gemma facts",
+            enabled = modelPack.installed && modelPack.multimodal,
+        )
         IndexMetric(
             "OCR ready or skipped",
             index.ocrReady,
@@ -955,6 +963,31 @@ private fun IndexManagerScreen(
                 }
                 Spacer(Modifier.height(11.dp))
                 OutlinedButton(onClick = onImportModel) { Text(if (modelPack.installed) "Replace signed pack" else "Import .agemma pack") }
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(14.dp))
+                Text("Gemma semantic memory", fontWeight = FontWeight.Bold)
+                Text(
+                    "${index.semanticFactsReady} media currently have verified cached Gemma facts. " +
+                        "The adaptive worker analyzes selected event, burst, document, and frequently retrieved representatives, not every image.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = onBuildSemanticMemory,
+                    enabled = modelPack.installed && modelPack.multimodal,
+                    modifier = Modifier.fillMaxWidth().testTag("build-semantic-memory"),
+                ) {
+                    Text("Build semantic memory")
+                }
+                if (!modelPack.installed || !modelPack.multimodal) {
+                    Text(
+                        "Import a verified multimodal Gemma E2B or E4B pack to enable this action.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                    )
+                }
             }
         }
         Spacer(Modifier.height(14.dp))

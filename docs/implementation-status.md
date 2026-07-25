@@ -3302,3 +3302,20 @@ Status: **ROOT CAUSE CONFIRMED; FIX TESTED, BUILT, AND REPLACEMENT-INSTALLED.**
 - `OfflineDemoDebug` assemble and replacement install: PASS on SM-S928B. The production database and WAL remained present at their pre-install sizes and timestamps; no uninstall, data clear, people reset, reindex, or MediaStore mutation was performed.
 - APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-birthday-retrieval-fix-20260726.apk`; 628,875,846 bytes; SHA-256 `68B3119CFA09EF8EBB103AB3C67E4079E0A2823B48AD0B8CD1378CF7AD734017`.
 - Live post-install UI query interaction: NOT RUN to avoid taking over the user's foreground device session. The real failed turn and deterministic repaired ranking were verified from a read-only database snapshot.
+
+## Gemma semantic-memory creation path - 26 July 2026
+
+Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; REAL GEMMA FACT CREATION BLOCKED BY A MISSING VERIFIED MULTIMODAL PACK.**
+
+- Device inspection found zero `semantic_fact`, `semantic_enrichment_job`, `visual_group`, `visual_group_member`, and `event_representative` rows.
+- The installed offline-demo app has verified retrieval and face packs, but no active multimodal Gemma generation. The worker correctly refuses to create facts without a signature/checksum-verified multimodal pack.
+- The repository already had adaptive representative selection and a semantic-enrichment worker, but no application UI called the user-requested entry point; therefore no plan or jobs were created.
+- Settings now reports persisted `semantic_fact` evidence coverage instead of incorrectly counting cheap ML Kit labels as Gemma facts.
+- Added `Build semantic memory` under the Gemma model card. It remains disabled until a verified multimodal E2B or E4B pack is active, then creates and schedules a representative-only plan without deleting or rebuilding gallery or people indexes.
+- Normal pending work is processed in four-item batches with immediate WorkManager continuations. The 15-minute retry backoff is retained only for actual admission or inference failures.
+- Sensitive authentication-protected OCR is marked `AUTH_REQUIRED` and is not sent to Gemma.
+- `AdaptiveSemanticEnrichmentTest`: PASS. CI and `OfflineDemoDebug` Kotlin compilation: PASS.
+- `SemanticEnrichmentDatabaseTest`: PASS, 1/1 on SM-S928B using the isolated CI package.
+- `OfflineDemoDebug` assemble and replacement install: PASS on SM-S928B. No uninstall, data clear, people reset, gallery reindex, or MediaStore mutation was performed; the production `gallery-memory.db` remained present after installation.
+- APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-semantic-memory-20260726.apk`; 628,884,398 bytes; SHA-256 `6FDCFB784F4063C9EC505F026A39004621E22198BB87D4733E2A129199F8703A`.
+- Real Gemma fact creation: NOT RUN because no verified multimodal Gemma pack is available on the connected device.

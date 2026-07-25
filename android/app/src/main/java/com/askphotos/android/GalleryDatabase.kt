@@ -1622,7 +1622,10 @@ class GalleryDatabase(
         return IndexSummary(
             discovered = items.size,
             metadataReady = items.size,
-            semanticFactsReady = items.count { it.tags.isNotEmpty() },
+            semanticFactsReady = readableDatabase.rawQuery(
+                "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_fact",
+                null,
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
             ocrReady = items.count { it.source == MediaSource.DEMO_ASSET || it.indexState == IndexState.READY },
             visualLabelsReady = items.count { it.tags.isNotEmpty() },
             videoKeyframesReady = readableDatabase.rawQuery(
