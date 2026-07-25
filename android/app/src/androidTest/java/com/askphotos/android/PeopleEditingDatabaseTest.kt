@@ -34,7 +34,37 @@ class PeopleEditingDatabaseTest {
         val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
         store.seedDemoIfEmpty()
         store.ensureStageRows()
-        val media = store.allItems().filter { it.kind == MediaKind.IMAGE }.take(2)
+        store.upsertImported(
+            listOf(
+                ImportedMedia(
+                    stableId = "person-order-older",
+                    uri = "content://people-test/older",
+                    displayName = "older.jpg",
+                    mimeType = "image/jpeg",
+                    source = MediaSource.MEDIA_STORE,
+                    capturedAt = 1_700_000_000_000L,
+                    modifiedAt = 1_700_000_000_000L,
+                    durationMs = null,
+                    width = 1200,
+                    height = 900,
+                    sizeBytes = 1_000L,
+                ),
+                ImportedMedia(
+                    stableId = "person-order-newer",
+                    uri = "content://people-test/newer",
+                    displayName = "newer.jpg",
+                    mimeType = "image/jpeg",
+                    source = MediaSource.MEDIA_STORE,
+                    capturedAt = 1_800_000_000_000L,
+                    modifiedAt = 1_800_000_000_000L,
+                    durationMs = null,
+                    width = 1200,
+                    height = 900,
+                    sizeBytes = 1_000L,
+                ),
+            ),
+        )
+        val media = store.allItems().filter { it.id == "person-order-older" || it.id == "person-order-newer" }
         assertEquals(2, media.size)
         store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
         store.ensureAutomaticPersonCluster("person_me")
@@ -72,8 +102,18 @@ class PeopleEditingDatabaseTest {
         assertEquals(1, firstPage.size)
         assertEquals(1, secondPage.size)
         assertTrue(firstPage.single().id != secondPage.single().id)
+        val expectedNewest = media.maxWith(
+            compareBy<GalleryItem> { it.capturedAt ?: it.modifiedAt ?: 0L }
+                .thenBy { it.modifiedAt ?: 0L },
+        )
+        assertEquals(expectedNewest.id, firstPage.single().mediaId)
         store.setPersonClusterRepresentative("person_me", secondPage.single().id)
         assertEquals(secondPage.single().id, store.personClusterSummaries(true).single { it.id == "person_me" }.representativeFaceId)
+        assertEquals(
+            "Choosing a representative must not move an older photo above the latest photo",
+            expectedNewest.id,
+            store.personFacesForCluster("person_me", limit = 1, offset = 0).single().mediaId,
+        )
         store.setPersonClusterHidden("person_me", true)
         assertTrue(store.personClusterSummaries(true).single { it.id == "person_me" }.hidden)
         assertFalse(store.resolveReviewedPersonIds("Anup Kumar").contains("person_me"))

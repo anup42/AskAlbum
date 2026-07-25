@@ -948,8 +948,9 @@ class GalleryDatabase(
         )
         val pending = readableDatabase.rawQuery(
             "SELECT f.id,f.media_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,f.quality,f.user_corrected " +
-                "FROM face_instance f JOIN person_cluster c ON c.id=f.cluster_id WHERE f.cluster_id=? " +
-                "ORDER BY CASE WHEN f.id=c.representative_face_id THEN 0 ELSE 1 END, f.quality DESC, f.created_at DESC " +
+                "FROM face_instance f JOIN media_item m ON m.id=f.media_id WHERE f.cluster_id=? " +
+                "ORDER BY COALESCE(m.captured_at,m.modified_at,0) DESC, COALESCE(m.modified_at,0) DESC, " +
+                "f.created_at DESC, f.quality DESC, f.id " +
                 "LIMIT ? OFFSET ?",
             arrayOf(clusterId, boundedLimit.toString(), offset.toString()),
         ).use { cursor ->

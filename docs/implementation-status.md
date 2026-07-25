@@ -3270,3 +3270,18 @@ Status: **IMPLEMENTED, TARGETED-TESTED, BUILT, AND REPLACEMENT-INSTALLED.**
 - `OfflineDemoDebug` assemble and replacement install: PASS on SM-S928B. No uninstall, package-data clear, people reset, reindex, or MediaStore mutation was performed.
 - APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-smooth-grid-20260725.apk`; 628,869,446 bytes; SHA-256 `ED2801E3AA4EE8B65EDE3AE2577E87D5551E8722A7CF78501A11F3CC747E4FB5`.
 - Direct device frame-time scrolling measurement: NOT RUN because the foreground activity could not be established without taking over the user's device session.
+
+## Newest-first person photo list - 26 July 2026
+
+Status: **IMPLEMENTED, CONNECTED-DEVICE TESTED, BUILT, AND REPLACEMENT-INSTALLED.**
+
+- Person cluster detail paging now orders photos by capture time descending, falling back to modified time when capture metadata is unavailable.
+- Selecting an older photo as the cluster representative no longer moves it above newer photos in the cluster grid.
+- Face creation time, quality, and face ID provide deterministic tie-breakers so page boundaries remain stable.
+- Cluster cards continue to use the chosen representative; only the full person photo list changes to newest-first.
+- Production Kotlin compilation: PASS.
+- First connected test attempt: FAIL because the original two demo fixtures had no capture or modified timestamps, so the test's list-position expectation did not represent media recency.
+- Second connected test attempt: FAIL because no bundled demo images had non-null capture timestamps.
+- The test now ingests two isolated media fixtures with distinct capture times through the production import API. `PeopleEditingDatabaseTest`: PASS, 1/1 on SM-S928B, including stable pagination and representative-selection regression coverage.
+- `OfflineDemoDebug` assemble and replacement install: PASS on SM-S928B. No uninstall, package-data clear, people reset, reindex, or MediaStore mutation was performed.
+- APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-newest-person-photos-20260726.apk`; 628,869,466 bytes; SHA-256 `4B83F41C152A7C8B37D01F81DED6448E09A9E55CB1F310341749873CD212D8C1`.
