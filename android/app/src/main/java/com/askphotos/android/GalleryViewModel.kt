@@ -59,6 +59,11 @@ private data class GalleryInitialization(
     val conversation: ConversationSearchState,
 )
 
+internal fun automaticGemmaCandidates(status: ModelPackStatus): List<GemmaModelTier> {
+    if (status.installed) return emptyList()
+    val recommended = status.deviceAssessment?.recommendedTier ?: GemmaModelTier.E2B
+    return listOf(recommended, GemmaModelTier.E2B).distinct()
+}
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
     private val askPhotosApplication = application as AskPhotosApplication
     private val repository = askPhotosApplication.repository
@@ -822,6 +827,62 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    init {
+        automaticallyProvisionGemma()
+    }
+
+    private fun automaticallyProvisionGemma() {
+        if (!BuildConfig.ALLOW_MODEL_DOWNLOAD) return
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { provisionGemmaModel() } }
+                .onSuccess { (status, progress) ->
+                    val message = when (progress.state) {
+                        GemmaDownloadState.QUEUED,
+                        GemmaDownloadState.DOWNLOADING,
+                        GemmaDownloadState.VERIFYING,
+                        -> "${GemmaModelCatalog.require(progress.tier).displayName} is downloading automatically for all Gemma features"
+                        else -> null
+                    }
+                    state = state.copy(
+                        modelPack = status,
+                        modelDownload = progress,
+                        operationMessage = state.operationMessage ?: message,
+                    )
+                    if (progress.state in ACTIVE_DOWNLOAD_STATES) monitorModelDownload()
+                }
+                .onFailure { error ->
+                    state = state.copy(operationMessage = error.message ?: "The automatic Gemma model download could not start")
+                }
+        }
+    }
+
+    private fun provisionGemmaModel(): Pair<ModelPackStatus, GemmaDownloadProgress> {
+        val current = modelPacks.status()
+        if (current.installed) {
+            val tier = current.tier ?: current.selectedTier
+            return current to modelDownloader.progress(tier)
+        }
+        var lastFailure: Throwable? = null
+        automaticGemmaCandidates(current).forEach { tier ->
+            if (modelPacks.isInstalled(tier)) {
+                return modelPacks.selectTier(tier) to modelDownloader.progress(tier)
+            }
+            val existing = modelDownloader.progress(tier)
+            if (existing.state in ACTIVE_DOWNLOAD_STATES) {
+                return modelPacks.selectTier(tier) to existing
+            }
+            runCatching { modelDownloader.enqueue(tier) }
+                .onSuccess {
+                    return modelPacks.selectTier(tier) to GemmaDownloadProgress(
+                        tier = tier,
+                        state = GemmaDownloadState.QUEUED,
+                        totalBytes = GemmaModelCatalog.require(tier).sizeBytes,
+                    )
+                }
+                .onFailure { lastFailure = it }
+        }
+        throw lastFailure ?: IllegalStateException("No compatible Gemma model is available for this device")
+    }
     private fun monitorModelDownload() {
         modelMonitorJob?.cancel()
         modelMonitorJob = viewModelScope.launch {

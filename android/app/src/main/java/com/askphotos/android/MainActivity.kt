@@ -189,9 +189,6 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
     val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         viewModel.importUris(uris, MediaSource.SAF_DOCUMENT)
     }
-    val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        viewModel.importModelPack(uri)
-    }
     val retrievalModelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         viewModel.importRetrievalPack(uri)
     }
@@ -280,6 +277,7 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     index = state.index,
                     peopleIndex = state.peopleIndex,
                     modelPack = state.modelPack,
+                    modelDownload = state.modelDownload,
                     retrievalPack = state.retrievalPack,
                     retrievalProvision = state.retrievalProvision,
                     ocrModel = state.ocrModel,
@@ -289,7 +287,6 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     operationMessage = state.operationMessage,
                     indexingActive = state.indexingActive,
                     onRetry = viewModel::retryIndexing,
-                    onImportModel = { modelPicker.launch(arrayOf("application/octet-stream", "application/zip", "*/*")) },
                     onBuildSemanticMemory = viewModel::requestSemanticEnrichment,
                     onImportRetrievalModel = {
                         retrievalModelPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
@@ -750,6 +747,7 @@ private fun IndexManagerScreen(
     index: IndexSummary,
     peopleIndex: PeopleIndexStatus,
     modelPack: ModelPackStatus,
+    modelDownload: GemmaDownloadProgress,
     retrievalPack: RetrievalPackStatus,
     retrievalProvision: RetrievalProvisionProgress,
     ocrModel: OcrModelStatus,
@@ -759,7 +757,6 @@ private fun IndexManagerScreen(
     operationMessage: String?,
     indexingActive: Boolean,
     onRetry: () -> Unit,
-    onImportModel: () -> Unit,
     onBuildSemanticMemory: () -> Unit,
     onImportRetrievalModel: () -> Unit,
     onInstallEmbeddedRetrievalModel: () -> Unit,
@@ -921,20 +918,35 @@ private fun IndexManagerScreen(
                 } else {
                     Text("No Gemma model is active in AskPhotos.")
                     Text(
-                        "Android keeps models installed by other apps private. Choose a signed AskPhotos Gemma model file once; AskPhotos verifies it and keeps one active model.",
+                        if (BuildConfig.ALLOW_MODEL_DOWNLOAD) {
+                            "AskPhotos automatically selects and downloads one compatible Gemma model for every Gemma feature."
+                        } else {
+                            "This offline demo cannot download model weights; deterministic and indexed retrieval remain available."
+                        },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                     )
                 }
                 Text(modelPack.runtimeVersion, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                when (modelDownload.state) {
+                    GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING -> {
+                        Spacer(Modifier.height(8.dp))
+                        SettingsCircularProgress(modelDownload.fraction)
+                        Text(
+                            "${GemmaModelCatalog.require(modelDownload.tier).displayName}: ${modelDownload.state.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                        )
+                    }
+                    GemmaDownloadState.FAILED -> Text(
+                        modelDownload.error ?: "Automatic Gemma download failed",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 11.sp,
+                    )
+                    else -> Unit
+                }
                 modelPack.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
                 Spacer(Modifier.height(11.dp))
-                OutlinedButton(
-                    onClick = onImportModel,
-                    modifier = Modifier.fillMaxWidth().testTag("choose-gemma-model"),
-                ) {
-                    Text(if (modelPack.installed) "Change Gemma model" else "Choose Gemma model")
-                }
                 Spacer(Modifier.height(16.dp))
                 HorizontalDivider()
                 Spacer(Modifier.height(14.dp))
@@ -954,7 +966,7 @@ private fun IndexManagerScreen(
                 }
                 if (!modelPack.installed || !modelPack.multimodal) {
                     Text(
-                        "Semantic memory is unavailable until AskPhotos has one active Gemma model.",
+                        if (BuildConfig.ALLOW_MODEL_DOWNLOAD) "Semantic memory becomes available after the automatic model download finishes." else "Semantic memory is unavailable in this offline build until a verified model is provisioned.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                     )
@@ -1006,9 +1018,6 @@ private fun IndexManagerScreen(
                     }
                 }
                 Spacer(Modifier.height(11.dp))
-                OutlinedButton(onClick = onImportFaceModel) {
-                    Text(if (faceModel.installed) "Replace pinned ONNX" else "Import pinned ONNX")
-                }
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -1055,24 +1064,9 @@ private fun IndexManagerScreen(
                     }
                 }
                 Spacer(Modifier.height(11.dp))
-                OutlinedButton(onClick = onImportRetrievalModel) {
-                    Text(if (retrievalPack.installed) "Replace signed pack" else "Import .agretrieval pack")
-                }
             }
         }
         Spacer(Modifier.height(14.dp))
-        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(Modifier.padding(20.dp)) {
-                Text("Privacy posture", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "✓ App-private gallery memory\n" +
-                        (if (BuildConfig.ALLOW_MODEL_DOWNLOAD) "✓ Network used only for selected model downloads\n" else "✓ No Internet permission\n") +
-                        "✓ No cloud inference\n✓ System Photo Picker and partial access\n✓ Evidence source shown per result\n✓ Face identity search remains opt-in; SFace embeddings stay app-private",
-                    lineHeight = 25.sp,
-                )
-            }
-        }
     }
 }
 

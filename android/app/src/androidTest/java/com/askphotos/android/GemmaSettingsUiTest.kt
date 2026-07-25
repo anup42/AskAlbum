@@ -22,9 +22,12 @@ class GemmaSettingsUiTest {
         rule.onNodeWithText("Menu").performClick()
         rule.onNodeWithText("Settings").performClick()
         rule.onNodeWithText("Gemma model").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithTag("choose-gemma-model").performScrollTo().assertIsDisplayed()
 
+        assertTrue(runCatching { rule.onNodeWithTag("choose-gemma-model").fetchSemanticsNode() }.isFailure)
         assertTrue(runCatching { rule.onNodeWithText("Gemma model pack").fetchSemanticsNode() }.isFailure)
+        assertTrue(runCatching { rule.onNodeWithText("Replace pinned ONNX").fetchSemanticsNode() }.isFailure)
+        assertTrue(runCatching { rule.onNodeWithText("Replace signed pack").fetchSemanticsNode() }.isFailure)
+        assertTrue(runCatching { rule.onNodeWithText("Privacy posture").fetchSemanticsNode() }.isFailure)
         assertTrue(runCatching { rule.onNodeWithText("Import .agemma pack").fetchSemanticsNode() }.isFailure)
         assertTrue(runCatching { rule.onNodeWithText("Replace signed pack").fetchSemanticsNode() }.isFailure)
         assertTrue(runCatching { rule.onNodeWithTag("gemma-tier-E2B").fetchSemanticsNode() }.isFailure)

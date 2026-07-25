@@ -3329,3 +3329,13 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; REAL GEMMA FACT
 - Validation: Gemma catalog and pack-validation unit tests PASS; OfflineDemoDebug Kotlin compile PASS; Gemma Settings connected UI test PASS 1/1 on SM-S928B.
 - Delivery: OfflineDemoDebug replacement install PASS; APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-single-gemma-20260726.apk` with SHA-256 `F63D4F6E692FE0C6BF01DB29D2F6FCD47EFCCE7D2BD519BE4F5E17E93971DD38`.
 - Real semantic fact generation: NOT RUN because AskPhotos has no active Gemma weights in its own app-private model store.
+## 2026-07-26 - Automatic single Gemma provisioning
+
+- Consumer builds now reuse an active verified Gemma model or automatically select the device-recommended E2B/E4B tier; E4B provisioning falls back to E2B when policy or storage rejects E4B.
+- The one active Gemma generation remains shared by planning, visual verification, grounded answers, and semantic enrichment.
+- Removed the Gemma chooser, `Replace pinned ONNX`, `Replace signed pack`, tier/download controls, and the Settings Privacy posture card.
+- Settings retains passive model status and automatic-download progress only.
+- CI and offlineDemo continue to prohibit model downloads and offlineDemo retains no Internet permission.
+- Validation: consumer/offline compilation PASS; `GemmaAutoProvisionPolicyTest` PASS; `GemmaSettingsUiTest` connected test PASS 1/1 on SM-S928B.
+- Delivery: ConsumerDebug replacement install PASS with existing `gallery-memory.db` preserved at 58,503,168 bytes.
+- Device provisioning: E4B was rejected by the storage-reserve guard with about 2.9 GB free; automatic fallback selected E2B and started the pinned verified download successfully.
