@@ -3339,3 +3339,6 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; REAL GEMMA FACT
 - Validation: consumer/offline compilation PASS; `GemmaAutoProvisionPolicyTest` PASS; `GemmaSettingsUiTest` connected test PASS 1/1 on SM-S928B.
 - Delivery: ConsumerDebug replacement install PASS with existing `gallery-memory.db` preserved at 58,503,168 bytes.
 - Device provisioning: E4B was rejected by the storage-reserve guard with about 2.9 GB free; automatic fallback selected E2B and started the pinned verified download successfully.
+- Device completion: the pinned 2,583,085,056-byte E2B artifact downloaded, verified, moved into a generation, and became the active Gemma model; the partial download was removed.
+- The same active generation is resolved for planner, visual verifier, grounded composer, and semantic enricher. Real semantic enrichment is now unblocked but was NOT RUN during this Settings/provisioning phase.
+- Consumer APK: `/sdcard/Download/AskPhotos-consumer-auto-gemma-20260726.apk`, SHA-256 `D9772C27B9869F16B59305698F387E6A024576321DAC5849BDF230E6AC264E70`.
