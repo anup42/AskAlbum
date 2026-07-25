@@ -3319,3 +3319,13 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; REAL GEMMA FACT
 - `OfflineDemoDebug` assemble and replacement install: PASS on SM-S928B. No uninstall, data clear, people reset, gallery reindex, or MediaStore mutation was performed; the production `gallery-memory.db` remained present after installation.
 - APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-semantic-memory-20260726.apk`; 628,884,398 bytes; SHA-256 `6FDCFB784F4063C9EC505F026A39004621E22198BB87D4733E2A129199F8703A`.
 - Real Gemma fact creation: NOT RUN because no verified multimodal Gemma pack is available on the connected device.
+## 2026-07-26 - Single active Gemma model UI
+
+- Device verification: `com.askphotos.android` contains the LiteRT-LM runtime plus retrieval and face models, but no app-private Gemma generation; Google AI Edge Gallery's model is isolated by Android and cannot be reused directly.
+- Gemma status now follows the verified active generation even if a stale tier preference differs.
+- Settings now presents one Gemma model and one Choose/Change action; E2B/E4B chips, download variants, `.agemma`, and signed-pack jargon are not shown.
+- Semantic memory explicitly reuses the same active Gemma model and never triggers a second model requirement.
+- Existing gallery, embedding, OCR, face indexes, and reviewed people data are preserved.
+- Validation: Gemma catalog and pack-validation unit tests PASS; OfflineDemoDebug Kotlin compile PASS; Gemma Settings connected UI test PASS 1/1 on SM-S928B.
+- Delivery: OfflineDemoDebug replacement install PASS; APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-single-gemma-20260726.apk` with SHA-256 `F63D4F6E692FE0C6BF01DB29D2F6FCD47EFCCE7D2BD519BE4F5E17E93971DD38`.
+- Real semantic fact generation: NOT RUN because AskPhotos has no active Gemma weights in its own app-private model store.

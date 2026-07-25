@@ -218,14 +218,14 @@ class ModelPackManager(
     }
 
     fun status(): ModelPackStatus = runCatching {
-        val selected = selectedTier()
+        val preferred = selectedTier()
         val tiers = installedTiers()
-        val installed = current()?.takeIf { it.manifest.tier == selected }
+        val installed = current()
             ?: return ModelPackStatus(
                 installed = false,
-                selectedTier = selected,
+                selectedTier = preferred,
                 installedTiers = tiers,
-                deviceAssessment = deviceCapability.assess(GemmaModelCatalog.require(selected)),
+                deviceAssessment = deviceCapability.assess(GemmaModelCatalog.require(preferred)),
             )
         val model = installed.artifact(GEMMA_ROLE_MODEL)
         ModelPackStatus(
@@ -237,7 +237,7 @@ class ModelPackManager(
             packId = installed.manifest.packId,
             packVersion = installed.manifest.packVersion,
             tier = installed.manifest.tier,
-            selectedTier = selected,
+            selectedTier = installed.manifest.tier,
             installedTiers = tiers,
             multimodal = installed.manifest.multimodal,
             deviceAssessment = deviceCapability.assess(installed.manifest),

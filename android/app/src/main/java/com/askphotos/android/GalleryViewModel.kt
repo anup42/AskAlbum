@@ -284,7 +284,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val model = state.modelPack
         if (!model.installed || !model.multimodal) {
             state = state.copy(
-                operationMessage = "Import a verified multimodal Gemma pack before building semantic memory",
+                operationMessage = "Choose a Gemma model for AskPhotos before building semantic memory",
             )
             return
         }

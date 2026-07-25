@@ -280,7 +280,6 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     index = state.index,
                     peopleIndex = state.peopleIndex,
                     modelPack = state.modelPack,
-                    modelDownload = state.modelDownload,
                     retrievalPack = state.retrievalPack,
                     retrievalProvision = state.retrievalProvision,
                     ocrModel = state.ocrModel,
@@ -291,9 +290,6 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     indexingActive = state.indexingActive,
                     onRetry = viewModel::retryIndexing,
                     onImportModel = { modelPicker.launch(arrayOf("application/octet-stream", "application/zip", "*/*")) },
-                    onSelectModelTier = viewModel::selectModelTier,
-                    onDownloadModel = viewModel::downloadSelectedModel,
-                    onCancelModelDownload = viewModel::cancelModelDownload,
                     onBuildSemanticMemory = viewModel::requestSemanticEnrichment,
                     onImportRetrievalModel = {
                         retrievalModelPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
@@ -754,7 +750,6 @@ private fun IndexManagerScreen(
     index: IndexSummary,
     peopleIndex: PeopleIndexStatus,
     modelPack: ModelPackStatus,
-    modelDownload: GemmaDownloadProgress,
     retrievalPack: RetrievalPackStatus,
     retrievalProvision: RetrievalProvisionProgress,
     ocrModel: OcrModelStatus,
@@ -765,9 +760,6 @@ private fun IndexManagerScreen(
     indexingActive: Boolean,
     onRetry: () -> Unit,
     onImportModel: () -> Unit,
-    onSelectModelTier: (GemmaModelTier) -> Unit,
-    onDownloadModel: () -> Unit,
-    onCancelModelDownload: () -> Unit,
     onBuildSemanticMemory: () -> Unit,
     onImportRetrievalModel: () -> Unit,
     onInstallEmbeddedRetrievalModel: () -> Unit,
@@ -907,69 +899,48 @@ private fun IndexManagerScreen(
         Spacer(Modifier.height(14.dp))
         Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(20.dp)) {
-                Text("Gemma model pack", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text("Gemma model", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(7.dp))
-                Text(if (modelPack.installed) modelPack.name else "Selected model is not installed — deterministic planning remains active")
-                Text(modelPack.runtimeVersion, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GemmaModelCatalog.all.forEach { spec ->
-                        FilterChip(
-                            modifier = Modifier.testTag("gemma-tier-${spec.tier.name}"),
-                            selected = modelPack.selectedTier == spec.tier,
-                            onClick = { onSelectModelTier(spec.tier) },
-                            label = { Text(spec.tier.name) },
-                        )
-                    }
-                }
-                val selectedSpec = GemmaModelCatalog.require(modelPack.selectedTier)
-                Text(
-                    "${selectedSpec.displayName} • ${formatBytes(selectedSpec.sizeBytes)} • ${selectedSpec.deviceClassRamGb} GB-class device",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp,
-                )
                 if (modelPack.installed) {
-                    Text("${modelPack.packId} ${modelPack.packVersion} • ${modelPack.tier} • ${formatBytes(modelPack.sizeBytes)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-                    Text("Signed model SHA-256 ${modelPack.sha256?.take(12)}…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    Text(modelPack.name)
+                    Text(
+                        "This one active model is reused for planning, visual verification, grounded answers, and semantic memory.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                    )
+                    Text(
+                        "${modelPack.packId} ${modelPack.packVersion} • ${formatBytes(modelPack.sizeBytes)}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                    )
+                    Text(
+                        "Verified model SHA-256 ${modelPack.sha256?.take(12)}…",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                    )
                 } else {
-                    Text("Device recommendation: ${modelPack.deviceAssessment?.recommendedTier ?: GemmaModelTier.E2B}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-                    modelPack.deviceAssessment?.reason?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
+                    Text("No Gemma model is active in AskPhotos.")
+                    Text(
+                        "Android keeps models installed by other apps private. Choose a signed AskPhotos Gemma model file once; AskPhotos verifies it and keeps one active model.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                    )
                 }
+                Text(modelPack.runtimeVersion, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 modelPack.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
-                if (modelPack.downloadAllowed && !modelPack.installed) {
-                    Spacer(Modifier.height(10.dp))
-                    when (modelDownload.state) {
-                        GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING -> {
-                            SettingsCircularProgress(modelDownload.fraction)
-                            Text(
-                                if (modelDownload.state == GemmaDownloadState.VERIFYING) "Verifying SHA-256 and activating…" else "${formatBytes(modelDownload.bytesDownloaded)} of ${formatBytes(modelDownload.totalBytes)}",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 11.sp,
-                            )
-                            TextButton(onClick = onCancelModelDownload) { Text("Cancel download") }
-                        }
-                        else -> {
-                            Button(
-                                onClick = onDownloadModel,
-                                enabled = modelPack.deviceAssessment?.supported == true,
-                                modifier = Modifier.fillMaxWidth().testTag("download-gemma-${selectedSpec.tier.name}"),
-                            ) { Text("Download ${selectedSpec.displayName}") }
-                            modelDownload.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
-                        }
-                    }
-                } else if (!modelPack.downloadAllowed) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("Offline demo build: network model downloads are disabled.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-                }
                 Spacer(Modifier.height(11.dp))
-                OutlinedButton(onClick = onImportModel) { Text(if (modelPack.installed) "Replace signed pack" else "Import .agemma pack") }
+                OutlinedButton(
+                    onClick = onImportModel,
+                    modifier = Modifier.fillMaxWidth().testTag("choose-gemma-model"),
+                ) {
+                    Text(if (modelPack.installed) "Change Gemma model" else "Choose Gemma model")
+                }
                 Spacer(Modifier.height(16.dp))
                 HorizontalDivider()
                 Spacer(Modifier.height(14.dp))
                 Text("Gemma semantic memory", fontWeight = FontWeight.Bold)
                 Text(
-                    "${index.semanticFactsReady} media currently have verified cached Gemma facts. " +
-                        "The adaptive worker analyzes selected event, burst, document, and frequently retrieved representatives, not every image.",
+                    "Uses the same active Gemma model on selected event and group representatives, ambiguous documents, and difficult candidates. It does not analyze every image.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp,
                 )
@@ -983,7 +954,7 @@ private fun IndexManagerScreen(
                 }
                 if (!modelPack.installed || !modelPack.multimodal) {
                     Text(
-                        "Import a verified multimodal Gemma E2B or E4B pack to enable this action.",
+                        "Semantic memory is unavailable until AskPhotos has one active Gemma model.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                     )
