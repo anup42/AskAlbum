@@ -3356,4 +3356,5 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; REAL GEMMA FACT
 - Heavy work is limited to two representatives per run and continuation waits 30 seconds so thermal admission can recover.
 - Interrupted `RUNNING` semantic jobs are returned to `PENDING` without consuming an inference attempt after process death or replacement install.
 - A persisted duplicate-only active plan is detected once and rebuilt with the balanced event-first selector; existing cached facts remain intact.
+- Explicit retry backoff is limited to user-requested work; idle background requests no longer combine Android's incompatible device-idle and backoff JobScheduler flags.
 - Existing gallery, people, face, OCR, embedding, and model data are not reset or deleted.

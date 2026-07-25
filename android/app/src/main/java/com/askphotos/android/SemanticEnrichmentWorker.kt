@@ -146,8 +146,8 @@ object SemanticEnrichmentScheduler {
         )
         .apply {
             if (initialDelaySeconds > 0L) setInitialDelay(initialDelaySeconds, TimeUnit.SECONDS)
+            if (userRequested) setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
         }
-        .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
         .addTag(UNIQUE_WORK)
         .build()
 }
