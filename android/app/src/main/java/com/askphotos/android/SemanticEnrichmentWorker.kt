@@ -23,6 +23,9 @@ class SemanticEnrichmentWorker(
         if (!admission.allowed) return Result.retry()
         if (!services.modelPackManager.status().let { it.installed && it.multimodal }) return Result.success()
         val database = services.galleryDatabase
+        if (database.semanticEnrichmentPlanNeedsRebuild()) {
+            SemanticEnrichmentCoordinator(database).rebuildPlan(userRequested = true)
+        }
         var job = database.claimSemanticEnrichmentJob()
         if (job == null) {
             SemanticEnrichmentCoordinator(database).rebuildPlan()
@@ -42,7 +45,7 @@ class SemanticEnrichmentWorker(
                 job = database.claimSemanticEnrichmentJob()
                 continue
             }
-            val item = database.allItems().singleOrNull { it.id == currentJob.representativeMediaId }
+            val item = database.itemById(currentJob.representativeMediaId)
             if (item == null) {
                 database.failSemanticEnrichment(
                     currentJob,
@@ -54,8 +57,13 @@ class SemanticEnrichmentWorker(
                 continue
             }
             try {
-                if (isStopped || !BackgroundWorkAdmissionPolicy(applicationContext).evaluate().allowed) {
-                    database.failSemanticEnrichment(currentJob, "Background admission changed", retryable = true)
+                val currentAdmission = BackgroundWorkAdmissionPolicy(applicationContext).evaluate()
+                if (isStopped || !currentAdmission.allowed) {
+                    database.failSemanticEnrichment(
+                        currentJob,
+                        currentAdmission.reason ?: "Background admission changed",
+                        retryable = true,
+                    )
                     return Result.retry()
                 }
                 val hit = SearchHit(item, 0.0, emptyList())
@@ -72,12 +80,13 @@ class SemanticEnrichmentWorker(
                 database.failSemanticEnrichment(currentJob, "Enrichment cancelled", retryable = true)
                 throw cancelled
             } catch (error: Throwable) {
+                val retryable = SemanticEnrichmentFailurePolicy.isRetryable(error)
                 database.failSemanticEnrichment(
                     currentJob,
                     error.message ?: error::class.java.simpleName,
-                    retryable = true,
+                    retryable = retryable,
                 )
-                return Result.retry()
+                if (retryable) return Result.retry()
             }
             processed += 1
             job = database.claimSemanticEnrichmentJob()
@@ -89,18 +98,24 @@ class SemanticEnrichmentWorker(
     }
 
     private companion object {
-        const val MAX_JOBS_PER_RUN = 4
+        const val MAX_JOBS_PER_RUN = 2
     }
+}
+
+internal object SemanticEnrichmentFailurePolicy {
+    fun isRetryable(error: Throwable): Boolean = error !is SemanticEnrichmentOutputException
 }
 
 object SemanticEnrichmentScheduler {
     private const val UNIQUE_WORK = "semantic-enrichment"
+    private const val USER_REQUESTED_START_DELAY_SECONDS = 1L
+    private const val CONTINUATION_COOLING_DELAY_SECONDS = 30L
 
     fun schedule(context: Context, userRequested: Boolean = false) {
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             if (userRequested) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
-            request(userRequested),
+            request(userRequested, USER_REQUESTED_START_DELAY_SECONDS),
         )
     }
 
@@ -108,11 +123,14 @@ object SemanticEnrichmentScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
-            request(userRequested = true),
+            request(userRequested = true, initialDelaySeconds = CONTINUATION_COOLING_DELAY_SECONDS),
         )
     }
 
-    private fun request(userRequested: Boolean) = OneTimeWorkRequestBuilder<SemanticEnrichmentWorker>()
+    private fun request(
+        userRequested: Boolean,
+        initialDelaySeconds: Long = 0L,
+    ) = OneTimeWorkRequestBuilder<SemanticEnrichmentWorker>()
         .setConstraints(
             Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
@@ -126,6 +144,9 @@ object SemanticEnrichmentScheduler {
                 }
                 .build(),
         )
+        .apply {
+            if (initialDelaySeconds > 0L) setInitialDelay(initialDelaySeconds, TimeUnit.SECONDS)
+        }
         .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
         .addTag(UNIQUE_WORK)
         .build()

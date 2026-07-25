@@ -35,6 +35,8 @@ data class GalleryUiState(
     val destination: AppDestination = AppDestination.GALLERY,
     val indexingActive: Boolean = false,
     val operationMessage: String? = null,
+    val semanticMemory: SemanticMemoryProgress = SemanticMemoryProgress(),
+    val semanticMemoryPlanning: Boolean = false,
     val modelPack: ModelPackStatus = ModelPackStatus(installed = false),
     val modelDownload: GemmaDownloadProgress = GemmaDownloadProgress(),
     val retrievalPack: RetrievalPackStatus = RetrievalPackStatus(installed = false),
@@ -57,6 +59,7 @@ private data class GalleryInitialization(
     val items: List<GalleryItem>,
     val peopleIndex: PeopleIndexStatus,
     val conversation: ConversationSearchState,
+    val semanticMemory: SemanticMemoryProgress,
 )
 
 internal fun automaticGemmaCandidates(status: ModelPackStatus): List<GemmaModelTier> {
@@ -84,6 +87,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private var faceModelMonitorJob: Job? = null
     private var queryJob: Job? = null
     private var indexMonitorJob: Job? = null
+    private var semanticMemoryMonitorJob: Job? = null
     private var queryGeneration = 0L
     var state by mutableStateOf(GalleryUiState())
         private set
@@ -98,6 +102,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         repository.allItems(),
                         repository.peopleIndexStatus(),
                         repository.conversationState(),
+                        repository.semanticMemoryProgress(),
                     )
                 }
             }.onSuccess { initial ->
@@ -115,6 +120,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     faceModelDownload = currentFaceModelProgress(),
                     peopleIndex = initial.peopleIndex,
                     conversation = initial.conversation,
+                    semanticMemory = initial.semanticMemory,
                 )
                 if (initial.peopleIndex.enabled) loadPeopleReviewClusters()
                 monitorIndexing()
@@ -180,6 +186,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
         if (destination == AppDestination.PEOPLE) {
             loadPeopleReviewClusters()
+        }
+        if (destination == AppDestination.INDEX_MANAGER) {
+            monitorSemanticMemory()
+        } else {
+            semanticMemoryMonitorJob?.cancel()
         }
     }
 
@@ -289,28 +300,36 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val model = state.modelPack
         if (!model.installed || !model.multimodal) {
             state = state.copy(
-                operationMessage = "Choose a Gemma model for AskPhotos before building semantic memory",
+                operationMessage = "Gemma is still being prepared automatically for semantic memory",
             )
             return
         }
-        state = state.copy(operationMessage = "Selecting representative media for Gemma semantic memory...")
+        if (state.semanticMemoryPlanning || state.semanticMemory.runningJobs > 0) return
+        state = state.copy(
+            semanticMemoryPlanning = true,
+            operationMessage = "Selecting representative media for Gemma semantic memory...",
+        )
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
                     val plan = repository.requestSemanticEnrichment()
-                    plan.jobs.size to repository.indexSummary()
+                    Triple(plan.jobs.size, repository.indexSummary(), repository.semanticMemoryProgress())
                 }
-            }.onSuccess { (jobCount, summary) ->
+            }.onSuccess { (jobCount, summary, progress) ->
                 state = state.copy(
                     index = summary,
+                    semanticMemory = progress,
+                    semanticMemoryPlanning = false,
                     operationMessage = if (jobCount > 0) {
                         "Queued $jobCount representative analyses. Existing gallery and people indexes are unchanged."
                     } else {
                         "No eligible representative media needs semantic enrichment"
                     },
                 )
+                if (progress.hasActiveWork) monitorSemanticMemory()
             }.onFailure { error ->
                 state = state.copy(
+                    semanticMemoryPlanning = false,
                     operationMessage = error.message ?: "Semantic memory could not be scheduled",
                 )
             }
@@ -824,6 +843,18 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 indexingActive = false,
                 operationMessage = "Indexing paused by battery, storage, or thermal conditions",
             )
+        }
+    }
+
+    private fun monitorSemanticMemory() {
+        semanticMemoryMonitorJob?.cancel()
+        semanticMemoryMonitorJob = viewModelScope.launch {
+            while (state.destination == AppDestination.INDEX_MANAGER) {
+                val progress = withContext(Dispatchers.IO) { repository.semanticMemoryProgress() }
+                state = state.copy(semanticMemory = progress)
+                if (!progress.hasActiveWork) return@launch
+                delay(if (progress.runningJobs > 0) 750 else 2_000)
+            }
         }
     }
 

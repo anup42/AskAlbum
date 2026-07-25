@@ -34,6 +34,23 @@ data class SemanticEnrichmentJobRecord(
     val error: String? = null,
 )
 
+data class SemanticMemoryProgress(
+    val totalJobs: Int = 0,
+    val pendingJobs: Int = 0,
+    val runningJobs: Int = 0,
+    val completedJobs: Int = 0,
+    val failedJobs: Int = 0,
+    val authenticationRequiredJobs: Int = 0,
+    val factCount: Int = 0,
+    val latestError: String? = null,
+) {
+    val processedJobs: Int
+        get() = completedJobs + failedJobs + authenticationRequiredJobs
+
+    val hasActiveWork: Boolean
+        get() = pendingJobs > 0 || runningJobs > 0
+}
+
 data class VisualGroupPlan(
     val id: String,
     val kind: String,
@@ -83,19 +100,33 @@ internal object AdaptiveRepresentativeSelector {
             .filterValues { it.size > 1 }
             .map { (key, members) -> group("burst:$key", "BURST_SCENE", members, if (members.size >= 12) 3 else 2) }
         val eventRepresentatives = eventMembership.entries.groupBy(Map.Entry<String, Long>::value)
+            .entries
+            .sortedByDescending { (_, entries) ->
+                entries.maxOfOrNull { entry -> byId[entry.key]?.capturedAt ?: Long.MIN_VALUE } ?: Long.MIN_VALUE
+            }
             .flatMap { (eventId, entries) ->
                 val members = entries.mapNotNull { byId[it.key] }
                 selectDiverse(members, if (members.size >= 40) 3 else 2).mapIndexed { rank, item ->
                     EventRepresentativePlan(eventId, item.id, rank, "quality_time_people_ocr_frame_diversity")
                 }
             }
-        val groupJobs = (exact + bursts).flatMap { group ->
+        val exactJobs = exact.flatMap { group ->
             group.representatives.map { mediaId ->
                 job(
                     scope = SemanticFactScope.VISUAL_GROUP,
                     subjectId = group.id,
                     mediaId = mediaId,
-                    reason = if (group.kind == "EXACT_DUPLICATE") "exact_duplicate_canonical" else "diverse_group_representative",
+                    reason = "exact_duplicate_canonical",
+                )
+            }
+        }
+        val burstJobs = bursts.flatMap { group ->
+            group.representatives.map { mediaId ->
+                job(
+                    scope = SemanticFactScope.VISUAL_GROUP,
+                    subjectId = group.id,
+                    mediaId = mediaId,
+                    reason = "diverse_group_representative",
                 )
             }
         }
@@ -108,16 +139,28 @@ internal object AdaptiveRepresentativeSelector {
             .map { job(SemanticFactScope.MEDIA, it.id, it.id, "ambiguous_document") }
         val frequent = frequentlyRetrievedIds.mapNotNull(byId::get).take(MAX_FREQUENT_JOBS)
             .map { job(SemanticFactScope.MEDIA, it.id, it.id, "frequently_retrieved") }
-        val represented = (groupJobs + eventJobs + ambiguousDocuments + frequent)
+        val represented = (exactJobs + burstJobs + eventJobs + ambiguousDocuments + frequent)
             .mapTo(hashSetOf(), SemanticEnrichmentJobRecord::representativeMediaId)
         val outliers = eligible.filterNot { it.id in represented }
             .sortedWith(compareByDescending<GalleryItem> { it.qualityScore ?: 0f }.thenBy { it.capturedAt ?: 0L })
             .take(MAX_OUTLIER_JOBS)
             .map { job(SemanticFactScope.MEDIA, it.id, it.id, "important_unique_outlier") }
+        val prioritizedJobs = eventJobs.take(MAX_EVENT_JOBS) +
+            burstJobs.take(MAX_BURST_JOBS) +
+            exactJobs.take(MAX_EXACT_DUPLICATE_JOBS) +
+            ambiguousDocuments +
+            frequent +
+            outliers
+        val fallbackJobs = eventJobs +
+            burstJobs +
+            ambiguousDocuments +
+            frequent +
+            outliers +
+            exactJobs.take(MAX_EXACT_DUPLICATE_JOBS)
         return SemanticEnrichmentPlan(
             groups = exact + bursts,
             eventRepresentatives = eventRepresentatives,
-            jobs = (groupJobs + eventJobs + ambiguousDocuments + frequent + outliers)
+            jobs = (prioritizedJobs + fallbackJobs)
                 .distinctBy(SemanticEnrichmentJobRecord::id)
                 .take(MAX_TOTAL_JOBS),
         )
@@ -178,6 +221,9 @@ internal object AdaptiveRepresentativeSelector {
 
     private const val BURST_WINDOW_MS = 30L * 60L * 1000L
     private const val DAY_MS = 24f * 60f * 60f * 1000f
+    private const val MAX_EVENT_JOBS = 48
+    private const val MAX_BURST_JOBS = 20
+    private const val MAX_EXACT_DUPLICATE_JOBS = 12
     private const val MAX_DOCUMENT_JOBS = 16
     private const val MAX_FREQUENT_JOBS = 16
     private const val MAX_OUTLIER_JOBS = 16

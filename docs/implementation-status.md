@@ -3342,3 +3342,18 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; REAL GEMMA FACT
 - Device completion: the pinned 2,583,085,056-byte E2B artifact downloaded, verified, moved into a generation, and became the active Gemma model; the partial download was removed.
 - The same active generation is resolved for planner, visual verifier, grounded composer, and semantic enricher. Real semantic enrichment is now unblocked but was NOT RUN during this Settings/provisioning phase.
 - Consumer APK: `/sdcard/Download/AskPhotos-consumer-auto-gemma-20260726.apk`, SHA-256 `D9772C27B9869F16B59305698F387E6A024576321DAC5849BDF230E6AC264E70`.
+## 2026-07-26 - Semantic memory execution feedback and queue recovery
+
+- Device reproduction confirmed the manual action selected 128 representatives and started `SemanticEnrichmentWorker`, but the first Gemma response failed the fact safety filter and was incorrectly returned as retryable work.
+- That deterministic validation result left all jobs pending behind WorkManager's 15-minute backoff while the scrolled Gemma card showed no local progress.
+- Unsafe or unsupported individual model facts are now discarded without discarding safe facts; malformed structured output fails only that representative and processing continues.
+- `birthday card` remains a valid visible semantic fact, while payment-card values, passwords, long numbers, emails, and phone-like values remain blocked.
+- Worker media lookup is now one indexed row instead of loading the full gallery for every representative.
+- User-requested work yields one second for the queued state to render before heavy Gemma initialization.
+- The Gemma card now shows selecting, queued, running, cached-fact, completed, skipped, and retry states using persisted job counts.
+- The 128-job budget now reserves 48 recent event representatives plus bounded burst, duplicate, document, frequent-result, and outlier slots; exact duplicates can no longer crowd out event memory.
+- Safe JSON wrapped in Gemma prose or markdown is extracted without accepting arbitrary fields or execution instructions.
+- Heavy work is limited to two representatives per run and continuation waits 30 seconds so thermal admission can recover.
+- Interrupted `RUNNING` semantic jobs are returned to `PENDING` without consuming an inference attempt after process death or replacement install.
+- A persisted duplicate-only active plan is detected once and rebuilt with the balanced event-first selector; existing cached facts remain intact.
+- Existing gallery, people, face, OCR, embedding, and model data are not reset or deleted.

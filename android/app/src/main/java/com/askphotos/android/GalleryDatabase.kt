@@ -440,6 +440,16 @@ class GalleryDatabase(
         try {
             db.execSQL("UPDATE media_item SET index_state='PENDING' WHERE index_state='INDEXING'")
             db.execSQL("UPDATE media_index_stage SET status='PENDING', updated_at=${System.currentTimeMillis()}, error='process_interrupted' WHERE status='RUNNING'")
+            db.execSQL(
+                """
+                UPDATE semantic_enrichment_job
+                SET status='PENDING',
+                    attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
+                    updated_at=${System.currentTimeMillis()},
+                    error='process_interrupted'
+                WHERE status='RUNNING'
+                """.trimIndent(),
+            )
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -2131,6 +2141,19 @@ class GalleryDatabase(
                     putNull("error")
                     put("updated_at", now)
                 }, SQLiteDatabase.CONFLICT_IGNORE)
+                if (job.userRequested) {
+                    db.update("semantic_enrichment_job", ContentValues().apply {
+                        put("status", SemanticEnrichmentStatus.PENDING.name)
+                        put("attempt_count", 0)
+                        put("user_requested", true)
+                        putNull("error")
+                        put("updated_at", now)
+                    }, "id=? AND status IN (?,?)", arrayOf(
+                        job.id,
+                        SemanticEnrichmentStatus.PENDING.name,
+                        SemanticEnrichmentStatus.FAILED.name,
+                    ))
+                }
             }
         }
     }
@@ -2172,6 +2195,74 @@ class GalleryDatabase(
         "SELECT 1 FROM semantic_enrichment_job WHERE status=? LIMIT 1",
         arrayOf(SemanticEnrichmentStatus.PENDING.name),
     ).use(android.database.Cursor::moveToFirst)
+
+    fun semanticEnrichmentPlanNeedsRebuild(): Boolean {
+        val activeStatuses = setOf(
+            SemanticEnrichmentStatus.PENDING.name,
+            SemanticEnrichmentStatus.RUNNING.name,
+            SemanticEnrichmentStatus.FAILED.name,
+        )
+        val placeholders = activeStatuses.joinToString(",") { "?" }
+        val counts = readableDatabase.rawQuery(
+            """
+            SELECT COUNT(*),
+                   COALESCE(SUM(CASE WHEN reason='exact_duplicate_canonical' THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN reason='diverse_event_representative' THEN 1 ELSE 0 END),0)
+            FROM semantic_enrichment_job
+            WHERE status IN ($placeholders)
+            """.trimIndent(),
+            activeStatuses.toTypedArray(),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) IntArray(3) else IntArray(3) { cursor.getInt(it) }
+        }
+        val hasEventRepresentatives = readableDatabase.rawQuery(
+            "SELECT 1 FROM event_representative LIMIT 1",
+            emptyArray(),
+        ).use(android.database.Cursor::moveToFirst)
+        return hasEventRepresentatives &&
+            counts[0] >= 32 &&
+            counts[1] == counts[0] &&
+            counts[2] == 0
+    }
+
+    fun semanticMemoryProgress(): SemanticMemoryProgress {
+        val db = readableDatabase
+        val counts = db.rawQuery(
+            """
+            SELECT COUNT(*),
+                   COALESCE(SUM(CASE WHEN status='PENDING' THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN status='RUNNING' THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN status='COMPLETE' THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN status='AUTH_REQUIRED' THEN 1 ELSE 0 END),0)
+            FROM semantic_enrichment_job
+            """.trimIndent(),
+            emptyArray(),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) {
+                IntArray(6)
+            } else {
+                IntArray(6) { index -> cursor.getInt(index) }
+            }
+        }
+        val factCount = db.rawQuery("SELECT COUNT(*) FROM semantic_fact", emptyArray()).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
+        val latestError = db.rawQuery(
+            "SELECT error FROM semantic_enrichment_job WHERE error IS NOT NULL AND error<>'' ORDER BY updated_at DESC LIMIT 1",
+            emptyArray(),
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+        return SemanticMemoryProgress(
+            totalJobs = counts[0],
+            pendingJobs = counts[1],
+            runningJobs = counts[2],
+            completedJobs = counts[3],
+            failedJobs = counts[4],
+            authenticationRequiredJobs = counts[5],
+            factCount = factCount,
+            latestError = latestError,
+        )
+    }
 
     fun completeSemanticEnrichment(job: SemanticEnrichmentJobRecord, facts: List<SemanticFactRecord>) {
         writableDatabase.transaction { db ->

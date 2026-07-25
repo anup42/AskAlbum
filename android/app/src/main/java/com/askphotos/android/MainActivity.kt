@@ -285,6 +285,8 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     faceModel = state.faceModel,
                     faceModelDownload = state.faceModelDownload,
                     operationMessage = state.operationMessage,
+                    semanticMemory = state.semanticMemory,
+                    semanticMemoryPlanning = state.semanticMemoryPlanning,
                     indexingActive = state.indexingActive,
                     onRetry = viewModel::retryIndexing,
                     onBuildSemanticMemory = viewModel::requestSemanticEnrichment,
@@ -755,6 +757,8 @@ private fun IndexManagerScreen(
     faceModel: FaceModelStatus,
     faceModelDownload: FaceModelDownloadProgress,
     operationMessage: String?,
+    semanticMemory: SemanticMemoryProgress,
+    semanticMemoryPlanning: Boolean,
     indexingActive: Boolean,
     onRetry: () -> Unit,
     onBuildSemanticMemory: () -> Unit,
@@ -956,13 +960,56 @@ private fun IndexManagerScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp,
                 )
+                val semanticStatusText = when {
+                    semanticMemoryPlanning ->
+                        "Selecting representative media. Existing gallery and people indexes remain available."
+                    semanticMemory.runningJobs > 0 ->
+                        "Analyzing representative ${semanticMemory.processedJobs + 1} of ${semanticMemory.totalJobs} on device. ${semanticMemory.factCount} facts cached."
+                    semanticMemory.pendingJobs > 0 && semanticMemory.latestError?.startsWith("thermal_status_") == true ->
+                        "Paused to let the device cool. ${semanticMemory.pendingJobs} representative analyses remain."
+                    semanticMemory.pendingJobs > 0 && semanticMemory.latestError != null ->
+                        "The previous pass paused before completion. ${semanticMemory.pendingJobs} representative analyses remain."
+                    semanticMemory.pendingJobs > 0 ->
+                        "${semanticMemory.pendingJobs} representative analyses are queued. You can leave this screen while they run."
+                    semanticMemory.totalJobs > 0 -> buildString {
+                        append("${semanticMemory.factCount} facts cached from ${semanticMemory.completedJobs} representatives.")
+                        val skipped = semanticMemory.failedJobs + semanticMemory.authenticationRequiredJobs
+                        if (skipped > 0) append(" $skipped skipped or authentication-protected.")
+                    }
+                    semanticMemory.factCount > 0 ->
+                        "${semanticMemory.factCount} verified semantic facts are cached."
+                    else -> null
+                }
+                semanticStatusText?.let { status ->
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (semanticMemoryPlanning || semanticMemory.runningJobs > 0) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
                 Button(
                     onClick = onBuildSemanticMemory,
-                    enabled = modelPack.installed && modelPack.multimodal,
+                    enabled = modelPack.installed &&
+                        modelPack.multimodal &&
+                        !semanticMemoryPlanning &&
+                        semanticMemory.runningJobs == 0 &&
+                        !(semanticMemory.pendingJobs > 0 && semanticMemory.latestError == null),
                     modifier = Modifier.fillMaxWidth().testTag("build-semantic-memory"),
                 ) {
-                    Text("Build semantic memory")
+                    Text(
+                        when {
+                            semanticMemoryPlanning -> "Selecting representatives..."
+                            semanticMemory.runningJobs > 0 -> "Building semantic memory..."
+                            semanticMemory.pendingJobs > 0 && semanticMemory.latestError != null -> "Retry semantic memory"
+                            semanticMemory.pendingJobs > 0 -> "Semantic memory queued"
+                            semanticMemory.totalJobs > 0 -> "Rebuild semantic memory"
+                            else -> "Build semantic memory"
+                        },
+                    )
                 }
                 if (!modelPack.installed || !modelPack.multimodal) {
                     Text(

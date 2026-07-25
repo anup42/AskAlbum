@@ -181,6 +181,7 @@ class GalleryRepository(context: Context) {
         SemanticEnrichmentCoordinator(database).rebuildPlan(userRequested = true).also {
             SemanticEnrichmentScheduler.schedule(appContext, userRequested = true)
         }
+    fun semanticMemoryProgress(): SemanticMemoryProgress = database.semanticMemoryProgress()
     fun events(): List<EventRecord> = database.events()
     fun saveEventCorrection(
         operation: EventCorrectionOperation,
