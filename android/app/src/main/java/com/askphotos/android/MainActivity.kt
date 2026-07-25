@@ -1483,7 +1483,8 @@ private fun decodeFaceThumbnail(
     }
 
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    openSource()?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return@runCatching null
+    val boundsSource = openSource() ?: return@runCatching null
+    boundsSource.use { BitmapFactory.decodeStream(it, null, bounds) }
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
     val sample = FaceCropSamplingPolicy.sampleSize(bounds.outWidth, bounds.outHeight)
     val source = openSource()?.use {

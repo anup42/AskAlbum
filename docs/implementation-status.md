@@ -14,6 +14,7 @@ Status: **PARTIAL.**
 - The current production database contains 14 demo media, 0 face instances, and 0 person clusters; people indexing is disabled. Replace-install did not delete these records because no people records existed in the connected package at verification time.
 - People is visible as its own Menu destination and opens the review/named/hidden screen instead of Privacy.
 - People launch performance fix verified on SM-S928B with 229 clusters: lazy card composition, off-main bounded/recycled face thumbnails, and batched cluster/face/media hydration replace eager full-image decoding and the previous `1 + 5N` query pattern. Isolated launch rendered 165 frames with 1.82% jank, 8 ms p95, no ANR/fatal exception, and no repeated app-GC signal.
+- Corrected bounds-only thumbnail decoding: `BitmapFactory` intentionally returns no bitmap while populating dimensions, which had been misread as a source failure. A post-install SM-S928B screenshot confirms real representative and supporting face crops render from preserved MediaStore URIs.
 - Focused PASS: `FaceCropSamplingPolicyTest` (2 tests) and CI-package `PeopleEditingDatabaseTest` (1 connected test). `OfflineDemoDebug` was replace-installed without clearing production app data.
 - APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-0.0.6-20260725.apk`; local/device SHA-256 `105a6cba26f13776a5cdcc9ff96353426f966ff319dc47252b4b6cde8d5796e0`.
 
