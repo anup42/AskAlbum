@@ -32,6 +32,10 @@ data class GalleryUiState(
     val items: List<GalleryItem> = emptyList(),
     val index: IndexSummary = IndexSummary(),
     val selectedEvidence: SearchHit? = null,
+    val selectedEvidenceMetadata: IndexedMediaMetadata? = null,
+    val selectedEvidenceMetadataLoading: Boolean = false,
+    val selectedEvidenceMetadataError: String? = null,
+    val selectedEvidenceMetadataUnlocked: Boolean = false,
     val destination: AppDestination = AppDestination.GALLERY,
     val indexingActive: Boolean = false,
     val operationMessage: String? = null,
@@ -841,11 +845,65 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun showEvidence(hit: SearchHit) {
-        state = state.copy(selectedEvidence = hit)
+        state = state.copy(
+            selectedEvidence = hit,
+            selectedEvidenceMetadata = null,
+            selectedEvidenceMetadataLoading = false,
+            selectedEvidenceMetadataError = null,
+            selectedEvidenceMetadataUnlocked = false,
+        )
     }
 
     fun dismissEvidence() {
-        state = state.copy(selectedEvidence = null)
+        state = state.copy(
+            selectedEvidence = null,
+            selectedEvidenceMetadata = null,
+            selectedEvidenceMetadataLoading = false,
+            selectedEvidenceMetadataError = null,
+            selectedEvidenceMetadataUnlocked = false,
+        )
+    }
+
+    fun loadSelectedEvidenceMetadata(includeSensitiveContent: Boolean = false) {
+        val selected = state.selectedEvidence ?: return
+        if (state.selectedEvidenceMetadataLoading) return
+        if (state.selectedEvidenceMetadata != null &&
+            (!includeSensitiveContent || state.selectedEvidenceMetadataUnlocked)
+        ) {
+            return
+        }
+        val mediaId = selected.item.id
+        state = state.copy(
+            selectedEvidenceMetadataLoading = true,
+            selectedEvidenceMetadataError = null,
+        )
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    repository.indexedMetadata(mediaId, includeSensitiveContent)
+                }
+            }.onSuccess { metadata ->
+                if (state.selectedEvidence?.item?.id == mediaId) {
+                    state = state.copy(
+                        selectedEvidenceMetadata = metadata,
+                        selectedEvidenceMetadataLoading = false,
+                        selectedEvidenceMetadataUnlocked = includeSensitiveContent,
+                    )
+                }
+            }.onFailure { error ->
+                if (state.selectedEvidence?.item?.id == mediaId) {
+                    state = state.copy(
+                        selectedEvidenceMetadataLoading = false,
+                        selectedEvidenceMetadataError = error.message ?: "Indexed metadata could not be loaded",
+                    )
+                }
+            }
+        }
+    }
+
+    fun unlockSelectedEvidenceMetadata(hit: SearchHit) {
+        if (state.selectedEvidence?.item?.id != hit.item.id) return
+        loadSelectedEvidenceMetadata(includeSensitiveContent = true)
     }
 
     private suspend fun reload(message: String? = state.operationMessage) {

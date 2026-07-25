@@ -821,6 +821,34 @@ class GalleryDatabase(
         arrayOf(mediaId),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
 
+    fun indexedPeopleForMedia(mediaId: String): List<IndexedPersonMetadata> = readableDatabase.rawQuery(
+        """
+        SELECT c.id,c.label,c.relationship,c.aliases,c.reviewed,c.hidden,COUNT(f.id) AS face_count
+        FROM face_instance f
+        JOIN person_cluster c ON c.id=f.cluster_id
+        WHERE f.media_id=?
+        GROUP BY c.id,c.label,c.relationship,c.aliases,c.reviewed,c.hidden
+        ORDER BY c.reviewed DESC,COALESCE(c.label,c.relationship,c.id) COLLATE NOCASE
+        """.trimIndent(),
+        arrayOf(mediaId),
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(
+                    IndexedPersonMetadata(
+                        clusterId = cursor.getString(0),
+                        label = if (cursor.isNull(1)) null else cursor.getString(1),
+                        relationship = if (cursor.isNull(2)) null else cursor.getString(2),
+                        aliases = decodeStrings(cursor.getString(3)).sorted(),
+                        reviewed = cursor.getInt(4) != 0,
+                        hidden = cursor.getInt(5) != 0,
+                        faceCount = cursor.getInt(6),
+                    ),
+                )
+            }
+        }
+    }
+
     fun allEmbeddedFaceIds(): Set<String> = readableDatabase.rawQuery(
         "SELECT id FROM face_instance WHERE embedding_dimension=? AND embedding_offset IS NOT NULL",
         arrayOf(FaceModelCatalog.sface.embeddingDimension.toString()),
@@ -2392,6 +2420,32 @@ class GalleryDatabase(
                         ),
                     )
                 }
+            }
+        }
+    }
+
+    fun semanticFactsForMedia(mediaId: String): List<SemanticFactRecord> = readableDatabase.rawQuery(
+        "SELECT * FROM semantic_fact WHERE subject_id=? OR evidence_media_id=? ORDER BY predicate,value",
+        arrayOf(mediaId, mediaId),
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(
+                    SemanticFactRecord(
+                        scope = SemanticFactScope.valueOf(cursor.text("scope")),
+                        subjectId = cursor.text("subject_id"),
+                        predicate = cursor.text("predicate"),
+                        value = cursor.text("value"),
+                        confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
+                        evidenceMediaId = cursor.text("evidence_media_id"),
+                        region = cursor.nullableText("region")?.let { encoded ->
+                            JSONArray(encoded).let { array -> List(array.length()) { array.getDouble(it).toFloat() } }
+                        },
+                        applicability = cursor.text("applicability"),
+                        modelVersion = cursor.text("model_version"),
+                        promptVersion = cursor.text("prompt_version"),
+                    ),
+                )
             }
         }
     }

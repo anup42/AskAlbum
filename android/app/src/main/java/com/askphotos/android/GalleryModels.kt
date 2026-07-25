@@ -451,6 +451,28 @@ data class MediaIndexStageRecord(
     val error: String?,
 )
 
+data class IndexedPersonMetadata(
+    val clusterId: String,
+    val label: String?,
+    val relationship: String?,
+    val aliases: List<String>,
+    val reviewed: Boolean,
+    val hidden: Boolean,
+    val faceCount: Int,
+)
+
+data class IndexedMediaMetadata(
+    val stages: List<MediaIndexStageRecord>,
+    val ocrBlocks: List<OcrBlockRecord>,
+    val ocrEntities: List<OcrEntityRecord>,
+    val people: List<IndexedPersonMetadata>,
+    val event: EventRecord?,
+    val videoKeyframes: List<VideoKeyframeRecord>,
+    val semanticFacts: List<SemanticFactRecord>,
+    val sensitiveContentLocked: Boolean,
+    val protectedValueCount: Int,
+)
+
 data class MediaScanSnapshot(
     val items: List<ImportedMedia>,
     val fullyCoveredKinds: Set<MediaKind>,

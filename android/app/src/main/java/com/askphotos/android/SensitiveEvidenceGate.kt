@@ -25,8 +25,8 @@ class SensitiveEvidenceGate(
         },
     )
 
-    fun open(hit: SearchHit) {
-        if (!SensitiveEvidencePolicy.requiresAuthentication(hit)) {
+    fun open(hit: SearchHit, forceAuthentication: Boolean = false) {
+        if (!forceAuthentication && !SensitiveEvidencePolicy.requiresAuthentication(hit)) {
             onAuthorized(hit)
             return
         }

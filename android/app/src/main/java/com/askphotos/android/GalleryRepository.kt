@@ -71,6 +71,42 @@ class GalleryRepository(context: Context) {
     fun tombstoneCount(): Int = database.tombstoneCount()
     fun stageRecords(mediaId: String): List<MediaIndexStageRecord> = database.stageRecords(mediaId)
     fun videoKeyframes(mediaId: String): List<VideoKeyframeRecord> = database.videoKeyframes(mediaId)
+    fun indexedMetadata(mediaId: String, includeSensitiveContent: Boolean = false): IndexedMediaMetadata {
+        val item = requireNotNull(database.itemById(mediaId)) { "Media item is no longer available" }
+        val blocks = database.ocrBlocks(mediaId)
+        val entities = database.ocrEntities(mediaId)
+        val keyframes = database.videoKeyframes(mediaId)
+        val facts = database.semanticFactsForMedia(mediaId)
+        val protectedTypes = setOf(OcrEntityType.PASSWORD, OcrEntityType.EMAIL, OcrEntityType.PHONE, OcrEntityType.ORDER_ID)
+        val protectedEntities = entities.filter {
+            it.type in protectedTypes ||
+                SensitiveContentClassifier.isSensitive("${it.label.orEmpty()} ${it.rawText} ${it.normalizedValue}")
+        }
+        val sensitiveFreeText = SensitiveContentClassifier.isSensitive(item.ocrText) ||
+            blocks.any { SensitiveContentClassifier.isSensitive(it.text) } ||
+            keyframes.any { SensitiveContentClassifier.isSensitive(it.ocrText) } ||
+            facts.any { SensitiveContentClassifier.isSensitive("${it.predicate} ${it.value}") }
+        val hasProtectedContent = protectedEntities.isNotEmpty() ||
+            database.hasAuthenticationProtectedOcr(mediaId) ||
+            sensitiveFreeText
+        val locked = hasProtectedContent && !includeSensitiveContent
+        val visibleFacts = if (locked) {
+            facts.filterNot { SensitiveContentClassifier.isSensitive("${it.predicate} ${it.value}") }
+        } else {
+            facts
+        }
+        return IndexedMediaMetadata(
+            stages = database.stageRecords(mediaId),
+            ocrBlocks = if (locked) emptyList() else blocks,
+            ocrEntities = if (locked) entities - protectedEntities.toSet() else entities,
+            people = database.indexedPeopleForMedia(mediaId),
+            event = database.eventsForMedia(listOf(mediaId))[mediaId],
+            videoKeyframes = if (locked) keyframes.map { it.copy(ocrText = "") } else keyframes,
+            semanticFacts = visibleFacts,
+            sensitiveContentLocked = locked,
+            protectedValueCount = protectedEntities.size + if (sensitiveFreeText) 1 else 0,
+        )
+    }
     fun peopleIndexStatus(): PeopleIndexStatus = database.peopleIndexStatus()
 
     fun enablePeopleIndexing(): PeopleIndexStatus = database

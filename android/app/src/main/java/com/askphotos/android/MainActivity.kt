@@ -183,6 +183,9 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
     val evidenceGate = remember(context) {
         SensitiveEvidenceGate(context as FragmentActivity, viewModel::showEvidence)
     }
+    val metadataGate = remember(context) {
+        SensitiveEvidenceGate(context as FragmentActivity, viewModel::unlockSelectedEvidenceMetadata)
+    }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { uris ->
         viewModel.importUris(uris, MediaSource.PHOTO_PICKER)
     }
@@ -339,7 +342,12 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
     state.selectedEvidence?.let { hit ->
         EvidenceDialog(
             hit = hit,
+            metadata = state.selectedEvidenceMetadata,
+            metadataLoading = state.selectedEvidenceMetadataLoading,
+            metadataError = state.selectedEvidenceMetadataError,
             onDismiss = viewModel::dismissEvidence,
+            onLoadMetadata = { viewModel.loadSelectedEvidenceMetadata() },
+            onUnlockSensitiveMetadata = { metadataGate.open(hit, forceAuthentication = true) },
             onAsk = { item ->
                 viewModel.dismissEvidence()
                 viewModel.updateQuery("Tell me about ${item.title}")
@@ -2288,12 +2296,25 @@ private fun GalleryMenuScreen(
 }
 
 @Composable
-internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit, onAsk: ((GalleryItem) -> Unit)? = null) {
+internal fun EvidenceDialog(
+    hit: SearchHit,
+    metadata: IndexedMediaMetadata? = null,
+    metadataLoading: Boolean = false,
+    metadataError: String? = null,
+    onDismiss: () -> Unit,
+    onLoadMetadata: () -> Unit = {},
+    onUnlockSensitiveMetadata: () -> Unit = {},
+    onAsk: ((GalleryItem) -> Unit)? = null,
+) {
     val context = LocalContext.current
     val playbackTimestamp = hit.evidence.mapNotNull { it.timestampMs }.minOrNull()
     var playing by remember(hit.item.id, playbackTimestamp) { mutableStateOf(false) }
     var detailsVisible by remember(hit.item.id) { mutableStateOf(false) }
     var favorite by remember(hit.item.id) { mutableStateOf(false) }
+    val toggleDetails = {
+        detailsVisible = !detailsVisible
+        if (detailsVisible) onLoadMetadata()
+    }
     BackHandler {
         when {
             detailsVisible -> detailsVisible = false
@@ -2335,7 +2356,7 @@ internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit, onAsk: ((Gall
                 ) {
                     Spacer(Modifier.weight(1f))
                     Surface(shape = CircleShape, color = Color.Black.copy(alpha = .55f)) {
-                        IconButton(onClick = { detailsVisible = !detailsVisible }) {
+                        IconButton(onClick = toggleDetails) {
                             Icon(painterResource(R.drawable.ic_gallery_info), "Details and evidence", tint = Color.White)
                         }
                     }
@@ -2353,7 +2374,10 @@ internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit, onAsk: ((Gall
                             if (hit.item.kind == MediaKind.VIDEO && hit.item.contentUri != null) {
                                 ViewerAction("Play", R.drawable.ic_gallery_video) { playing = true }
                             }
-                            ViewerAction("Details", R.drawable.ic_gallery_info) { detailsVisible = true }
+                            ViewerAction("Details", R.drawable.ic_gallery_info) {
+                                detailsVisible = true
+                                onLoadMetadata()
+                            }
                         }
                     }
                 } else {
@@ -2368,13 +2392,32 @@ internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit, onAsk: ((Gall
                                 TextButton(onClick = { detailsVisible = false }) { Text("Close") }
                             }
                             Text(hit.item.location, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            hit.evidence.forEachIndexed { index, evidence ->
-                                if (index > 0) HorizontalDivider(Modifier.padding(vertical = 12.dp))
-                                Text(evidence.sourceField.replace('_', ' '), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text(evidence.text)
-                                Text("${(evidence.confidence * 100).toInt()}% confidence", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                            Spacer(Modifier.height(18.dp))
+                            Text("Indexed metadata", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                            IndexedItemMetadata(hit.item)
+                            when {
+                                metadataLoading -> {
+                                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 18.dp))
+                                    Text("Loading local index records...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                metadataError != null -> {
+                                    Text(metadataError, color = MaterialTheme.colorScheme.error)
+                                    TextButton(onClick = onLoadMetadata) { Text("Retry") }
+                                }
+                                metadata != null -> IndexedMetadataRecords(
+                                    item = hit.item,
+                                    metadata = metadata,
+                                    onUnlockSensitiveMetadata = onUnlockSensitiveMetadata,
+                                )
+                                else -> Text("Open Details again to load local index records.")
                             }
-                            if (hit.evidence.isEmpty()) Text("Supported by this item's local metadata record.")
+                            MetadataSection(
+                                "Why this item matched",
+                                hit.evidence.map {
+                                    it.sourceField.replace('_', ' ') to
+                                        "${it.text} (${(it.confidence * 100).toInt()}% confidence)"
+                                },
+                            )
                         }
                     }
                 }
@@ -2382,6 +2425,201 @@ internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit, onAsk: ((Gall
         }
     }
 }
+
+@Composable
+private fun IndexedItemMetadata(item: GalleryItem) {
+    MetadataSection(
+        "Media",
+        buildList {
+            add("Media ID" to item.id)
+            add("Filename" to item.filename)
+            add("Kind" to item.kind.name)
+            add("MIME type" to item.mimeType)
+            add("Source" to item.source.name)
+            if (item.contentUri != null) add("Content URI" to item.contentUri)
+            if (item.assetPath != null) add("Asset path" to item.assetPath)
+            if (item.previewPath != null) add("Preview path" to item.previewPath)
+            if (item.sourceUrl.isNotBlank()) add("Source URL" to item.sourceUrl)
+            if (item.creator != null) add("Creator" to item.creator)
+            if (item.license.isNotBlank()) add("License" to item.license)
+            if (item.album.isNotBlank()) add("Album" to item.album)
+            if (item.location.isNotBlank()) add("Location" to item.location)
+            if (item.latitude != null && item.longitude != null) add("Coordinates" to "${item.latitude}, ${item.longitude}")
+            add("Captured" to formatMetadataTime(item.capturedAt))
+            add("Modified" to formatMetadataTime(item.modifiedAt))
+            add("Last seen" to formatMetadataTime(item.lastSeenAt))
+            add("Dimensions" to "${item.width} x ${item.height}")
+            if (item.durationMs != null) add("Duration" to formatPlaybackTime(item.durationMs))
+            add("Size" to formatBytes(item.sizeBytes))
+            add("Access" to item.accessState.name)
+            add("Index state" to item.indexState.name)
+            if (item.indexError != null) add("Index error" to item.indexError)
+        },
+    )
+    MetadataSection(
+        "Visual features",
+        buildList {
+            if (item.tags.isNotEmpty()) add("Labels" to item.tags.joinToString())
+            if (item.description.isNotBlank()) add("Description" to item.description)
+            add("Detected faces" to item.faceCount.toString())
+            if (item.qualityScore != null) add("Quality score" to "%.4f".format(item.qualityScore))
+            if (item.blurScore != null) add("Blur score" to "%.4f".format(item.blurScore))
+            if (item.exposureScore != null) add("Exposure score" to "%.4f".format(item.exposureScore))
+            if (item.perceptualHash != null) add("Perceptual hash" to java.lang.Long.toUnsignedString(item.perceptualHash, 16))
+        },
+    )
+}
+
+@Composable
+private fun IndexedMetadataRecords(
+    item: GalleryItem,
+    metadata: IndexedMediaMetadata,
+    onUnlockSensitiveMetadata: () -> Unit,
+) {
+    MetadataSection(
+        "Index pipeline",
+        metadata.stages.map { stage ->
+            stage.stage.name.replace('_', ' ') to buildString {
+                append(stage.status.name)
+                append(" | ")
+                append(stage.producerVersion)
+                append(" | attempts ")
+                append(stage.attemptCount)
+                append(" | ")
+                append(formatMetadataTime(stage.updatedAt))
+                stage.error?.let { append(" | error: ").append(it) }
+            }
+        },
+    )
+    MetadataSection(
+        "People",
+        metadata.people.map { person ->
+            val identity = person.label ?: person.relationship ?: "Unreviewed cluster"
+            identity to buildString {
+                append("cluster ").append(person.clusterId)
+                append(" | faces ").append(person.faceCount)
+                append(" | ").append(if (person.reviewed) "reviewed" else "unreviewed")
+                if (person.hidden) append(" | hidden")
+                if (person.relationship != null && person.relationship != identity) append(" | ").append(person.relationship)
+                if (person.aliases.isNotEmpty()) append(" | aliases: ").append(person.aliases.joinToString())
+            }
+        },
+    )
+    metadata.event?.let { event ->
+        MetadataSection(
+            "Event",
+            listOf(
+                "Title" to event.title,
+                "Type" to event.eventType,
+                "Range" to "${formatMetadataTime(event.startTime)} - ${formatMetadataTime(event.endTime)}",
+                "Location" to event.locationName.orEmpty(),
+                "Members" to event.memberCount.toString(),
+                "Confidence" to "${(event.confidence * 100).toInt()}%",
+                "Producer" to event.producerVersion,
+                "User corrected" to event.userCorrected.toString(),
+            ).filter { it.second.isNotBlank() },
+        )
+    }
+    if (metadata.sensitiveContentLocked) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Protected OCR metadata", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "${metadata.protectedValueCount.coerceAtLeast(1)} sensitive indexed value(s) are hidden.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
+                TextButton(onClick = onUnlockSensitiveMetadata) { Text("Authenticate to view") }
+            }
+        }
+    } else if (item.ocrText.isNotBlank()) {
+        MetadataSection("Combined OCR text", listOf("Text" to item.ocrText))
+    }
+    MetadataSection(
+        "OCR entities",
+        metadata.ocrEntities.mapIndexed { index, entity ->
+            "${entity.type.name.replace('_', ' ')} ${index + 1}" to buildString {
+                append(entity.rawText)
+                if (entity.normalizedValue != entity.rawText) append(" | normalized: ").append(entity.normalizedValue)
+                entity.label?.let { append(" | label: ").append(it) }
+                append(" | ").append((entity.confidence * 100).toInt()).append("%")
+                append(" | ").append(entity.producerVersion)
+                append(" | bounds ").append(formatBounds(entity.left, entity.top, entity.right, entity.bottom))
+            }
+        },
+    )
+    MetadataSection(
+        "OCR blocks",
+        metadata.ocrBlocks.mapIndexed { index, block ->
+            "Block ${index + 1}" to buildString {
+                append(block.text)
+                if (block.normalizedText != block.text) append(" | normalized: ").append(block.normalizedText)
+                block.language?.let { append(" | language: ").append(it) }
+                append(" | page ").append(block.pageIndex)
+                block.timestampMs?.let { append(" | ").append(formatPlaybackTime(it)) }
+                append(" | ").append((block.confidence * 100).toInt()).append("%")
+                append(" | bounds ").append(formatBounds(block.left, block.top, block.right, block.bottom))
+            }
+        },
+    )
+    MetadataSection(
+        "Gemma semantic facts",
+        metadata.semanticFacts.mapIndexed { index, fact ->
+            "${fact.predicate} ${index + 1}" to buildString {
+                append(fact.value)
+                append(" | scope ").append(fact.scope.name)
+                append(" | subject ").append(fact.subjectId)
+                append(" | evidence ").append(fact.evidenceMediaId)
+                append(" | ").append((fact.confidence * 100).toInt()).append("%")
+                append(" | applicability ").append(fact.applicability)
+                append(" | model ").append(fact.modelVersion)
+                append(" | prompt ").append(fact.promptVersion)
+                fact.region?.let { append(" | region ").append(it.joinToString(prefix = "[", postfix = "]")) }
+            }
+        },
+    )
+    MetadataSection(
+        "Video keyframes",
+        metadata.videoKeyframes.map { frame ->
+            formatPlaybackTime(frame.timestampMs) to buildString {
+                append("id ").append(frame.id)
+                if (frame.labels.isNotEmpty()) append(" | labels: ").append(frame.labels.joinToString())
+                if (frame.ocrText.isNotBlank()) append(" | OCR: ").append(frame.ocrText)
+                append(" | quality ").append("%.4f".format(frame.qualityScore))
+                append(" | hash ").append(java.lang.Long.toUnsignedString(frame.perceptualHash, 16))
+                append(" | producer ").append(frame.producerVersion)
+                append(" | embedding ").append(frame.embeddingVersion ?: "not indexed")
+                append(" | preview ").append(frame.previewPath)
+            }
+        },
+    )
+}
+
+@Composable
+private fun MetadataSection(title: String, rows: List<Pair<String, String>>) {
+    if (rows.isEmpty()) return
+    Spacer(Modifier.height(18.dp))
+    Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+    rows.forEach { (label, value) ->
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(label, Modifier.weight(.34f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+            Text(value, Modifier.weight(.66f), fontSize = 12.sp)
+        }
+    }
+}
+
+private fun formatMetadataTime(epochMillis: Long?): String {
+    if (epochMillis == null || epochMillis <= 0L) return "Not indexed"
+    return DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
+        .format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))
+}
+
+private fun formatBounds(left: Float, top: Float, right: Float, bottom: Float): String =
+    "%.3f, %.3f, %.3f, %.3f".format(left, top, right, bottom)
 
 @Composable
 private fun ViewerAction(label: String, icon: Int, onClick: () -> Unit) {
