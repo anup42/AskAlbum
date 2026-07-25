@@ -3238,3 +3238,18 @@ Status: **IMPLEMENTED; TARGETED TEST AND CONNECTED-DEVICE RESULTS RECORDED AFTER
 - Connected `PeopleEditingDatabaseTest`: PASS, 1/1 on SM-S928B using the isolated CI package/database. It covers durable exclusion, re-index persistence, paged cluster faces, representative selection, merge, hide, aliases, and reset.
 - `OfflineDemoDebug` assemble and replacement install: PASS on SM-S928B. The existing production package data was migrated in place; no uninstall, clear-data, people reset, or media deletion was performed.
 - Connected visual QA: PASS for real face thumbnails, the 1,803-photo paged cluster grid, `Set representative`, and `Exclude from person`. The final `Named people`-before-`To review` ordering compiled and installed; its last screenshot was not taken because the device moved to an active WhatsApp task.
+
+## System Back and high-precision people-cluster repair - 25 July 2026
+
+Status: **IMPLEMENTED; VALIDATION RESULTS RECORDED AFTER EXECUTION.**
+
+- Removed visible top Back controls from People cluster detail, album detail, and the immersive media viewer. Android system Back now closes viewer details/playback first, then the viewer; closes People cluster detail before leaving People; and returns People, Privacy, Settings, and Results to their prior app destination.
+- Primary bottom-navigation selections clear stale destination history so system Back exits a primary screen rather than cycling through tabs.
+- Device data analysis found 10,482 indexed faces in only 232 clusters. The reviewed `Pooja` cluster contained 4,685 faces; only 188 matched its displayed representative at the model threshold and 35 at the new conservative gallery-scale refinement threshold. This confirmed single-linkage chaining at `0.363` as the contamination source.
+- Future automatic assignment now uses up to 12 neighbors, requires either strong single-face evidence or support from two faces in one cluster, rejects close runner-up identities, and never assigns into hidden clusters.
+- Reviewed clusters expose `Improve matches`. It anchors to the selected/displayed representative, retains manual corrections and unavailable vectors, moves low-confidence automatic members into a hidden recoverable cluster, preserves all embeddings and face rows, and invalidates stale person-attribute facts.
+- Initial targeted compile: FAIL because two public repository APIs exposed internal transport records; visibility was corrected without behavior changes.
+- `:app:testCiDebugUnitTest --tests FaceModelCatalogTest --tests PeopleClusterStateReducerTest :app:compileOfflineDemoDebugKotlin`: PASS after the correction.
+- Android build/install helper for `OfflineDemoDebug`: PASS on SM-S928B using replacement install. Post-install read-only database verification retained 10,482 face rows, 232 clusters, one reviewed cluster, and the `Pooja` label; no uninstall, clear-data, people reset, face reindex, or MediaStore mutation was performed.
+- APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-system-back-cluster-fix-20260725.apk`; 628,855,330 bytes; SHA-256 `19319B66D5C9AEE5138A12A106439B8FD3F85FF41E39DAF1C7630D3FE32910C5`.
+- Connected visual/system-Back interaction: NOT RUN because the device remained active in another application.

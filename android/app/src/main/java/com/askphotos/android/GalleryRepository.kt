@@ -127,6 +127,12 @@ class GalleryRepository(context: Context) {
     fun faceIdsForMedia(mediaId: String): List<String> = database.faceIdsForMedia(mediaId)
     fun allEmbeddedFaceIds(): Set<String> = database.allEmbeddedFaceIds()
     fun clusterIdForFace(faceId: String): String? = database.clusterIdForFace(faceId)
+    fun faceClusterReferences(faceIds: List<String>): Map<String, FaceClusterReference> =
+        database.faceClusterReferences(faceIds)
+    fun faceClusterMemberships(clusterId: String): List<FaceClusterMembership> =
+        database.faceClusterMemberships(clusterId)
+    fun refineReviewedPersonCluster(clusterId: String, representativeFaceId: String, rejectedFaceIds: Set<String>): Int =
+        database.refineReviewedPersonCluster(clusterId, representativeFaceId, rejectedFaceIds)
     fun ensureAutomaticPersonCluster(id: String) = database.ensureAutomaticPersonCluster(id)
     fun failFaces(mediaId: String, message: String, permanent: Boolean) = database.failFaces(mediaId, message, permanent)
     fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> =

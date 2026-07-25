@@ -146,6 +146,23 @@ class MmapFp16VectorIndex(
 
     suspend fun ids(): Set<String> = mutex.withLock { entries.keys.toSet() }
 
+    suspend fun vector(id: String): FloatArray? = mutex.withLock {
+        when (val source = entries[id] ?: return@withLock null) {
+            is Source.Delta -> source.vector.copyOf()
+            is Source.Snapshot -> {
+                val snapshotInfo = snapshot ?: return@withLock null
+                RandomAccessFile(snapshotInfo.file, "r").use { input ->
+                    input.seek(snapshotInfo.vectorOffset + source.row.toLong() * dimension * 2L)
+                    FloatArray(dimension) {
+                        val low = input.readUnsignedByte()
+                        val high = input.readUnsignedByte()
+                        Fp16.toFloat(((high shl 8) or low).toShort())
+                    }
+                }
+            }
+        }
+    }
+
     val backendName: String get() = if (NativeVectorScanner.isAvailable) "native-fp16" else "kotlin-fp16"
 
     internal suspend fun activeSnapshotFileForTest(): File? = mutex.withLock { snapshot?.file }

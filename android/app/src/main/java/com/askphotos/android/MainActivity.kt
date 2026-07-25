@@ -221,6 +221,7 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
         val alreadyGranted = permissions.any { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
         if (alreadyGranted) viewModel.scanAccessibleGallery() else permissionLauncher.launch(permissions)
     }
+    BackHandler(enabled = viewModel.canNavigateBack()) { viewModel.navigateBack() }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
@@ -228,7 +229,7 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
             if (state.destination != AppDestination.ONBOARDING) {
                 AppNavigation(
                     selected = state.destination,
-                    onSelect = viewModel::navigate,
+                    onSelect = viewModel::selectPrimaryDestination,
                 )
             }
         },
@@ -321,6 +322,7 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     onLoadMoreClusterFaces = viewModel::loadMorePersonClusterFaces,
                     onExcludeFace = viewModel::excludeFaceFromSelectedCluster,
                     onSetRepresentative = viewModel::setPersonClusterRepresentative,
+                    onImproveCluster = viewModel::improveSelectedPersonCluster,
                     onReviewCluster = { id, label, relationship, aliases ->
                         viewModel.saveReviewedPersonCluster(id, label, relationship, aliases)
                     },
@@ -1236,6 +1238,7 @@ private fun PeopleScreen(
     onLoadMoreClusterFaces: () -> Unit,
     onExcludeFace: (String) -> Unit,
     onSetRepresentative: (String) -> Unit,
+    onImproveCluster: () -> Unit,
     onReviewCluster: (String, String, String?, List<String>) -> Unit,
     onRemoveLabel: (String) -> Unit,
     onSetHidden: (String, Boolean) -> Unit,
@@ -1244,16 +1247,17 @@ private fun PeopleScreen(
 ) {
     var editingCluster by remember { mutableStateOf<PersonClusterReviewItem?>(null) }
     val selectedCluster = selectedClusterId?.let { id -> clusters.firstOrNull { it.id == id } }
+    BackHandler(selectedCluster != null) { onCloseCluster() }
     if (selectedCluster != null) {
         PersonClusterDetailScreen(
             cluster = selectedCluster,
             faces = selectedClusterFaces,
             loading = selectedClusterFacesLoading,
             operationMessage = operationMessage,
-            onBack = onCloseCluster,
             onLoadMore = onLoadMoreClusterFaces,
             onExcludeFace = onExcludeFace,
             onSetRepresentative = onSetRepresentative,
+            onImproveCluster = onImproveCluster,
         )
         return
     }
@@ -1446,10 +1450,10 @@ private fun PersonClusterDetailScreen(
     faces: List<PersonFaceReviewItem>,
     loading: Boolean,
     operationMessage: String?,
-    onBack: () -> Unit,
     onLoadMore: () -> Unit,
     onExcludeFace: (String) -> Unit,
     onSetRepresentative: (String) -> Unit,
+    onImproveCluster: () -> Unit,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
@@ -1460,7 +1464,6 @@ private fun PersonClusterDetailScreen(
     ) {
         item(key = "cluster-detail-header", span = { GridItemSpan(maxLineSpan) }) {
             Column {
-                TextButton(onClick = onBack) { Text("Back to People") }
                 Text(cluster.label ?: "Unreviewed person", fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
                 Text(
                     "${cluster.faceCount} ${if (cluster.faceCount == 1) "photo" else "photos"} in this local cluster",
@@ -1473,6 +1476,15 @@ private fun PersonClusterDetailScreen(
                 operationMessage?.let { message ->
                     Spacer(Modifier.height(8.dp))
                     Text(message, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                }
+                if (cluster.reviewed && cluster.faceCount > 1) {
+                    Spacer(Modifier.height(10.dp))
+                    Button(onClick = onImproveCluster, enabled = !loading) { Text("Improve matches") }
+                    Text(
+                        "Keeps manual corrections and compares automatic faces with the representative.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                    )
                 }
                 Spacer(Modifier.height(4.dp))
             }
@@ -2186,8 +2198,7 @@ private fun AlbumsScreen(items: List<GalleryItem>, onSelect: (SearchHit) -> Unit
                     Spacer(Modifier.weight(1f))
                     IconButton(onClick = onPickMedia) { Text("+", fontSize = 28.sp, fontWeight = FontWeight.Light) }
                 } else {
-                    TextButton(onClick = { activeAlbum = null }) { Text("Back") }
-                    Text(activeAlbum ?: "", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(activeAlbum ?: "", fontSize = 30.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -2264,6 +2275,13 @@ internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit, onAsk: ((Gall
     var playing by remember(hit.item.id, playbackTimestamp) { mutableStateOf(false) }
     var detailsVisible by remember(hit.item.id) { mutableStateOf(false) }
     var favorite by remember(hit.item.id) { mutableStateOf(false) }
+    BackHandler {
+        when {
+            detailsVisible -> detailsVisible = false
+            playing -> playing = false
+            else -> onDismiss()
+        }
+    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             Box(Modifier.fillMaxSize()) {
@@ -2291,9 +2309,6 @@ internal fun EvidenceDialog(hit: SearchHit, onDismiss: () -> Unit, onAsk: ((Gall
                     Modifier.fillMaxWidth().safeDrawingPadding().padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Surface(shape = CircleShape, color = Color.Black.copy(alpha = .55f)) {
-                        TextButton(onClick = onDismiss) { Text("Back", color = Color.White) }
-                    }
                     Spacer(Modifier.weight(1f))
                     Surface(shape = CircleShape, color = Color.Black.copy(alpha = .55f)) {
                         IconButton(onClick = { detailsVisible = !detailsVisible }) {

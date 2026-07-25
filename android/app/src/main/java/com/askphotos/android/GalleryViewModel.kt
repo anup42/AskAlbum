@@ -70,6 +70,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val ocrModelDownloader = askPhotosApplication.services.ocrModelDownloader
     private val faceModelPacks = askPhotosApplication.services.faceModelPackManager
     private val faceModelDownloader = askPhotosApplication.services.faceModelDownloader
+    private val faceVectorStore = askPhotosApplication.services.faceVectorStore
+    private val destinationHistory = ArrayDeque<AppDestination>()
     private val embeddedFaceModelProvisioner = askPhotosApplication.services.embeddedFaceModelProvisioner
     private var modelMonitorJob: Job? = null
     private var retrievalProvisionMonitorJob: Job? = null
@@ -126,6 +128,40 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun navigate(destination: AppDestination) {
+        if (destination == state.destination) return
+        destinationHistory.addLast(state.destination)
+        setDestination(destination)
+    }
+
+    fun selectPrimaryDestination(destination: AppDestination) {
+        destinationHistory.clear()
+        setDestination(destination)
+    }
+
+    fun canNavigateBack(): Boolean =
+        state.selectedPeopleClusterId != null ||
+            destinationHistory.isNotEmpty() ||
+            state.destination in setOf(
+                AppDestination.RESULTS,
+                AppDestination.PEOPLE,
+                AppDestination.PRIVACY,
+                AppDestination.INDEX_MANAGER,
+            )
+
+    fun navigateBack() {
+        if (state.selectedPeopleClusterId != null) {
+            closePersonCluster()
+            return
+        }
+        val previous = destinationHistory.removeLastOrNull() ?: when (state.destination) {
+            AppDestination.RESULTS -> AppDestination.ASK
+            AppDestination.PEOPLE, AppDestination.PRIVACY, AppDestination.INDEX_MANAGER -> AppDestination.MENU
+            else -> null
+        }
+        previous?.let(::setDestination)
+    }
+
+    private fun setDestination(destination: AppDestination) {
         state = if (destination == AppDestination.PEOPLE) {
             state.copy(destination = destination)
         } else {
@@ -508,6 +544,71 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 state = state.copy(
                     peopleReviewClusters = previousClusters,
                     operationMessage = error.message ?: "Representative photo could not be updated",
+                )
+            }
+        }
+    }
+
+    fun improveSelectedPersonCluster() {
+        val clusterId = state.selectedPeopleClusterId ?: return
+        val cluster = state.peopleReviewClusters.firstOrNull { it.id == clusterId } ?: return
+        if (!cluster.reviewed) {
+            state = state.copy(operationMessage = "Name this person before improving automatic matches")
+            return
+        }
+        val representativeFaceId = cluster.representativeFaceId
+            ?: cluster.representativeFace?.id
+            ?: state.selectedPeopleClusterFaces.firstOrNull()?.id
+        if (representativeFaceId == null) {
+            state = state.copy(operationMessage = "Set a representative photo before improving matches")
+            return
+        }
+        state = state.copy(peopleClusterFacesLoading = true, operationMessage = "Checking faces against the representative...")
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val memberships = repository.faceClusterMemberships(clusterId)
+                    val similarities = faceVectorStore.similarities(
+                        representativeFaceId,
+                        memberships.map(FaceClusterMembership::faceId),
+                    )
+                    val decision = FaceClusterRefinementPolicy.decide(memberships, representativeFaceId, similarities)
+                    val moved = repository.refineReviewedPersonCluster(
+                        clusterId,
+                        representativeFaceId,
+                        decision.rejectedFaceIds,
+                    )
+                    decision to moved
+                }
+            }.onSuccess { (decision, moved) ->
+                val representative = cluster.representativeFace
+                    ?: state.selectedPeopleClusterFaces.firstOrNull { it.id == representativeFaceId }
+                state = state.copy(
+                    peopleReviewClusters = if (representative == null) {
+                        state.peopleReviewClusters
+                    } else {
+                        PeopleClusterStateReducer.setRepresentative(
+                            state.peopleReviewClusters.map { item ->
+                                if (item.id == clusterId) item.copy(faceCount = (item.faceCount - moved).coerceAtLeast(1)) else item
+                            },
+                            clusterId,
+                            representative,
+                        )
+                    },
+                    selectedPeopleClusterFaces = state.selectedPeopleClusterFaces.filter { it.id in decision.keptFaceIds },
+                    peopleClusterFaceOffset = 0,
+                    peopleClusterFacesLoading = false,
+                    operationMessage = if (moved == 0) {
+                        "No low-confidence automatic matches were found"
+                    } else {
+                        "Moved $moved low-confidence automatic matches out of ${cluster.label ?: "this person"}"
+                    },
+                )
+                loadPeopleReviewClusters()
+            }.onFailure { error ->
+                state = state.copy(
+                    peopleClusterFacesLoading = false,
+                    operationMessage = error.message ?: "Could not improve this cluster",
                 )
             }
         }

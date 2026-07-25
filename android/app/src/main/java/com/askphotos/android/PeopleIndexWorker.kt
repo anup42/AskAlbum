@@ -44,10 +44,15 @@ class PeopleIndexWorker(
                         val faces = requireNotNull(embedder).detectAndEmbed(jpeg.toModelImage())
                         val clusters = faces.mapIndexed { index, face ->
                             val faceId = "${item.id}:$index"
-                            val nearest = services.faceVectorStore.nearest(face.embedding, priorFaceIds)
-                            val matchedCluster = nearest?.let { hit ->
-                                FaceClusterPolicy.matchingCluster(hit, repository.clusterIdForFace(hit.mediaId))
-                            }
+                            val neighbors = services.faceVectorStore.nearestNeighbors(
+                                vector = face.embedding,
+                                limit = CLUSTER_NEIGHBOR_COUNT,
+                                allowedIds = priorFaceIds,
+                            )
+                            val references = repository.faceClusterReferences(neighbors.map(VectorHit::mediaId))
+                            val matchedCluster = FaceClusterPolicy.matchingCluster(
+                                neighbors.map { hit -> FaceClusterCandidate(hit, references[hit.mediaId]) },
+                            )
                             val clusterId = matchedCluster ?: "person_${UUID.nameUUIDFromBytes(faceId.toByteArray()).toString().replace("-", "")}"
                             repository.ensureAutomaticPersonCluster(clusterId)
                             clusterId
@@ -76,6 +81,7 @@ class PeopleIndexWorker(
 
     private companion object {
         const val BATCH_SIZE = 24
+        const val CLUSTER_NEIGHBOR_COUNT = 12
     }
 
     private fun ByteArray.toModelImage(): ModelImage {

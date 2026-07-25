@@ -29,4 +29,45 @@ class FaceModelCatalogTest {
         assertNull(FaceClusterPolicy.matchingCluster(nearest, null))
         assertFalse(FaceModelCatalog.sface.downloadUrl.contains("latest", ignoreCase = true))
     }
+
+    @Test
+    fun automaticClusteringRequiresStrongOrSupportedSeparatedEvidence() {
+        fun candidate(faceId: String, score: Float, clusterId: String, hidden: Boolean = false) =
+            FaceClusterCandidate(VectorHit(faceId, score), FaceClusterReference(clusterId, reviewed = false, hidden = hidden))
+
+        assertEquals(
+            "person_a",
+            FaceClusterPolicy.matchingCluster(
+                listOf(candidate("a1", .52f, "person_a"), candidate("a2", .44f, "person_a"), candidate("b1", .31f, "person_b")),
+            ),
+        )
+        assertEquals("person_a", FaceClusterPolicy.matchingCluster(listOf(candidate("a1", .60f, "person_a"))))
+        assertNull(FaceClusterPolicy.matchingCluster(listOf(candidate("a1", .55f, "person_a"))))
+        assertNull(
+            FaceClusterPolicy.matchingCluster(
+                listOf(candidate("a1", .54f, "person_a"), candidate("a2", .46f, "person_a"), candidate("b1", .51f, "person_b")),
+            ),
+        )
+        assertNull(FaceClusterPolicy.matchingCluster(listOf(candidate("a1", .90f, "person_a", hidden = true))))
+    }
+
+    @Test
+    fun refinementPreservesRepresentativeCorrectionsAndMissingVectors() {
+        val memberships = listOf(
+            FaceClusterMembership("representative", userCorrected = false),
+            FaceClusterMembership("close", userCorrected = false),
+            FaceClusterMembership("wrong", userCorrected = false),
+            FaceClusterMembership("manual", userCorrected = true),
+            FaceClusterMembership("missing", userCorrected = false),
+        )
+
+        val result = FaceClusterRefinementPolicy.decide(
+            memberships = memberships,
+            representativeFaceId = "representative",
+            similarities = mapOf("representative" to 1f, "close" to .43f, "wrong" to .1f, "manual" to .1f),
+        )
+
+        assertEquals(setOf("wrong"), result.rejectedFaceIds)
+        assertEquals(setOf("representative", "close", "manual", "missing"), result.keptFaceIds)
+    }
 }

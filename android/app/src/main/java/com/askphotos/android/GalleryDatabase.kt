@@ -792,6 +792,40 @@ class GalleryDatabase(
         arrayOf(faceId),
     ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null }
 
+    fun faceClusterReferences(faceIds: List<String>): Map<String, FaceClusterReference> =
+        faceIds.distinct().chunked(SQLITE_ID_CHUNK).flatMap { ids ->
+            val placeholders = ids.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT f.id,c.id,c.reviewed,c.hidden FROM face_instance f " +
+                    "JOIN person_cluster c ON c.id=f.cluster_id WHERE f.id IN ($placeholders)",
+                ids.toTypedArray(),
+            ).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) {
+                        add(
+                            cursor.getString(0) to FaceClusterReference(
+                                clusterId = cursor.getString(1),
+                                reviewed = cursor.getInt(2) != 0,
+                                hidden = cursor.getInt(3) != 0,
+                            ),
+                        )
+                    }
+                }
+            }
+        }.toMap()
+
+    fun faceClusterMemberships(clusterId: String): List<FaceClusterMembership> {
+        require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
+        return readableDatabase.rawQuery(
+            "SELECT id,user_corrected FROM face_instance WHERE cluster_id=? ORDER BY quality DESC,id",
+            arrayOf(clusterId),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(FaceClusterMembership(cursor.getString(0), cursor.getInt(1) != 0))
+            }
+        }
+    }
+
     fun ensureAutomaticPersonCluster(id: String) {
         require(PERSON_ID.matches(id)) { "Invalid automatic cluster ID" }
         val now = System.currentTimeMillis()
@@ -1049,6 +1083,72 @@ class GalleryDatabase(
                 put("updated_at", System.currentTimeMillis())
             }, "id=?", arrayOf(clusterId))
             db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun refineReviewedPersonCluster(clusterId: String, representativeFaceId: String, rejectedFaceIds: Set<String>): Int {
+        require(PERSON_ID.matches(clusterId) && representativeFaceId.length in 3..240) { "Invalid cluster refinement" }
+        val db = writableDatabase
+        db.beginTransaction()
+        return try {
+            val clusterIsReviewed = db.rawQuery(
+                "SELECT reviewed FROM person_cluster WHERE id=?",
+                arrayOf(clusterId),
+            ).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) != 0 }
+            check(clusterIsReviewed) { "Only a reviewed identity can be improved" }
+            val representativeBelongs = db.rawQuery(
+                "SELECT 1 FROM face_instance WHERE id=? AND cluster_id=? LIMIT 1",
+                arrayOf(representativeFaceId, clusterId),
+            ).use(android.database.Cursor::moveToFirst)
+            check(representativeBelongs) { "Representative face is not in this cluster" }
+            val now = System.currentTimeMillis()
+            db.update("person_cluster", ContentValues().apply {
+                put("representative_face_id", representativeFaceId)
+                put("updated_at", now)
+            }, "id=?", arrayOf(clusterId))
+            var moved = 0
+            if (rejectedFaceIds.isNotEmpty()) {
+                val quarantineId = "person_${java.util.UUID.nameUUIDFromBytes(
+                    "refinement:$clusterId:$representativeFaceId".toByteArray(),
+                ).toString().replace("-", "")}"
+                db.insertWithOnConflict("person_cluster", null, ContentValues().apply {
+                    put("id", quarantineId)
+                    putNull("label")
+                    putNull("relationship")
+                    put("aliases", "[]")
+                    put("reviewed", 0)
+                    put("hidden", 1)
+                    put("created_at", now)
+                    put("updated_at", now)
+                }, SQLiteDatabase.CONFLICT_IGNORE)
+                rejectedFaceIds.chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                    val placeholders = ids.joinToString(",") { "?" }
+                    val selectionArgs = (listOf(clusterId) + ids).toTypedArray()
+                    val mediaIds = db.rawQuery(
+                        "SELECT DISTINCT media_id FROM face_instance WHERE cluster_id=? AND user_corrected=0 AND id IN ($placeholders)",
+                        selectionArgs,
+                    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+                    moved += db.update(
+                        "face_instance",
+                        ContentValues().apply { put("cluster_id", quarantineId) },
+                        "cluster_id=? AND user_corrected=0 AND id IN ($placeholders)",
+                        selectionArgs,
+                    )
+                    mediaIds.chunked(SQLITE_ID_CHUNK).forEach { mediaChunk ->
+                        val mediaPlaceholders = mediaChunk.joinToString(",") { "?" }
+                        db.delete(
+                            "person_attribute_fact",
+                            "cluster_id=? AND media_id IN ($mediaPlaceholders)",
+                            (listOf(clusterId) + mediaChunk).toTypedArray(),
+                        )
+                    }
+                }
+                if (moved == 0) db.delete("person_cluster", "id=? AND reviewed=0", arrayOf(quarantineId))
+            }
+            db.setTransactionSuccessful()
+            moved
         } finally {
             db.endTransaction()
         }
