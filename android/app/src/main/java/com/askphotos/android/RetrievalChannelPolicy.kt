@@ -7,14 +7,25 @@ internal object SemanticQueryVariants {
 
     fun from(plan: GalleryQueryPlan): List<String> {
         if (plan.terms.isEmpty() && plan.semanticClauses.isEmpty()) return emptyList()
+        val executionTerms = RetrievalTerms.forExecution(
+            plan.terms,
+            reviewedPeopleFilterApplied = plan.peopleClauses.isNotEmpty(),
+        )
         return buildList {
             add(plan.originalQuery)
             plan.semanticClauses.asSequence()
                 .filter { it.polarity == Polarity.POSITIVE }
+                .filter {
+                    RetrievalTerms.forExecution(
+                        listOf(it.canonicalText ?: it.text),
+                        reviewedPeopleFilterApplied = plan.peopleClauses.isNotEmpty(),
+                    ).isNotEmpty()
+                }
                 .forEach { clause ->
                     add(clause.text)
                     clause.canonicalText?.let(::add)
                 }
+            addAll(RetrievalConceptExpansion.semanticQueries(executionTerms))
         }.map(String::trim)
             .filter(String::isNotBlank)
             .distinctBy { it.lowercase(Locale.ROOT) }

@@ -285,7 +285,12 @@ class GalleryRepository(context: Context) {
         } else {
             (requiredAllowed ?: databaseItems.mapTo(mutableSetOf(), GalleryItem::id)) - peopleScope.excludedIds
         }
-        val terms = RetrievalTerms.normalize(plan.terms)
+        val terms = RetrievalConceptExpansion.evidenceTerms(
+            RetrievalTerms.forExecution(
+                plan.terms,
+                reviewedPeopleFilterApplied = plan.peopleClauses.isNotEmpty(),
+            ),
+        )
         val allItems = databaseItems.filter { item ->
             val inScope = when (plan.mediaScope) {
                 MediaScope.ALL -> true

@@ -3285,3 +3285,20 @@ Status: **IMPLEMENTED, CONNECTED-DEVICE TESTED, BUILT, AND REPLACEMENT-INSTALLED
 - The test now ingests two isolated media fixtures with distinct capture times through the production import API. `PeopleEditingDatabaseTest`: PASS, 1/1 on SM-S928B, including stable pagination and representative-selection regression coverage.
 - `OfflineDemoDebug` assemble and replacement install: PASS on SM-S928B. No uninstall, package-data clear, people reset, reindex, or MediaStore mutation was performed.
 - APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-newest-person-photos-20260726.apk`; 628,869,466 bytes; SHA-256 `4B83F41C152A7C8B37D01F81DED6448E09A9E55CB1F310341749873CD212D8C1`.
+
+## Reviewed-person birthday retrieval repair - 26 July 2026
+
+Status: **ROOT CAUSE CONFIRMED; FIX TESTED, BUILT, AND REPLACEMENT-INSTALLED.**
+
+- Read-only device analysis of query turn 9 confirmed that `wife` correctly resolved to reviewed cluster `Pooja` and produced 861 hard-eligible media.
+- The failed result returned 100 items, but none contained exact `birthday` lexical evidence. The known wife-linked cake photo and two adjacent party photos were omitted.
+- The local event is correctly compiled as a 13-media event on 11 July 2025. Its search text contains `party`, `balloon`, and `cake`, but event retrieval searched only the literal term `birthday` and reported zero event hits.
+- No cached Gemma `semantic_fact` rows exist. Image-semantic retrieval alone ranked generic selfies and events above the concrete birthday evidence, and visual verification was not requested.
+- Added bounded deterministic birthday candidate expansion for `cake`, `candle(s)`, `balloon(s)`, `party`, and `celebration`, plus focused semantic variants such as `birthday cake`.
+- Reviewed relationship terms and generic media words are removed from standalone soft retrieval variants after the reviewed-person hard filter is applied. The original user query remains a semantic variant.
+- Cheap ML Kit labels remain candidate-retrieval evidence only; this change does not promote them to verified Gemma facts.
+- `BirthdayRetrievalConceptTest`, `RetrievalChannelPolicyTest`, and `RetrievalTermNormalizationTest`: PASS on the CI fixture variant. CI and `OfflineDemoDebug` Kotlin compilation: PASS.
+- Read-only production snapshot replay: PASS. The known wife-linked cake image becomes the strongest lexical candidate with `cake + balloon + party`; its event contributes three wife-eligible members instead of zero.
+- `OfflineDemoDebug` assemble and replacement install: PASS on SM-S928B. The production database and WAL remained present at their pre-install sizes and timestamps; no uninstall, data clear, people reset, reindex, or MediaStore mutation was performed.
+- APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-birthday-retrieval-fix-20260726.apk`; 628,875,846 bytes; SHA-256 `68B3119CFA09EF8EBB103AB3C67E4079E0A2823B48AD0B8CD1378CF7AD734017`.
+- Live post-install UI query interaction: NOT RUN to avoid taking over the user's foreground device session. The real failed turn and deterministic repaired ranking were verified from a read-only database snapshot.

@@ -11,7 +11,8 @@ class QueryCompiler(
 ) {
     private val stopWords = setOf(
         "a", "an", "and", "are", "did", "do", "find", "from", "gallery", "how", "i", "many",
-        "amount", "have", "in", "is", "latest", "me", "my", "of", "on", "only", "photo", "photos", "picture", "pictures",
+        "amount", "have", "in", "is", "latest", "me", "my", "of", "on", "only", "image", "images", "photo", "photos",
+        "pic", "pics", "picture", "pictures",
         "please", "show", "take", "took", "the", "this", "to", "was", "were", "what", "where", "with",
         "bas", "dikhao", "dikhाओ", "ke", "ki", "ka", "pichle", "saal", "sirf", "wali", "wala",
         "दिखाओ", "फोटो", "फोटोस", "के", "की", "का", "पिछले", "साल", "वाली", "वाला", "सिर्फ", "सिर्फ़", "केवल",
