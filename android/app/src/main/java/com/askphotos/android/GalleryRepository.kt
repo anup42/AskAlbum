@@ -9,17 +9,19 @@ import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.single
 import kotlin.math.max
+import java.util.concurrent.ConcurrentHashMap
 
 class GalleryRepository(context: Context) {
     private val appContext = context.applicationContext
-    private val database = GalleryDatabase(context.applicationContext)
     private val services = (context.applicationContext as AskPhotosApplication).services
-    private val planner = LiteRtLmQueryPlanner(services.modelPackManager, services.inferenceResources)
+    private val database = services.galleryDatabase
+    private val planner = LiteRtLmQueryPlanner(services.modelPackManager, services.gemmaSessions)
     private val semanticVectors = services.semanticVectorStore
     private val visualVerifier = services.visualVerifier
     private val groundedAnswerComposer = services.groundedAnswerComposer
     private val importer = MediaImporter(context.applicationContext)
     private val planPatchResolver = ResultSetPlanPatchResolver()
+    private val sessionPlans = ConcurrentHashMap<String, GalleryQueryPlan>()
 
     fun initialize(): IndexSummary {
         database.recoverInterruptedJobs()
@@ -98,6 +100,15 @@ class GalleryRepository(context: Context) {
     fun saveReviewedPersonCluster(id: String, label: String, relationship: String?, aliases: List<String>): PeopleIndexStatus =
         database.saveReviewedPersonCluster(id, label, relationship, aliases)
 
+    fun personClustersPendingReview(): List<PersonClusterReviewItem> = database.personClustersPendingReview()
+    fun personClusterSummaries(includeHidden: Boolean = true): List<PersonClusterReviewItem> =
+        database.personClusterSummaries(includeHidden)
+    fun removePersonLabel(id: String): PeopleIndexStatus = database.removePersonLabel(id)
+    fun setPersonClusterHidden(id: String, hidden: Boolean): PeopleIndexStatus = database.setPersonClusterHidden(id, hidden)
+    fun mergePersonClusters(targetId: String, sourceId: String): PeopleIndexStatus =
+        database.mergePersonClusters(targetId, sourceId)
+    fun moveFaceToCluster(faceId: String, targetId: String? = null): String = database.moveFaceToCluster(faceId, targetId)
+
     fun pendingItems(limit: Int): List<GalleryItem> = database.pendingItems(limit)
     fun pendingItemsForIds(mediaIds: Set<String>, limit: Int): List<GalleryItem> = database.pendingItemsForIds(mediaIds, limit)
     fun requestGalleryReindex(mediaIds: Set<String>) = database.requestGalleryReindex(mediaIds)
@@ -151,7 +162,14 @@ class GalleryRepository(context: Context) {
         ocrAttempted, ocrProducerVersion, visualFeatures, keyframes,
     )
     fun failIndex(id: String, message: String, permanent: Boolean) = database.failIndex(id, message, permanent)
-    fun rebuildEvents() = database.rebuildEvents()
+    fun rebuildEvents() {
+        database.rebuildEvents()
+        SemanticEnrichmentScheduler.schedule(appContext)
+    }
+    fun requestSemanticEnrichment(): SemanticEnrichmentPlan =
+        SemanticEnrichmentCoordinator(database).rebuildPlan(userRequested = true).also {
+            SemanticEnrichmentScheduler.schedule(appContext, userRequested = true)
+        }
     fun events(): List<EventRecord> = database.events()
     fun saveEventCorrection(
         operation: EventCorrectionOperation,
@@ -183,20 +201,43 @@ class GalleryRepository(context: Context) {
     ): Flow<QueryProgress> = flow {
         val started = SystemClock.elapsedRealtime()
         val conversation = sessionId?.let(database::conversationState)
-        val isFollowUp = FollowUpLanguage.isFollowUp(query)
+        val isFollowUp = FollowUpRefinementPolicy.isContextualFollowUp(query, conversation)
         val scopedIds = if (conversation != null && isFollowUp) conversation.activeResultIds else activeResultIds
         val parentResultSetId = if (conversation != null && isFollowUp) conversation.activeResultSetId else null
         emit(QueryProgress.Understanding)
         val compiledPlan = planner.compile(query, scopedIds)
-        val (planPatch, plan) = if (conversation != null && isFollowUp) {
-            planPatchResolver.createAndApply(compiledPlan, conversation).let { it.first to it.second }
+        val (planPatch, patchedPlan) = if (conversation != null && isFollowUp) {
+            planPatchResolver.createAndApply(
+                compiledPlan,
+                conversation,
+                sessionId?.let(sessionPlans::get),
+            ).let { it.first to it.second }
         } else {
             null to compiledPlan
         }
+        val resolvedPersonIds = database.resolveReviewedPersonIds(query)
+        val plan = if (resolvedPersonIds.isEmpty()) {
+            patchedPlan
+        } else {
+            patchedPlan.copy(
+                peopleClauses = (patchedPlan.peopleClauses + resolvedPersonIds.map { PersonClause(it) })
+                    .distinctBy { it.personId to it.mustBePresent },
+            )
+        }
+        sessionId?.let { sessionPlans[it] = plan }
         emit(QueryProgress.PlanReady(plan))
         val peopleStatus = database.peopleIndexStatus()
         val peopleUnavailable = PeopleQueryGate.unavailableReason(plan, peopleStatus)
         if (peopleUnavailable != null) {
+            val peopleReport = RetrievalChannelReport<SearchHit>(
+                RetrievalChannel.PEOPLE,
+                ChannelStatus.UNAVAILABLE,
+                database.allItems().count { it.kind == MediaKind.IMAGE },
+                peopleStatus.identityReadyFaceCount,
+                0,
+                emptyList(),
+                errorCode = "REVIEWED_IDENTITY_UNAVAILABLE",
+            )
             emit(QueryProgress.InitialResults(plan, emptyList()))
             val outcome = finalizeOutcome(sessionId, parentResultSetId, SearchOutcome(
                 plan = plan,
@@ -209,9 +250,11 @@ class GalleryRepository(context: Context) {
                     indexedEligibleCount = peopleStatus.faceInstanceCount,
                     totalEligibleCount = database.allItems().count { it.kind == MediaKind.IMAGE },
                     warnings = listOf(peopleUnavailable),
+                    channelReports = listOf(peopleReport),
                 ),
                 elapsedMs = max(1, SystemClock.elapsedRealtime() - started),
                 planPatch = planPatch,
+                channelReports = listOf(peopleReport),
             ))
             emit(QueryProgress.Completed(outcome))
             return@flow
@@ -240,40 +283,85 @@ class GalleryRepository(context: Context) {
                 MediaScope.DOCUMENTS -> item.kind == MediaKind.PDF || item.ocrText.isNotBlank() || item.looksLikeDocument()
             }
             inScope && (allowed == null || item.id in allowed) &&
-                GalleryFilterEvaluator.matches(item, plan.filter) && item.matchesRequiredMerchant(plan.ocrClause?.merchant)
+                GalleryFilterEvaluator.matches(item, plan.filter) &&
+                item.matchesRequiredPlace(plan.place) &&
+                item.matchesRequiredMerchant(plan.ocrClause?.merchant)
         }
+        val eligibleIds = allItems.mapTo(mutableSetOf(), GalleryItem::id)
         val fullTextIds = database.fullTextMatches(terms)
         val lexicalRanked = allItems
             .asSequence()
             .mapNotNull { item -> score(item, terms, item.id in fullTextIds) }
             .sortedWith(compareByDescending<SearchHit> { it.score }.thenBy { it.item.title })
             .toList()
-        val rawSemanticRanked = if (plan.semanticClauses.isNotEmpty() || plan.terms.isNotEmpty()) {
-            runCatching {
-                semanticVectors.searchText(
-                    plan.originalQuery,
+        val semanticQueries = SemanticQueryVariants.from(plan)
+        val eligibleVectorIds = database.vectorIdsForMedia(eligibleIds)
+        val semanticVectorReport = SemanticChannelReportFusion.fuse(
+            semanticQueries.map { semanticQuery ->
+                semanticVectors.searchTextReport(
+                    query = semanticQuery,
                     topK = plan.limit.coerceIn(20, 100),
-                    allowedIds = allowed?.let(database::vectorIdsForMedia),
+                    eligibleCount = eligibleIds.size,
+                    allowedIds = eligibleVectorIds,
                 )
-            }.getOrDefault(emptyList())
-        } else {
-            emptyList()
-        }
+            },
+        )
+        val rawSemanticRanked = semanticVectorReport.hits
         val semanticKeyframes = database.videoKeyframesByIds(rawSemanticRanked.mapTo(mutableSetOf()) { it.mediaId })
         val resolvedSemanticHits = resolveSemanticVideoHits(rawSemanticRanked, semanticKeyframes)
         val semanticRanked = resolvedSemanticHits.map { it.hit }
         val bestSemanticKeyframeByMedia = resolvedSemanticHits.mapNotNull { resolved ->
             resolved.keyframe?.let { it.mediaId to it }
         }.toMap()
-        val eligibleIds = allItems.mapTo(mutableSetOf()) { it.id }.let { ids ->
-            if (allowed == null) ids else ids.intersect(allowed)
-        }
         val eventRanked = database.searchEvents(terms, eligibleIds)
         val eventMediaRank = eventRanked.flatMap { it.mediaIds }.distinct()
         val eventByMedia = eventRanked.flatMap { hit -> hit.mediaIds.map { it to hit.event } }.toMap()
         val lexicalById = lexicalRanked.associateBy { it.item.id }
         val semanticById = semanticRanked.associateBy { it.mediaId }
         val itemById = allItems.associateBy { it.id }
+        val resolvedSemanticBySourceId = resolvedSemanticHits.associateBy(ResolvedSemanticHit::sourceVectorId)
+        val semanticChannelReport = semanticVectorReport.mapHits { vectorHit ->
+            val resolved = resolvedSemanticBySourceId[vectorHit.mediaId] ?: return@mapHits null
+            val item = itemById[resolved.hit.mediaId] ?: return@mapHits null
+            SearchHit(item, resolved.hit.score.toDouble(), emptyList())
+        }
+        val readyEligibleCount = allItems.count { it.indexState == IndexState.READY }
+        val lexicalChannelReport = RetrievalChannelReport(
+            RetrievalChannel.LEXICAL,
+            ChannelStatus.SUCCESS,
+            allItems.size,
+            readyEligibleCount,
+            allItems.size,
+            lexicalRanked,
+            modelVersion = "sqlite-fts+metadata-v1",
+        )
+        val eventChannelReport = RetrievalChannelReport(
+            RetrievalChannel.EVENT,
+            if (terms.isEmpty() && plan.intent != QueryIntent.EVENT_SUMMARY) ChannelStatus.NOT_REQUIRED else ChannelStatus.SUCCESS,
+            allItems.size,
+            database.events().size,
+            eventRanked.size,
+            eventMediaRank.mapNotNull { id -> itemById[id]?.let { SearchHit(it, 1.0, emptyList()) } },
+            modelVersion = EventCompiler.PRODUCER_VERSION,
+        )
+        val peopleChannelReport = RetrievalChannelReport<SearchHit>(
+            RetrievalChannel.PEOPLE,
+            if (plan.peopleClauses.isEmpty()) ChannelStatus.NOT_REQUIRED else ChannelStatus.SUCCESS,
+            databaseItems.count { it.kind == MediaKind.IMAGE },
+            peopleStatus.identityReadyFaceCount,
+            if (plan.peopleClauses.isEmpty()) 0 else allItems.size,
+            emptyList(),
+            modelVersion = services.faceEngines.activeDescriptor()?.producerVersion,
+        )
+        val ocrChannelReport = RetrievalChannelReport<SearchHit>(
+            RetrievalChannel.OCR,
+            if (plan.ocrClause == null) ChannelStatus.NOT_REQUIRED else if (readyEligibleCount < allItems.size) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
+            allItems.size,
+            readyEligibleCount,
+            if (plan.ocrClause == null) 0 else allItems.size,
+            emptyList(),
+            modelVersion = services.ocrEngines.activeDescriptor()?.producerVersion,
+        )
         val refinementIds = FollowUpRefinementPolicy.corroboratedSemanticIds(
             scoped = plan.baseResultIds != null,
             semanticIds = semanticRanked.map { it.mediaId },
@@ -329,7 +417,35 @@ class GalleryRepository(context: Context) {
         } else {
             collapsed
         }
-        val enriched = if (plan.intent == QueryIntent.ANSWER_FACT) diverse.map(::addDeterministicFactEvidence) else diverse
+        val factIntents = setOf(
+            QueryIntent.ANSWER_FACT,
+            QueryIntent.DOCUMENT_QA,
+            QueryIntent.LIST,
+            QueryIntent.SUM,
+            QueryIntent.MIN_MAX,
+            QueryIntent.COMPARE,
+        )
+        val deterministicFacts = if (plan.intent in factIntents) {
+            diverse.map { addDeterministicFactEvidence(it, plan) }
+        } else {
+            diverse
+        }
+        val cachedSemanticFacts = database.semanticFacts(deterministicFacts.map { it.item.id })
+            .groupBy(SemanticFactRecord::subjectId)
+        val enriched = deterministicFacts.map { hit ->
+            val cached = cachedSemanticFacts[hit.item.id].orEmpty().map { fact ->
+                EvidenceRecord(
+                    id = "semantic:${fact.subjectId}:${fact.predicate}:${fact.value}".take(240),
+                    mediaId = hit.item.id,
+                    sourceField = "semantic_fact",
+                    text = "${fact.predicate}: ${fact.value}",
+                    confidence = fact.confidence,
+                    producerVersion = fact.modelVersion,
+                    region = fact.region,
+                )
+            }
+            hit.copy(evidence = (hit.evidence + cached).distinctBy(EvidenceRecord::id))
+        }
         val initialHits = enriched.take(plan.limit.coerceIn(1, 100))
         emit(QueryProgress.InitialResults(plan, initialHits))
         if (VisualVerificationPolicy.requiresVerification(plan) && initialHits.isNotEmpty()) {
@@ -346,9 +462,34 @@ class GalleryRepository(context: Context) {
             enriched
         }
         val hits = verified.take(plan.limit.coerceIn(1, 100))
+        val visualChannelReport = RetrievalChannelReport(
+            RetrievalChannel.VISUAL_VERIFICATION,
+            when {
+                !verification.applied -> ChannelStatus.NOT_REQUIRED
+                verification.trace?.usedGemma == false &&
+                    verification.trace?.fallbackReason?.contains("No verified", true) == true -> ChannelStatus.UNAVAILABLE
+                verification.failures.isNotEmpty() && verification.evaluations.isNotEmpty() -> ChannelStatus.PARTIAL
+                verification.failures.isNotEmpty() -> ChannelStatus.FAILED
+                else -> ChannelStatus.SUCCESS
+            },
+            initialHits.size,
+            initialHits.size,
+            verification.evaluations.size,
+            hits,
+            modelVersion = verification.trace?.modelRevision,
+            errorCode = verification.trace?.fallbackReason?.take(120),
+        )
+        val channelReports = listOf(
+            lexicalChannelReport,
+            semanticChannelReport,
+            eventChannelReport,
+            ocrChannelReport,
+            peopleChannelReport,
+            visualChannelReport,
+        )
 
         val matchCount = if (verification.applied) verified.size else ranked.size
-        val deterministicAnswer = buildAnswer(plan, hits, allItems, matchCount, verification)
+        val deterministicAnswer = buildAnswer(plan, hits, allItems, matchCount, verification, channelReports)
         val requiresAuthentication = hits.any(SensitiveEvidencePolicy::requiresAuthentication)
         val answer = if (requiresAuthentication) {
             SensitiveEvidencePolicy.lock(deterministicAnswer)
@@ -357,13 +498,14 @@ class GalleryRepository(context: Context) {
             groundedAnswerComposer.compose(GroundedAnswerInput(plan, hits, deterministicAnswer)).answer
         } else {
             deterministicAnswer
-        }
+        }.copy(channelReports = channelReports)
         val outcome = finalizeOutcome(sessionId, parentResultSetId, SearchOutcome(
             plan = plan,
             hits = hits,
             answer = answer,
             elapsedMs = max(1, SystemClock.elapsedRealtime() - started),
             planPatch = planPatch,
+            channelReports = channelReports,
         ))
         emit(QueryProgress.Completed(outcome))
     }
@@ -473,26 +615,34 @@ class GalleryRepository(context: Context) {
         allItems: List<GalleryItem>,
         matchCount: Int,
         verification: VerificationResult,
+        channelReports: List<RetrievalChannelReport<SearchHit>>,
     ): SearchAnswer {
         val totalItems = allItems.size
         val readyItems = allItems.count { it.indexState == IndexState.READY }
-        val usedSemanticRetrieval = hits.any { hit -> hit.evidence.any { it.sourceField == "image_text_embedding" } }
+        val semanticReport = channelReports.first { it.channel == RetrievalChannel.SEMANTIC }
+        val usedSemanticRetrieval = semanticReport.status != ChannelStatus.NOT_REQUIRED
         val deterministicResultSetFilter = plan.baseResultIds != null && plan.terms.isEmpty() &&
             plan.semanticClauses.isEmpty() && plan.filter != FilterExpression.True && !verification.applied
         val deterministicAggregation = plan.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
             plan.aggregation != null && plan.semanticClauses.isEmpty() && !usedSemanticRetrieval && !verification.applied
-        val exactness = when {
-            readyItems < totalItems -> ResultExactness.PARTIAL_INDEX
-            deterministicAggregation -> ResultExactness.EXACT
-            deterministicResultSetFilter -> ResultExactness.EXACT
-            usedSemanticRetrieval || verification.applied -> ResultExactness.ESTIMATED_FROM_RETRIEVAL
-            else -> ResultExactness.COMPLETE_MODEL_SCAN
-        }
+        val exactness = RetrievalExactnessPolicy.resolve(
+            allEligibleIndexed = readyItems == totalItems,
+            deterministicOperation = deterministicAggregation || deterministicResultSetFilter,
+            semanticReport = semanticReport,
+            verificationApplied = verification.applied,
+        )
         val warnings = buildList {
             if (verification.failures.isNotEmpty()) {
                 add("Visual verification had ${verification.failures.size} bounded failure(s); no failed candidate was accepted.")
             }
             verification.trace?.fallbackReason?.let { add("Visual verification unavailable: $it") }
+            channelReports.filter { it.status in setOf(ChannelStatus.UNAVAILABLE, ChannelStatus.FAILED, ChannelStatus.PARTIAL) }
+                .forEach { report ->
+                    add(
+                        "${report.channel.name.lowercase().replace('_', ' ')} channel ${report.status.name.lowercase()}: " +
+                            "searched ${report.searchedCount} of ${report.eligibleCount} eligible items.",
+                    )
+                }
         }.distinct()
         val evidenceIds = hits.flatMap { it.evidence }.map { it.id }.distinct().take(12)
         if (hits.isEmpty()) {
@@ -500,21 +650,42 @@ class GalleryRepository(context: Context) {
                 headline = "No supported matches found",
                 detail = if (verification.applied) {
                     "No bounded candidate was proven to satisfy every required visual condition. Failed or unverified candidates are never returned as matches."
+                } else if (usedSemanticRetrieval) {
+                    "The semantic channel was ${semanticReport.status.name.lowercase()} and searched " +
+                        "${semanticReport.searchedCount} of ${semanticReport.eligibleCount} eligible local items. " +
+                        "This is not a complete gallery predicate scan."
                 } else {
-                    "All ${if (plan.baseResultIds == null) totalItems else plan.baseResultIds.size} eligible local items were checked. ${if (readyItems < totalItems) "Some items are still indexing." else "Try a place, object, OCR word, or scene."}"
+                    "All $totalItems eligible local items were checked. " +
+                        if (readyItems < totalItems) "Some items are still indexing." else "Try a place, object, OCR word, or scene."
                 },
                 evidenceIds = emptyList(),
                 exactness = exactness,
                 indexedEligibleCount = readyItems,
                 totalEligibleCount = totalItems,
                 warnings = warnings,
+                channelReports = channelReports,
             )
         }
 
+        return CapabilityAnswerExecutor.execute(
+            CapabilityAnswerContext(
+                plan = plan,
+                hits = hits,
+                matchCount = matchCount,
+                exactness = exactness,
+                indexedEligibleCount = readyItems,
+                totalEligibleCount = totalItems,
+                warnings = warnings,
+                channelReports = channelReports,
+                eventsByMedia = database.eventsForMedia(hits.map { it.item.id }),
+            ),
+        )
+
+        @Suppress("UNREACHABLE_CODE")
         val scope = if (plan.baseResultIds == null) "the local gallery" else "your previous result set"
         return when (plan.intent) {
             QueryIntent.COUNT -> SearchAnswer(
-                headline = "$matchCount matching ${if (matchCount == 1) "item" else "items"}",
+                headline = RetrievalAnswerWording.countHeadline(matchCount, usedSemanticRetrieval),
                 detail = if (usedSemanticRetrieval) {
                     "This count comes from thresholded semantic retrieval over $scope; run a complete predicate scan when an exact visual count is required."
                 } else {
@@ -525,6 +696,7 @@ class GalleryRepository(context: Context) {
                 indexedEligibleCount = readyItems,
                 totalEligibleCount = totalItems,
                 warnings = warnings,
+                channelReports = channelReports,
             )
             QueryIntent.EVENT_SUMMARY -> {
                 val event = database.eventsForMedia(hits.map { it.item.id }).values
@@ -541,6 +713,7 @@ class GalleryRepository(context: Context) {
                     indexedEligibleCount = readyItems,
                     totalEligibleCount = totalItems,
                     warnings = warnings,
+                    channelReports = channelReports,
                 )
             }
             QueryIntent.ANSWER_FACT -> {
@@ -556,6 +729,7 @@ class GalleryRepository(context: Context) {
                     indexedEligibleCount = readyItems,
                     totalEligibleCount = totalItems,
                     warnings = warnings,
+                    channelReports = channelReports,
                 )
             }
             else -> SearchAnswer(
@@ -566,6 +740,7 @@ class GalleryRepository(context: Context) {
                 indexedEligibleCount = readyItems,
                 totalEligibleCount = totalItems,
                 warnings = warnings,
+                channelReports = channelReports,
             )
         }
     }
@@ -603,18 +778,32 @@ class GalleryRepository(context: Context) {
         return matchesMerchantIdentity(required, merchantEntities, identityText)
     }
 
-    private fun addDeterministicFactEvidence(hit: SearchHit): SearchHit {
-        val selected = database.ocrEntities(hit.item.id, OcrEntityType.RECEIPT_TOTAL).firstOrNull() ?: return hit
-        val evidence = EvidenceRecord(
-            id = "${hit.item.id}:document_total:${selected.normalizedValue.hashCode().toUInt()}",
-            mediaId = hit.item.id,
-            sourceField = "document_total",
-            text = selected.rawText,
-            confidence = selected.confidence,
-            producerVersion = selected.producerVersion,
-            region = listOf(selected.left, selected.top, selected.right, selected.bottom),
-        )
-        return hit.copy(evidence = listOf(evidence) + hit.evidence)
+    private fun GalleryItem.matchesRequiredPlace(place: String?): Boolean {
+        val required = place?.trim()?.lowercase(Locale.ROOT)?.takeIf(String::isNotEmpty) ?: return true
+        return listOf(location, album, title, filename).plus(tags)
+            .any { required in it.lowercase(Locale.ROOT) }
+    }
+
+    private fun addDeterministicFactEvidence(hit: SearchHit, plan: GalleryQueryPlan): SearchHit {
+        val requested = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField ?: plan.aggregation?.field)
+        val fields = when {
+            requested != null -> listOf(requested)
+            plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX) -> listOf(OcrFactAllowlist.fields.first())
+            else -> OcrFactAllowlist.fields
+        }
+        val evidence = fields.mapNotNull { field ->
+            val selected = database.ocrEntities(hit.item.id, field.type).firstOrNull() ?: return@mapNotNull null
+            EvidenceRecord(
+                id = "${hit.item.id}:${field.sourceField}:${selected.normalizedValue.hashCode().toUInt()}",
+                mediaId = hit.item.id,
+                sourceField = field.sourceField,
+                text = selected.rawText,
+                confidence = selected.confidence,
+                producerVersion = selected.producerVersion,
+                region = listOf(selected.left, selected.top, selected.right, selected.bottom),
+            )
+        }
+        return if (evidence.isEmpty()) hit else hit.copy(evidence = evidence + hit.evidence)
     }
 }
 

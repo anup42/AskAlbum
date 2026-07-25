@@ -23,13 +23,15 @@ enum class Polarity { POSITIVE, NEGATIVE }
 enum class ConstraintStrength { HARD, SOFT }
 enum class SemanticSubject { WHOLE_MEDIA, PERSON, EVENT, DOCUMENT }
 enum class ResultExactness { EXACT, COMPLETE_MODEL_SCAN, ESTIMATED_FROM_RETRIEVAL, PARTIAL_INDEX }
+enum class RetrievalChannel { LEXICAL, SEMANTIC, EVENT, OCR, PEOPLE, VISUAL_VERIFICATION }
+enum class ChannelStatus { SUCCESS, UNAVAILABLE, FAILED, PARTIAL, NOT_REQUIRED }
 enum class MediaSource { DEMO_ASSET, MEDIA_STORE, PHOTO_PICKER, SAF_DOCUMENT }
 enum class MediaKind { IMAGE, VIDEO, PDF }
 enum class IndexState { PENDING, INDEXING, READY, FAILED_RETRYABLE, FAILED_PERMANENT }
 enum class MediaAccessState { ACCESSIBLE, INACCESSIBLE }
 enum class IndexStage { DISCOVERY, METADATA, THUMBNAIL, VIDEO_KEYFRAMES, EMBEDDING, OCR, FACES, EVENTS, ENRICHMENT }
 enum class StageStatus { PENDING, RUNNING, COMPLETE, SKIPPED, FAILED_RETRYABLE, FAILED_PERMANENT }
-enum class OcrEntityType { AMOUNT, RECEIPT_TOTAL, DATE, PHONE, EMAIL, URL, ORDER_ID, FLIGHT_NUMBER, MERCHANT, PASSWORD }
+enum class OcrEntityType { AMOUNT, RECEIPT_TOTAL, DATE, PHONE, EMAIL, URL, ORDER_ID, FLIGHT_NUMBER, FLIGHT_TIME, MERCHANT, PASSWORD }
 
 sealed interface FilterExpression {
     data object True : FilterExpression
@@ -93,6 +95,32 @@ data class PlanPatch(
     val baseResultSetId: String,
     val changedFields: Set<String>,
     val replacementPlan: GalleryQueryPlan,
+    val operations: List<PlanPatchOperation> = emptyList(),
+)
+
+enum class PlanPatchOperationType { ADD, REPLACE, REMOVE }
+
+enum class PlanPatchField {
+    INTENT,
+    TIME,
+    MEDIA_KIND,
+    FILTER,
+    PEOPLE,
+    PLACE,
+    SEMANTIC_CLAUSES,
+    OCR,
+    SORT,
+    GROUPING,
+    AGGREGATION,
+    VERIFICATION,
+    ANSWER_MODE,
+    LIMIT,
+    SCOPE,
+}
+
+data class PlanPatchOperation(
+    val type: PlanPatchOperationType,
+    val field: PlanPatchField,
 )
 
 data class ConversationSearchState(
@@ -170,6 +198,17 @@ data class SearchHit(
     val duplicateIds: List<String> = emptyList(),
 )
 
+data class RetrievalChannelReport<T>(
+    val channel: RetrievalChannel,
+    val status: ChannelStatus,
+    val eligibleCount: Int,
+    val indexedCount: Int,
+    val searchedCount: Int,
+    val hits: List<T>,
+    val modelVersion: String? = null,
+    val errorCode: String? = null,
+)
+
 data class VisualFeatures(
     val perceptualHash: Long,
     val blurScore: Float,
@@ -187,6 +226,7 @@ data class SearchAnswer(
     val claims: List<GroundedClaim> = emptyList(),
     val warnings: List<String> = emptyList(),
     val requiresAuthentication: Boolean = false,
+    val channelReports: List<RetrievalChannelReport<SearchHit>> = emptyList(),
 )
 
 data class SearchOutcome(
@@ -197,6 +237,7 @@ data class SearchOutcome(
     val resultSetId: String? = null,
     val baseResultSetId: String? = null,
     val planPatch: PlanPatch? = null,
+    val channelReports: List<RetrievalChannelReport<SearchHit>> = emptyList(),
 )
 
 sealed interface QueryProgress {
@@ -216,6 +257,7 @@ data class IndexSummary(
     val visualLabelsReady: Int = 0,
     val videoKeyframesReady: Int = 0,
     val facesScanned: Int = 0,
+    val faceEligible: Int = 0,
     val pending: Int = 0,
     val events: Int = 0,
     val failed: Int = 0,
@@ -250,6 +292,42 @@ data class PeopleIndexStatus(
     val reviewedClusterCount: Int = 0,
     val identityReadyFaceCount: Int = 0,
     val pendingMediaCount: Int = 0,
+)
+
+data class PersonClusterReviewItem(
+    val id: String,
+    val label: String?,
+    val relationship: String?,
+    val aliases: List<String>,
+    val faceCount: Int,
+    val sampleMediaId: String?,
+    val reviewed: Boolean = false,
+    val hidden: Boolean = false,
+    val representativeFace: PersonFaceReviewItem? = null,
+    val supportingFaces: List<PersonFaceReviewItem> = emptyList(),
+)
+
+data class PersonFaceReviewItem(
+    val id: String,
+    val mediaId: String,
+    val item: GalleryItem,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    val quality: Float,
+    val userCorrected: Boolean,
+)
+
+data class PersonVerificationBinding(
+    val faceId: String,
+    val clusterId: String,
+    val stableLabel: String,
+    val identityTerms: Set<String>,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
 )
 
 data class FaceDetectionRecord(

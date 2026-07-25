@@ -28,6 +28,26 @@ class SemanticVectorStore(
             .filter { it.score >= current.pack.manifest.minimumSimilarity }
     }
 
+    suspend fun searchTextReport(
+        query: String,
+        topK: Int,
+        eligibleCount: Int,
+        allowedIds: Set<String>,
+    ): RetrievalChannelReport<VectorHit> = SemanticChannelReporter.execute(
+        query = query,
+        modelVersion = producerVersion(),
+        eligibleCount = eligibleCount,
+        eligibleVectorIds = allowedIds,
+        topK = topK,
+        indexedIds = { currentIndex().index.ids() },
+        search = { text, limit, eligibleIds ->
+            val current = currentIndex()
+            val vector = embeddings.embedText(text)
+            current.index.search(vector, limit, eligibleIds)
+                .filter { it.score >= current.pack.manifest.minimumSimilarity }
+        },
+    )
+
     suspend fun reconcile(accessibleIds: Set<String>) {
         val index = currentIndex().index
         (index.ids() - accessibleIds).forEach { index.delete(it) }

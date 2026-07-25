@@ -218,6 +218,7 @@ data class PersonClusterEntity(
     val relationship: String?,
     @ColumnInfo(defaultValue = "''") val aliases: String = "",
     @ColumnInfo(defaultValue = "0") val reviewed: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val hidden: Boolean = false,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
 )
@@ -244,8 +245,32 @@ data class FaceInstanceEntity(
     @ColumnInfo(name = "embedding_offset") val embeddingOffset: Long?,
     @ColumnInfo(name = "embedding_dimension", defaultValue = "0") val embeddingDimension: Int = 0,
     @ColumnInfo(name = "cluster_id") val clusterId: String?,
+    @ColumnInfo(name = "user_corrected", defaultValue = "0") val userCorrected: Boolean = false,
     @ColumnInfo(name = "producer_version") val producerVersion: String,
     @ColumnInfo(name = "created_at") val createdAt: Long,
+)
+
+@Entity(
+    tableName = "person_attribute_fact",
+    foreignKeys = [
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["media_id"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = PersonClusterEntity::class, parentColumns = ["id"], childColumns = ["cluster_id"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [
+        Index(name = "person_attribute_media_idx", value = ["media_id"]),
+        Index(name = "person_attribute_cluster_idx", value = ["cluster_id"]),
+    ],
+)
+data class PersonAttributeFactEntity(
+    @PrimaryKey val id: String,
+    @ColumnInfo(name = "media_id") val mediaId: String,
+    @ColumnInfo(name = "cluster_id") val clusterId: String,
+    val predicate: String,
+    val value: String,
+    val confidence: Float,
+    val region: String,
+    @ColumnInfo(name = "model_version") val modelVersion: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
 )
 
 @Entity(tableName = "query_turn")
@@ -323,6 +348,105 @@ data class MediaIndexStageEntity(
     val error: String?,
 )
 
+@Entity(
+    tableName = "visual_group",
+    indices = [Index(name = "visual_group_kind_idx", value = ["kind"])],
+)
+data class VisualGroupEntity(
+    @PrimaryKey val id: String,
+    val kind: String,
+    @ColumnInfo(name = "canonical_media_id") val canonicalMediaId: String,
+    @ColumnInfo(name = "producer_version") val producerVersion: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+)
+
+@Entity(
+    tableName = "visual_group_member",
+    primaryKeys = ["group_id", "media_id"],
+    foreignKeys = [
+        ForeignKey(entity = VisualGroupEntity::class, parentColumns = ["id"], childColumns = ["group_id"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["media_id"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index(name = "visual_group_member_media_idx", value = ["media_id"])],
+)
+data class VisualGroupMemberEntity(
+    @ColumnInfo(name = "group_id") val groupId: String,
+    @ColumnInfo(name = "media_id") val mediaId: String,
+    val role: String,
+    @ColumnInfo(name = "diversity_score") val diversityScore: Float,
+)
+
+@Entity(
+    tableName = "event_representative",
+    primaryKeys = ["event_id", "media_id"],
+    foreignKeys = [
+        ForeignKey(entity = GalleryEventEntity::class, parentColumns = ["id"], childColumns = ["event_id"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["media_id"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index(name = "event_representative_media_idx", value = ["media_id"])],
+)
+data class EventRepresentativeEntity(
+    @ColumnInfo(name = "event_id") val eventId: Long,
+    @ColumnInfo(name = "media_id") val mediaId: String,
+    val rank: Int,
+    val reason: String,
+)
+
+@Entity(
+    tableName = "semantic_fact",
+    indices = [
+        Index(name = "semantic_fact_subject_idx", value = ["scope", "subject_id"]),
+        Index(name = "semantic_fact_evidence_idx", value = ["evidence_media_id"]),
+        Index(name = "semantic_fact_predicate_idx", value = ["predicate"]),
+    ],
+    foreignKeys = [
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["evidence_media_id"], onDelete = ForeignKey.CASCADE),
+    ],
+)
+data class SemanticFactEntity(
+    @PrimaryKey val id: String,
+    val scope: String,
+    @ColumnInfo(name = "subject_id") val subjectId: String,
+    val predicate: String,
+    val value: String,
+    val confidence: Float,
+    @ColumnInfo(name = "evidence_media_id") val evidenceMediaId: String,
+    val region: String?,
+    val applicability: String,
+    @ColumnInfo(name = "model_version") val modelVersion: String,
+    @ColumnInfo(name = "prompt_version") val promptVersion: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+)
+
+@Entity(
+    tableName = "semantic_enrichment_job",
+    indices = [
+        Index(name = "semantic_enrichment_status_idx", value = ["status", "updated_at"]),
+        Index(name = "semantic_enrichment_media_idx", value = ["representative_media_id"]),
+        Index(
+            name = "semantic_enrichment_unique_idx",
+            value = ["scope", "subject_id", "representative_media_id", "reason"],
+            unique = true,
+        ),
+    ],
+    foreignKeys = [
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["representative_media_id"], onDelete = ForeignKey.CASCADE),
+    ],
+)
+data class SemanticEnrichmentJobEntity(
+    @PrimaryKey val id: String,
+    val scope: String,
+    @ColumnInfo(name = "subject_id") val subjectId: String,
+    @ColumnInfo(name = "representative_media_id") val representativeMediaId: String,
+    val reason: String,
+    val status: String,
+    @ColumnInfo(name = "attempt_count", defaultValue = "0") val attemptCount: Int,
+    @ColumnInfo(name = "user_requested", defaultValue = "0") val userRequested: Boolean,
+    @ColumnInfo(name = "model_version") val modelVersion: String?,
+    val error: String?,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+)
+
 @Database(
     entities = [
         MediaItemEntity::class,
@@ -337,13 +461,19 @@ data class MediaIndexStageEntity(
         PeopleSettingsEntity::class,
         PersonClusterEntity::class,
         FaceInstanceEntity::class,
+        PersonAttributeFactEntity::class,
         QueryTurnEntity::class,
         QuerySessionEntity::class,
         ResultSetEntity::class,
         ResultSetMediaEntity::class,
         MediaIndexStageEntity::class,
+        VisualGroupEntity::class,
+        VisualGroupMemberEntity::class,
+        EventRepresentativeEntity::class,
+        SemanticFactEntity::class,
+        SemanticEnrichmentJobEntity::class,
     ],
-    version = 11,
+    version = 13,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -365,6 +495,8 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_8_9,
             MIGRATION_9_10,
             MIGRATION_10_11,
+            MIGRATION_11_12,
+            MIGRATION_12_13,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -486,6 +618,42 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 val now = System.currentTimeMillis()
                 db.execSQL("INSERT OR IGNORE INTO media_index_stage(media_id,stage,status,producer_version,attempt_count,updated_at,error) SELECT id,'VIDEO_KEYFRAMES',CASE WHEN media_kind='VIDEO' AND source_kind!='DEMO_ASSET' THEN 'PENDING' ELSE 'SKIPPED' END,CASE WHEN media_kind='VIDEO' THEN 'video-keyframes-v1' ELSE 'not-video' END,0,$now,NULL FROM media_item")
                 db.execSQL("UPDATE media_item SET index_state='PENDING',index_version='video-keyframes-v1' WHERE media_kind='VIDEO' AND source_kind!='DEMO_ASSET' AND access_state='ACCESSIBLE'")
+            }
+        }
+
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE person_cluster ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE face_instance ADD COLUMN user_corrected INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS person_attribute_fact (" +
+                        "id TEXT NOT NULL, media_id TEXT NOT NULL, cluster_id TEXT NOT NULL, predicate TEXT NOT NULL, " +
+                        "value TEXT NOT NULL, confidence REAL NOT NULL, region TEXT NOT NULL, model_version TEXT NOT NULL, " +
+                        "updated_at INTEGER NOT NULL, PRIMARY KEY(id), " +
+                        "FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE, " +
+                        "FOREIGN KEY(cluster_id) REFERENCES person_cluster(id) ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS person_attribute_media_idx ON person_attribute_fact(media_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS person_attribute_cluster_idx ON person_attribute_fact(cluster_id)")
+            }
+        }
+
+        internal val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS visual_group (id TEXT NOT NULL, kind TEXT NOT NULL, canonical_media_id TEXT NOT NULL, producer_version TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(id))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS visual_group_kind_idx ON visual_group(kind)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS visual_group_member (group_id TEXT NOT NULL, media_id TEXT NOT NULL, role TEXT NOT NULL, diversity_score REAL NOT NULL, PRIMARY KEY(group_id,media_id), FOREIGN KEY(group_id) REFERENCES visual_group(id) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS visual_group_member_media_idx ON visual_group_member(media_id)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS event_representative (event_id INTEGER NOT NULL, media_id TEXT NOT NULL, rank INTEGER NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(event_id,media_id), FOREIGN KEY(event_id) REFERENCES gallery_event(id) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS event_representative_media_idx ON event_representative(media_id)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS semantic_fact (id TEXT NOT NULL, scope TEXT NOT NULL, subject_id TEXT NOT NULL, predicate TEXT NOT NULL, value TEXT NOT NULL, confidence REAL NOT NULL, evidence_media_id TEXT NOT NULL, region TEXT, applicability TEXT NOT NULL, model_version TEXT NOT NULL, prompt_version TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(id), FOREIGN KEY(evidence_media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_fact_subject_idx ON semantic_fact(scope,subject_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_fact_evidence_idx ON semantic_fact(evidence_media_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_fact_predicate_idx ON semantic_fact(predicate)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS semantic_enrichment_job (id TEXT NOT NULL, scope TEXT NOT NULL, subject_id TEXT NOT NULL, representative_media_id TEXT NOT NULL, reason TEXT NOT NULL, status TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, user_requested INTEGER NOT NULL DEFAULT 0, model_version TEXT, error TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY(id), FOREIGN KEY(representative_media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_enrichment_status_idx ON semantic_enrichment_job(status,updated_at)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_enrichment_media_idx ON semantic_enrichment_job(representative_media_id)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS semantic_enrichment_unique_idx ON semantic_enrichment_job(scope,subject_id,representative_media_id,reason)")
             }
         }
 

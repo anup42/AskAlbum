@@ -48,11 +48,16 @@ class BoundedGemmaPlanCompiler(private val codec: GemmaPlanCodec = GemmaPlanCode
 /** LiteRT-LM planner with central high-memory leasing, GPU/CPU fallback, bounded repair, and safe deterministic fallback. */
 class LiteRtLmQueryPlanner(
     private val modelPacks: ModelPackManager,
-    private val resources: InferenceResourceManager = SerializedInferenceResourceManager(),
+    private val sessions: GemmaSessionManager = GemmaSessionManager(SerializedInferenceResourceManager()),
     private val fallback: QueryCompiler = QueryCompiler(),
     private val boundedCompiler: BoundedGemmaPlanCompiler = BoundedGemmaPlanCompiler(),
     private val deterministicOverlay: DeterministicPlanOverlay = DeterministicPlanOverlay(),
 ) {
+    constructor(
+        modelPacks: ModelPackManager,
+        resources: InferenceResourceManager,
+    ) : this(modelPacks, GemmaSessionManager(resources))
+
     suspend fun compile(query: String, activeResultIds: Set<String>?): GalleryQueryPlan =
         compileWithTrace(query, activeResultIds).plan
 
@@ -64,38 +69,29 @@ class LiteRtLmQueryPlanner(
             return fallbackTrace(query, activeResultIds, started, status.deviceAssessment.reason)
         }
         return try {
-            resources.withModel(ModelCapability.GENERATIVE) {
+            sessions.withEngine(path, status.multimodal) { initialized ->
                 withContext(Dispatchers.IO) {
                     require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
-                    val initialized = createEngine(path)
                     var calls = 0
                     var generationMs = 0L
-                    var closeMs = 0L
-                    var compiledPlan: GalleryQueryPlan? = null
-                    try {
-                        val generationStarted = android.os.SystemClock.elapsedRealtime()
-                        compiledPlan = boundedCompiler.compile(query, activeResultIds, plannerPrompt(query)) { prompt ->
-                            calls++
-                            generate(initialized.engine, prompt)
-                        }
-                        generationMs = android.os.SystemClock.elapsedRealtime() - generationStarted
-                    } finally {
-                        val closeStarted = android.os.SystemClock.elapsedRealtime()
-                        initialized.engine.close()
-                        closeMs = android.os.SystemClock.elapsedRealtime() - closeStarted
+                    val generationStarted = android.os.SystemClock.elapsedRealtime()
+                    val compiledPlan = boundedCompiler.compile(query, activeResultIds, plannerPrompt(query)) { prompt ->
+                        calls++
+                        initialized.engine.generateText(prompt, seed = 17)
                     }
+                    generationMs = android.os.SystemClock.elapsedRealtime() - generationStarted
                     val overlay = deterministicOverlay.apply(query, requireNotNull(compiledPlan), activeResultIds)
                     PlannerExecutionTrace(
                         plan = overlay.plan,
                         usedGemma = true,
-                        backend = initialized.backend,
+                        backend = initialized.engine.backend,
                         modelTier = status.tier,
                         modelRevision = status.packVersion,
                         generationCalls = calls,
                         repaired = calls > 1,
                         engineLoadMs = initialized.loadMs,
                         generationMs = generationMs,
-                        engineCloseMs = closeMs,
+                        engineCloseMs = 0L,
                         deterministicOverlayApplied = overlay.applied,
                         elapsedMs = android.os.SystemClock.elapsedRealtime() - started,
                     )
@@ -163,7 +159,7 @@ class LiteRtLmQueryPlanner(
         Compile the personal-gallery request into exactly one JSON object. Return JSON only.
         Never emit SQL, code, file paths, content URIs, tool names, result IDs, or more than the declared bounds.
         Allowed root fields: version,intent,mediaScope,filter,semanticClauses,peopleClauses,ocrClause,grouping,aggregation,sort,verification,answerMode,limit,terms,place.
-        Allowed intents: FIND_MEDIA,ANSWER_FACT,LIST,COUNT,SUM,MIN_MAX,COMPARE,TIMELINE,EVENT_SUMMARY,DOCUMENT_QA.
+        Allowed intents: ${CapabilityRegistry.plannerIntentNames()}.
         Allowed mediaScope: ALL,IMAGES,VIDEOS,DOCUMENTS. limit is 1..100; terms and semanticClauses max 16; peopleClauses max 8.
         filter is {"op":"TRUE"}, {"op":"AND","clauses":[]}, {"op":"TIME_RANGE","startEpochMs":null,"endEpochMs":null}, {"op":"MEDIA_KIND","kind":"IMAGE"}, or {"op":"ALBUM","album":"name"}.
         Default to terms and place. For ordinary category, scene, activity, place, event-name, or free-text search, semanticClauses must be [].

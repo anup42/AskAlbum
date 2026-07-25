@@ -2,6 +2,11 @@ package com.askphotos.android
 
 /** Prevents a semantic follow-up from retaining every weak vector hit in its parent result set. */
 internal object FollowUpRefinementPolicy {
+    fun isContextualFollowUp(query: String, state: ConversationSearchState?): Boolean =
+        state?.activeResultSetId != null &&
+            state.activeResultIds.isNotEmpty() &&
+            FollowUpLanguage.isFollowUp(query, activeResultAvailable = true)
+
     fun corroboratedSemanticIds(
         scoped: Boolean,
         semanticIds: Collection<String>,

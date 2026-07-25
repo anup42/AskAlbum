@@ -33,6 +33,24 @@ class GalleryQueryPlanValidatorTest {
     }
 
     @Test
+    fun allowsBenignSqlWordsInNaturalLanguage() {
+        listOf(
+            "Select the best photo.",
+            "Show the Delete-key screenshot.",
+            "Show total eclipse photos.",
+        ).forEach { query ->
+            val result = validator.validate(
+                GalleryQueryPlan(
+                    originalQuery = query,
+                    intent = QueryIntent.FIND_MEDIA,
+                    terms = listOf(query),
+                ),
+            )
+            assertTrue("$query: ${result.errors}", result.isValid)
+        }
+    }
+
+    @Test
     fun rejectsContradictoryHardConstraints() {
         val positive = SemanticClause("yellow hat", "yellow hat", Polarity.POSITIVE, ConstraintStrength.HARD)
         val negative = positive.copy(polarity = Polarity.NEGATIVE)

@@ -9,6 +9,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 /** Narrow compatibility wrapper used while repository queries move to typed Room DAOs. */
 internal class GallerySqlDatabase(private val delegate: SupportSQLiteDatabase) {
+    fun <T> transaction(block: (GallerySqlDatabase) -> T): T {
+        beginTransaction()
+        return try {
+            block(this).also { setTransactionSuccessful() }
+        } finally {
+            endTransaction()
+        }
+    }
+
     fun beginTransaction() = delegate.beginTransaction()
     fun setTransactionSuccessful() = delegate.setTransactionSuccessful()
     fun endTransaction() = delegate.endTransaction()

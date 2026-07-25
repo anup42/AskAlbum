@@ -19,7 +19,8 @@ import org.json.JSONObject
 class LiteRtGemmaVisualVerifier(
     context: Context,
     private val modelPacks: ModelPackManager,
-    private val resources: InferenceResourceManager,
+    private val sessions: GemmaSessionManager,
+    private val database: GalleryDatabase,
     private val imageLoader: GalleryImageLoader = GalleryImageLoader(context.applicationContext),
     private val compiler: BoundedGemmaVerificationCompiler = BoundedGemmaVerificationCompiler(),
 ) : CandidateVerifier {
@@ -28,10 +29,10 @@ class LiteRtGemmaVisualVerifier(
             return VerificationResult(candidates.mapTo(linkedSetOf()) { it.item.id }, emptyList())
         }
         val started = SystemClock.elapsedRealtime()
-        val bounded = candidates.filter { it.item.kind == MediaKind.IMAGE }.take(MAX_CANDIDATES)
+        val bounded = candidates.filter { it.item.kind in setOf(MediaKind.IMAGE, MediaKind.VIDEO) }.take(MAX_CANDIDATES)
         val conditions = VisualVerificationPolicy.conditions(plan)
         if (bounded.isEmpty() || conditions.isEmpty()) {
-            return failedBeforeInference(started, bounded.size, "No bounded image conditions were available")
+            return failedBeforeInference(started, bounded.size, "No bounded media conditions were available")
         }
         val status = modelPacks.status()
         val path = status.path
@@ -43,10 +44,9 @@ class LiteRtGemmaVisualVerifier(
         }
 
         return try {
-            resources.withModel(ModelCapability.GENERATIVE) {
+            sessions.withEngine(path, multimodal = true) { initialized ->
                 withContext(Dispatchers.IO) {
                     require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
-                    val initialized = createEngine(path)
                     val accepted = linkedSetOf<String>()
                     val evidence = mutableListOf<EvidenceRecord>()
                     val evaluations = mutableListOf<CandidateVerification>()
@@ -54,41 +54,81 @@ class LiteRtGemmaVisualVerifier(
                     var generationCalls = 0
                     var repairedCandidates = 0
                     var generationMs = 0L
-                    var closeMs = 0L
-                    try {
-                        bounded.forEach { hit ->
+                    bounded.forEach { hit ->
                             runCatching {
-                                val bytes = imageLoader.loadJpeg(hit.item)
+                                val requiredPeople = plan.peopleClauses.filter(PersonClause::mustBePresent)
+                                    .map(PersonClause::personId).toSet()
+                                val bindings = database.reviewedFaceBindings(hit.item.id, requiredPeople)
+                                if (requiredPeople.isNotEmpty()) {
+                                    val grouped = bindings.groupBy(PersonVerificationBinding::clusterId)
+                                    val everyRequestedIdentityBound = requiredPeople.all { requested ->
+                                        bindings.any { binding ->
+                                            binding.clusterId == requested ||
+                                                binding.identityTerms.any { it.equals(requested, ignoreCase = true) }
+                                        }
+                                    }
+                                    require(everyRequestedIdentityBound && grouped.values.all { it.size == 1 }) {
+                                        "Required reviewed identities could not be bound unambiguously to visible faces"
+                                    }
+                                }
+                                val boundConditions = PersonVerificationPromptBinding.bind(conditions, bindings)
+                                val loaded = imageLoader.loadForVerification(hit, database.videoKeyframes(hit.item.id))
+                                val bytes = PersonVerificationImageComposer.compose(loaded.bytes, bindings)
                                 val generationStarted = SystemClock.elapsedRealtime()
-                                val decoded = compiler.compile(conditions, prompt(plan, conditions)) { prompt ->
-                                    generate(initialized.engine, bytes, prompt)
+                                val decoded = compiler.compile(boundConditions, prompt(plan, boundConditions, bindings)) { prompt ->
+                                    initialized.engine.generateVision(bytes, prompt, seed = 23)
                                 }
                                 generationMs += SystemClock.elapsedRealtime() - generationStarted
                                 generationCalls += decoded.generationCalls
                                 if (decoded.generationCalls > 1) repairedCandidates++
-                                val candidate = CandidateVerification(hit.item.id, decoded.payload.conditions, decoded.payload.overallMatch)
+                                val evaluationsById = decoded.payload.conditions.associateBy(VerificationConditionEvaluation::id)
+                                val overallMatch = boundConditions
+                                    .filter { it.hardness == ConstraintStrength.HARD }
+                                    .all { spec ->
+                                        evaluationsById[spec.id]?.let { evaluation ->
+                                            SemanticPolarityNormalizer.conditionMatched(spec, evaluation.satisfied)
+                                        } == true
+                                    }
+                                val candidate = CandidateVerification(hit.item.id, decoded.payload.conditions, overallMatch)
                                 evaluations += candidate
                                 if (candidate.overallMatch) accepted += hit.item.id
-                                decoded.payload.conditions.filter { it.satisfied }.forEach { evaluation ->
-                                    val spec = conditions.single { it.id == evaluation.id }
+                                decoded.payload.conditions.filter { evaluation ->
+                                    val spec = boundConditions.single { it.id == evaluation.id }
+                                    SemanticPolarityNormalizer.conditionMatched(spec, evaluation.satisfied)
+                                }.forEach { evaluation ->
+                                    val spec = boundConditions.single { it.id == evaluation.id }
                                     evidence += EvidenceRecord(
                                         id = "${hit.item.id}:visual_verification:${spec.id}",
                                         mediaId = hit.item.id,
                                         sourceField = "visual_verification",
-                                        text = spec.text,
+                                        text = if (spec.polarity == Polarity.NEGATIVE) {
+                                            "No visible ${spec.text}"
+                                        } else {
+                                            spec.text
+                                        },
                                         confidence = evaluation.confidence,
                                         producerVersion = producerVersion(status),
+                                        timestampMs = loaded.timestampMs,
                                     )
+                                    val binding = spec.relationToPerson?.let { clusterId ->
+                                        bindings.singleOrNull { it.clusterId == clusterId }
+                                    }
+                                    if (binding != null) {
+                                        database.saveVerifiedPersonAttributeFact(
+                                            mediaId = hit.item.id,
+                                            clusterId = binding.clusterId,
+                                            predicate = spec.text,
+                                            value = evaluation.satisfied.toString(),
+                                            confidence = evaluation.confidence,
+                                            region = listOf(binding.left, binding.top, binding.right, binding.bottom),
+                                            modelVersion = producerVersion(status),
+                                        )
+                                    }
                                 }
                             }.onFailure { error ->
                                 if (error is CancellationException) throw error
                                 failures += VerificationFailure(hit.item.id, sanitize(error))
                             }
-                        }
-                    } finally {
-                        val closeStarted = SystemClock.elapsedRealtime()
-                        initialized.engine.close()
-                        closeMs = SystemClock.elapsedRealtime() - closeStarted
                     }
                     VerificationResult(
                         acceptedIds = accepted,
@@ -98,7 +138,11 @@ class LiteRtGemmaVisualVerifier(
                         failures = failures,
                         trace = VerificationExecutionTrace(
                             usedGemma = true,
-                            backend = initialized.backend,
+                            backend = if (initialized.engine.backend == PlannerInferenceBackend.GPU) {
+                                VerificationInferenceBackend.GPU
+                            } else {
+                                VerificationInferenceBackend.CPU
+                            },
                             modelTier = status.tier,
                             modelRevision = status.packVersion,
                             requestedCandidates = bounded.size,
@@ -107,7 +151,7 @@ class LiteRtGemmaVisualVerifier(
                             repairedCandidates = repairedCandidates,
                             engineLoadMs = initialized.loadMs,
                             generationMs = generationMs,
-                            engineCloseMs = closeMs,
+                            engineCloseMs = 0L,
                             elapsedMs = SystemClock.elapsedRealtime() - started,
                         ),
                     )
@@ -120,7 +164,11 @@ class LiteRtGemmaVisualVerifier(
         }
     }
 
-    private fun prompt(plan: GalleryQueryPlan, conditions: List<VerificationConditionSpec>): String {
+    private fun prompt(
+        plan: GalleryQueryPlan,
+        conditions: List<VerificationConditionSpec>,
+        bindings: List<PersonVerificationBinding>,
+    ): String {
         val array = JSONArray().apply {
             conditions.forEach { condition ->
                 put(JSONObject().apply {
@@ -129,20 +177,28 @@ class LiteRtGemmaVisualVerifier(
                     put("polarity", condition.polarity.name)
                     put("hardness", condition.hardness.name)
                     put("subject", condition.subject.name)
-                    condition.relationToPerson?.let { put("relationToPerson", it) }
+                    condition.relationToPerson?.let { clusterId ->
+                        put("relationToPerson", bindings.firstOrNull { it.clusterId == clusterId }?.stableLabel ?: clusterId)
+                    }
                 })
             }
         }
+        val mapping = JSONObject().apply {
+            bindings.forEach { binding -> put(binding.stableLabel, "reviewed-cluster:${binding.clusterId}") }
+        }
         return """
-            Inspect the one supplied gallery image against the Kotlin-owned conditions below.
+            Inspect the supplied contact sheet. Its top panel is the full image with labelled face boxes; lower panels are expanded upper/full-body crops.
             Return exactly one JSON object and no markdown or explanation.
-            Decide whether each condition's literal natural-language text is satisfied by visible evidence. The polarity field is metadata; do not invert text that is already phrased negatively.
+            Every condition text is a positive visual predicate. Set satisfied=true only when that predicate is visibly present.
+            Kotlin applies polarity after your response: a NEGATIVE condition matches only when its positive predicate is not visible. Never invert polarity yourself.
+            Person labels are deterministic and must not be reassigned. Bind every person-specific condition only to the matching P-label.
+            Person mapping: $mapping
             For synthetic cards or diagrams, visible labels and illustrated clothing are valid image evidence.
             Query context: ${JSONObject.quote(plan.originalQuery)}
             Conditions: $array
             Required shape: {"conditions":[{"id":"c1","satisfied":true,"confidence":0.95}],"overallMatch":true}
             Include every supplied ID exactly once. confidence must be from 0 to 1.
-            overallMatch is true exactly when every HARD condition is satisfied. SOFT conditions do not control it.
+            overallMatch is advisory; Kotlin deterministically applies HARD constraints and polarity.
             Never emit media IDs, paths, URIs, boxes, tools, or additional fields.
         """.trimIndent()
     }
@@ -262,7 +318,7 @@ internal object VisualVerificationPolicy {
         val clauses = plan.semanticClauses.ifEmpty {
             listOf(SemanticClause(plan.originalQuery, hardness = ConstraintStrength.HARD))
         }
-        return clauses.take(MAX_CONDITIONS).mapIndexed { index, clause ->
+        return clauses.map(SemanticPolarityNormalizer::normalize).take(MAX_CONDITIONS).mapIndexed { index, clause ->
             VerificationConditionSpec(
                 id = "c${index + 1}",
                 text = clause.text,

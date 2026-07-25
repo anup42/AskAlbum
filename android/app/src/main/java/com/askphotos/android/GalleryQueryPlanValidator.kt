@@ -10,7 +10,7 @@ class GalleryQueryPlanValidator(
     private val maxLimit: Int = 100,
 ) {
     private val unsafeText = Regex(
-        "(?i)(content://|file://|/storage/|\\\\|;|--|\\b(select|insert|update|delete|drop|alter|pragma)\\b)",
+        "(?i)(content://|file://|/storage/|\\\\|;|--)",
     )
 
     fun validate(
@@ -19,6 +19,7 @@ class GalleryQueryPlanValidator(
     ): PlanValidationResult {
         val errors = mutableListOf<String>()
         if (plan.version != supportedVersion) errors += "Unsupported plan version"
+        if (!CapabilityRegistry.supports(plan.intent)) errors += "Intent has no registered executor"
         if (plan.limit !in 1..maxLimit) errors += "Candidate limit must be between 1 and $maxLimit"
         if (plan.originalQuery.isBlank() || plan.originalQuery.length > 2_000) errors += "Invalid original query"
         if (plan.terms.size > 16) errors += "Too many retrieval terms"

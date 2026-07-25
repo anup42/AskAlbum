@@ -18,6 +18,7 @@ object SensitiveEvidencePolicy {
 
     fun requiresAuthentication(hit: SearchHit): Boolean =
         SensitiveContentClassifier.isSensitive(hit.item.ocrText) ||
+            hit.evidence.any { it.sourceField == "document_password" } ||
             hit.evidence.any { SensitiveContentClassifier.isSensitive(it.text) }
 
     fun lock(answer: SearchAnswer): SearchAnswer = answer.copy(

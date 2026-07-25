@@ -1,5 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.gradle.api.tasks.Sync
+import java.security.MessageDigest
 
 val embeddedSiglipArchive = rootProject.layout.projectDirectory.file("../build/siglip2-base-p16-224-q8-core05.agretrieval")
 val generatedEmbeddedSiglipAssets = layout.buildDirectory.dir("generated/embeddedSiglip2Assets")
@@ -9,6 +10,32 @@ val prepareEmbeddedSiglip2Assets by tasks.registering(Sync::class) {
     doFirst {
         require(embeddedSiglipArchive.asFile.isFile) {
             "Missing pinned embedded SigLIP2 archive: ${embeddedSiglipArchive.asFile}"
+        }
+    }
+}
+
+val embeddedSfaceModel = rootProject.layout.projectDirectory.file("../build/models/face/face_recognition_sface_2021dec.onnx")
+val generatedEmbeddedSfaceAssets = layout.buildDirectory.dir("generated/embeddedSfaceAssets")
+val prepareEmbeddedSfaceAssets by tasks.registering(Sync::class) {
+    from(embeddedSfaceModel)
+    into(generatedEmbeddedSfaceAssets.map { it.dir("models/face") })
+    doFirst {
+        val file = embeddedSfaceModel.asFile
+        require(file.isFile && file.length() == 38_696_353L) {
+            "Missing or incomplete pinned SFace model: $file"
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        val sha256 = digest.digest().joinToString("") { "%02x".format(it) }
+        require(sha256 == "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79") {
+            "Pinned SFace SHA-256 mismatch: $sha256"
         }
     }
 }
@@ -34,8 +61,8 @@ android {
         applicationId = "com.askphotos.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.0.4"
+        versionCode = 6
+        versionName = "0.0.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -75,12 +102,22 @@ android {
         create("offlineDemo") {
             dimension = "distribution"
             buildConfigField("boolean", "ALLOW_MODEL_DOWNLOAD", "false")
+            buildConfigField("boolean", "MODEL_INDEPENDENT", "false")
             buildConfigField("String", "DISTRIBUTION", "\"offlineDemo\"")
         }
         create("consumer") {
             dimension = "distribution"
             buildConfigField("boolean", "ALLOW_MODEL_DOWNLOAD", "true")
+            buildConfigField("boolean", "MODEL_INDEPENDENT", "false")
             buildConfigField("String", "DISTRIBUTION", "\"consumer\"")
+        }
+        create("ci") {
+            dimension = "distribution"
+            applicationIdSuffix = ".ci"
+            versionNameSuffix = "-ci"
+            buildConfigField("boolean", "ALLOW_MODEL_DOWNLOAD", "false")
+            buildConfigField("boolean", "MODEL_INDEPENDENT", "true")
+            buildConfigField("String", "DISTRIBUTION", "\"ci\"")
         }
     }
 
@@ -95,8 +132,11 @@ android {
     }
 
     sourceSets["main"].assets.srcDir("../../demo-assets")
-    sourceSets["main"].assets.srcDir(generatedEmbeddedSiglipAssets)
-    androidResources.noCompress += "agretrieval"
+    sourceSets["offlineDemo"].assets.srcDir(generatedEmbeddedSiglipAssets)
+    sourceSets["offlineDemo"].assets.srcDir(generatedEmbeddedSfaceAssets)
+    sourceSets["consumer"].assets.srcDir(generatedEmbeddedSiglipAssets)
+    sourceSets["consumer"].assets.srcDir(generatedEmbeddedSfaceAssets)
+    androidResources.noCompress += listOf("agretrieval", "onnx")
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -104,7 +144,10 @@ android {
 }
 
 tasks.configureEach {
-    if (name.startsWith("merge") && name.endsWith("Assets")) dependsOn(prepareEmbeddedSiglip2Assets)
+    val modelBearingVariant = !name.contains("Ci", ignoreCase = true)
+    if (modelBearingVariant && ((name.startsWith("merge") && name.endsWith("Assets")) || name.contains("Lint", ignoreCase = true))) {
+        dependsOn(prepareEmbeddedSiglip2Assets, prepareEmbeddedSfaceAssets)
+    }
 }
 
 kotlin {

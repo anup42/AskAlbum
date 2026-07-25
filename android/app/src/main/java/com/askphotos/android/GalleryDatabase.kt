@@ -559,7 +559,7 @@ class GalleryDatabase(
             enabledAt = settings.third,
             faceInstanceCount = count("SELECT COUNT(*) FROM face_instance"),
             personClusterCount = count("SELECT COUNT(*) FROM person_cluster"),
-            reviewedClusterCount = count("SELECT COUNT(*) FROM person_cluster WHERE reviewed=1"),
+            reviewedClusterCount = count("SELECT COUNT(*) FROM person_cluster WHERE reviewed=1 AND hidden=0"),
             identityReadyFaceCount = count(
                 "SELECT COUNT(*) FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
                     "WHERE p.reviewed=1 AND f.embedding_dimension>0 AND f.embedding_offset IS NOT NULL",
@@ -583,7 +583,7 @@ class GalleryDatabase(
             }, SQLiteDatabase.CONFLICT_REPLACE)
             db.execSQL(
                 "UPDATE media_index_stage SET status='PENDING',producer_version='mlkit-face-detection-v1',updated_at=$now,error=NULL " +
-                    "WHERE stage='FACES' AND media_id IN (SELECT id FROM media_item WHERE source_kind!='DEMO_ASSET' AND media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY')",
+                    "WHERE stage='FACES' AND media_id IN (SELECT id FROM media_item WHERE media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY')",
             )
             db.setTransactionSuccessful()
         } finally {
@@ -647,8 +647,17 @@ class GalleryDatabase(
                 if (safeRelationship == null) putNull("relationship") else put("relationship", safeRelationship)
                 put("aliases", JSONArray(safeAliases).toString())
                 put("reviewed", 1)
+                put("hidden", 0)
                 put("updated_at", now)
             }, "id=?", arrayOf(id))
+            if (safeRelationship.equals("me", ignoreCase = true)) {
+                db.update(
+                    "person_cluster",
+                    ContentValues().apply { putNull("relationship"); put("updated_at", now) },
+                    "id<>? AND reviewed=1 AND lower(relationship)='me'",
+                    arrayOf(id),
+                )
+            }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -659,7 +668,7 @@ class GalleryDatabase(
     fun facePendingItems(limit: Int): List<GalleryItem> {
         if (!peopleIndexStatus().enabled) return emptyList()
         return queryItems(
-            "source_kind!='DEMO_ASSET' AND media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY' AND id IN " +
+            "media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY' AND id IN " +
                 "(SELECT media_id FROM media_index_stage WHERE stage='FACES' AND status IN ('PENDING','FAILED_RETRYABLE'))",
             null,
             "COALESCE(captured_at,0) DESC",
@@ -719,6 +728,14 @@ class GalleryDatabase(
         db.beginTransaction()
         try {
             check(peopleIndexEnabled(db)) { "People indexing was disabled" }
+            val correctedAssignments = db.rawQuery(
+                "SELECT id,cluster_id FROM face_instance WHERE media_id=? AND user_corrected=1 AND cluster_id IS NOT NULL",
+                arrayOf(mediaId),
+            ).use { cursor ->
+                buildMap {
+                    while (cursor.moveToNext()) put(cursor.getString(0), cursor.getString(1))
+                }
+            }
             db.delete("face_instance", "media_id=?", arrayOf(mediaId))
             val now = System.currentTimeMillis()
             faces.forEachIndexed { index, face ->
@@ -737,7 +754,9 @@ class GalleryDatabase(
                     put("quality", face.quality.coerceIn(0f, 1f))
                     put("embedding_offset", 0L)
                     put("embedding_dimension", face.embedding.size)
-                    put("cluster_id", clusterIds[index])
+                    val faceId = "$mediaId:$index"
+                    put("cluster_id", correctedAssignments[faceId] ?: clusterIds[index])
+                    put("user_corrected", if (faceId in correctedAssignments) 1 else 0)
                     put("producer_version", producerVersion)
                     put("created_at", now)
                 })
@@ -784,8 +803,8 @@ class GalleryDatabase(
         val now = System.currentTimeMillis()
         writableDatabase.execSQL(
             "UPDATE media_index_stage SET status='PENDING',producer_version=?,updated_at=?,error=NULL " +
-                "WHERE stage='FACES' AND media_id IN (SELECT id FROM media_item WHERE source_kind!='DEMO_ASSET' " +
-                "AND media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY') " +
+                "WHERE stage='FACES' AND media_id IN (SELECT id FROM media_item WHERE " +
+                "media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY') " +
                 "AND (producer_version IS NULL OR producer_version!=?)",
             arrayOf(producerVersion, now, producerVersion),
         )
@@ -797,7 +816,7 @@ class GalleryDatabase(
         val clusterSets = personIds.distinct().map { requested ->
             val needle = requested.trim().lowercase(Locale.ROOT)
             val clusterIds = db.rawQuery(
-                "SELECT id,label,relationship,aliases FROM person_cluster WHERE reviewed=1",
+                "SELECT id,label,relationship,aliases FROM person_cluster WHERE reviewed=1 AND hidden=0",
                 null,
             ).use { cursor ->
                 buildSet {
@@ -822,6 +841,269 @@ class GalleryDatabase(
             }
         }
         return clusterSets.reduceOrNull { current, next -> current intersect next }.orEmpty()
+    }
+
+    fun personClustersPendingReview(): List<PersonClusterReviewItem> =
+        personClusterSummaries(includeHidden = false).filterNot(PersonClusterReviewItem::reviewed)
+
+    fun personClusterSummaries(includeHidden: Boolean = false): List<PersonClusterReviewItem> = readableDatabase.rawQuery(
+        "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(f.id) AS face_count, MAX(f.media_id) AS sample_media_id " +
+            ", c.reviewed, c.hidden " +
+            "FROM person_cluster c LEFT JOIN face_instance f ON c.id = f.cluster_id " +
+            (if (includeHidden) "" else "WHERE c.hidden = 0 ") +
+            "GROUP BY c.id, c.label, c.relationship, c.aliases " +
+            "ORDER BY c.hidden ASC, c.reviewed ASC, face_count DESC, c.updated_at DESC, c.id",
+        null,
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                val id = cursor.getString(0)
+                val label = if (cursor.isNull(1)) null else cursor.getString(1)
+                val relationship = if (cursor.isNull(2)) null else cursor.getString(2)
+                val aliases = runCatching {
+                    val json = JSONArray(cursor.getString(3))
+                    List(json.length()) { json.getString(it) }
+                }.getOrDefault(emptyList())
+                val faceCount = cursor.getInt(4)
+                val sampleMediaId = if (cursor.isNull(5)) null else cursor.getString(5)
+                val reviewed = cursor.getInt(6) != 0
+                val hidden = cursor.getInt(7) != 0
+                val faces = personFacesForCluster(id, 4)
+                add(
+                    PersonClusterReviewItem(
+                        id,
+                        label,
+                        relationship,
+                        aliases,
+                        faceCount,
+                        sampleMediaId,
+                        reviewed,
+                        hidden,
+                        faces.firstOrNull(),
+                        faces,
+                    ),
+                )
+            }
+        }
+    }
+
+    fun personFacesForCluster(clusterId: String, limit: Int = 20): List<PersonFaceReviewItem> {
+        require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
+        return readableDatabase.rawQuery(
+            "SELECT id,media_id,left_pos,top_pos,right_pos,bottom_pos,quality,user_corrected " +
+                "FROM face_instance WHERE cluster_id=? ORDER BY quality DESC,created_at DESC LIMIT ?",
+            arrayOf(clusterId, limit.coerceIn(1, 100).toString()),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val item = itemById(cursor.getString(1)) ?: continue
+                    add(
+                        PersonFaceReviewItem(
+                            id = cursor.getString(0),
+                            mediaId = cursor.getString(1),
+                            item = item,
+                            left = cursor.getFloat(2),
+                            top = cursor.getFloat(3),
+                            right = cursor.getFloat(4),
+                            bottom = cursor.getFloat(5),
+                            quality = cursor.getFloat(6),
+                            userCorrected = cursor.getInt(7) != 0,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun removePersonLabel(clusterId: String): PeopleIndexStatus {
+        require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
+        writableDatabase.update("person_cluster", ContentValues().apply {
+            putNull("label")
+            putNull("relationship")
+            put("aliases", "[]")
+            put("reviewed", 0)
+            put("updated_at", System.currentTimeMillis())
+        }, "id=?", arrayOf(clusterId))
+        return peopleIndexStatus()
+    }
+
+    fun setPersonClusterHidden(clusterId: String, hidden: Boolean): PeopleIndexStatus {
+        require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
+        writableDatabase.update("person_cluster", ContentValues().apply {
+            put("hidden", if (hidden) 1 else 0)
+            put("updated_at", System.currentTimeMillis())
+        }, "id=?", arrayOf(clusterId))
+        return peopleIndexStatus()
+    }
+
+    fun mergePersonClusters(targetClusterId: String, sourceClusterId: String): PeopleIndexStatus {
+        require(PERSON_ID.matches(targetClusterId) && PERSON_ID.matches(sourceClusterId) && targetClusterId != sourceClusterId) {
+            "Invalid cluster merge"
+        }
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            check(clusterExists(db, targetClusterId) && clusterExists(db, sourceClusterId)) { "Cluster merge target is unavailable" }
+            val now = System.currentTimeMillis()
+            fun identity(clusterId: String): Triple<String?, String?, List<String>> = db.rawQuery(
+                "SELECT label,relationship,aliases FROM person_cluster WHERE id=?",
+                arrayOf(clusterId),
+            ).use { cursor ->
+                check(cursor.moveToFirst())
+                Triple(
+                    if (cursor.isNull(0)) null else cursor.getString(0),
+                    if (cursor.isNull(1)) null else cursor.getString(1),
+                    runCatching {
+                        val json = JSONArray(cursor.getString(2))
+                        List(json.length()) { json.getString(it) }
+                    }.getOrDefault(emptyList()),
+                )
+            }
+            val targetIdentity = identity(targetClusterId)
+            val sourceIdentity = identity(sourceClusterId)
+            val aliases = (targetIdentity.third + sourceIdentity.third + listOfNotNull(sourceIdentity.first))
+                .map(String::trim).filter(String::isNotBlank).distinct().take(MAX_PERSON_ALIASES)
+            db.update("face_instance", ContentValues().apply {
+                put("cluster_id", targetClusterId)
+                put("user_corrected", 1)
+            }, "cluster_id=?", arrayOf(sourceClusterId))
+            db.update("person_attribute_fact", ContentValues().apply { put("cluster_id", targetClusterId) }, "cluster_id=?", arrayOf(sourceClusterId))
+            db.delete("person_cluster", "id=?", arrayOf(sourceClusterId))
+            db.update("person_cluster", ContentValues().apply {
+                val label = targetIdentity.first ?: sourceIdentity.first
+                val relationship = targetIdentity.second ?: sourceIdentity.second
+                if (label == null) putNull("label") else put("label", label)
+                if (relationship == null) putNull("relationship") else put("relationship", relationship)
+                put("aliases", JSONArray(aliases).toString())
+                put("reviewed", if (label != null) 1 else 0)
+                put("updated_at", now)
+            }, "id=?", arrayOf(targetClusterId))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return peopleIndexStatus()
+    }
+
+    fun moveFaceToCluster(faceId: String, requestedTargetClusterId: String? = null): String {
+        require(faceId.length in 3..240) { "Invalid face ID" }
+        val target = requestedTargetClusterId?.trim()?.takeIf(String::isNotBlank)
+            ?: "person_${java.util.UUID.nameUUIDFromBytes("manual:$faceId:${System.currentTimeMillis()}".toByteArray()).toString().replace("-", "")}"
+        require(PERSON_ID.matches(target)) { "Invalid target cluster ID" }
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val source = db.rawQuery("SELECT cluster_id,media_id FROM face_instance WHERE id=?", arrayOf(faceId)).use { cursor ->
+                check(cursor.moveToFirst()) { "Face is unavailable" }
+                (if (cursor.isNull(0)) null else cursor.getString(0)) to cursor.getString(1)
+            }
+            ensureAutomaticPersonCluster(target)
+            db.update("face_instance", ContentValues().apply {
+                put("cluster_id", target)
+                put("user_corrected", 1)
+            }, "id=?", arrayOf(faceId))
+            db.delete(
+                "person_attribute_fact",
+                "media_id=? AND cluster_id IN (?,?)",
+                arrayOf(source.second, source.first.orEmpty(), target),
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return target
+    }
+
+    fun resolveReviewedPersonIds(query: String): Set<String> {
+        val normalizedQuery = query.lowercase(Locale.ROOT)
+        return readableDatabase.rawQuery(
+            "SELECT id,label,relationship,aliases FROM person_cluster WHERE reviewed=1 AND hidden=0",
+            null,
+        ).use { cursor ->
+            buildSet {
+                while (cursor.moveToNext()) {
+                    val id = cursor.getString(0)
+                    val terms = buildList {
+                        if (!cursor.isNull(1)) add(cursor.getString(1))
+                        if (!cursor.isNull(2)) add(cursor.getString(2))
+                        val aliases = runCatching {
+                            val json = JSONArray(cursor.getString(3))
+                            List(json.length()) { json.getString(it) }
+                        }.getOrDefault(emptyList())
+                        addAll(aliases)
+                    }
+                    if (terms.any { identityTermMatches(normalizedQuery, it) }) add(id)
+                }
+            }
+        }
+    }
+
+    fun reviewedFaceBindings(mediaId: String, requestedPeople: Set<String>): List<PersonVerificationBinding> {
+        if (requestedPeople.isEmpty()) return emptyList()
+        val resolved = requestedPeople.flatMap { requested ->
+            resolveReviewedPersonIds(requested).ifEmpty {
+                if (PERSON_ID.matches(requested)) setOf(requested) else emptySet()
+            }
+        }.distinct()
+        if (resolved.isEmpty()) return emptyList()
+        val placeholders = resolved.joinToString(",") { "?" }
+        return readableDatabase.rawQuery(
+            "SELECT f.id,f.cluster_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,p.label,p.relationship,p.aliases " +
+                "FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
+                "WHERE f.media_id=? AND p.reviewed=1 AND p.hidden=0 AND f.cluster_id IN ($placeholders) " +
+                "ORDER BY f.cluster_id,f.quality DESC,f.id",
+            (listOf(mediaId) + resolved).toTypedArray(),
+        ).use { cursor ->
+            val stable = resolved.withIndex().associate { (index, id) -> id to "P${index + 1}" }
+            buildList {
+                while (cursor.moveToNext()) {
+                    val clusterId = cursor.getString(1)
+                    val aliases = runCatching {
+                        val json = JSONArray(cursor.getString(8))
+                        List(json.length()) { json.getString(it) }
+                    }.getOrDefault(emptyList())
+                    add(
+                        PersonVerificationBinding(
+                            faceId = cursor.getString(0),
+                            clusterId = clusterId,
+                            stableLabel = stable.getValue(clusterId),
+                            identityTerms = setOfNotNull(
+                                if (cursor.isNull(6)) null else cursor.getString(6),
+                                if (cursor.isNull(7)) null else cursor.getString(7),
+                            ) + aliases,
+                            left = cursor.getFloat(2),
+                            top = cursor.getFloat(3),
+                            right = cursor.getFloat(4),
+                            bottom = cursor.getFloat(5),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun saveVerifiedPersonAttributeFact(
+        mediaId: String,
+        clusterId: String,
+        predicate: String,
+        value: String,
+        confidence: Float,
+        region: List<Float>,
+        modelVersion: String,
+    ) {
+        require(PERSON_ID.matches(clusterId) && predicate.isNotBlank() && value.isNotBlank()) { "Invalid person fact" }
+        val id = "$mediaId:$clusterId:${predicate.lowercase(Locale.ROOT).hashCode().toUInt()}"
+        writableDatabase.insertWithOnConflict("person_attribute_fact", null, ContentValues().apply {
+            put("id", id)
+            put("media_id", mediaId)
+            put("cluster_id", clusterId)
+            put("predicate", predicate.take(240))
+            put("value", value.take(240))
+            put("confidence", confidence.coerceIn(0f, 1f))
+            put("region", JSONArray(region).toString())
+            put("model_version", modelVersion.take(160))
+            put("updated_at", System.currentTimeMillis())
+        }, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
     fun failFaces(mediaId: String, message: String, permanent: Boolean) {
@@ -1063,7 +1345,13 @@ class GalleryDatabase(
                 "SELECT COUNT(*) FROM video_keyframe", null,
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
             facesScanned = readableDatabase.rawQuery(
-                "SELECT COUNT(*) FROM media_index_stage WHERE stage='FACES' AND status='COMPLETE'",
+                "SELECT COUNT(*) FROM media_index_stage s JOIN media_item m ON m.id=s.media_id " +
+                    "WHERE s.stage='FACES' AND s.status='COMPLETE' AND m.media_kind='IMAGE' " +
+                    "AND m.access_state='ACCESSIBLE' AND m.index_state='READY'",
+                null,
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
+            faceEligible = readableDatabase.rawQuery(
+                "SELECT COUNT(*) FROM media_item WHERE media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY'",
                 null,
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
             pending = items.count { it.indexState == IndexState.PENDING || it.indexState == IndexState.INDEXING },
@@ -1115,7 +1403,10 @@ class GalleryDatabase(
     fun recordQuery(outcome: SearchOutcome, sessionId: String? = null) {
         writableDatabase.insert("query_turn", null, ContentValues().apply {
             put("query", outcome.plan.originalQuery)
-            put("plan_summary", "${outcome.plan.intent}:${outcome.plan.terms.joinToString(",")}")
+            val channels = outcome.channelReports.joinToString(",") { report ->
+                "${report.channel}:${report.status}:${report.searchedCount}/${report.eligibleCount}"
+            }
+            put("plan_summary", "${outcome.plan.intent}:${outcome.plan.terms.joinToString(",")}|channels=$channels")
             put("result_count", outcome.hits.size)
             put("elapsed_ms", outcome.elapsedMs)
             put("created_at", System.currentTimeMillis())
@@ -1475,6 +1766,243 @@ class GalleryDatabase(
         "SELECT enabled FROM people_settings WHERE singleton_id=1",
         null,
     ).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) != 0 }
+
+    private fun clusterExists(db: GallerySqlDatabase, clusterId: String): Boolean = db.rawQuery(
+        "SELECT 1 FROM person_cluster WHERE id=? LIMIT 1",
+        arrayOf(clusterId),
+    ).use(android.database.Cursor::moveToFirst)
+
+    private fun identityTermMatches(normalizedQuery: String, rawTerm: String): Boolean {
+        val term = rawTerm.trim().lowercase(Locale.ROOT)
+        if (term.isEmpty()) return false
+        return Regex("(^|[^\\p{L}\\p{M}\\p{N}])${Regex.escape(term)}([^\\p{L}\\p{M}\\p{N}]|$)")
+            .containsMatchIn(normalizedQuery)
+    }
+
+    fun embeddingReadyMediaIds(): Set<String> = readableDatabase.rawQuery(
+        "SELECT media_id FROM media_index_stage WHERE stage=? AND status=?",
+        arrayOf(IndexStage.EMBEDDING.name, StageStatus.COMPLETE.name),
+    ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    fun frequentlyRetrievedMediaIds(limit: Int = 32): List<String> = readableDatabase.rawQuery(
+        "SELECT media_id,COUNT(*) AS uses FROM result_set_media GROUP BY media_id ORDER BY uses DESC LIMIT ?",
+        arrayOf(limit.coerceIn(1, 128).toString()),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    fun replaceSemanticEnrichmentPlan(plan: SemanticEnrichmentPlan) {
+        writableDatabase.transaction { db ->
+            db.delete(
+                "semantic_enrichment_job",
+                "status IN (?,?,?,?)",
+                arrayOf(
+                    SemanticEnrichmentStatus.PENDING.name,
+                    SemanticEnrichmentStatus.FAILED.name,
+                    SemanticEnrichmentStatus.AUTH_REQUIRED.name,
+                    SemanticEnrichmentStatus.RUNNING.name,
+                ),
+            )
+            db.delete("event_representative", null, null)
+            db.delete("visual_group_member", null, null)
+            db.delete("visual_group", null, null)
+            val now = System.currentTimeMillis()
+            plan.groups.forEach { group ->
+                db.insertOrThrow("visual_group", null, ContentValues().apply {
+                    put("id", group.id)
+                    put("kind", group.kind)
+                    put("canonical_media_id", group.canonicalMediaId)
+                    put("producer_version", "adaptive-groups-v1")
+                    put("updated_at", now)
+                })
+                group.members.forEach { mediaId ->
+                    db.insertOrThrow("visual_group_member", null, ContentValues().apply {
+                        put("group_id", group.id)
+                        put("media_id", mediaId)
+                        put("role", if (mediaId in group.representatives) "REPRESENTATIVE" else "MEMBER")
+                        put("diversity_score", if (mediaId in group.representatives) 1f else 0f)
+                    })
+                }
+            }
+            plan.eventRepresentatives.forEach { representative ->
+                db.insertWithOnConflict("event_representative", null, ContentValues().apply {
+                    put("event_id", representative.eventId)
+                    put("media_id", representative.mediaId)
+                    put("rank", representative.rank)
+                    put("reason", representative.reason)
+                }, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            plan.jobs.forEach { job ->
+                db.insertWithOnConflict("semantic_enrichment_job", null, ContentValues().apply {
+                    put("id", job.id)
+                    put("scope", job.scope.name)
+                    put("subject_id", job.subjectId)
+                    put("representative_media_id", job.representativeMediaId)
+                    put("reason", job.reason)
+                    put("status", job.status.name)
+                    put("attempt_count", job.attemptCount)
+                    put("user_requested", job.userRequested)
+                    putNull("model_version")
+                    putNull("error")
+                    put("updated_at", now)
+                }, SQLiteDatabase.CONFLICT_IGNORE)
+            }
+        }
+    }
+
+    fun claimSemanticEnrichmentJob(userRequestedOnly: Boolean = false): SemanticEnrichmentJobRecord? {
+        var selected: SemanticEnrichmentJobRecord? = null
+        writableDatabase.transaction { db ->
+            val where = if (userRequestedOnly) " AND user_requested=1" else ""
+            selected = db.rawQuery(
+                "SELECT * FROM semantic_enrichment_job WHERE status=?$where ORDER BY user_requested DESC,updated_at LIMIT 1",
+                arrayOf(SemanticEnrichmentStatus.PENDING.name),
+            ).use { cursor ->
+                if (!cursor.moveToFirst()) null else SemanticEnrichmentJobRecord(
+                    id = cursor.text("id"),
+                    scope = SemanticFactScope.valueOf(cursor.text("scope")),
+                    subjectId = cursor.text("subject_id"),
+                    representativeMediaId = cursor.text("representative_media_id"),
+                    reason = cursor.text("reason"),
+                    status = SemanticEnrichmentStatus.RUNNING,
+                    attemptCount = cursor.getInt(cursor.getColumnIndexOrThrow("attempt_count")) + 1,
+                    userRequested = cursor.getInt(cursor.getColumnIndexOrThrow("user_requested")) != 0,
+                    modelVersion = cursor.nullableText("model_version"),
+                    error = cursor.nullableText("error"),
+                )
+            }
+            selected?.let { job ->
+                db.update("semantic_enrichment_job", ContentValues().apply {
+                    put("status", SemanticEnrichmentStatus.RUNNING.name)
+                    put("attempt_count", job.attemptCount)
+                    put("updated_at", System.currentTimeMillis())
+                    putNull("error")
+                }, "id=? AND status=?", arrayOf(job.id, SemanticEnrichmentStatus.PENDING.name))
+            }
+        }
+        return selected
+    }
+
+    fun hasPendingSemanticEnrichmentJobs(): Boolean = readableDatabase.rawQuery(
+        "SELECT 1 FROM semantic_enrichment_job WHERE status=? LIMIT 1",
+        arrayOf(SemanticEnrichmentStatus.PENDING.name),
+    ).use(android.database.Cursor::moveToFirst)
+
+    fun completeSemanticEnrichment(job: SemanticEnrichmentJobRecord, facts: List<SemanticFactRecord>) {
+        writableDatabase.transaction { db ->
+            val now = System.currentTimeMillis()
+            facts.forEach { fact ->
+                val targets = if (fact.applicability == "SAFE_FOR_EXACT_DUPLICATES") {
+                    exactDuplicateMediaIds(db, fact.evidenceMediaId)
+                } else {
+                    setOf(fact.subjectId)
+                }
+                targets.forEach { subjectId ->
+                    val stable = "${fact.scope}|$subjectId|${fact.predicate}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}"
+                    val id = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
+                    db.insertWithOnConflict("semantic_fact", null, ContentValues().apply {
+                        put("id", id)
+                        put("scope", if (subjectId == fact.evidenceMediaId) fact.scope.name else SemanticFactScope.MEDIA.name)
+                        put("subject_id", subjectId)
+                        put("predicate", fact.predicate)
+                        put("value", fact.value)
+                        put("confidence", fact.confidence)
+                        put("evidence_media_id", fact.evidenceMediaId)
+                        if (fact.region == null) putNull("region") else put("region", JSONArray(fact.region).toString())
+                        put("applicability", if (subjectId == fact.evidenceMediaId) fact.applicability else "EXACT_DUPLICATE_SHARED")
+                        put("model_version", fact.modelVersion)
+                        put("prompt_version", fact.promptVersion)
+                        put("updated_at", now)
+                    }, SQLiteDatabase.CONFLICT_REPLACE)
+                }
+            }
+            db.update("semantic_enrichment_job", ContentValues().apply {
+                put("status", SemanticEnrichmentStatus.COMPLETE.name)
+                put("model_version", facts.firstOrNull()?.modelVersion)
+                putNull("error")
+                put("updated_at", now)
+            }, "id=?", arrayOf(job.id))
+            updateStage(
+                db,
+                job.representativeMediaId,
+                IndexStage.ENRICHMENT,
+                StageStatus.COMPLETE,
+                facts.firstOrNull()?.modelVersion ?: "adaptive-no-facts-v1",
+            )
+        }
+    }
+
+    fun failSemanticEnrichment(
+        job: SemanticEnrichmentJobRecord,
+        error: String,
+        retryable: Boolean,
+        authenticationRequired: Boolean = false,
+    ) {
+        writableDatabase.transaction { db ->
+            val status = when {
+                authenticationRequired -> SemanticEnrichmentStatus.AUTH_REQUIRED
+                retryable && job.attemptCount < 3 -> SemanticEnrichmentStatus.PENDING
+                else -> SemanticEnrichmentStatus.FAILED
+            }
+            db.update("semantic_enrichment_job", ContentValues().apply {
+                put("status", status.name)
+                put("error", error.take(240))
+                put("updated_at", System.currentTimeMillis())
+            }, "id=?", arrayOf(job.id))
+            if (status == SemanticEnrichmentStatus.FAILED) {
+                updateStage(
+                    db,
+                    job.representativeMediaId,
+                    IndexStage.ENRICHMENT,
+                    StageStatus.FAILED_PERMANENT,
+                    "adaptive-enrichment-v1",
+                    error = error,
+                )
+            }
+        }
+    }
+
+    fun semanticFacts(mediaIds: Collection<String>): List<SemanticFactRecord> = mediaIds.chunked(SQLITE_ID_CHUNK).flatMap { ids ->
+        if (ids.isEmpty()) return@flatMap emptyList()
+        readableDatabase.rawQuery(
+            "SELECT * FROM semantic_fact WHERE subject_id IN (${ids.joinToString(",") { "?" }})",
+            ids.toTypedArray(),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        SemanticFactRecord(
+                            scope = SemanticFactScope.valueOf(cursor.text("scope")),
+                            subjectId = cursor.text("subject_id"),
+                            predicate = cursor.text("predicate"),
+                            value = cursor.text("value"),
+                            confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
+                            evidenceMediaId = cursor.text("evidence_media_id"),
+                            region = cursor.nullableText("region")?.let { encoded ->
+                                JSONArray(encoded).let { array -> List(array.length()) { array.getDouble(it).toFloat() } }
+                            },
+                            applicability = cursor.text("applicability"),
+                            modelVersion = cursor.text("model_version"),
+                            promptVersion = cursor.text("prompt_version"),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun hasAuthenticationProtectedOcr(mediaId: String): Boolean = readableDatabase.rawQuery(
+        "SELECT 1 FROM ocr_entity WHERE media_id=? AND entity_type IN ('PASSWORD','EMAIL','PHONE','ORDER_ID') LIMIT 1",
+        arrayOf(mediaId),
+    ).use(android.database.Cursor::moveToFirst)
+
+    private fun exactDuplicateMediaIds(db: GallerySqlDatabase, mediaId: String): Set<String> = db.rawQuery(
+        "SELECT sibling.media_id FROM visual_group_member source JOIN visual_group g ON g.id=source.group_id JOIN visual_group_member sibling ON sibling.group_id=g.id WHERE source.media_id=? AND g.kind='EXACT_DUPLICATE'",
+        arrayOf(mediaId),
+    ).use { cursor ->
+        buildSet {
+            add(mediaId)
+            while (cursor.moveToNext()) add(cursor.getString(0))
+        }
+    }
 
     companion object {
         private const val SQLITE_ID_CHUNK = 800

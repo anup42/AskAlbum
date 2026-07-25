@@ -15,18 +15,18 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         val intent = enum<QueryIntent>(json, "intent")
         val semantic = json.optJSONArray("semanticClauses")?.objects(MAX_SEMANTIC_CLAUSES) { item ->
             item.requireOnly("text", "canonicalText", "polarity", "hardness", "subject", "relationToPerson")
-            SemanticClause(
+            SemanticPolarityNormalizer.normalize(SemanticClause(
                 text = item.getString("text").trim(),
                 canonicalText = item.optNullableString("canonicalText"),
                 polarity = item.optEnum("polarity", Polarity.POSITIVE),
                 hardness = item.optEnum("hardness", ConstraintStrength.SOFT),
                 subject = item.optEnum("subject", SemanticSubject.WHOLE_MEDIA),
                 relationToPerson = item.optNullableString("relationToPerson"),
-            )
+            ))
         }.orEmpty()
         val terms = json.optJSONArray("terms")?.strings(MAX_TERMS).orEmpty().map { it.lowercase(Locale.ROOT) }.distinct()
         val finalTerms = if (terms.isNotEmpty()) terms else semantic.mapNotNull { it.canonicalText ?: it.text }.map { it.lowercase(Locale.ROOT) }.distinct()
-        val followUp = FollowUpLanguage.isFollowUp(query)
+        val followUp = FollowUpLanguage.isFollowUp(query, !activeResultIds.isNullOrEmpty())
         require(finalTerms.isNotEmpty() || followUp || intent in setOf(QueryIntent.COUNT, QueryIntent.LIST, QueryIntent.TIMELINE)) {
             "Planner produced no searchable constraints"
         }
@@ -145,7 +145,16 @@ object FollowUpLanguage {
         "only ", "what about ", "with ", "without ", "which ", "best ", "and now ", "same but ",
         "sirf ", "bas ", "keval ", "केवल ", "सिर्फ़ ", "सिर्फ ",
     )
-    fun isFollowUp(query: String): Boolean = prefixes.any(query.trim().lowercase(Locale.ROOT)::startsWith)
+    private val contextualForms = listOf(
+        Regex("""^(?:now|same\b|exclude\b|excluding\b|remove\b|clear\b|show\s+close[- ]?ups?\b)"""),
+        Regex("""^(?:अब|वही|हटाओ|निकालो)\b"""),
+    )
+
+    fun isFollowUp(query: String, activeResultAvailable: Boolean = false): Boolean {
+        val normalized = query.trim().lowercase(Locale.ROOT)
+        if (prefixes.any(normalized::startsWith)) return true
+        return activeResultAvailable && contextualForms.any { it.containsMatchIn(normalized) }
+    }
 }
 
 private fun JSONObject.requireOnly(vararg allowed: String): JSONObject {

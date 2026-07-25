@@ -1,5 +1,88 @@
 # Agentic Gallery implementation status
 
+## Phase 6 - connected-device hardening and delivery (25 July 2026)
+
+Status: **PARTIAL.**
+
+- Full model-independent CI unit suite: 147 tests, 0 failures, 0 errors, 0 skipped.
+- `OfflineDemoDebug` assembled and replace-installed on Samsung SM-F966B without clearing app data.
+- Connected PASS: CI/offline network privacy, native FP16 parity, 5k/20k vector benchmark, persistent result-set follow-up, people editing, semantic-fact persistence, and legacy-to-schema-13 migration.
+- Connected SKIPPED: sensitive OCR retrieval, receipt OCR QA, no-fabrication corpus query, and cancellation UI because the CI package has no active private OCR/Gemma path or cancellable model window. These are not reported as passes.
+- NOT RUN: the full retained core-corpus query matrix, real Gemma E2B planning/verification/composition, real person-to-body query, process-death during a new full index, and sustained 20k end-to-end indexing. The connected package lacks the required retained corpus, verified Gemma pack, and people index.
+- Both offline and CI merged manifests have no Internet permission. Exported debug harness components now require platform signature-level `android.permission.DUMP`.
+- Post-install launch succeeded with Room schema 13 and no migration crash. Existing SFace/retrieval packs and vector storage remained present.
+- The current production database contains 14 demo media, 0 face instances, and 0 person clusters; people indexing is disabled. Replace-install did not delete these records because no people records existed in the connected package at verification time.
+- People is visible as its own Menu destination and opens the review/named/hidden screen instead of Privacy.
+- APK pushed to `/sdcard/Download/AskPhotos-offlineDemo-0.0.6-20260725.apk`; local/device SHA-256 `105a6cba26f13776a5cdcc9ff96353426f966ff319dc47252b4b6cde8d5796e0`.
+
+## Phase 5 - adaptive semantic enrichment (25 July 2026)
+
+Status: **PASS.**
+
+- Room schema 13 adds visual groups/members, event representatives, structured semantic facts, and resumable enrichment jobs through a non-destructive 12-to-13 migration.
+- Exact duplicates share canonical facts only when explicitly marked safe; burst, scene, and event facts remain bound to their evidence representative.
+- Representative selection combines quality, capture-time, people-count, OCR, perceptual diversity, and close-up/wide framing, with multiple representatives for larger groups/events.
+- Jobs are bounded to representatives, ambiguous non-sensitive documents, frequently retrieved media, and important outliers; the app does not caption every gallery item.
+- Background work requires no network, charging and device idle unless user-requested, battery/storage headroom, and thermal admission; work is checkpointed and resumable.
+- Enrichment JSON is typed and allowlisted, rejects sensitive/private values, and uses the shared serialized Gemma session.
+- Cached semantic facts are added to result evidence with model/prompt provenance; authentication-protected OCR is never sent to background Gemma.
+- Host gate passed in 20 seconds; isolated semantic persistence and legacy-to-schema-13 migration tests each passed on SM-F966B.
+
+## Phase 4 - follow-ups, negation, video, and Gemma reuse (25 July 2026)
+
+Status: **PASS.**
+
+- Follow-up detection now combines active conversation state with structural forms such as `Now`, `Exclude`, `Same event`, and `Show close-ups`; prefix rules remain fallback.
+- Version 2 `PlanPatch` records typed add/replace/remove operations while the app retains ownership of result-set IDs and media IDs.
+- Negative clauses are normalized to positive predicates plus Kotlin-owned polarity; Kotlin, not Gemma, computes HARD-condition acceptance.
+- Video candidates remain eligible for verification, load the nearest matched private keyframe, retain its timestamp, and return the parent video.
+- One application-scoped Gemma session is serialized and reused across planning, verification, and answer composition, with cancellation, GPU/CPU fallback, rollback-compatible failures, idle eviction, memory-pressure eviction, and initialization counters.
+- Focused CI gate: Phase 4 orchestration, existing plan-patch, and visual-verifier tests passed in 20 seconds.
+
+## Phase 3 - person tagging and people search (25 July 2026)
+
+Status: **PASS.**
+
+- Added `AppDestination.PEOPLE` with To review, Named people, and Hidden sections, representative face crops, supporting thumbnails, and edit actions.
+- Added rename, relationship/Me, multilingual aliases, merge, split/move, not-this-person, hide/unhide, and remove-label operations without modifying original media.
+- Added non-destructive Room 11→12 migration for hidden clusters, durable user-corrected face assignments, and cached person-attribute facts.
+- Reviewed names, relationships, and aliases resolve Unicode-safely from the original query; hidden and unreviewed clusters never resolve as identities.
+- Person verification now creates P-labelled full-image/contact-sheet evidence, fails closed on ambiguous face/body binding, and caches verified cluster-bound attributes.
+- Host gate: focused people resolver and prompt-binding tests plus CI Android-test compilation passed.
+- Device gate: `PeopleEditingDatabaseTest` passed on SM-F966B with 1 test, 0 failures, 0 errors, and 0 skipped.
+
+## Phase 2 - real capability executors (25 July 2026)
+
+Status: **PASS.**
+
+- Added one capability registry consumed by planner schema, validator, deterministic executor dispatch, suggested queries, UI, and tests.
+- Added real executors for find, list, count, fact/document QA, sum, min/max, event summary, timeline, and compare.
+- OCR fact QA is allowlisted for receipt total, password, flight number/time, order ID, email, phone, date, URL, and merchant.
+- Sum/min/max deduplicate source documents, use decimal arithmetic outside Gemma, and reject mixed-currency aggregation.
+- Password evidence is authentication-gated by source type even when the recognized value itself lacks a sensitivity keyword.
+- Focused Phase 2 gate: 40 tests PASS in 11s after two compiler-precedence regressions were repaired.
+
+## Phase 1 - retrieval truthfulness and correctness (25 July 2026)
+
+Status: **PASS.**
+
+- Added typed lexical, semantic, event, OCR, people, and visual-verification reports through outcomes, answers, persisted query summaries, and the results coverage UI.
+- Semantic pack absence, embedding/search failure, and partial vector coverage no longer collapse to a successful empty channel.
+- Complete hard eligibility is converted to media/keyframe vector IDs before top-K; original, positive-clause, and canonical multilingual text are fused.
+- Semantic counts are retrieval-pass counts, and semantic execution can never produce `COMPLETE_MODEL_SCAN`.
+- Natural-language SQL words are allowed while URI/path/control-token validation remains enforced; `total eclipse` stays media retrieval.
+- Focused CI gate: seven Phase 1/retrieval test classes PASS in 39s; changed repository and Compose sources compiled successfully.
+
+## Phase 0 refresh - model-independent baseline (25 July 2026)
+
+Status: **PASS.**
+
+- Added a `ciDebug` distribution that packages no SigLIP2 or SFace binary and never schedules embedded-model installation.
+- The CI variant retains deterministic fixture planning and local non-generative fallbacks; production `consumer` and `offlineDemo` variants retain the existing embedded assets and verified activation paths.
+- Baseline before this edit: `:app:testOfflineDemoDebugUnitTest :app:assembleOfflineDemoDebug` PASS in 1m35s.
+- Model-independent gate: `:app:testCiDebugUnitTest :app:assembleCiDebug` PASS in 1m48s with no embedded model-asset task.
+- Initial failures were environmental: sandboxed Gradle-wrapper download and an unset Android SDK path. No source failure was observed.
+
 Last updated: 21 July 2026
 
 This is the evidence-backed implementation ledger for the native Android application under `android/`. A capability is marked complete only after its stated command or device gate has succeeded.
@@ -3093,3 +3176,48 @@ Known follow-up work:
 - Favorites are currently viewer-session state rather than a persisted database field.
 - Navigation still uses the existing typed application destination state; a full Navigation Compose nested graph and foldable two-pane viewer remain future structural improvements.
 - Media delete/edit and pinch-to-change-grid-density were not added in this visual slice because they require separate safe MediaStore mutation and gesture acceptance work.
+
+## Dark-mode settings and indexing-state repair — application 0.0.5 (22 July 2026)
+
+Status: **IMPLEMENTED, HOST-VERIFIED, INSTALLED, AND VISUALLY VERIFIED IN DARK MODE ON A CONNECTED SAMSUNG DEVICE.**
+
+Files changed:
+
+- `android/app/src/main/java/com/askphotos/android/MainActivity.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryViewModel.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryDatabase.kt`
+- `android/app/src/main/java/com/askphotos/android/GalleryModels.kt`
+- `android/app/src/main/java/com/askphotos/android/PeopleIndexScheduler.kt`
+- `android/app/src/androidTest/java/com/askphotos/android/PeoplePrivacyDatabaseTest.kt`
+- `android/app/build.gradle.kts`
+
+Architecture and behavior decisions:
+
+- Settings, Privacy, onboarding, operation banners, model cards, and image fallbacks now use `MaterialTheme.colorScheme` surfaces/content colors rather than fixed light-only white, lime, green, or gray values. Intentional black media-viewer overlays remain unchanged.
+- Photos, Albums, Ask, Results, and Menu now apply a shared status-bar inset. Device QA found and corrected content scrolling beneath the clock on Photos/Ask during the broader dark-screen inspection.
+- An active indexing stage now displays a determinate circular progress indicator and percentage in its card. Active model provisioning/download cards use the same circular progress treatment.
+- The bottom action changes immediately from `Resume indexing` to a non-clickable `Indexing in progress` status after activation. Restart recovers interrupted database stages, cancels stale tagged WorkManager chains, and enqueues fresh base and opted-in people work with `REPLACE`; duplicate monitor coroutines are cancelled.
+- Face indexing remains explicitly opt-in. When disabled, Settings reports `Off` instead of `0 / all media`. When enabled, the denominator is eligible accessible ready images, not every gallery item.
+- Root cause of the persistent zero on a demo-only installation: all `DEMO_ASSET` rows were excluded from face-stage enqueue, pending selection, and model-version reindex SQL. The bundled open-license demo images are now eligible only after people consent, and an instrumented database regression asserts the behavior.
+- Version incremented to `0.0.5` (`versionCode` 5).
+- Fixed the generated embedded-SigLIP2 asset task dependency for lint model generation; this was exposed by the full gate.
+
+Commands and results:
+
+- Initial `adb devices -l`: no device. After reconnection: Samsung SM-S928B, Android 16/API 36, arm64-v8a, SM8650.
+- `:app:testOfflineDemoDebugUnitTest :app:compileOfflineDemoDebugAndroidTestKotlin`: PASS; 53 tasks.
+- First lint/assemble gate: FAILED on a pre-existing implicit dependency between lint and `prepareEmbeddedSiglip2Assets`; task dependency repaired.
+- `:app:lintOfflineDemoDebug :app:assembleOfflineDemoDebug :app:assembleOfflineDemoDebugAndroidTest`: PASS; 127 tasks in 2m36s. Lint reports 0 errors and 58 existing warnings.
+- Final `:app:lintOfflineDemoDebug` after the status-bar repair: PASS; 68 tasks in 1m37s.
+- Android build/install helper for `OfflineDemoDebug`: PASS; final 0.0.5 APK replace-installed on SM-S928B.
+- `connectedOfflineDemoDebugAndroidTest` scoped to `PeoplePrivacyDatabaseTest`: PASS, 2/2 tests. This used an isolated database and did not enable biometric indexing for the user's gallery.
+- Direct dark-mode visual QA: PASS for Settings stage cards, circular progress, active-indexing state, Photos, Albums, Ask, Menu, and Privacy. No app FATAL/ANR/OOM was found in targeted post-run diagnostics.
+- Device package metadata: `versionName=0.0.5`, `versionCode=5`.
+- The connected Gradle test temporarily uninstalled the target package and cleared its local index. After the final reinstall, Android media grants were confirmed (`READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, and selected-media access all granted); the automatic MediaStore rescan repopulated 11,602 visible gallery items. No personal media was modified.
+- APK: `android/app/build/outputs/apk/offlineDemo/debug/app-offlineDemo-debug.apk`, 589,584,946 bytes, SHA-256 `D23A6156E220D49F4EC80223902CDB176D4AF8858C2BBA77B617046832FEA402`.
+
+Artifacts and limitation:
+
+- Screenshots and UI hierarchies: `artifacts/device-runs/dark_settings_0.0.5/`; diagnostics: `artifacts/device-runs/dark_settings_0.0.5/diagnostics/20260723_002304/`.
+- The observed device was already actively indexing, so a second live `Resume indexing` tap was not manufactured by mutating the user's gallery. The device did verify the replacement `Indexing in progress` state and circular indicators; the stale-work restart path is compile-tested and uses WorkManager cancellation plus `REPLACE`.
+- Face indexing remains off in the installed app because the user has not consented on this device. Its opt-in demo eligibility and reset semantics passed 2/2 isolated device tests; no biometric setting was changed during acceptance.

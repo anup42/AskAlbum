@@ -92,6 +92,18 @@ class GalleryRoomMigrationTest {
                     assertEquals(0, cursor.getInt(0))
                 }
             }
+            database.query("PRAGMA table_info(person_cluster)").use { cursor ->
+                val columns = buildSet {
+                    while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+                }
+                assertTrue("People migration must preserve clusters and add hiding", "hidden" in columns)
+            }
+            database.query("PRAGMA table_info(face_instance)").use { cursor ->
+                val columns = buildSet {
+                    while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+                }
+                assertTrue("People migration must preserve faces and add correction locks", "user_corrected" in columns)
+            }
             listOf("query_session", "result_set", "result_set_media").forEach { table ->
                 database.query("SELECT COUNT(*) FROM $table").use { cursor ->
                     assertTrue(cursor.moveToFirst())

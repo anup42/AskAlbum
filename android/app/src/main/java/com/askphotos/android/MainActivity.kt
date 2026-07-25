@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -55,6 +56,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -269,7 +271,8 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     onAlbums = { viewModel.navigate(AppDestination.ALBUMS) },
                     onDocuments = { viewModel.ask("Show documents") },
                     onVideos = { viewModel.ask("Show videos") },
-                    onPeople = { viewModel.navigate(AppDestination.PRIVACY) },
+                    onPeople = { viewModel.navigate(AppDestination.PEOPLE) },
+                    onPrivacy = { viewModel.navigate(AppDestination.PRIVACY) },
                     onPlaces = { viewModel.ask("Show photos grouped by place") },
                     onSettings = { viewModel.navigate(AppDestination.INDEX_MANAGER) },
                 )
@@ -285,6 +288,7 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     faceModel = state.faceModel,
                     faceModelDownload = state.faceModelDownload,
                     operationMessage = state.operationMessage,
+                    indexingActive = state.indexingActive,
                     onRetry = viewModel::retryIndexing,
                     onImportModel = { modelPicker.launch(arrayOf("application/octet-stream", "application/zip", "*/*")) },
                     onSelectModelTier = viewModel::selectModelTier,
@@ -304,6 +308,18 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                     onImportFaceModel = {
                         faceModelPicker.launch(arrayOf("application/octet-stream", "*/*"))
                     },
+                )
+                state.destination == AppDestination.PEOPLE -> PeopleScreen(
+                    peopleIndex = state.peopleIndex,
+                    clusters = state.peopleReviewClusters,
+                    operationMessage = state.operationMessage,
+                    onReviewCluster = { id, label, relationship, aliases ->
+                        viewModel.saveReviewedPersonCluster(id, label, relationship, aliases)
+                    },
+                    onRemoveLabel = viewModel::removePersonLabel,
+                    onSetHidden = viewModel::setPersonClusterHidden,
+                    onMerge = viewModel::mergePersonClusters,
+                    onMoveFace = viewModel::moveFaceToCluster,
                 )
                 else -> PrivacyScreen(
                     peopleIndex = state.peopleIndex,
@@ -363,7 +379,8 @@ private fun AppNavigation(selected: AppDestination, onSelect: (AppDestination) -
                 onClick = { onSelect(AppDestination.ASK) },
             )
             GalleryNavigationItem(
-                selected = selected == AppDestination.MENU || selected == AppDestination.INDEX_MANAGER || selected == AppDestination.PRIVACY,
+                selected = selected == AppDestination.MENU || selected == AppDestination.INDEX_MANAGER || selected == AppDestination.PRIVACY ||
+                    selected == AppDestination.PEOPLE,
                 label = "Menu",
                 icon = R.drawable.ic_gallery_menu,
                 onClick = { onSelect(AppDestination.MENU) },
@@ -409,18 +426,13 @@ private fun ErrorState(message: String) {
     }
 }
 
-private val suggestions = listOf(
-    "Show Amsterdam photos",
-    "How many beach photos?",
-    "Find colorful flowers",
-    "Show bicycles",
-)
+private val suggestions = CapabilityRegistry.suggestedQueries
 
 @Composable
 private fun LegacyAskScreen(state: GalleryUiState, viewModel: GalleryViewModel, onEvidence: (SearchHit) -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
-        modifier = Modifier.fillMaxSize().semantics { contentDescription = "Ask results" },
+        modifier = Modifier.fillMaxSize().statusBarsPadding().semantics { contentDescription = "Ask results" },
         contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 28.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -551,7 +563,7 @@ private fun LegacyResultsScreen(
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
-        modifier = Modifier.fillMaxSize().semantics { contentDescription = "Ask results" },
+        modifier = Modifier.fillMaxSize().statusBarsPadding().semantics { contentDescription = "Ask results" },
         contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 28.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -740,6 +752,7 @@ private fun IndexManagerScreen(
     faceModel: FaceModelStatus,
     faceModelDownload: FaceModelDownloadProgress,
     operationMessage: String?,
+    indexingActive: Boolean,
     onRetry: () -> Unit,
     onImportModel: () -> Unit,
     onSelectModelTier: (GemmaModelTier) -> Unit,
@@ -766,53 +779,72 @@ private fun IndexManagerScreen(
         )
         Spacer(Modifier.height(20.dp))
         IndexMetric("Media discovered", index.discovered, index.discovered, "Asset manifest")
-        IndexMetric("Metadata ready", index.metadataReady, index.discovered, "demo-metadata-v1")
-        IndexMetric("Semantic facts ready", index.semanticFactsReady, index.discovered, "demo-sidecar-v1")
+        IndexMetric("Metadata ready", index.metadataReady, index.discovered, "demo-metadata-v1", inProgress = indexingActive && index.metadataReady < index.discovered)
+        IndexMetric("Semantic facts ready", index.semanticFactsReady, index.discovered, "demo-sidecar-v1", inProgress = indexingActive && index.semanticFactsReady < index.discovered)
         IndexMetric(
             "OCR ready or skipped",
             index.ocrReady,
             index.discovered,
             ocrModel.producerVersion ?: "mlkit-text-latin-v2 fallback",
+            inProgress = indexingActive && index.ocrReady < index.discovered,
         )
-        IndexMetric("Visual labels ready", index.visualLabelsReady, index.discovered, "mlkit-image-label-v1 bundled")
+        IndexMetric("Visual labels ready", index.visualLabelsReady, index.discovered, "mlkit-image-label-v1 bundled", inProgress = indexingActive && index.visualLabelsReady < index.discovered)
         IndexMetric("Video keyframes", index.videoKeyframesReady, index.videoKeyframesReady, VideoKeyframePolicy.PRODUCER_VERSION)
         IndexMetric(
-            "Face stage complete",
+            "Face indexing",
             index.facesScanned,
-            index.discovered,
+            index.faceEligible,
             when {
-                !peopleIndex.enabled -> "disabled-until-opt-in"
+                !peopleIndex.enabled -> "Off - enable People indexing in Privacy"
                 faceModel.installed -> faceModel.producerVersion ?: FaceModelCatalog.sface.producerVersion
                 else -> "mlkit-face-detection-v1; SFace not installed"
             },
+            enabled = peopleIndex.enabled,
+            inProgress = indexingActive && peopleIndex.pendingMediaCount > 0,
         )
-        IndexMetric("Pending", index.pending, index.discovered, "WorkManager resumable queue")
         IndexMetric("Events", index.events, index.events, "deterministic day grouping")
-        IndexMetric("Failed", index.failed, index.discovered, "No retries pending")
-        if (index.pending > 0 || index.failed > 0) {
-            Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("Resume indexing") }
+        val pendingCount = index.pending + peopleIndex.pendingMediaCount
+        if (pendingCount > 0 || index.failed > 0) {
+            if (indexingActive) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().testTag("indexing-in-progress"),
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                ) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 3.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text("Indexing in progress", fontWeight = FontWeight.SemiBold)
+                            Text("$pendingCount remaining", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        }
+                    }
+                }
+            } else {
+                Button(onClick = onRetry, modifier = Modifier.fillMaxWidth().testTag("resume-indexing")) { Text("Resume indexing") }
+            }
             Spacer(Modifier.height(10.dp))
         }
         operationMessage?.let {
-            Surface(color = Lime, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                Text(it, Modifier.padding(14.dp), color = Forest, fontWeight = FontWeight.SemiBold)
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Text(it, Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.SemiBold)
             }
             Spacer(Modifier.height(10.dp))
         }
         Spacer(Modifier.height(12.dp))
-        Card(colors = CardDefaults.cardColors(containerColor = Forest), shape = RoundedCornerShape(22.dp)) {
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), shape = RoundedCornerShape(22.dp)) {
             Column(Modifier.padding(20.dp)) {
-                Text("Runtime policy", color = Lime, fontWeight = FontWeight.Bold)
+                Text("Runtime policy", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(9.dp))
-                Text("Offline hybrid local runtime", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                Text("Offline hybrid local runtime", color = MaterialTheme.colorScheme.onPrimaryContainer, fontSize = 21.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(7.dp))
-                Text("OCR, image labeling, face detection, PDF rendering, and bounded video keyframes run locally. PaddleOCR, Gemma, SigLIP2, and SFace use separate verified model packs with deterministic fallbacks where available.", color = Color(0xFFDCE8E2))
+                Text("OCR, image labeling, face detection, PDF rendering, and bounded video keyframes run locally. PaddleOCR, Gemma, SigLIP2, and SFace use separate verified model packs with deterministic fallbacks where available.", color = MaterialTheme.colorScheme.onPrimaryContainer)
                 Spacer(Modifier.height(12.dp))
-                Text("Local database: ${formatBytes(index.storageBytes)}", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("Local database: ${formatBytes(index.storageBytes)}", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.SemiBold)
             }
         }
         Spacer(Modifier.height(14.dp))
-        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(20.dp)) {
                 Text("Multilingual OCR engine", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(7.dp))
@@ -832,12 +864,7 @@ private fun IndexManagerScreen(
                     Spacer(Modifier.height(10.dp))
                     when (ocrModelDownload.state) {
                         GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING -> {
-                            LinearProgressIndicator(
-                                progress = { ocrModelDownload.fraction },
-                                modifier = Modifier.fillMaxWidth(),
-                                color = Forest,
-                                trackColor = Mist,
-                            )
+                            SettingsCircularProgress(ocrModelDownload.fraction)
                             Text(
                                 if (ocrModelDownload.state == GemmaDownloadState.VERIFYING) "Verifying SHA-256 and activating..." else "${formatBytes(ocrModelDownload.bytesDownloaded)} of ${formatBytes(ocrModelDownload.totalBytes)}",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -861,7 +888,7 @@ private fun IndexManagerScreen(
             }
         }
         Spacer(Modifier.height(14.dp))
-        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(20.dp)) {
                 Text("Gemma model pack", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(7.dp))
@@ -896,12 +923,7 @@ private fun IndexManagerScreen(
                     Spacer(Modifier.height(10.dp))
                     when (modelDownload.state) {
                         GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING -> {
-                            LinearProgressIndicator(
-                                progress = { modelDownload.fraction },
-                                modifier = Modifier.fillMaxWidth(),
-                                color = Forest,
-                                trackColor = Mist,
-                            )
+                            SettingsCircularProgress(modelDownload.fraction)
                             Text(
                                 if (modelDownload.state == GemmaDownloadState.VERIFYING) "Verifying SHA-256 and activating…" else "${formatBytes(modelDownload.bytesDownloaded)} of ${formatBytes(modelDownload.totalBytes)}",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -927,7 +949,7 @@ private fun IndexManagerScreen(
             }
         }
         Spacer(Modifier.height(14.dp))
-        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(20.dp)) {
                 Text("Face identity model", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(7.dp))
@@ -938,31 +960,37 @@ private fun IndexManagerScreen(
                     fontSize = 11.sp,
                 )
                 faceModel.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
-                if (!faceModel.installed && BuildConfig.ALLOW_MODEL_DOWNLOAD) {
+                if (!faceModel.installed && faceModelDownload.state in setOf(
+                        GemmaDownloadState.QUEUED,
+                        GemmaDownloadState.DOWNLOADING,
+                        GemmaDownloadState.VERIFYING,
+                    )
+                ) {
                     Spacer(Modifier.height(10.dp))
-                    when (faceModelDownload.state) {
-                        GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING -> {
-                            LinearProgressIndicator(
-                                progress = { faceModelDownload.fraction },
-                                modifier = Modifier.fillMaxWidth(),
-                                color = Forest,
-                                trackColor = Mist,
-                            )
-                            Text(
-                                if (faceModelDownload.state == GemmaDownloadState.VERIFYING) "Verifying SHA-256 and activating…" else "${formatBytes(faceModelDownload.bytesDownloaded)} of ${formatBytes(faceModelDownload.totalBytes)}",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 11.sp,
-                            )
-                            TextButton(onClick = onCancelFaceModelDownload) { Text("Cancel download") }
-                        }
-                        else -> Button(
-                            onClick = onDownloadFaceModel,
-                            modifier = Modifier.fillMaxWidth().testTag("download-sface"),
-                        ) { Text("Download SFace ONNX") }
-                    }
+                    SettingsCircularProgress(faceModelDownload.fraction)
+                    Text(
+                        if (faceModelDownload.state == GemmaDownloadState.VERIFYING) {
+                            "Verifying embedded SFace and activating…"
+                        } else {
+                            "Installing embedded SFace… ${formatBytes(faceModelDownload.bytesDownloaded)} of ${formatBytes(faceModelDownload.totalBytes)}"
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                    )
                 } else if (!faceModel.installed) {
                     Spacer(Modifier.height(8.dp))
-                    Text("Offline demo build: import the pinned ONNX file locally.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    Text(
+                        "The embedded SFace model is installed automatically into app-private storage.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                    )
+                    faceModelDownload.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                    if (BuildConfig.ALLOW_MODEL_DOWNLOAD) {
+                        Button(
+                            onClick = onDownloadFaceModel,
+                            modifier = Modifier.fillMaxWidth().testTag("download-sface"),
+                        ) { Text("Retry from verified source") }
+                    }
                 }
                 Spacer(Modifier.height(11.dp))
                 OutlinedButton(onClick = onImportFaceModel) {
@@ -971,7 +999,7 @@ private fun IndexManagerScreen(
             }
         }
         Spacer(Modifier.height(14.dp))
-        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(20.dp)) {
                 Text("SigLIP2 retrieval pack", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(7.dp))
@@ -993,12 +1021,7 @@ private fun IndexManagerScreen(
                     Spacer(Modifier.height(10.dp))
                     when (retrievalProvision.state) {
                         GemmaDownloadState.QUEUED, GemmaDownloadState.DOWNLOADING, GemmaDownloadState.VERIFYING -> {
-                            LinearProgressIndicator(
-                                progress = { retrievalProvision.fraction },
-                                modifier = Modifier.fillMaxWidth(),
-                                color = Forest,
-                                trackColor = Mist,
-                            )
+                            SettingsCircularProgress(retrievalProvision.fraction)
                             Text(
                                 if (retrievalProvision.state == GemmaDownloadState.VERIFYING) {
                                     "Verifying embedded archive and every model artifact..."
@@ -1025,7 +1048,7 @@ private fun IndexManagerScreen(
             }
         }
         Spacer(Modifier.height(14.dp))
-        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(20.dp)) {
                 Text("Privacy posture", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(10.dp))
@@ -1041,27 +1064,50 @@ private fun IndexManagerScreen(
 }
 
 @Composable
-private fun IndexMetric(label: String, value: Int, total: Int, version: String) {
+private fun SettingsCircularProgress(fraction: Float) {
+    val safeFraction = fraction.coerceIn(0f, 1f)
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(48.dp).testTag("settings-card-progress"), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(progress = { safeFraction }, modifier = Modifier.fillMaxSize(), strokeWidth = 4.dp)
+            Text("${(safeFraction * 100).toInt()}%", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun IndexMetric(
+    label: String,
+    value: Int,
+    total: Int,
+    version: String,
+    enabled: Boolean = true,
+    inProgress: Boolean = false,
+) {
+    val fraction = if (total <= 0) 0f else (value.toFloat() / total).coerceIn(0f, 1f)
     Card(
         modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(18.dp),
     ) {
         Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(label, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                Text("$value / $total", color = Forest, fontWeight = FontWeight.Black, fontSize = 18.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(label, fontWeight = FontWeight.Bold)
+                    Text(version, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                }
+                Spacer(Modifier.width(12.dp))
+                when {
+                    !enabled -> Text("Off", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+                    inProgress -> Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxSize(), strokeWidth = 4.dp)
+                        Text("${(fraction * 100).toInt()}%", fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
+                    else -> Text("$value / $total", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
             }
-            Spacer(Modifier.height(8.dp))
-            LinearProgressIndicator(
-                progress = { if (total == 0) 0f else value.toFloat() / total },
-                modifier = Modifier.fillMaxWidth(),
-                color = Forest,
-                trackColor = Mist,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(version, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
         }
     }
 }
@@ -1079,11 +1125,11 @@ private fun PrivacyScreen(
         Modifier.fillMaxSize().semantics { contentDescription = "Privacy screen" }
             .safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp, 10.dp, 20.dp, 32.dp),
     ) {
-        Text("Privacy", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Forest)
+        Text("Privacy", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         Text("Gallery media, derived indexes, queries, and answers remain on this phone.")
         Spacer(Modifier.height(18.dp))
-        Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(20.dp)) {
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(18.dp)) {
                 Text("Current protections", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(8.dp))
@@ -1095,7 +1141,7 @@ private fun PrivacyScreen(
             }
         }
         Spacer(Modifier.height(14.dp))
-        Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(20.dp)) {
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(18.dp)) {
                 Text(
                     if (peopleIndex.enabled) "People indexing enabled" else "People indexing off",
@@ -1131,8 +1177,8 @@ private fun PrivacyScreen(
         }
         operationMessage?.let { message ->
             Spacer(Modifier.height(12.dp))
-            Surface(color = Lime, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                Text(message, Modifier.padding(14.dp), color = Forest, fontWeight = FontWeight.SemiBold)
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Text(message, Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.SemiBold)
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -1170,22 +1216,269 @@ private fun PrivacyScreen(
 private enum class PeopleConfirmation { ENABLE, RESET }
 
 @Composable
+private fun PeopleScreen(
+    peopleIndex: PeopleIndexStatus,
+    clusters: List<PersonClusterReviewItem>,
+    operationMessage: String?,
+    onReviewCluster: (String, String, String?, List<String>) -> Unit,
+    onRemoveLabel: (String) -> Unit,
+    onSetHidden: (String, Boolean) -> Unit,
+    onMerge: (String, String) -> Unit,
+    onMoveFace: (String, String?) -> Unit,
+) {
+    var editingCluster by remember { mutableStateOf<PersonClusterReviewItem?>(null) }
+    val toReview = clusters.filter { !it.reviewed && !it.hidden }
+    val named = clusters.filter { it.reviewed && !it.hidden }
+    val hidden = clusters.filter(PersonClusterReviewItem::hidden)
+    Column(
+        Modifier.fillMaxSize()
+            .safeDrawingPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp, 10.dp, 20.dp, 32.dp),
+    ) {
+        Text("People", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Text("Review and correct local face clusters. Original photos are never changed.")
+        Spacer(Modifier.height(12.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
+            Column(Modifier.padding(16.dp)) {
+                Text("People identity status", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Spacer(Modifier.height(8.dp))
+                Text("${toReview.size} to review • ${named.size} named • ${hidden.size} hidden")
+                Spacer(Modifier.height(6.dp))
+                if (!peopleIndex.enabled) {
+                    Text("People indexing is currently off. Enable it in Privacy first.")
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (!peopleIndex.enabled) {
+            Text("No review is possible while people indexing is disabled.")
+        } else if (clusters.isEmpty()) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Face clusters are still being processed.", fontWeight = FontWeight.SemiBold)
+                    Text("Indexed clusters will appear here without restarting face indexing.")
+                }
+            }
+        } else {
+            if (toReview.isNotEmpty()) {
+                Text("To review", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                toReview.forEach { cluster ->
+                    PersonClusterCard(cluster, "Tag this person", { editingCluster = cluster }, onSetHidden)
+                }
+            }
+            if (named.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                Text("Named people", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                named.forEach { cluster ->
+                    PersonClusterCard(cluster, "Edit person", { editingCluster = cluster }, onSetHidden)
+                }
+            }
+            if (hidden.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                Text("Hidden", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                hidden.forEach { cluster ->
+                    PersonClusterCard(cluster, "Edit", { editingCluster = cluster }, onSetHidden)
+                }
+            }
+        }
+        operationMessage?.let { message ->
+            Spacer(Modifier.height(12.dp))
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Text(message, Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+
+    editingCluster?.let { cluster ->
+        var label by remember(cluster.id) { mutableStateOf(cluster.label.orEmpty()) }
+        var relationship by remember(cluster.id) { mutableStateOf(cluster.relationship.orEmpty()) }
+        var aliases by remember(cluster.id) { mutableStateOf(cluster.aliases.joinToString(", ")) }
+        var mergeTarget by remember(cluster.id) { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { editingCluster = null },
+            title = { Text(if (cluster.reviewed) "Edit ${cluster.label}" else "Tag this person") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    cluster.representativeFace?.let {
+                        FaceCropImage(it, Modifier.size(104.dp).clip(RoundedCornerShape(20.dp)))
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    Text("Names, relationships, and aliases stay only in the app-private people index.")
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(value = label, onValueChange = { label = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = relationship,
+                        onValueChange = { relationship = it },
+                        label = { Text("Relationship (optional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text("Me, mother, father, brother, sister, partner, child, friend, other/custom", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { relationship = "Me"; if (label.isBlank()) label = "Me" }) { Text("Mark as Me") }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = aliases,
+                        onValueChange = { aliases = it },
+                        label = { Text("Aliases, comma separated") },
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { onReviewCluster(cluster.id, label, relationship.ifBlank { null }, parseAliases(aliases)) ; editingCluster = null }),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = mergeTarget,
+                        onValueChange = { mergeTarget = it },
+                        label = { Text("Target cluster ID for merge/move") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (mergeTarget.isNotBlank()) {
+                        TextButton(onClick = { onMerge(mergeTarget.trim(), cluster.id); editingCluster = null }) {
+                            Text("Merge this cluster into target")
+                        }
+                    }
+                    if (cluster.supportingFaces.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Correct faces", fontWeight = FontWeight.SemiBold)
+                        cluster.supportingFaces.forEach { face ->
+                            Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                                FaceCropImage(face, Modifier.size(58.dp).clip(RoundedCornerShape(14.dp)))
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(face.item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
+                                    TextButton(onClick = { onMoveFace(face.id, null); editingCluster = null }) { Text("Not this person") }
+                                    if (mergeTarget.isNotBlank()) {
+                                        TextButton(onClick = { onMoveFace(face.id, mergeTarget.trim()); editingCluster = null }) {
+                                            Text("Move to target")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (cluster.reviewed) {
+                        TextButton(onClick = { onRemoveLabel(cluster.id); editingCluster = null }) { Text("Remove local label") }
+                    }
+                    TextButton(onClick = { onSetHidden(cluster.id, !cluster.hidden); editingCluster = null }) {
+                        Text(if (cluster.hidden) "Unhide cluster" else "Hide cluster")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = label.isNotBlank(),
+                    onClick = {
+                        onReviewCluster(cluster.id, label, relationship.ifBlank { null }, parseAliases(aliases))
+                        editingCluster = null
+                    },
+                ) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { editingCluster = null }) { Text("Cancel") } },
+        )
+    }
+}
+
+@Composable
+private fun PersonClusterCard(
+    cluster: PersonClusterReviewItem,
+    actionLabel: String,
+    onEdit: () -> Unit,
+    onSetHidden: (String, Boolean) -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                cluster.representativeFace?.let {
+                    FaceCropImage(it, Modifier.size(82.dp).clip(RoundedCornerShape(18.dp)))
+                    Spacer(Modifier.width(12.dp))
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(cluster.label ?: "Unreviewed person", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${cluster.faceCount} faces • ${if (cluster.reviewed) "reviewed" else "to review"}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    cluster.relationship?.let { Text(it, fontSize = 12.sp) }
+                    if (cluster.aliases.isNotEmpty()) Text(cluster.aliases.joinToString(", "), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (cluster.supportingFaces.size > 1) {
+                Spacer(Modifier.height(9.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    cluster.supportingFaces.drop(1).take(3).forEach { face ->
+                        FaceCropImage(face, Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)))
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = onEdit) { Text(actionLabel) }
+                TextButton(onClick = { onSetHidden(cluster.id, !cluster.hidden) }) { Text(if (cluster.hidden) "Unhide" else "Hide") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FaceCropImage(face: PersonFaceReviewItem, modifier: Modifier) {
+    val context = LocalContext.current
+    val crop = remember(face.id, face.item.previewPath, face.item.assetPath, face.item.contentUri) {
+        runCatching {
+            val source = when {
+                face.item.previewPath != null -> BitmapFactory.decodeFile(face.item.previewPath)
+                face.item.assetPath != null -> context.assets.open(face.item.assetPath).use(BitmapFactory::decodeStream)
+                face.item.contentUri != null -> context.contentResolver.openInputStream(Uri.parse(face.item.contentUri)).use(BitmapFactory::decodeStream)
+                else -> null
+            } ?: return@runCatching null
+            val faceWidth = (face.right - face.left).coerceAtLeast(.01f)
+            val faceHeight = (face.bottom - face.top).coerceAtLeast(.01f)
+            val left = ((face.left - faceWidth * .25f).coerceIn(0f, 1f) * source.width).toInt()
+            val top = ((face.top - faceHeight * .3f).coerceIn(0f, 1f) * source.height).toInt()
+            val right = ((face.right + faceWidth * .25f).coerceIn(0f, 1f) * source.width).toInt().coerceAtLeast(left + 1)
+            val bottom = ((face.bottom + faceHeight * .35f).coerceIn(0f, 1f) * source.height).toInt().coerceAtLeast(top + 1)
+            android.graphics.Bitmap.createBitmap(source, left, top, right - left, bottom - top).asImageBitmap()
+        }.getOrNull()
+    }
+    if (crop != null) {
+        Image(crop, face.item.description, modifier, contentScale = ContentScale.Crop)
+    } else {
+        Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            Text("Face", fontSize = 10.sp)
+        }
+    }
+}
+
+private fun parseAliases(rawAliases: String): List<String> = rawAliases
+    .split(",")
+    .map { it.trim() }
+    .filter { it.isNotBlank() }
+    .distinct()
+    .take(16)
+
+@Composable
 private fun OnboardingScreen(onContinue: () -> Unit) {
     Column(
         Modifier.fillMaxSize().semantics { contentDescription = "Onboarding screen" }
-            .verticalScroll(rememberScrollState()).padding(24.dp, 18.dp, 24.dp, 32.dp),
+            .safeDrawingPadding().verticalScroll(rememberScrollState()).padding(24.dp, 18.dp, 24.dp, 32.dp),
     ) {
         Text(
             "Your gallery stays yours",
             fontSize = 32.sp,
             lineHeight = 36.sp,
-            fontWeight = FontWeight.Black,
-            color = Forest,
+            fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(10.dp))
         Text("Choose media with Android's system pickers. Indexing and question answering run locally, and people search remains off until you explicitly enable it.")
         Spacer(Modifier.height(20.dp))
-        Card(colors = CardDefaults.cardColors(containerColor = Mist), shape = RoundedCornerShape(20.dp)) {
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(18.dp)) {
                 Text("Progressive capabilities", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
@@ -1298,7 +1591,9 @@ private fun AssetImage(
             contentScale = contentScale,
         )
     } else {
-        Box(modifier.background(Mist), contentAlignment = Alignment.Center) { Text("Image unavailable") }
+        Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            Text("Image unavailable", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -1306,7 +1601,7 @@ private fun AssetImage(
 private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel, onEvidence: (SearchHit) -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
-        modifier = Modifier.fillMaxSize().semantics { contentDescription = "Ask results" },
+        modifier = Modifier.fillMaxSize().statusBarsPadding().semantics { contentDescription = "Ask results" },
         contentPadding = PaddingValues(start = 2.dp, end = 2.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -1369,7 +1664,7 @@ private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel, onEvid
                     shape = RoundedCornerShape(18.dp),
                 ) {
                     Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        LinearProgressIndicator(modifier = Modifier.width(64.dp))
+                        CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
                         Spacer(Modifier.width(12.dp))
                         Text(status, modifier = Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         TextButton(onClick = viewModel::cancelQuery, modifier = Modifier.testTag("cancel-query")) { Text("Cancel") }
@@ -1401,7 +1696,7 @@ private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel, onEvid
 private fun ResultsScreen(outcome: SearchOutcome?, onEvidence: (SearchHit) -> Unit, onAsk: () -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
-        modifier = Modifier.fillMaxSize().semantics { contentDescription = "Ask results" },
+        modifier = Modifier.fillMaxSize().statusBarsPadding().semantics { contentDescription = "Ask results" },
         contentPadding = PaddingValues(start = 2.dp, top = 46.dp, end = 2.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -1441,6 +1736,19 @@ private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FactPill(outcome.answer.exactness.name.replace('_', ' '))
                 FactPill(if (outcome.answer.requiresAuthentication) "Unlock required" else "${outcome.answer.evidenceIds.size} sources")
+            }
+            val reports = outcome.channelReports.filter { it.status != ChannelStatus.NOT_REQUIRED }
+            if (reports.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text("Retrieval coverage", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                reports.forEach { report ->
+                    Text(
+                        "${report.channel.name.replace('_', ' ').lowercase()}: ${report.status.name.lowercase()} - " +
+                            "${report.searchedCount}/${report.eligibleCount} searched",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                    )
+                }
             }
         }
     }
@@ -1519,7 +1827,7 @@ private fun GalleryScreen(
             .toList()
     }
     BackHandler(selectedIds.isNotEmpty()) { selectedIds = emptySet() }
-    Box(Modifier.fillMaxSize().semantics { contentDescription = "Gallery screen; ${items.count { it.source != MediaSource.DEMO_ASSET }} imported items" }) {
+    Box(Modifier.fillMaxSize().statusBarsPadding().semantics { contentDescription = "Gallery screen; ${items.count { it.source != MediaSource.DEMO_ASSET }} imported items" }) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(4),
             contentPadding = PaddingValues(start = 2.dp, end = 2.dp, bottom = if (selectedIds.isEmpty()) 24.dp else 96.dp),
@@ -1617,7 +1925,7 @@ private fun AlbumsScreen(items: List<GalleryItem>, onSelect: (SearchHit) -> Unit
     val visibleItems = activeAlbum?.let { name -> albums.firstOrNull { it.first == name }?.second }.orEmpty()
     LazyVerticalGrid(
         columns = GridCells.Fixed(if (activeAlbum == null) 2 else 4),
-        modifier = Modifier.fillMaxSize().semantics { contentDescription = "Albums screen" },
+        modifier = Modifier.fillMaxSize().statusBarsPadding().semantics { contentDescription = "Albums screen" },
         contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(if (activeAlbum == null) 12.dp else 2.dp),
         verticalArrangement = Arrangement.spacedBy(if (activeAlbum == null) 14.dp else 2.dp),
@@ -1660,6 +1968,7 @@ private fun GalleryMenuScreen(
     onDocuments: () -> Unit,
     onVideos: () -> Unit,
     onPeople: () -> Unit,
+    onPrivacy: () -> Unit,
     onPlaces: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -1670,12 +1979,12 @@ private fun GalleryMenuScreen(
         GalleryMenuAction("Documents", R.drawable.ic_gallery_search, items.count { it.kind == MediaKind.PDF }, onDocuments),
         GalleryMenuAction("People", R.drawable.ic_gallery_people, null, onPeople),
         GalleryMenuAction("Places", R.drawable.ic_gallery_search, items.map { it.location }.filter { it.isNotBlank() }.distinct().size, onPlaces),
-        GalleryMenuAction("Privacy", R.drawable.ic_gallery_privacy, null, onPeople),
+        GalleryMenuAction("Privacy", R.drawable.ic_gallery_privacy, null, onPrivacy),
         GalleryMenuAction("Settings", R.drawable.ic_gallery_settings, null, onSettings),
     )
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
-        modifier = Modifier.fillMaxSize().semantics { contentDescription = "Gallery menu" },
+        modifier = Modifier.fillMaxSize().statusBarsPadding().semantics { contentDescription = "Gallery menu" },
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),

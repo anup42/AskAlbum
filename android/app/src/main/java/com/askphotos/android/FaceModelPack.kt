@@ -51,7 +51,7 @@ data class FaceModelSpec(
         get() = "$packId@$packVersion:$revision:d$embeddingDimension"
 }
 
-/** Pinned OpenCV Zoo SFace model. Model bytes are downloaded/imported, never committed to the APK. */
+/** Pinned OpenCV Zoo SFace model embedded in the APK and activated only after SHA-256 verification. */
 object FaceModelCatalog {
     val sface = FaceModelSpec(
         packId = "opencv-sface",

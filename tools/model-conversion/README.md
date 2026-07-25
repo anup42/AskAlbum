@@ -14,6 +14,19 @@ The pack must be signed by the same certificate as the installed APK. The app re
 unknown signatures, changed files, extra ZIP entries, unsafe names, unsupported tensor
 contracts, non-pinned source revisions, and failed conversion parity.
 
+## Embedded SFace model
+
+Download and verify the exact Apache-2.0 SFace ONNX artifact before building an APK:
+
+```powershell
+python tools/model-conversion/download_sface.py
+```
+
+The script writes the verified 38,696,353-byte model to the ignored
+`build/models/face/` directory. The Android build independently checks its pinned
+SHA-256, stores it uncompressed inside the APK, and the app copies it into app-private
+storage before activation. The model binary is intentionally not committed to Git.
+
 The pinned SigLIP2 tokenizer is SentencePiece BPE (`model_type=2`) with identity
 normalization, no dummy prefix, preserved whitespace, escaped ASCII spaces, and
 UTF-8 byte fallback. Android must merge the highest-scoring adjacent BPE pair;

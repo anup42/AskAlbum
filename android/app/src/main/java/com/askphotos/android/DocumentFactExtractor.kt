@@ -14,6 +14,7 @@ object DocumentFactExtractor {
     private val phone = Regex("(?<!\\d)(?:\\+?\\d[\\d -]{7,}\\d)(?!\\d)")
     private val order = Regex("(?i)\\b(?:order|booking|reference|ref)\\s*(?:id|no|number)?\\s*[:#-]?\\s*([A-Z0-9][A-Z0-9-]{3,})")
     private val flight = Regex("(?i)\\bflight\\s*[:#-]?\\s*([A-Z]{2,3}\\s?\\d{2,4})\\b")
+    private val flightTime = Regex("(?i)\\b(?:flight\\s*time|departure(?:\\s*time)?|boarding\\s*time)\\s*[:#-]?\\s*([0-2]?\\d:[0-5]\\d(?:\\s?[AP]M)?)\\b")
     private val password = Regex("(?i)\\b(?:password|passcode)\\s*[:=-]\\s*(\\S+)")
     private val positiveTotal = mapOf("grand total" to 7, "amount paid" to 7, "net payable" to 6, "total" to 4, "balance due" to 3)
     private val negativeTotal = mapOf("subtotal" to 9, "tax" to 7, "discount" to 7, "saving" to 5, "tip" to 4)
@@ -31,6 +32,7 @@ object DocumentFactExtractor {
             findAll(phone, block).forEach { (raw, _) -> entities += entity(OcrEntityType.PHONE, raw, raw.filter(Char::isDigit), null, block, .82f) }
             findAll(order, block, 1).forEach { (raw, value) -> entities += entity(OcrEntityType.ORDER_ID, raw, value.uppercase(Locale.ROOT), "order_id", block, .91f) }
             findAll(flight, block, 1).forEach { (raw, value) -> entities += entity(OcrEntityType.FLIGHT_NUMBER, raw, value.replace(" ", "").uppercase(Locale.ROOT), "flight", block, .92f) }
+            findAll(flightTime, block, 1).forEach { (raw, value) -> entities += entity(OcrEntityType.FLIGHT_TIME, raw, value.uppercase(Locale.ROOT), "flight_time", block, .9f) }
             findAll(password, block, 1).forEach { (raw, value) -> entities += entity(OcrEntityType.PASSWORD, raw, value, "password", block, .94f) }
         }
         receiptTotal(blocks)?.let(entities::add)

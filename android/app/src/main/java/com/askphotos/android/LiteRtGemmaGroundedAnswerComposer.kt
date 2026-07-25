@@ -34,7 +34,7 @@ data class GroundedAnswerCompositionResult(
 /** Optional text-only wording stage. Deterministic answers remain authoritative on every failure. */
 class LiteRtGemmaGroundedAnswerComposer(
     private val modelPacks: ModelPackManager,
-    private val resources: InferenceResourceManager,
+    private val sessions: GemmaSessionManager,
     private val compiler: BoundedGemmaAnswerCompiler = BoundedGemmaAnswerCompiler(),
 ) {
     suspend fun compose(input: GroundedAnswerInput): GroundedAnswerCompositionResult {
@@ -51,28 +51,20 @@ class LiteRtGemmaGroundedAnswerComposer(
         if (status.deviceAssessment?.supported == false) return fallback(baseline, started, status.deviceAssessment.reason)
 
         return try {
-            resources.withModel(ModelCapability.GENERATIVE) {
+            sessions.withEngine(path, status.multimodal) { initialized ->
                 withContext(Dispatchers.IO) {
                     require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
-                    val initialized = createEngine(path)
                     var generationMs = 0L
-                    var closeMs = 0L
-                    var decoded: BoundedGroundedAnswerDecode? = null
-                    try {
-                        val generationStarted = SystemClock.elapsedRealtime()
-                        decoded = compiler.compile(packet, prompt(packet)) { generate(initialized.engine, it) }
-                        generationMs = SystemClock.elapsedRealtime() - generationStarted
-                    } finally {
-                        val closeStarted = SystemClock.elapsedRealtime()
-                        initialized.engine.close()
-                        closeMs = SystemClock.elapsedRealtime() - closeStarted
+                    val generationStarted = SystemClock.elapsedRealtime()
+                    val result = compiler.compile(packet, prompt(packet)) {
+                        initialized.engine.generateText(it, seed = 29)
                     }
-                    val result = requireNotNull(decoded)
+                    generationMs = SystemClock.elapsedRealtime() - generationStarted
                     GroundedAnswerCompositionResult(
                         answer = result.answer,
                         trace = GroundedAnswerCompositionTrace(
                             usedGemma = true,
-                            backend = initialized.backend,
+                            backend = initialized.engine.backend,
                             modelTier = status.tier,
                             modelRevision = status.packVersion,
                             generationCalls = result.generationCalls,
@@ -80,7 +72,7 @@ class LiteRtGemmaGroundedAnswerComposer(
                             evidenceCount = packet.evidence.size,
                             engineLoadMs = initialized.loadMs,
                             generationMs = generationMs,
-                            engineCloseMs = closeMs,
+                            engineCloseMs = 0L,
                             elapsedMs = SystemClock.elapsedRealtime() - started,
                         ),
                     )

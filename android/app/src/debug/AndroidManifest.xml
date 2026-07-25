@@ -5,17 +5,20 @@
             android:name=".TestSeedContentProvider"
             android:authorities="${applicationId}.testseed"
             android:enabled="true"
-            android:exported="true" />
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
         <service
             android:name=".TestGallerySeederService"
             android:enabled="true"
             android:exported="true"
+            android:permission="android.permission.DUMP"
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
         <receiver
             android:name=".TestGallerySeederReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="com.askphotos.android.test.SEED_GALLERY" />
                 <action android:name="com.askphotos.android.test.CLEANUP_GALLERY" />
@@ -30,7 +33,8 @@
         <receiver
             android:name=".TestGemmaModelReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="com.askphotos.android.test.DOWNLOAD_GEMMA" />
                 <action android:name="com.askphotos.android.test.REPORT_GEMMA" />
@@ -41,6 +45,7 @@
             android:name=".TestGemmaDownloadActivity"
             android:excludeFromRecents="true"
             android:exported="true"
+            android:permission="android.permission.DUMP"
             android:finishOnTaskLaunch="true"
             android:noHistory="true"
             android:theme="@android:style/Theme.Material.Light.NoActionBar" />

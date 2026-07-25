@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class AppDestination { ONBOARDING, GALLERY, ALBUMS, ASK, RESULTS, MENU, INDEX_MANAGER, PRIVACY }
+enum class AppDestination { ONBOARDING, GALLERY, ALBUMS, ASK, RESULTS, MENU, INDEX_MANAGER, PRIVACY, PEOPLE }
 
 enum class QueryExecutionStage { UNDERSTANDING, SEARCHING, INITIAL_RESULTS, VERIFYING, COMPOSING }
 
@@ -33,6 +33,7 @@ data class GalleryUiState(
     val index: IndexSummary = IndexSummary(),
     val selectedEvidence: SearchHit? = null,
     val destination: AppDestination = AppDestination.GALLERY,
+    val indexingActive: Boolean = false,
     val operationMessage: String? = null,
     val modelPack: ModelPackStatus = ModelPackStatus(installed = false),
     val modelDownload: GemmaDownloadProgress = GemmaDownloadProgress(),
@@ -43,6 +44,7 @@ data class GalleryUiState(
     val faceModel: FaceModelStatus = FaceModelStatus(),
     val faceModelDownload: FaceModelDownloadProgress = FaceModelDownloadProgress(),
     val peopleIndex: PeopleIndexStatus = PeopleIndexStatus(),
+    val peopleReviewClusters: List<PersonClusterReviewItem> = emptyList(),
     val conversation: ConversationSearchState = ConversationSearchState(GalleryDatabase.PRIMARY_QUERY_SESSION),
 )
 
@@ -64,11 +66,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val ocrModelDownloader = askPhotosApplication.services.ocrModelDownloader
     private val faceModelPacks = askPhotosApplication.services.faceModelPackManager
     private val faceModelDownloader = askPhotosApplication.services.faceModelDownloader
+    private val embeddedFaceModelProvisioner = askPhotosApplication.services.embeddedFaceModelProvisioner
     private var modelMonitorJob: Job? = null
     private var retrievalProvisionMonitorJob: Job? = null
     private var ocrModelMonitorJob: Job? = null
     private var faceModelMonitorJob: Job? = null
     private var queryJob: Job? = null
+    private var indexMonitorJob: Job? = null
     private var queryGeneration = 0L
     var state by mutableStateOf(GalleryUiState())
         private set
@@ -97,10 +101,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     ocrModel = ocrModelPacks.status(),
                     ocrModelDownload = ocrModelDownloader.progress(),
                     faceModel = faceModelPacks.status(),
-                    faceModelDownload = faceModelDownloader.progress(),
+                    faceModelDownload = currentFaceModelProgress(),
                     peopleIndex = initial.peopleIndex,
                     conversation = initial.conversation,
                 )
+                if (initial.peopleIndex.enabled) loadPeopleReviewClusters()
                 monitorIndexing()
                 monitorModelDownload()
                 monitorRetrievalProvision()
@@ -118,6 +123,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun navigate(destination: AppDestination) {
         state = state.copy(destination = destination)
+        if (destination == AppDestination.PEOPLE) {
+            loadPeopleReviewClusters()
+        }
     }
 
     fun importUris(uris: List<Uri>, source: MediaSource) {
@@ -145,9 +153,25 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun retryIndexing() {
-        IndexScheduler.schedule(getApplication())
-        state = state.copy(operationMessage = "Indexing resumed")
-        monitorIndexing()
+        if (state.indexingActive) return
+        state = state.copy(indexingActive = true, operationMessage = "Restarting local indexing...")
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    repository.recoverInterruptedJobs()
+                    IndexScheduler.restart(getApplication())
+                    if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.restart(getApplication())
+                }
+            }.onSuccess {
+                state = state.copy(operationMessage = "Indexing in progress")
+                monitorIndexing()
+            }.onFailure { error ->
+                state = state.copy(
+                    indexingActive = false,
+                    operationMessage = error.message ?: "Indexing could not be restarted",
+                )
+            }
+        }
     }
 
     fun importModelPack(uri: Uri?) {
@@ -246,7 +270,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     val people = withContext(Dispatchers.IO) { repository.onFaceModelInstalled() }
                     state = state.copy(
                         faceModel = status,
-                        faceModelDownload = faceModelDownloader.progress(),
+                        faceModelDownload = currentFaceModelProgress(),
                         peopleIndex = people,
                         operationMessage = "OpenCV SFace is ready; local 128-dimensional face indexing is queued",
                     )
@@ -328,6 +352,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         peopleIndex = status,
                         operationMessage = "People indexing enabled; identity search remains unavailable until you review local clusters",
                     )
+                    if (state.destination == AppDestination.PEOPLE) loadPeopleReviewClusters()
                     monitorIndexing()
                 }
                 .onFailure { error -> state = state.copy(operationMessage = error.message ?: "People indexing could not be enabled") }
@@ -342,10 +367,98 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     state = state.copy(
                         peopleIndex = status,
                         operationMessage = "People index reset; all face boxes, clusters, labels, and aliases were deleted",
+                        peopleReviewClusters = emptyList(),
                     )
                     reload()
                 }
                 .onFailure { error -> state = state.copy(operationMessage = error.message ?: "People index reset failed") }
+        }
+    }
+
+    fun loadPeopleReviewClusters() {
+        if (!state.peopleIndex.enabled) {
+            state = state.copy(peopleReviewClusters = emptyList())
+            return
+        }
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { repository.personClusterSummaries(includeHidden = true) } }
+                .onSuccess { clusters -> state = state.copy(peopleReviewClusters = clusters) }
+                .onFailure { error -> state = state.copy(operationMessage = error.message ?: "Could not load face review clusters") }
+        }
+    }
+
+    fun saveReviewedPersonCluster(id: String, label: String, relationship: String?, aliases: List<String>) {
+        if (label.isBlank()) return
+        state = state.copy(operationMessage = "Saving identity for cluster...")
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val status = repository.saveReviewedPersonCluster(
+                        id = id,
+                        label = label,
+                        relationship = relationship?.trim(),
+                        aliases = aliases,
+                    )
+                    status to repository.personClusterSummaries(includeHidden = true)
+                }
+            }.onSuccess { (status, clusters) ->
+                state = state.copy(
+                    peopleIndex = status,
+                    peopleReviewClusters = clusters,
+                    operationMessage = "Saved identity for ${label.trim()}",
+                )
+            }.onFailure { error ->
+                state = state.copy(operationMessage = error.message ?: "Person cluster review could not be saved")
+            }
+        }
+    }
+
+    fun removePersonLabel(id: String) {
+        updatePeople("Removing the local label...") { repository.removePersonLabel(id) to "Person label removed" }
+    }
+
+    fun setPersonClusterHidden(id: String, hidden: Boolean) {
+        updatePeople(if (hidden) "Hiding cluster..." else "Restoring cluster...") {
+            repository.setPersonClusterHidden(id, hidden) to if (hidden) "Cluster hidden" else "Cluster restored"
+        }
+    }
+
+    fun mergePersonClusters(targetId: String, sourceId: String) {
+        if (targetId.isBlank() || targetId == sourceId) return
+        updatePeople("Merging face clusters...") {
+            repository.mergePersonClusters(targetId.trim(), sourceId) to "Clusters merged"
+        }
+    }
+
+    fun moveFaceToCluster(faceId: String, targetId: String?) {
+        state = state.copy(operationMessage = "Correcting face assignment...")
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val target = repository.moveFaceToCluster(faceId, targetId?.trim()?.takeIf(String::isNotBlank))
+                    target to repository.personClusterSummaries(includeHidden = true)
+                }
+            }.onSuccess { (target, clusters) ->
+                state = state.copy(peopleReviewClusters = clusters, operationMessage = "Face moved to $target")
+            }.onFailure { error ->
+                state = state.copy(operationMessage = error.message ?: "Face assignment could not be changed")
+            }
+        }
+    }
+
+    private fun updatePeople(pendingMessage: String, operation: suspend () -> Pair<PeopleIndexStatus, String>) {
+        state = state.copy(operationMessage = pendingMessage)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val (status, message) = operation()
+                    Triple(status, repository.personClusterSummaries(includeHidden = true), message)
+                }
+            }.onSuccess { (status, clusters, message) ->
+                state = state.copy(peopleIndex = status, peopleReviewClusters = clusters, operationMessage = message)
+            }.onFailure { error ->
+                state = state.copy(operationMessage = error.message ?: "People data could not be updated")
+            }
         }
     }
 
@@ -423,15 +536,31 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             Triple(repository.indexSummary(), repository.allItems(), repository.peopleIndexStatus())
         }
         state = state.copy(index = summary, items = items, peopleIndex = peopleIndex, operationMessage = message)
+        if (state.destination == AppDestination.PEOPLE && peopleIndex.enabled) {
+            loadPeopleReviewClusters()
+        } else if (!peopleIndex.enabled) {
+            state = state.copy(peopleReviewClusters = emptyList())
+        }
     }
 
     private fun monitorIndexing() {
-        viewModelScope.launch {
+        indexMonitorJob?.cancel()
+        state = state.copy(indexingActive = true)
+        indexMonitorJob = viewModelScope.launch {
             repeat(90) {
                 delay(1_000)
                 reload()
-                if (state.index.pending == 0 && state.peopleIndex.pendingMediaCount == 0) return@launch
+                val hasPending = state.index.pending > 0 || state.peopleIndex.pendingMediaCount > 0
+                if (!hasPending) {
+                    state = state.copy(indexingActive = false)
+                    return@launch
+                }
+                state = state.copy(indexingActive = true)
             }
+            state = state.copy(
+                indexingActive = false,
+                operationMessage = "Indexing paused by battery, storage, or thermal conditions",
+            )
         }
     }
 
@@ -475,11 +604,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         faceModelMonitorJob?.cancel()
         faceModelMonitorJob = viewModelScope.launch {
             repeat(7_200) {
-                val progress = withContext(Dispatchers.IO) { faceModelDownloader.progress() }
+                val (progress, status) = withContext(Dispatchers.IO) {
+                    currentFaceModelProgress() to faceModelPacks.status()
+                }
                 val wasInstalled = state.faceModel.installed
-                val status = if (progress.state == GemmaDownloadState.INSTALLED) {
-                    withContext(Dispatchers.IO) { faceModelPacks.status() }
-                } else state.faceModel
                 var people = state.peopleIndex
                 if (!wasInstalled && status.installed) {
                     people = withContext(Dispatchers.IO) { repository.onFaceModelInstalled() }
@@ -489,6 +617,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 if (progress.state !in ACTIVE_DOWNLOAD_STATES) return@launch
                 delay(1_000)
             }
+        }
+    }
+
+    private fun currentFaceModelProgress(): FaceModelDownloadProgress {
+        val network = faceModelDownloader.progress()
+        val embedded = embeddedFaceModelProvisioner.progress()
+        return when {
+            network.state in ACTIVE_DOWNLOAD_STATES -> network
+            embedded.state != GemmaDownloadState.IDLE -> embedded
+            else -> network
         }
     }
 
