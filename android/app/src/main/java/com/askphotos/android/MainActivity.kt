@@ -418,7 +418,7 @@ private fun LoadingState() {
     ) {
         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(16.dp))
-        Text("Compiling the local sample gallery…")
+        Text("Opening your gallery…")
     }
 }
 

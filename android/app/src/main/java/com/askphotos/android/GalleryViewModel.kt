@@ -62,6 +62,17 @@ private data class GalleryInitialization(
     val semanticMemory: SemanticMemoryProgress,
 )
 
+private data class ModelInitialization(
+    val modelPack: ModelPackStatus,
+    val modelDownload: GemmaDownloadProgress,
+    val retrievalPack: RetrievalPackStatus,
+    val retrievalProvision: RetrievalProvisionProgress,
+    val ocrModel: OcrModelStatus,
+    val ocrModelDownload: OcrModelDownloadProgress,
+    val faceModel: FaceModelStatus,
+    val faceModelDownload: FaceModelDownloadProgress,
+)
+
 internal fun automaticGemmaCandidates(status: ModelPackStatus): List<GemmaModelTier> {
     if (status.installed) return emptyList()
     val recommended = status.deviceAssessment?.recommendedTier ?: GemmaModelTier.E2B
@@ -110,26 +121,50 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     loading = false,
                     index = initial.summary,
                     items = initial.items,
-                    modelPack = modelPacks.status(),
-                    modelDownload = modelDownloader.progress(modelPacks.selectedTier()),
-                    retrievalPack = retrievalPacks.status(),
-                    retrievalProvision = retrievalProvisioner.progress(),
-                    ocrModel = ocrModelPacks.status(),
-                    ocrModelDownload = ocrModelDownloader.progress(),
-                    faceModel = faceModelPacks.status(),
-                    faceModelDownload = currentFaceModelProgress(),
                     peopleIndex = initial.peopleIndex,
                     conversation = initial.conversation,
                     semanticMemory = initial.semanticMemory,
                 )
                 if (initial.peopleIndex.enabled) loadPeopleReviewClusters()
                 monitorIndexing()
+                loadModelInitialization()
+            }.onFailure { error ->
+                state = state.copy(loading = false, error = error.message ?: "Could not open local gallery memory")
+            }
+        }
+    }
+
+    private fun loadModelInitialization() {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val modelPack = modelPacks.status()
+                    ModelInitialization(
+                        modelPack = modelPack,
+                        modelDownload = modelDownloader.progress(modelPack.tier ?: modelPack.selectedTier),
+                        retrievalPack = retrievalPacks.status(),
+                        retrievalProvision = retrievalProvisioner.progress(),
+                        ocrModel = ocrModelPacks.status(),
+                        ocrModelDownload = ocrModelDownloader.progress(),
+                        faceModel = faceModelPacks.status(),
+                        faceModelDownload = currentFaceModelProgress(),
+                    )
+                }
+            }.onSuccess { models ->
+                state = state.copy(
+                    modelPack = models.modelPack,
+                    modelDownload = models.modelDownload,
+                    retrievalPack = models.retrievalPack,
+                    retrievalProvision = models.retrievalProvision,
+                    ocrModel = models.ocrModel,
+                    ocrModelDownload = models.ocrModelDownload,
+                    faceModel = models.faceModel,
+                    faceModelDownload = models.faceModelDownload,
+                )
                 monitorModelDownload()
                 monitorRetrievalProvision()
                 monitorOcrModelDownload()
                 monitorFaceModelDownload()
-            }.onFailure { error ->
-                state = state.copy(loading = false, error = error.message ?: "Could not open local gallery memory")
             }
         }
     }

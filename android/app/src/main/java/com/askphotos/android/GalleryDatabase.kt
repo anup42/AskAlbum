@@ -62,9 +62,38 @@ class GalleryDatabase(
 
     fun ensureStageRows() {
         val db = writableDatabase
+        val now = System.currentTimeMillis()
+        val complete = "source_kind='DEMO_ASSET' OR index_state='READY'"
+        val defaultProducer = "CASE WHEN source_kind='DEMO_ASSET' THEN 'demo-sidecar-v1' ELSE 'media-compiler-v1' END"
+        val stages = listOf(
+            Triple(IndexStage.DISCOVERY, "'COMPLETE'", defaultProducer),
+            Triple(IndexStage.METADATA, "'COMPLETE'", defaultProducer),
+            Triple(IndexStage.THUMBNAIL, "CASE WHEN $complete THEN 'COMPLETE' ELSE 'PENDING' END", defaultProducer),
+            Triple(
+                IndexStage.VIDEO_KEYFRAMES,
+                "CASE WHEN media_kind='VIDEO' AND NOT ($complete) THEN 'PENDING' ELSE 'SKIPPED' END",
+                "CASE WHEN media_kind='VIDEO' THEN '${VideoKeyframePolicy.PRODUCER_VERSION}' ELSE 'not-video' END",
+            ),
+            Triple(IndexStage.EMBEDDING, "'PENDING'", "'not-installed'"),
+            Triple(IndexStage.OCR, "CASE WHEN $complete THEN 'COMPLETE' ELSE 'PENDING' END", defaultProducer),
+            Triple(IndexStage.FACES, "'SKIPPED'", "'disabled-until-opt-in'"),
+            Triple(IndexStage.EVENTS, "CASE WHEN $complete THEN 'COMPLETE' ELSE 'PENDING' END", "'day-event-v1'"),
+            Triple(IndexStage.ENRICHMENT, "CASE WHEN $complete THEN 'COMPLETE' ELSE 'PENDING' END", defaultProducer),
+        )
         db.beginTransaction()
         try {
-            allItems(db).forEach { item -> initializeStages(db, item, replace = false) }
+            stages.forEach { (stage, statusExpression, producerExpression) ->
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO media_index_stage(
+                        media_id,stage,status,producer_version,attempt_count,updated_at,error
+                    )
+                    SELECT id,?,${statusExpression},${producerExpression},0,?,NULL
+                    FROM media_item
+                    """.trimIndent(),
+                    arrayOf(stage.name, now),
+                )
+            }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
