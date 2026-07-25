@@ -729,11 +729,13 @@ class GalleryDatabase(
         try {
             check(peopleIndexEnabled(db)) { "People indexing was disabled" }
             val correctedAssignments = db.rawQuery(
-                "SELECT id,cluster_id FROM face_instance WHERE media_id=? AND user_corrected=1 AND cluster_id IS NOT NULL",
+                "SELECT id,cluster_id FROM face_instance WHERE media_id=? AND user_corrected=1",
                 arrayOf(mediaId),
             ).use { cursor ->
-                buildMap {
-                    while (cursor.moveToNext()) put(cursor.getString(0), cursor.getString(1))
+                buildMap<String, String?> {
+                    while (cursor.moveToNext()) {
+                        put(cursor.getString(0), if (cursor.isNull(1)) null else cursor.getString(1))
+                    }
                 }
             }
             db.delete("face_instance", "media_id=?", arrayOf(mediaId))
@@ -755,8 +757,14 @@ class GalleryDatabase(
                     put("embedding_offset", 0L)
                     put("embedding_dimension", face.embedding.size)
                     val faceId = "$mediaId:$index"
-                    put("cluster_id", correctedAssignments[faceId] ?: clusterIds[index])
-                    put("user_corrected", if (faceId in correctedAssignments) 1 else 0)
+                    if (faceId in correctedAssignments) {
+                        val correctedClusterId = correctedAssignments[faceId]
+                        if (correctedClusterId == null) putNull("cluster_id") else put("cluster_id", correctedClusterId)
+                        put("user_corrected", 1)
+                    } else {
+                        put("cluster_id", clusterIds[index])
+                        put("user_corrected", 0)
+                    }
                     put("producer_version", producerVersion)
                     put("created_at", now)
                 })
@@ -849,10 +857,10 @@ class GalleryDatabase(
     fun personClusterSummaries(includeHidden: Boolean = false): List<PersonClusterReviewItem> {
         val summaries = readableDatabase.rawQuery(
             "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(f.id) AS face_count, MAX(f.media_id) AS sample_media_id " +
-                ", c.reviewed, c.hidden " +
+                ", c.reviewed, c.hidden, c.representative_face_id " +
                 "FROM person_cluster c LEFT JOIN face_instance f ON c.id = f.cluster_id " +
                 (if (includeHidden) "" else "WHERE c.hidden = 0 ") +
-                "GROUP BY c.id, c.label, c.relationship, c.aliases " +
+                "GROUP BY c.id, c.label, c.relationship, c.aliases, c.reviewed, c.hidden, c.representative_face_id " +
                 "ORDER BY c.hidden ASC, c.reviewed ASC, face_count DESC, c.updated_at DESC, c.id",
             null,
         ).use { cursor ->
@@ -871,6 +879,7 @@ class GalleryDatabase(
                             sampleMediaId = if (cursor.isNull(5)) null else cursor.getString(5),
                             reviewed = cursor.getInt(6) != 0,
                             hidden = cursor.getInt(7) != 0,
+                            representativeFaceId = if (cursor.isNull(8)) null else cursor.getString(8),
                         ),
                     )
                 }
@@ -882,13 +891,69 @@ class GalleryDatabase(
         )
         return summaries.map { summary ->
             val faces = facesByCluster[summary.id].orEmpty()
-            summary.copy(representativeFace = faces.firstOrNull(), supportingFaces = faces)
+            summary.copy(
+                representativeFace = faces.firstOrNull { it.id == summary.representativeFaceId } ?: faces.firstOrNull(),
+                supportingFaces = faces,
+            )
         }
     }
 
-    fun personFacesForCluster(clusterId: String, limit: Int = 20): List<PersonFaceReviewItem> {
+    fun personFacesForCluster(clusterId: String, limit: Int = 60, offset: Int = 0): List<PersonFaceReviewItem> {
         require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
-        return personFacesForClusters(setOf(clusterId), limit)[clusterId].orEmpty()
+        require(offset >= 0) { "Invalid face page offset" }
+        val boundedLimit = limit.coerceIn(1, 200)
+        data class PendingFace(
+            val id: String,
+            val mediaId: String,
+            val left: Float,
+            val top: Float,
+            val right: Float,
+            val bottom: Float,
+            val quality: Float,
+            val userCorrected: Boolean,
+        )
+        val pending = readableDatabase.rawQuery(
+            "SELECT f.id,f.media_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,f.quality,f.user_corrected " +
+                "FROM face_instance f JOIN person_cluster c ON c.id=f.cluster_id WHERE f.cluster_id=? " +
+                "ORDER BY CASE WHEN f.id=c.representative_face_id THEN 0 ELSE 1 END, f.quality DESC, f.created_at DESC " +
+                "LIMIT ? OFFSET ?",
+            arrayOf(clusterId, boundedLimit.toString(), offset.toString()),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        PendingFace(
+                            id = cursor.getString(0),
+                            mediaId = cursor.getString(1),
+                            left = cursor.getFloat(2),
+                            top = cursor.getFloat(3),
+                            right = cursor.getFloat(4),
+                            bottom = cursor.getFloat(5),
+                            quality = cursor.getFloat(6),
+                            userCorrected = cursor.getInt(7) != 0,
+                        ),
+                    )
+                }
+            }
+        }
+        val mediaById = pending.map(PendingFace::mediaId).distinct().chunked(SQLITE_ID_CHUNK).flatMap { ids ->
+            val placeholders = ids.joinToString(",") { "?" }
+            queryItems("id IN ($placeholders)", ids.toTypedArray(), null, null)
+        }.associateBy(GalleryItem::id)
+        return pending.mapNotNull { face ->
+            val item = mediaById[face.mediaId] ?: return@mapNotNull null
+            PersonFaceReviewItem(
+                id = face.id,
+                mediaId = face.mediaId,
+                item = item,
+                left = face.left,
+                top = face.top,
+                right = face.right,
+                bottom = face.bottom,
+                quality = face.quality,
+                userCorrected = face.userCorrected,
+            )
+        }
     }
 
     private fun personFacesForClusters(
@@ -913,9 +978,9 @@ class GalleryDatabase(
         clusterIds.chunked(800).forEach { clusterChunk ->
             val placeholders = clusterChunk.joinToString(",") { "?" }
             readableDatabase.rawQuery(
-                "SELECT id,media_id,cluster_id,left_pos,top_pos,right_pos,bottom_pos,quality,user_corrected " +
-                    "FROM face_instance WHERE cluster_id IN ($placeholders) " +
-                    "ORDER BY cluster_id,quality DESC,created_at DESC",
+                "SELECT f.id,f.media_id,f.cluster_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,f.quality,f.user_corrected " +
+                    "FROM face_instance f JOIN person_cluster c ON c.id=f.cluster_id WHERE f.cluster_id IN ($placeholders) " +
+                    "ORDER BY f.cluster_id,CASE WHEN f.id=c.representative_face_id THEN 0 ELSE 1 END,f.quality DESC,f.created_at DESC",
                 clusterChunk.toTypedArray(),
             ).use { cursor ->
                 while (cursor.moveToNext()) {
@@ -969,6 +1034,55 @@ class GalleryDatabase(
         }
     }
 
+    fun setPersonClusterRepresentative(clusterId: String, faceId: String) {
+        require(PERSON_ID.matches(clusterId) && faceId.length in 3..240) { "Invalid representative face" }
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val belongsToCluster = db.rawQuery(
+                "SELECT 1 FROM face_instance WHERE id=? AND cluster_id=? LIMIT 1",
+                arrayOf(faceId, clusterId),
+            ).use(android.database.Cursor::moveToFirst)
+            check(belongsToCluster) { "Representative face is not in this cluster" }
+            db.update("person_cluster", ContentValues().apply {
+                put("representative_face_id", faceId)
+                put("updated_at", System.currentTimeMillis())
+            }, "id=?", arrayOf(clusterId))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun excludeFaceFromCluster(faceId: String): String {
+        require(faceId.length in 3..240) { "Invalid face ID" }
+        val db = writableDatabase
+        db.beginTransaction()
+        return try {
+            val source = db.rawQuery(
+                "SELECT cluster_id,media_id FROM face_instance WHERE id=?",
+                arrayOf(faceId),
+            ).use { cursor ->
+                check(cursor.moveToFirst()) { "Face is unavailable" }
+                check(!cursor.isNull(0)) { "Face is already excluded" }
+                cursor.getString(0) to cursor.getString(1)
+            }
+            db.update("face_instance", ContentValues().apply {
+                putNull("cluster_id")
+                put("user_corrected", 1)
+            }, "id=?", arrayOf(faceId))
+            db.update("person_cluster", ContentValues().apply {
+                putNull("representative_face_id")
+                put("updated_at", System.currentTimeMillis())
+            }, "id=? AND representative_face_id=?", arrayOf(source.first, faceId))
+            db.delete("person_attribute_fact", "media_id=? AND cluster_id=?", arrayOf(source.second, source.first))
+            db.setTransactionSuccessful()
+            source.first
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun removePersonLabel(clusterId: String): PeopleIndexStatus {
         require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
         writableDatabase.update("person_cluster", ContentValues().apply {
@@ -999,23 +1113,30 @@ class GalleryDatabase(
         try {
             check(clusterExists(db, targetClusterId) && clusterExists(db, sourceClusterId)) { "Cluster merge target is unavailable" }
             val now = System.currentTimeMillis()
-            fun identity(clusterId: String): Triple<String?, String?, List<String>> = db.rawQuery(
-                "SELECT label,relationship,aliases FROM person_cluster WHERE id=?",
+            data class ClusterIdentity(
+                val label: String?,
+                val relationship: String?,
+                val aliases: List<String>,
+                val representativeFaceId: String?,
+            )
+            fun identity(clusterId: String): ClusterIdentity = db.rawQuery(
+                "SELECT label,relationship,aliases,representative_face_id FROM person_cluster WHERE id=?",
                 arrayOf(clusterId),
             ).use { cursor ->
                 check(cursor.moveToFirst())
-                Triple(
-                    if (cursor.isNull(0)) null else cursor.getString(0),
-                    if (cursor.isNull(1)) null else cursor.getString(1),
-                    runCatching {
+                ClusterIdentity(
+                    label = if (cursor.isNull(0)) null else cursor.getString(0),
+                    relationship = if (cursor.isNull(1)) null else cursor.getString(1),
+                    aliases = runCatching {
                         val json = JSONArray(cursor.getString(2))
                         List(json.length()) { json.getString(it) }
                     }.getOrDefault(emptyList()),
+                    representativeFaceId = if (cursor.isNull(3)) null else cursor.getString(3),
                 )
             }
             val targetIdentity = identity(targetClusterId)
             val sourceIdentity = identity(sourceClusterId)
-            val aliases = (targetIdentity.third + sourceIdentity.third + listOfNotNull(sourceIdentity.first))
+            val aliases = (targetIdentity.aliases + sourceIdentity.aliases + listOfNotNull(sourceIdentity.label))
                 .map(String::trim).filter(String::isNotBlank).distinct().take(MAX_PERSON_ALIASES)
             db.update("face_instance", ContentValues().apply {
                 put("cluster_id", targetClusterId)
@@ -1024,10 +1145,12 @@ class GalleryDatabase(
             db.update("person_attribute_fact", ContentValues().apply { put("cluster_id", targetClusterId) }, "cluster_id=?", arrayOf(sourceClusterId))
             db.delete("person_cluster", "id=?", arrayOf(sourceClusterId))
             db.update("person_cluster", ContentValues().apply {
-                val label = targetIdentity.first ?: sourceIdentity.first
-                val relationship = targetIdentity.second ?: sourceIdentity.second
+                val label = targetIdentity.label ?: sourceIdentity.label
+                val relationship = targetIdentity.relationship ?: sourceIdentity.relationship
+                val representativeFaceId = targetIdentity.representativeFaceId ?: sourceIdentity.representativeFaceId
                 if (label == null) putNull("label") else put("label", label)
                 if (relationship == null) putNull("relationship") else put("relationship", relationship)
+                if (representativeFaceId == null) putNull("representative_face_id") else put("representative_face_id", representativeFaceId)
                 put("aliases", JSONArray(aliases).toString())
                 put("reviewed", if (label != null) 1 else 0)
                 put("updated_at", now)
@@ -1056,6 +1179,12 @@ class GalleryDatabase(
                 put("cluster_id", target)
                 put("user_corrected", 1)
             }, "id=?", arrayOf(faceId))
+            source.first?.let { sourceClusterId ->
+                db.update("person_cluster", ContentValues().apply {
+                    putNull("representative_face_id")
+                    put("updated_at", System.currentTimeMillis())
+                }, "id=? AND representative_face_id=?", arrayOf(sourceClusterId, faceId))
+            }
             db.delete(
                 "person_attribute_fact",
                 "media_id=? AND cluster_id IN (?,?)",

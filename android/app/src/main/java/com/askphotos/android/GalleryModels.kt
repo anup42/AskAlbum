@@ -303,6 +303,7 @@ data class PersonClusterReviewItem(
     val sampleMediaId: String?,
     val reviewed: Boolean = false,
     val hidden: Boolean = false,
+    val representativeFaceId: String? = null,
     val representativeFace: PersonFaceReviewItem? = null,
     val supportingFaces: List<PersonFaceReviewItem> = emptyList(),
 )

@@ -219,6 +219,7 @@ data class PersonClusterEntity(
     @ColumnInfo(defaultValue = "''") val aliases: String = "",
     @ColumnInfo(defaultValue = "0") val reviewed: Boolean = false,
     @ColumnInfo(defaultValue = "0") val hidden: Boolean = false,
+    @ColumnInfo(name = "representative_face_id") val representativeFaceId: String? = null,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
 )
@@ -473,7 +474,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticFactEntity::class,
         SemanticEnrichmentJobEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -497,6 +498,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_10_11,
             MIGRATION_11_12,
             MIGRATION_12_13,
+            MIGRATION_13_14,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -654,6 +656,12 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_enrichment_status_idx ON semantic_enrichment_job(status,updated_at)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_enrichment_media_idx ON semantic_enrichment_job(representative_media_id)")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS semantic_enrichment_unique_idx ON semantic_enrichment_job(scope,subject_id,representative_media_id,reason)")
+            }
+        }
+
+        internal val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE person_cluster ADD COLUMN representative_face_id TEXT")
             }
         }
 

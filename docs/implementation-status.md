@@ -3224,3 +3224,17 @@ Artifacts and limitation:
 - Screenshots and UI hierarchies: `artifacts/device-runs/dark_settings_0.0.5/`; diagnostics: `artifacts/device-runs/dark_settings_0.0.5/diagnostics/20260723_002304/`.
 - The observed device was already actively indexing, so a second live `Resume indexing` tap was not manufactured by mutating the user's gallery. The device did verify the replacement `Indexing in progress` state and circular indicators; the stale-work restart path is compile-tested and uses WorkManager cancellation plus `REPLACE`.
 - Face indexing remains off in the installed app because the user has not consented on this device. Its opt-in demo eligibility and reset semantics passed 2/2 isolated device tests; no biometric setting was changed during acceptance.
+
+## People identity refresh and cluster photo review - 25 July 2026
+
+Status: **IMPLEMENTED; TARGETED TEST AND CONNECTED-DEVICE RESULTS RECORDED AFTER EXECUTION.**
+
+- Saving a reviewed identity now updates the matching cluster in Compose state immediately instead of waiting for all cluster summaries and thumbnail samples to reload. The tagged cluster moves directly into `Named people`; the database write remains asynchronous and rolls UI state back on failure.
+- Tapping any cluster opens a paged two-column photo grid. Sixty face-linked photos are hydrated at a time as the user scrolls, avoiding a full multi-thousand-photo allocation on entry.
+- Each grid item can be excluded from the selected identity. Exclusion stores `cluster_id=NULL` with `user_corrected=1`, clears stale person-attribute facts, and remains excluded after face re-indexing.
+- Each grid item can be selected as the cluster representative. Schema 14 adds only nullable `person_cluster.representative_face_id`; migration 13-to-14 is non-destructive.
+- Representative selection is preserved through cluster merge, cleared when that face is moved or excluded, and used ahead of automatic quality ordering in People cards.
+- `PeopleClusterStateReducerTest`: PASS on the CI fixture variant. The reviewed identity appears in UI state immediately and only one cluster retains the `Me` relationship.
+- Connected `PeopleEditingDatabaseTest`: PASS, 1/1 on SM-S928B using the isolated CI package/database. It covers durable exclusion, re-index persistence, paged cluster faces, representative selection, merge, hide, aliases, and reset.
+- `OfflineDemoDebug` assemble and replacement install: PASS on SM-S928B. The existing production package data was migrated in place; no uninstall, clear-data, people reset, or media deletion was performed.
+- Connected visual QA: PASS for real face thumbnails, the 1,803-photo paged cluster grid, `Set representative`, and `Exclude from person`. The final `Named people`-before-`To review` ordering compiled and installed; its last screenshot was not taken because the device moved to an active WhatsApp task.

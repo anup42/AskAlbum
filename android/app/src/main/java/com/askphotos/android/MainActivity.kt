@@ -312,7 +312,15 @@ private fun AskPhotosApp(viewModel: GalleryViewModel) {
                 state.destination == AppDestination.PEOPLE -> PeopleScreen(
                     peopleIndex = state.peopleIndex,
                     clusters = state.peopleReviewClusters,
+                    selectedClusterId = state.selectedPeopleClusterId,
+                    selectedClusterFaces = state.selectedPeopleClusterFaces,
+                    selectedClusterFacesLoading = state.peopleClusterFacesLoading,
                     operationMessage = state.operationMessage,
+                    onOpenCluster = viewModel::openPersonCluster,
+                    onCloseCluster = viewModel::closePersonCluster,
+                    onLoadMoreClusterFaces = viewModel::loadMorePersonClusterFaces,
+                    onExcludeFace = viewModel::excludeFaceFromSelectedCluster,
+                    onSetRepresentative = viewModel::setPersonClusterRepresentative,
                     onReviewCluster = { id, label, relationship, aliases ->
                         viewModel.saveReviewedPersonCluster(id, label, relationship, aliases)
                     },
@@ -1219,7 +1227,15 @@ private enum class PeopleConfirmation { ENABLE, RESET }
 private fun PeopleScreen(
     peopleIndex: PeopleIndexStatus,
     clusters: List<PersonClusterReviewItem>,
+    selectedClusterId: String?,
+    selectedClusterFaces: List<PersonFaceReviewItem>,
+    selectedClusterFacesLoading: Boolean,
     operationMessage: String?,
+    onOpenCluster: (String) -> Unit,
+    onCloseCluster: () -> Unit,
+    onLoadMoreClusterFaces: () -> Unit,
+    onExcludeFace: (String) -> Unit,
+    onSetRepresentative: (String) -> Unit,
     onReviewCluster: (String, String, String?, List<String>) -> Unit,
     onRemoveLabel: (String) -> Unit,
     onSetHidden: (String, Boolean) -> Unit,
@@ -1227,6 +1243,20 @@ private fun PeopleScreen(
     onMoveFace: (String, String?) -> Unit,
 ) {
     var editingCluster by remember { mutableStateOf<PersonClusterReviewItem?>(null) }
+    val selectedCluster = selectedClusterId?.let { id -> clusters.firstOrNull { it.id == id } }
+    if (selectedCluster != null) {
+        PersonClusterDetailScreen(
+            cluster = selectedCluster,
+            faces = selectedClusterFaces,
+            loading = selectedClusterFacesLoading,
+            operationMessage = operationMessage,
+            onBack = onCloseCluster,
+            onLoadMore = onLoadMoreClusterFaces,
+            onExcludeFace = onExcludeFace,
+            onSetRepresentative = onSetRepresentative,
+        )
+        return
+    }
     val toReview = clusters.filter { !it.reviewed && !it.hidden }
     val named = clusters.filter { it.reviewed && !it.hidden }
     val hidden = clusters.filter(PersonClusterReviewItem::hidden)
@@ -1270,22 +1300,8 @@ private fun PeopleScreen(
                 }
             }
         } else {
-            if (toReview.isNotEmpty()) {
-                item(key = "to-review-heading") {
-                    Text("To review", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(8.dp))
-                }
-                items(
-                    count = toReview.size,
-                    key = { index -> "review-${toReview[index].id}" },
-                ) { index ->
-                    val cluster = toReview[index]
-                    PersonClusterCard(cluster, "Tag this person", { editingCluster = cluster }, onSetHidden)
-                }
-            }
             if (named.isNotEmpty()) {
                 item(key = "named-heading") {
-                    Spacer(Modifier.height(14.dp))
                     Text("Named people", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(8.dp))
                 }
@@ -1294,7 +1310,21 @@ private fun PeopleScreen(
                     key = { index -> "named-${named[index].id}" },
                 ) { index ->
                     val cluster = named[index]
-                    PersonClusterCard(cluster, "Edit person", { editingCluster = cluster }, onSetHidden)
+                    PersonClusterCard(cluster, "Edit person", { onOpenCluster(cluster.id) }, { editingCluster = cluster }, onSetHidden)
+                }
+            }
+            if (toReview.isNotEmpty()) {
+                item(key = "to-review-heading") {
+                    if (named.isNotEmpty()) Spacer(Modifier.height(14.dp))
+                    Text("To review", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                }
+                items(
+                    count = toReview.size,
+                    key = { index -> "review-${toReview[index].id}" },
+                ) { index ->
+                    val cluster = toReview[index]
+                    PersonClusterCard(cluster, "Tag this person", { onOpenCluster(cluster.id) }, { editingCluster = cluster }, onSetHidden)
                 }
             }
             if (hidden.isNotEmpty()) {
@@ -1308,7 +1338,7 @@ private fun PeopleScreen(
                     key = { index -> "hidden-${hidden[index].id}" },
                 ) { index ->
                     val cluster = hidden[index]
-                    PersonClusterCard(cluster, "Edit", { editingCluster = cluster }, onSetHidden)
+                    PersonClusterCard(cluster, "Edit", { onOpenCluster(cluster.id) }, { editingCluster = cluster }, onSetHidden)
                 }
             }
         }
@@ -1411,16 +1441,108 @@ private fun PeopleScreen(
 }
 
 @Composable
+private fun PersonClusterDetailScreen(
+    cluster: PersonClusterReviewItem,
+    faces: List<PersonFaceReviewItem>,
+    loading: Boolean,
+    operationMessage: String?,
+    onBack: () -> Unit,
+    onLoadMore: () -> Unit,
+    onExcludeFace: (String) -> Unit,
+    onSetRepresentative: (String) -> Unit,
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize().safeDrawingPadding().testTag("person-cluster-grid"),
+        contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 32.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item(key = "cluster-detail-header", span = { GridItemSpan(maxLineSpan) }) {
+            Column {
+                TextButton(onClick = onBack) { Text("Back to People") }
+                Text(cluster.label ?: "Unreviewed person", fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "${cluster.faceCount} ${if (cluster.faceCount == 1) "photo" else "photos"} in this local cluster",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                cluster.relationship?.let { Text(it, fontWeight = FontWeight.Medium) }
+                if (cluster.aliases.isNotEmpty()) {
+                    Text(cluster.aliases.joinToString(", "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                }
+                operationMessage?.let { message ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(message, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+        }
+        items(items = faces, key = PersonFaceReviewItem::id) { face ->
+            val representative = cluster.representativeFaceId == face.id
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (representative) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                ),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column {
+                    ClusterPhotoImage(
+                        face = face,
+                        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                    )
+                    Column(Modifier.padding(10.dp)) {
+                        Text(face.item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        if (representative) {
+                            Text("Representative", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        } else {
+                            TextButton(
+                                onClick = { onSetRepresentative(face.id) },
+                                contentPadding = PaddingValues(0.dp),
+                            ) { Text("Set representative", fontSize = 11.sp) }
+                        }
+                        TextButton(
+                            onClick = { onExcludeFace(face.id) },
+                            contentPadding = PaddingValues(0.dp),
+                        ) { Text("Exclude from person", fontSize = 11.sp, color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+            }
+        }
+        if (loading || faces.size < cluster.faceCount) {
+            item(key = "cluster-detail-loading-${faces.size}", span = { GridItemSpan(maxLineSpan) }) {
+                androidx.compose.runtime.LaunchedEffect(cluster.id, faces.size, loading) {
+                    if (!loading && faces.size < cluster.faceCount) onLoadMore()
+                }
+                Column(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    if (loading) {
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(8.dp))
+                        Text("Loading more photos...")
+                    } else {
+                        TextButton(onClick = onLoadMore) { Text("Load more") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun PersonClusterCard(
     cluster: PersonClusterReviewItem,
     actionLabel: String,
+    onOpen: () -> Unit,
     onEdit: () -> Unit,
     onSetHidden: (String, Boolean) -> Unit,
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(18.dp),
-        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp).clickable(onClick = onOpen)
+            .testTag("person-cluster-${cluster.id}"),
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1450,6 +1572,47 @@ private fun PersonClusterCard(
         }
     }
 }
+
+@Composable
+private fun ClusterPhotoImage(face: PersonFaceReviewItem, modifier: Modifier) {
+    val context = LocalContext.current
+    val image by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(
+        initialValue = null,
+        key1 = face.item.id,
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            decodeClusterPhotoThumbnail(context.applicationContext, face.item)
+        }
+    }
+    if (image != null) {
+        Image(requireNotNull(image), face.item.description, modifier, contentScale = ContentScale.Crop)
+    } else {
+        Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            Text("Photo", fontSize = 10.sp)
+        }
+    }
+}
+
+private fun decodeClusterPhotoThumbnail(
+    context: android.content.Context,
+    item: GalleryItem,
+): androidx.compose.ui.graphics.ImageBitmap? = runCatching {
+    fun openSource(): java.io.InputStream? = when {
+        item.previewPath != null -> java.io.File(item.previewPath).inputStream()
+        item.assetPath != null -> context.assets.open(item.assetPath)
+        item.contentUri != null -> context.contentResolver.openInputStream(Uri.parse(item.contentUri))
+        else -> null
+    }
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    val boundsSource = openSource() ?: return@runCatching null
+    boundsSource.use { BitmapFactory.decodeStream(it, null, bounds) }
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+    var sample = 1
+    while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > 640) sample *= 2
+    openSource()?.use {
+        BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+    }?.asImageBitmap()
+}.getOrNull()
 
 @Composable
 private fun FaceCropImage(face: PersonFaceReviewItem, modifier: Modifier) {

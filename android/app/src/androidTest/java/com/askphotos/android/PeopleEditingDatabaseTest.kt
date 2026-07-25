@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -50,13 +51,29 @@ class PeopleEditingDatabaseTest {
         store.saveReviewedPersonCluster("person_me", "Anup Kumar", "Me", listOf("मैं", "main"))
         assertEquals("Anup Kumar", store.personClusterSummaries(true).single { it.id == "person_me" }.label)
 
-        val movedCluster = store.moveFaceToCluster("${media[1].id}:0")
-        assertEquals(movedCluster, store.clusterIdForFace("${media[1].id}:0"))
+        val brotherFaceId = "${media[1].id}:0"
+        store.setPersonClusterRepresentative("person_brother", brotherFaceId)
+        assertEquals(brotherFaceId, store.personClusterSummaries(true).single { it.id == "person_brother" }.representativeFaceId)
+        store.excludeFaceFromCluster(brotherFaceId)
+        assertNull(store.clusterIdForFace(brotherFaceId))
+        assertNull(store.personClusterSummaries(true).single { it.id == "person_brother" }.representativeFaceId)
+        store.completeEmbeddedFaces(media[1].id, listOf(face()), listOf("person_brother"), "fixture-face-v1-excluded")
+        assertNull("A user exclusion must survive reindex", store.clusterIdForFace(brotherFaceId))
+
+        val movedCluster = store.moveFaceToCluster(brotherFaceId)
+        assertEquals(movedCluster, store.clusterIdForFace(brotherFaceId))
         store.completeEmbeddedFaces(media[1].id, listOf(face()), listOf("person_brother"), "fixture-face-v2")
-        assertEquals("A user-corrected split must survive reindex", movedCluster, store.clusterIdForFace("${media[1].id}:0"))
+        assertEquals("A user-corrected split must survive reindex", movedCluster, store.clusterIdForFace(brotherFaceId))
 
         store.mergePersonClusters("person_me", movedCluster)
-        assertEquals("person_me", store.clusterIdForFace("${media[1].id}:0"))
+        assertEquals("person_me", store.clusterIdForFace(brotherFaceId))
+        val firstPage = store.personFacesForCluster("person_me", limit = 1, offset = 0)
+        val secondPage = store.personFacesForCluster("person_me", limit = 1, offset = 1)
+        assertEquals(1, firstPage.size)
+        assertEquals(1, secondPage.size)
+        assertTrue(firstPage.single().id != secondPage.single().id)
+        store.setPersonClusterRepresentative("person_me", secondPage.single().id)
+        assertEquals(secondPage.single().id, store.personClusterSummaries(true).single { it.id == "person_me" }.representativeFaceId)
         store.setPersonClusterHidden("person_me", true)
         assertTrue(store.personClusterSummaries(true).single { it.id == "person_me" }.hidden)
         assertFalse(store.resolveReviewedPersonIds("Anup Kumar").contains("person_me"))

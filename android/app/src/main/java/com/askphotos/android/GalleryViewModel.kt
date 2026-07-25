@@ -45,6 +45,10 @@ data class GalleryUiState(
     val faceModelDownload: FaceModelDownloadProgress = FaceModelDownloadProgress(),
     val peopleIndex: PeopleIndexStatus = PeopleIndexStatus(),
     val peopleReviewClusters: List<PersonClusterReviewItem> = emptyList(),
+    val selectedPeopleClusterId: String? = null,
+    val selectedPeopleClusterFaces: List<PersonFaceReviewItem> = emptyList(),
+    val peopleClusterFaceOffset: Int = 0,
+    val peopleClusterFacesLoading: Boolean = false,
     val conversation: ConversationSearchState = ConversationSearchState(GalleryDatabase.PRIMARY_QUERY_SESSION),
 )
 
@@ -122,7 +126,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun navigate(destination: AppDestination) {
-        state = state.copy(destination = destination)
+        state = if (destination == AppDestination.PEOPLE) {
+            state.copy(destination = destination)
+        } else {
+            state.copy(
+                destination = destination,
+                selectedPeopleClusterId = null,
+                selectedPeopleClusterFaces = emptyList(),
+                peopleClusterFaceOffset = 0,
+                peopleClusterFacesLoading = false,
+            )
+        }
         if (destination == AppDestination.PEOPLE) {
             loadPeopleReviewClusters()
         }
@@ -389,26 +403,137 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveReviewedPersonCluster(id: String, label: String, relationship: String?, aliases: List<String>) {
         if (label.isBlank()) return
-        state = state.copy(operationMessage = "Saving identity for cluster...")
+        val safeLabel = label.trim()
+        val safeRelationship = relationship?.trim()?.takeIf(String::isNotBlank)
+        val safeAliases = aliases.map(String::trim).filter(String::isNotBlank).distinct()
+        val previousClusters = state.peopleReviewClusters
+        state = state.copy(
+            peopleReviewClusters = PeopleClusterStateReducer.review(
+                clusters = previousClusters,
+                id = id,
+                label = safeLabel,
+                relationship = safeRelationship,
+                aliases = safeAliases,
+            ),
+            operationMessage = "Saving identity for $safeLabel...",
+        )
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    val status = repository.saveReviewedPersonCluster(
+                    repository.saveReviewedPersonCluster(
                         id = id,
-                        label = label,
-                        relationship = relationship?.trim(),
-                        aliases = aliases,
+                        label = safeLabel,
+                        relationship = safeRelationship,
+                        aliases = safeAliases,
                     )
-                    status to repository.personClusterSummaries(includeHidden = true)
                 }
-            }.onSuccess { (status, clusters) ->
+            }.onSuccess { status ->
                 state = state.copy(
                     peopleIndex = status,
-                    peopleReviewClusters = clusters,
-                    operationMessage = "Saved identity for ${label.trim()}",
+                    operationMessage = "Saved identity for $safeLabel",
                 )
             }.onFailure { error ->
-                state = state.copy(operationMessage = error.message ?: "Person cluster review could not be saved")
+                state = state.copy(
+                    peopleReviewClusters = previousClusters,
+                    operationMessage = error.message ?: "Person cluster review could not be saved",
+                )
+            }
+        }
+    }
+
+    fun openPersonCluster(id: String) {
+        if (state.peopleReviewClusters.none { it.id == id }) return
+        state = state.copy(
+            selectedPeopleClusterId = id,
+            selectedPeopleClusterFaces = emptyList(),
+            peopleClusterFaceOffset = 0,
+            peopleClusterFacesLoading = false,
+        )
+        loadMorePersonClusterFaces()
+    }
+
+    fun closePersonCluster() {
+        state = state.copy(
+            selectedPeopleClusterId = null,
+            selectedPeopleClusterFaces = emptyList(),
+            peopleClusterFaceOffset = 0,
+            peopleClusterFacesLoading = false,
+        )
+    }
+
+    fun loadMorePersonClusterFaces() {
+        val clusterId = state.selectedPeopleClusterId ?: return
+        if (state.peopleClusterFacesLoading) return
+        val cluster = state.peopleReviewClusters.firstOrNull { it.id == clusterId } ?: return
+        val offset = state.peopleClusterFaceOffset
+        if (offset >= cluster.faceCount) return
+        state = state.copy(peopleClusterFacesLoading = true)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    repository.personFacesForCluster(clusterId, PEOPLE_FACE_PAGE_SIZE, offset)
+                }
+            }.onSuccess { page ->
+                if (state.selectedPeopleClusterId != clusterId) return@onSuccess
+                state = state.copy(
+                    selectedPeopleClusterFaces = (state.selectedPeopleClusterFaces + page).distinctBy(PersonFaceReviewItem::id),
+                    peopleClusterFaceOffset = offset + PEOPLE_FACE_PAGE_SIZE,
+                    peopleClusterFacesLoading = false,
+                )
+            }.onFailure { error ->
+                if (state.selectedPeopleClusterId == clusterId) {
+                    state = state.copy(
+                        peopleClusterFacesLoading = false,
+                        operationMessage = error.message ?: "Could not load this person's photos",
+                    )
+                }
+            }
+        }
+    }
+
+    fun setPersonClusterRepresentative(faceId: String) {
+        val clusterId = state.selectedPeopleClusterId ?: return
+        val face = state.selectedPeopleClusterFaces.firstOrNull { it.id == faceId } ?: return
+        val previousClusters = state.peopleReviewClusters
+        state = state.copy(
+            peopleReviewClusters = PeopleClusterStateReducer.setRepresentative(previousClusters, clusterId, face),
+            operationMessage = "Updating representative photo...",
+        )
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { repository.setPersonClusterRepresentative(clusterId, faceId) }
+            }.onSuccess {
+                state = state.copy(operationMessage = "Representative photo updated")
+            }.onFailure { error ->
+                state = state.copy(
+                    peopleReviewClusters = previousClusters,
+                    operationMessage = error.message ?: "Representative photo could not be updated",
+                )
+            }
+        }
+    }
+
+    fun excludeFaceFromSelectedCluster(faceId: String) {
+        val clusterId = state.selectedPeopleClusterId ?: return
+        val previousClusters = state.peopleReviewClusters
+        val previousFaces = state.selectedPeopleClusterFaces
+        if (previousFaces.none { it.id == faceId }) return
+        state = state.copy(
+            peopleReviewClusters = PeopleClusterStateReducer.excludeFace(previousClusters, clusterId, faceId),
+            selectedPeopleClusterFaces = previousFaces.filterNot { it.id == faceId },
+            operationMessage = "Excluding photo from this person...",
+        )
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { repository.excludeFaceFromCluster(faceId) }
+            }.onSuccess {
+                state = state.copy(operationMessage = "Photo excluded from this person")
+            }.onFailure { error ->
+                state = state.copy(
+                    peopleReviewClusters = previousClusters,
+                    selectedPeopleClusterFaces = previousFaces,
+                    operationMessage = error.message ?: "Photo could not be excluded",
+                )
             }
         }
     }
@@ -651,11 +776,70 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private companion object {
+        const val PEOPLE_FACE_PAGE_SIZE = 60
         val ACTIVE_DOWNLOAD_STATES = setOf(
             GemmaDownloadState.QUEUED,
             GemmaDownloadState.DOWNLOADING,
             GemmaDownloadState.VERIFYING,
         )
+    }
+}
+
+internal object PeopleClusterStateReducer {
+    fun review(
+        clusters: List<PersonClusterReviewItem>,
+        id: String,
+        label: String,
+        relationship: String?,
+        aliases: List<String>,
+    ): List<PersonClusterReviewItem> = clusters.map { cluster ->
+        when {
+            cluster.id == id -> cluster.copy(
+                label = label,
+                relationship = relationship,
+                aliases = aliases,
+                reviewed = true,
+                hidden = false,
+            )
+            relationship.equals("me", ignoreCase = true) && cluster.relationship.equals("me", ignoreCase = true) ->
+                cluster.copy(relationship = null)
+            else -> cluster
+        }
+    }
+
+    fun setRepresentative(
+        clusters: List<PersonClusterReviewItem>,
+        clusterId: String,
+        face: PersonFaceReviewItem,
+    ): List<PersonClusterReviewItem> = clusters.map { cluster ->
+        if (cluster.id != clusterId) {
+            cluster
+        } else {
+            cluster.copy(
+                representativeFaceId = face.id,
+                representativeFace = face,
+                supportingFaces = (listOf(face) + cluster.supportingFaces).distinctBy(PersonFaceReviewItem::id).take(4),
+            )
+        }
+    }
+
+    fun excludeFace(
+        clusters: List<PersonClusterReviewItem>,
+        clusterId: String,
+        faceId: String,
+    ): List<PersonClusterReviewItem> = clusters.map { cluster ->
+        if (cluster.id != clusterId) {
+            cluster
+        } else {
+            val remainingFaces = cluster.supportingFaces.filterNot { it.id == faceId }
+            val representativeWasExcluded = cluster.representativeFaceId == faceId || cluster.representativeFace?.id == faceId
+            cluster.copy(
+                faceCount = (cluster.faceCount - 1).coerceAtLeast(0),
+                representativeFaceId = if (representativeWasExcluded) null else cluster.representativeFaceId,
+                representativeFace = if (representativeWasExcluded) remainingFaces.firstOrNull() else cluster.representativeFace,
+                supportingFaces = remainingFaces,
+            )
+        }
     }
 }
 

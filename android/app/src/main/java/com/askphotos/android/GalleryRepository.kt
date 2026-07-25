@@ -103,6 +103,11 @@ class GalleryRepository(context: Context) {
     fun personClustersPendingReview(): List<PersonClusterReviewItem> = database.personClustersPendingReview()
     fun personClusterSummaries(includeHidden: Boolean = true): List<PersonClusterReviewItem> =
         database.personClusterSummaries(includeHidden)
+    fun personFacesForCluster(id: String, limit: Int, offset: Int): List<PersonFaceReviewItem> =
+        database.personFacesForCluster(id, limit, offset)
+    fun setPersonClusterRepresentative(id: String, faceId: String) =
+        database.setPersonClusterRepresentative(id, faceId)
+    fun excludeFaceFromCluster(faceId: String): String = database.excludeFaceFromCluster(faceId)
     fun removePersonLabel(id: String): PeopleIndexStatus = database.removePersonLabel(id)
     fun setPersonClusterHidden(id: String, hidden: Boolean): PeopleIndexStatus = database.setPersonClusterHidden(id, hidden)
     fun mergePersonClusters(targetId: String, sourceId: String): PeopleIndexStatus =
