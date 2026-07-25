@@ -1,11 +1,15 @@
 package com.askphotos.android
 
+import android.util.Log
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Capabilities
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.SamplerConfig
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
@@ -19,6 +23,10 @@ import kotlinx.coroutines.sync.withLock
 
 internal interface SharedGemmaEngine : AutoCloseable {
     val backend: PlannerInferenceBackend
+    val mtpSupported: Boolean
+        get() = false
+    val mtpEnabled: Boolean
+        get() = false
 
     suspend fun generateText(prompt: String, seed: Int): String
 
@@ -126,9 +134,12 @@ class GemmaSessionManager internal constructor(
 }
 
 private object LiteRtSharedGemmaEngineFactory : SharedGemmaEngineFactory {
+    private const val TAG = "AskPhotosGemma"
+
     override fun create(modelPath: String, multimodal: Boolean): SharedGemmaEngine {
         val gpu = runCatching { create(modelPath, multimodal, gpu = true) }
         return gpu.getOrElse { gpuFailure ->
+            Log.w(TAG, "GPU initialization failed; retrying Gemma on CPU", gpuFailure)
             runCatching { create(modelPath, multimodal, gpu = false) }.getOrElse { cpuFailure ->
                 throw GemmaModelLoadFailure(
                     "Gemma failed on GPU and CPU",
@@ -138,8 +149,19 @@ private object LiteRtSharedGemmaEngineFactory : SharedGemmaEngineFactory {
         }
     }
 
+    @OptIn(ExperimentalApi::class)
     private fun create(modelPath: String, multimodal: Boolean, gpu: Boolean): SharedGemmaEngine {
         val backend = if (gpu) Backend.GPU() else Backend.CPU()
+        val mtpSupported = if (gpu) {
+            runCatching {
+                Capabilities(modelPath).use(Capabilities::hasSpeculativeDecodingSupport)
+            }.onFailure { error ->
+                Log.w(TAG, "Could not read Gemma MTP capability; speculative decoding stays disabled", error)
+            }.getOrDefault(false)
+        } else {
+            false
+        }
+        val mtpEnabled = gpu && mtpSupported
         val config = if (multimodal) {
             EngineConfig(
                 modelPath = modelPath,
@@ -151,20 +173,31 @@ private object LiteRtSharedGemmaEngineFactory : SharedGemmaEngineFactory {
         } else {
             EngineConfig(modelPath = modelPath, backend = backend, maxNumTokens = 4096)
         }
+        ExperimentalFlags.enableSpeculativeDecoding = mtpEnabled
         val engine = Engine(config)
         try {
             engine.initialize()
         } catch (error: Throwable) {
             runCatching { engine.close() }
             throw error
+        } finally {
+            // This process-global flag is consumed while constructing the engine.
+            ExperimentalFlags.enableSpeculativeDecoding = false
         }
-        return LiteRtSharedGemmaEngine(engine, if (gpu) PlannerInferenceBackend.GPU else PlannerInferenceBackend.CPU)
+        val selectedBackend = if (gpu) PlannerInferenceBackend.GPU else PlannerInferenceBackend.CPU
+        Log.i(
+            TAG,
+            "LiteRT-LM initialized backend=$selectedBackend mtpSupported=$mtpSupported mtpEnabled=$mtpEnabled multimodal=$multimodal",
+        )
+        return LiteRtSharedGemmaEngine(engine, selectedBackend, mtpSupported, mtpEnabled)
     }
 }
 
 private class LiteRtSharedGemmaEngine(
     private val engine: Engine,
     override val backend: PlannerInferenceBackend,
+    override val mtpSupported: Boolean,
+    override val mtpEnabled: Boolean,
 ) : SharedGemmaEngine {
     override suspend fun generateText(prompt: String, seed: Int): String =
         engine.generateTextCancellable(conversation(seed), prompt, DISABLE_THINKING)
