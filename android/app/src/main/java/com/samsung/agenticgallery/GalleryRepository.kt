@@ -196,15 +196,21 @@ class GalleryRepository(context: Context) {
         relationship,
         aliases,
         includeInPersonalSemanticMemory,
-    ).also { queuePersonalSemanticMemory(userRequested = true) }
+    ).also {
+        queuePersonalSemanticMemory(userRequested = true)
+        ReviewedIdentityExpansionScheduler.schedule(appContext, id)
+    }
 
     fun personClustersPendingReview(): List<PersonClusterReviewItem> = database.personClustersPendingReview()
     fun personClusterSummaries(includeHidden: Boolean = true): List<PersonClusterReviewItem> =
         database.personClusterSummaries(includeHidden)
     fun personFacesForCluster(id: String, limit: Int, offset: Int): List<PersonFaceReviewItem> =
         database.personFacesForCluster(id, limit, offset)
+    fun personFace(faceId: String): PersonFaceReviewItem? = database.personFace(faceId)
     fun setPersonClusterRepresentative(id: String, faceId: String) =
-        database.setPersonClusterRepresentative(id, faceId)
+        database.setPersonClusterRepresentative(id, faceId).also {
+            ReviewedIdentityExpansionScheduler.schedule(appContext, id)
+        }
     fun excludeFaceFromCluster(faceId: String): String = database.excludeFaceFromCluster(faceId)
         .also { queuePersonalSemanticMemory(userRequested = true) }
     fun removePersonLabel(id: String): PeopleIndexStatus = database.removePersonLabel(id)
@@ -212,7 +218,10 @@ class GalleryRepository(context: Context) {
     fun setPersonClusterHidden(id: String, hidden: Boolean): PeopleIndexStatus = database.setPersonClusterHidden(id, hidden)
         .also { if (!hidden) queuePersonalSemanticMemory(userRequested = true) }
     fun mergePersonClusters(targetId: String, sourceId: String): PeopleIndexStatus =
-        database.mergePersonClusters(targetId, sourceId).also { queuePersonalSemanticMemory(userRequested = true) }
+        database.mergePersonClusters(targetId, sourceId).also {
+            queuePersonalSemanticMemory(userRequested = true)
+            ReviewedIdentityExpansionScheduler.schedule(appContext, targetId)
+        }
     fun moveFaceToCluster(faceId: String, targetId: String? = null): String =
         database.moveFaceToCluster(faceId, targetId).also { queuePersonalSemanticMemory(userRequested = true) }
 
@@ -235,6 +244,10 @@ class GalleryRepository(context: Context) {
         database.faceClusterReferences(faceIds)
     fun faceClusterMemberships(clusterId: String): List<FaceClusterMembership> =
         database.faceClusterMemberships(clusterId)
+    fun markFaceEmbeddingAvailable(faceId: String, dimension: Int, producerVersion: String) =
+        database.markFaceEmbeddingAvailable(faceId, dimension, producerVersion)
+    fun assignAutomaticFacesToReviewedCluster(clusterId: String, faceIds: Set<String>): Int =
+        database.assignAutomaticFacesToReviewedCluster(clusterId, faceIds)
     fun refineReviewedPersonCluster(clusterId: String, representativeFaceId: String, rejectedFaceIds: Set<String>): Int =
         database.refineReviewedPersonCluster(clusterId, representativeFaceId, rejectedFaceIds)
             .also { if (it > 0) queuePersonalSemanticMemory(userRequested = true) }

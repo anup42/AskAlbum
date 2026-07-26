@@ -1060,6 +1060,19 @@ class GalleryDatabase(
         arrayOf(FaceModelCatalog.sface.embeddingDimension.toString()),
     ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
 
+    fun markFaceEmbeddingAvailable(faceId: String, dimension: Int, producerVersion: String) {
+        require(faceId.length in 3..240 && dimension == FaceModelCatalog.sface.embeddingDimension) {
+            "Invalid repaired face embedding"
+        }
+        check(
+            writableDatabase.update("face_instance", ContentValues().apply {
+                put("embedding_offset", 0L)
+                put("embedding_dimension", dimension)
+                put("producer_version", producerVersion)
+            }, "id=?", arrayOf(faceId)) == 1,
+        ) { "Representative face is unavailable" }
+    }
+
     fun clusterIdForFace(faceId: String): String? = readableDatabase.rawQuery(
         "SELECT cluster_id FROM face_instance WHERE id=?",
         arrayOf(faceId),
@@ -1069,7 +1082,7 @@ class GalleryDatabase(
         faceIds.distinct().chunked(SQLITE_ID_CHUNK).flatMap { ids ->
             val placeholders = ids.joinToString(",") { "?" }
             readableDatabase.rawQuery(
-                "SELECT f.id,c.id,c.reviewed,c.hidden FROM face_instance f " +
+                "SELECT f.id,c.id,c.reviewed,c.hidden,f.user_corrected FROM face_instance f " +
                     "JOIN person_cluster c ON c.id=f.cluster_id WHERE f.id IN ($placeholders)",
                 ids.toTypedArray(),
             ).use { cursor ->
@@ -1080,6 +1093,7 @@ class GalleryDatabase(
                                 clusterId = cursor.getString(1),
                                 reviewed = cursor.getInt(2) != 0,
                                 hidden = cursor.getInt(3) != 0,
+                                userCorrected = cursor.getInt(4) != 0,
                             ),
                         )
                     }
@@ -1096,6 +1110,73 @@ class GalleryDatabase(
             buildList {
                 while (cursor.moveToNext()) add(FaceClusterMembership(cursor.getString(0), cursor.getInt(1) != 0))
             }
+        }
+    }
+
+    fun assignAutomaticFacesToReviewedCluster(clusterId: String, faceIds: Set<String>): Int {
+        require(PERSON_ID.matches(clusterId)) { "Invalid reviewed person ID" }
+        if (faceIds.isEmpty()) return 0
+        val db = writableDatabase
+        db.beginTransaction()
+        return try {
+            val targetIsReviewed = db.rawQuery(
+                "SELECT reviewed=1 AND hidden=0 FROM person_cluster WHERE id=?",
+                arrayOf(clusterId),
+            ).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) != 0 }
+            check(targetIsReviewed) { "Reviewed person is unavailable" }
+            val eligible = faceIds.chunked(SQLITE_ID_CHUNK).flatMap { ids ->
+                val placeholders = ids.joinToString(",") { "?" }
+                db.rawQuery(
+                    "SELECT f.id,f.media_id,f.cluster_id FROM face_instance f " +
+                        "LEFT JOIN person_cluster c ON c.id=f.cluster_id " +
+                        "WHERE f.id IN ($placeholders) AND f.user_corrected=0 " +
+                        "AND (f.cluster_id IS NULL OR (c.reviewed=0 AND c.hidden=0))",
+                    ids.toTypedArray(),
+                ).use { cursor ->
+                    buildList {
+                        while (cursor.moveToNext()) {
+                            add(Triple(cursor.getString(0), cursor.getString(1), if (cursor.isNull(2)) null else cursor.getString(2)))
+                        }
+                    }
+                }
+            }
+            eligible.map { it.first }.chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                val placeholders = ids.joinToString(",") { "?" }
+                db.update(
+                    "face_instance",
+                    ContentValues().apply { put("cluster_id", clusterId) },
+                    "id IN ($placeholders)",
+                    ids.toTypedArray(),
+                )
+            }
+            val now = System.currentTimeMillis()
+            db.update("person_cluster", ContentValues().apply { put("updated_at", now) }, "id=?", arrayOf(clusterId))
+            eligible.groupBy { it.third }.forEach { (sourceClusterId, movedFaces) ->
+                if (sourceClusterId == null) return@forEach
+                val movedIds = movedFaces.map { it.first }
+                movedIds.chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                    val placeholders = ids.joinToString(",") { "?" }
+                    db.update(
+                        "person_cluster",
+                        ContentValues().apply {
+                            putNull("representative_face_id")
+                            put("updated_at", now)
+                        },
+                        "id=? AND representative_face_id IN ($placeholders)",
+                        arrayOf(sourceClusterId, *ids.toTypedArray()),
+                    )
+                }
+                db.delete(
+                    "person_cluster",
+                    "id=? AND reviewed=0 AND NOT EXISTS (SELECT 1 FROM face_instance WHERE cluster_id=?)",
+                    arrayOf(sourceClusterId, sourceClusterId),
+                )
+            }
+            invalidatePersonalSemanticEvidence(db, eligible.mapTo(linkedSetOf()) { it.second })
+            db.setTransactionSuccessful()
+            eligible.size
+        } finally {
+            db.endTransaction()
         }
     }
 
@@ -1163,7 +1244,8 @@ class GalleryDatabase(
 
     fun personClusterSummaries(includeHidden: Boolean = false): List<PersonClusterReviewItem> {
         val summaries = readableDatabase.rawQuery(
-            "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(f.id) AS face_count, MAX(f.media_id) AS sample_media_id " +
+            "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(f.id) AS face_count, " +
+                "COUNT(DISTINCT f.media_id) AS media_count, MAX(f.media_id) AS sample_media_id " +
                 ", c.reviewed, c.hidden, c.representative_face_id, c.include_in_personal_memory " +
                 "FROM person_cluster c LEFT JOIN face_instance f ON c.id = f.cluster_id " +
                 (if (includeHidden) "" else "WHERE c.hidden = 0 ") +
@@ -1183,21 +1265,23 @@ class GalleryDatabase(
                                 List(json.length()) { json.getString(it) }
                             }.getOrDefault(emptyList()),
                             faceCount = cursor.getInt(4),
-                            sampleMediaId = if (cursor.isNull(5)) null else cursor.getString(5),
-                            reviewed = cursor.getInt(6) != 0,
-                            hidden = cursor.getInt(7) != 0,
-                            representativeFaceId = if (cursor.isNull(8)) null else cursor.getString(8),
-                            includeInPersonalSemanticMemory = cursor.getInt(9) != 0,
+                            mediaCount = cursor.getInt(5),
+                            sampleMediaId = if (cursor.isNull(6)) null else cursor.getString(6),
+                            reviewed = cursor.getInt(7) != 0,
+                            hidden = cursor.getInt(8) != 0,
+                            representativeFaceId = if (cursor.isNull(9)) null else cursor.getString(9),
+                            includeInPersonalSemanticMemory = cursor.getInt(10) != 0,
                         ),
                     )
                 }
             }
         }
+        val visibleSummaries = summaries.filter { it.reviewed || it.mediaCount >= MIN_UNREVIEWED_PERSON_MEDIA }
         val facesByCluster = personFacesForClusters(
-            summaries.mapTo(linkedSetOf(), PersonClusterReviewItem::id),
+            visibleSummaries.mapTo(linkedSetOf(), PersonClusterReviewItem::id),
             limitPerCluster = 4,
         )
-        return summaries.map { summary ->
+        return visibleSummaries.map { summary ->
             val faces = facesByCluster[summary.id].orEmpty()
             summary.copy(
                 representativeFace = faces.firstOrNull { it.id == summary.representativeFaceId } ?: faces.firstOrNull(),
@@ -1263,6 +1347,46 @@ class GalleryDatabase(
                 userCorrected = face.userCorrected,
             )
         }
+    }
+
+    fun personFace(faceId: String): PersonFaceReviewItem? {
+        require(faceId.length in 3..240) { "Invalid face ID" }
+        data class PendingFace(
+            val mediaId: String,
+            val left: Float,
+            val top: Float,
+            val right: Float,
+            val bottom: Float,
+            val quality: Float,
+            val userCorrected: Boolean,
+        )
+        val face = readableDatabase.rawQuery(
+            "SELECT media_id,left_pos,top_pos,right_pos,bottom_pos,quality,user_corrected FROM face_instance WHERE id=?",
+            arrayOf(faceId),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            PendingFace(
+                mediaId = cursor.getString(0),
+                left = cursor.getFloat(1),
+                top = cursor.getFloat(2),
+                right = cursor.getFloat(3),
+                bottom = cursor.getFloat(4),
+                quality = cursor.getFloat(5),
+                userCorrected = cursor.getInt(6) != 0,
+            )
+        }
+        val item = queryItems("id=?", arrayOf(face.mediaId), null, "1").singleOrNull() ?: return null
+        return PersonFaceReviewItem(
+            id = faceId,
+            mediaId = face.mediaId,
+            item = item,
+            left = face.left,
+            top = face.top,
+            right = face.right,
+            bottom = face.bottom,
+            quality = face.quality,
+            userCorrected = face.userCorrected,
+        )
     }
 
     private fun personFacesForClusters(
@@ -3318,6 +3442,7 @@ class GalleryDatabase(
         )
         private const val SQLITE_ID_CHUNK = 800
         const val PEOPLE_CONSENT_VERSION = 1
+        private const val MIN_UNREVIEWED_PERSON_MEDIA = 5
         const val PRIMARY_QUERY_SESSION = "primary"
         private const val MAX_RESULT_SETS_PER_SESSION = 20
         private const val MAX_FACES_PER_MEDIA = 64

@@ -30,6 +30,7 @@ data class FaceClusterReference(
     val clusterId: String,
     val reviewed: Boolean,
     val hidden: Boolean,
+    val userCorrected: Boolean = false,
 )
 
 internal data class FaceClusterCandidate(

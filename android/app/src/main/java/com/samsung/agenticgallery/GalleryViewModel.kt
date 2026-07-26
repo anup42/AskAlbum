@@ -107,6 +107,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val faceModelPacks = askPhotosApplication.services.faceModelPackManager
     private val faceModelDownloader = askPhotosApplication.services.faceModelDownloader
     private val faceVectorStore = askPhotosApplication.services.faceVectorStore
+    private val reviewedIdentityExpander = ReviewedIdentityClusterExpander(askPhotosApplication)
     private val destinationHistory = ArrayDeque<AppDestination>()
     private val embeddedFaceModelProvisioner = askPhotosApplication.services.embeddedFaceModelProvisioner
     private var modelMonitorJob: Job? = null
@@ -845,6 +846,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 withContext(Dispatchers.IO) {
                     val memberships = repository.faceClusterMemberships(clusterId)
+                    val representativeFace = repository.personFace(representativeFaceId)
+                        ?: error("Representative face is unavailable")
+                    reviewedIdentityExpander.ensureEmbedding(representativeFace)
                     val similarities = faceVectorStore.similarities(
                         representativeFaceId,
                         memberships.map(FaceClusterMembership::faceId),

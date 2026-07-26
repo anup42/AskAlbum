@@ -310,6 +310,7 @@ data class PersonClusterReviewItem(
     val representativeFaceId: String? = null,
     val representativeFace: PersonFaceReviewItem? = null,
     val supportingFaces: List<PersonFaceReviewItem> = emptyList(),
+    val mediaCount: Int = 0,
 )
 
 data class PersonFaceReviewItem(

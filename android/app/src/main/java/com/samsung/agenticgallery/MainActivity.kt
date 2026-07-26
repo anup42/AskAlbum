@@ -2440,7 +2440,7 @@ private fun PersonClusterCard(
                 }
                 Column(Modifier.weight(1f)) {
                     Text(cluster.label ?: "Unreviewed person", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${cluster.faceCount} faces • ${if (cluster.reviewed) "reviewed" else "to review"}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    Text("${cluster.mediaCount} photos • ${if (cluster.reviewed) "reviewed" else "to review"}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                     cluster.relationship?.let { Text(it, fontSize = 12.sp) }
                     if (cluster.includeInPersonalSemanticMemory) {
                         Text("Personal semantic memory", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
@@ -2494,15 +2494,11 @@ private fun decodeClusterPhotoThumbnail(
         item.contentUri != null -> context.contentResolver.openInputStream(Uri.parse(item.contentUri))
         else -> null
     }
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    val boundsSource = openSource() ?: return@runCatching null
-    boundsSource.use { BitmapFactory.decodeStream(it, null, bounds) }
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
-    var sample = 1
-    while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > 640) sample *= 2
-    openSource()?.use {
-        BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
-    }?.asImageBitmap()
+    ExifBitmapOrientation.decodeSampled(
+        opener = ::openSource,
+        requestedEdgePx = 640,
+        config = android.graphics.Bitmap.Config.ARGB_8888,
+    )?.asImageBitmap()
 }.getOrNull()
 
 @Composable
@@ -2536,6 +2532,7 @@ private fun decodeFaceThumbnail(
         else -> null
     }
 
+    val orientation = ExifBitmapOrientation.read(::openSource)
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     val boundsSource = openSource() ?: return@runCatching null
     boundsSource.use { BitmapFactory.decodeStream(it, null, bounds) }
@@ -2581,7 +2578,7 @@ private fun decodeFaceThumbnail(
         if (scaled !== cropped) cropped.recycle()
         scaled
     }
-    output.asImageBitmap()
+    ExifBitmapOrientation.apply(output, orientation).asImageBitmap()
 }.getOrNull()
 
 internal object FaceCropSamplingPolicy {

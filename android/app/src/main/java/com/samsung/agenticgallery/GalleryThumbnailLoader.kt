@@ -2,7 +2,6 @@ package com.samsung.agenticgallery
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.CancellationSignal
 import android.util.LruCache
@@ -19,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import java.io.File
 import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -102,34 +102,11 @@ internal object GalleryThumbnailLoader {
         else -> null
     }
 
-    private fun decodeSampledFile(path: String, requestedEdgePx: Int): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(path, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        return BitmapFactory.decodeFile(
-            path,
-            BitmapFactory.Options().apply {
-                inSampleSize = thumbnailSampleSize(bounds.outWidth, bounds.outHeight, requestedEdgePx)
-                inPreferredConfig = Bitmap.Config.RGB_565
-            },
-        )
-    }
+    private fun decodeSampledFile(path: String, requestedEdgePx: Int): Bitmap? =
+        decodeSampledStream({ File(path).inputStream() }, requestedEdgePx)
 
-    private fun decodeSampledStream(opener: () -> InputStream?, requestedEdgePx: Int): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        opener()?.use { BitmapFactory.decodeStream(it, null, bounds) }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        return opener()?.use {
-            BitmapFactory.decodeStream(
-                it,
-                null,
-                BitmapFactory.Options().apply {
-                    inSampleSize = thumbnailSampleSize(bounds.outWidth, bounds.outHeight, requestedEdgePx)
-                    inPreferredConfig = Bitmap.Config.RGB_565
-                },
-            )
-        }
-    }
+    private fun decodeSampledStream(opener: () -> InputStream?, requestedEdgePx: Int): Bitmap? =
+        ExifBitmapOrientation.decodeSampled(opener, requestedEdgePx)
 }
 
 @Composable
