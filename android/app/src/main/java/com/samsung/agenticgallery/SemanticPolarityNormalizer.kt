@@ -22,4 +22,9 @@ internal object SemanticPolarityNormalizer {
 
     fun conditionMatched(spec: VerificationConditionSpec, predicateVisible: Boolean): Boolean =
         if (spec.polarity == Polarity.NEGATIVE) !predicateVisible else predicateVisible
+
+    fun conditionMatched(spec: VerificationConditionSpec, evaluation: VerificationConditionEvaluation): Boolean = when {
+        spec.polarity == Polarity.POSITIVE -> evaluation.verdict == PersonVisualVerdict.VERIFIED_TRUE
+        else -> evaluation.verdict == PersonVisualVerdict.VERIFIED_FALSE
+    }
 }

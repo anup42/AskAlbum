@@ -9,7 +9,11 @@ class AdaptiveGemmaSemanticEnricher(
     private val modelPacks: ModelPackManager,
     private val sessions: GemmaSessionManager,
 ) {
-    suspend fun enrich(job: SemanticEnrichmentJobRecord, imageBytes: ByteArray): List<SemanticFactRecord> {
+    suspend fun enrich(
+        job: SemanticEnrichmentJobRecord,
+        imageBytes: ByteArray,
+        bindings: List<PersonVerificationBinding> = emptyList(),
+    ): SemanticEnrichmentResult {
         val status = modelPacks.status()
         val path = status.path
         require(path != null && status.installed && status.multimodal) {
@@ -18,14 +22,36 @@ class AdaptiveGemmaSemanticEnricher(
         require(status.deviceAssessment?.supported != false) { status.deviceAssessment?.reason ?: "Device unsupported" }
         require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
         val response = sessions.withEngine(path, multimodal = true) { lease ->
-            lease.engine.generateVision(imageBytes, prompt(job), seed = 31)
+            lease.engine.generateVision(imageBytes, prompt(job, bindings), seed = 31)
         }
-        return SemanticFactCodec.decode(job, response, "gemma-4-${status.packVersion ?: "unknown"}")
+        return SemanticEnrichmentCodec.decode(job, response, "gemma-4-${status.packVersion ?: "unknown"}", bindings)
     }
 
-    private fun prompt(job: SemanticEnrichmentJobRecord): String = """
-        Analyze only the supplied local representative image. Return one JSON object and no markdown.
-        Shape: {"facts":[{"predicate":"scene","value":"beach","confidence":0.93,"applicability":"EVIDENCE_MEDIA_ONLY"}]}
+    private fun prompt(job: SemanticEnrichmentJobRecord, bindings: List<PersonVerificationBinding>): String = """
+        Analyze only the supplied local representative contact sheet. Return one JSON object and no markdown.
+        The top panel is the complete image. Lower panels are labelled conservative full-body and upper-body crops.
+        Reviewed labels available: ${bindings.distinctBy(PersonVerificationBinding::clusterId).joinToString(",") { it.stableLabel }.ifBlank { "none" }}.
+        Write a comprehensive detailedCaption covering every search-useful visible scene, setting, occasion cue, labelled person,
+        clothing, footwear, headwear, accessory, jewelry, eyewear, bag, carried or held object, action, pose, interaction,
+        foreground and background object, animal, food, vehicle, furniture, decoration, color, pattern, material, style,
+        spatial relationship, weather, lighting, time-of-day cue, viewpoint, composition, and image-quality characteristic.
+        Use as much grounded detail as supported, normally 120-220 words for a complex image. Do not add filler.
+        Use P labels only. Never infer identities, relationships, occupations, private traits, sensitive attributes, exact location,
+        or an event without visible cues. Never output sensitive OCR values, paths, filenames, URIs, tools, passwords, payment data,
+        phone numbers, emails, account data, or identity numbers.
+        Shape: {"detailedCaption":"...","captionConfidence":0.93,
+        "people":[{"personRef":"P1","visibility":"FULL_BODY","associationStatus":"CONFIDENT",
+        "bodyRegion":[0.1,0.1,0.4,0.95],"wornItems":[{"category":"CLOTHING","itemType":"dress","colors":["red"],
+        "pattern":"floral","material":null,"style":"long","length":"long","sleeves":null,"bodyRegion":"FULL_BODY",
+        "confidence":0.96,"region":[0.1,0.2,0.4,0.95]}],"carriedItems":[],"actions":["standing"],"confidence":0.94}],
+        "facts":[{"predicate":"scene","value":"decorated living room","confidence":0.93,"applicability":"EVIDENCE_MEDIA_ONLY"}]}
+        people must contain only supplied P labels. If none are supplied, people must be [].
+        associationStatus: CONFIDENT, AMBIGUOUS, or UNAVAILABLE. Use AMBIGUOUS when crops contain competing bodies.
+        visibility: FULL_BODY, UPPER_BODY, LOWER_BODY, FACE_ONLY, PARTIAL, OCCLUDED, or UNKNOWN.
+        category: CLOTHING, FOOTWEAR, HEADWEAR, ACCESSORY, JEWELRY, EYEWEAR, BAG, or OTHER_WORN_ITEM.
+        bodyRegion: HEAD, NECK, UPPER_BODY, LOWER_BODY, FULL_BODY, FEET, HAND, or UNKNOWN.
+        Include every visible worn item, not only shirts: dresses, sarees, suits, trousers, shoes, sandals, hats, glasses,
+        jewelry, bags, and uncommon items using OTHER_WORN_ITEM with a safe itemType.
         predicate must be one of: scene, activity, object, setting, occasion, clothing, document_type.
         value must be concise visible evidence, never a caption, identity guess, private value, password, payment data, phone, email, order ID, path, URI, or tool.
         applicability must be EVIDENCE_MEDIA_ONLY or SAFE_FOR_EXACT_DUPLICATES.

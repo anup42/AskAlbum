@@ -87,22 +87,25 @@ class SemanticEnrichmentWorker(
                     hit,
                     database.videoKeyframes(item.id),
                 )
+                val bindings = database.reviewedFaceBindingsForMedia(item.id)
+                val modelImage = PersonVerificationImageComposer.compose(loaded.bytes, bindings)
                 val enricher = AdaptiveGemmaSemanticEnricher(
                     services.modelPackManager,
                     services.gemmaSessions,
                 )
-                val facts = IndexingResourceCoordinator.withBackgroundPermit {
+                val result = IndexingResourceCoordinator.withBackgroundPermit {
                     try {
-                        enricher.enrich(currentJob, loaded.bytes)
+                        enricher.enrich(currentJob, modelImage, bindings)
                     } catch (malformed: SemanticEnrichmentOutputException) {
                         Log.w(TAG, "Retrying malformed Gemma semantic output once for job=${currentJob.id}")
-                        enricher.enrich(currentJob, loaded.bytes)
+                        enricher.enrich(currentJob, modelImage, bindings)
                     }
                 }
-                database.completeSemanticEnrichment(currentJob, facts)
+                database.completeSemanticEnrichment(currentJob, result)
                 Log.i(
                     TAG,
-                    "Semantic enrichment completed job=${currentJob.id} media=${currentJob.representativeMediaId} facts=${facts.size}",
+                    "Semantic enrichment completed job=${currentJob.id} media=${currentJob.representativeMediaId} " +
+                        "facts=${result.facts.size} caption=${result.caption != null} personFacts=${result.personFacts.size}",
                 )
             } catch (cancelled: CancellationException) {
                 database.failSemanticEnrichment(currentJob, "Enrichment cancelled", retryable = true)

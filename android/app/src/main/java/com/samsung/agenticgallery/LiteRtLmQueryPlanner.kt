@@ -165,6 +165,7 @@ class LiteRtLmQueryPlanner(
         Default to terms and place. For ordinary category, scene, activity, place, event-name, or free-text search, semanticClauses must be [].
         Use semanticClauses only for relational, negative, comparative, or fine-grained visual conditions that terms cannot express.
         A semantic clause has text, optional canonicalText, polarity POSITIVE|NEGATIVE, hardness HARD|SOFT, subject WHOLE_MEDIA|PERSON|EVENT|DOCUMENT, optional relationToPerson. Subject is the evidence carrier, not the search category: put family, pet, trip, food, clothing, and similar concepts in text/canonicalText and use WHOLE_MEDIA.
+        For wearing, carrying, holding, using, pose, or person-to-person conditions, use subject PERSON, set relationToPerson to the exact peopleClauses personId, keep the visible item and attributes in text/canonicalText, and require visual verification.
         A people clause has personId, mustBePresent, hardness. ocrClause has optional query,merchant,requestedField.
         verification is exactly one quoted scalar enum string: AUTO, REQUIRED, or NEVER. Never emit an array or object there.
         Preserve the user's language in text and add a short English canonicalText when useful for retrieval.

@@ -3436,3 +3436,22 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND INSTALLED.**
 - Connected 90-second screen-off run: PASS. Thumbnail completion advanced by 167, OCR by 39, and SigLIP2 vectors by 224; media count stayed 11,511 with no observed app crash, ANR, or OOM.
 - Full 30-minute screen-off soak: NOT RUN. Process-death, Doze, service-timeout, 5,000/20,000-item load, ANR, and OOM acceptance remain pending beyond the focused connected run.
 - During the first consumer-flavor migration test, Android instrumentation teardown removed the consumer package. The complete 19:48 database snapshot was restored and verified before relaunch; media permissions were restored. The prior app-private Gemma pack and shared preferences were not present in the snapshot, so automatic E2B provisioning is queued again.
+
+## 2026-07-26 - Comprehensive Gemma captions and person appearance
+
+Status: **IMPLEMENTED, TESTED, BUILT, AND INSTALLED; BACKGROUND CAPTION UPGRADE RUNNING.**
+
+- Room schema v16 non-destructively adds evidence-scoped comprehensive captions, stable reviewed-person references, and general person visual fields for clothing, footwear, headwear, accessories, jewelry, eyewear, bags, actions, body regions, association status, and four-state verdicts.
+- Representative enrichment now produces the detailed caption, atomic semantic facts, and reviewed-person observations in one shared local Gemma vision call. No additional model pack or engine initialization path was added.
+- The contact sheet retains the full image and adds deterministic P-labelled full-height person corridors plus upper-body crops. Ambiguous associations are retained as caption mappings but cannot create confirmed person facts.
+- Query verification now distinguishes `VERIFIED_TRUE`, `VERIFIED_FALSE`, `AMBIGUOUS`, and `NOT_VISIBLE`. Positive conditions require verified true; negative conditions require verified false, so ambiguity and cropped body regions cannot satisfy either.
+- Caption search is a separate fused retrieval channel. Visual-group and event caption expansion is lower-confidence candidate evidence and is never treated as individual-image proof or an exact count.
+- Semantic Memory and image metadata inspection show the exact caption, scope, evidence media, P-to-cluster mapping, confidence, applicability, model/prompt versions, and person observations.
+- Existing completed semantic jobs are requeued once using a `caption-v2` completion checkpoint. Existing facts remain searchable during regeneration, and safe no-caption results do not loop.
+- `ComprehensiveSemanticCaptionTest` and existing `AdaptiveSemanticEnrichmentTest`: PASS.
+- Isolated `GalleryMigration15To16Test` on SM-S928B Android 16: PASS.
+- `ConsumerDebug` and `OfflineDemoDebug`: PASS. Offline APK permission inspection: PASS, no `android.permission.INTERNET`.
+- Replacement install: PASS. Pre-install v15 snapshot contained 11,511 media, 1,206 person clusters, 3,275 faces, 427 semantic facts, and integrity `ok`.
+- Post-install v16 snapshot retained 11,511 media and all prior facts; indexing continued to 1,230 clusters, 3,325 faces, 430 facts, and 3 comprehensive captions with integrity `ok`.
+- Caption upgrade snapshot: 196 pending, 1 running, 1 completed, 2 authentication-protected, and zero legacy completed jobs remaining.
+- Full caption-queue completion, real-gallery swapped-person clothing query acceptance, cropped-footwear acceptance, and the broader requested apparel corpus are NOT RUN. These require the background queue and targeted device corpus to complete.

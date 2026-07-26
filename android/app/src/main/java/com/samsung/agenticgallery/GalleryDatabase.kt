@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.provider.MediaStore
 import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 import java.util.UUID
 
@@ -1629,6 +1630,25 @@ class GalleryDatabase(
         }
     }
 
+    fun reviewedFaceBindingsForMedia(mediaId: String): List<PersonVerificationBinding> {
+        val clusterIds = readableDatabase.rawQuery(
+            "SELECT DISTINCT f.cluster_id FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
+                "WHERE f.media_id=? AND p.reviewed=1 AND p.hidden=0 ORDER BY f.cluster_id",
+            arrayOf(mediaId),
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+        return reviewedFaceBindings(mediaId, clusterIds.toSet()).distinctBy(PersonVerificationBinding::clusterId)
+    }
+
+    fun reviewedPersonClusterIdsByMedia(): Map<String, Set<String>> = readableDatabase.rawQuery(
+        "SELECT f.media_id,f.cluster_id FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
+            "WHERE p.reviewed=1 AND p.hidden=0 ORDER BY f.media_id,f.cluster_id",
+        emptyArray(),
+    ).use { cursor ->
+        buildMap<String, MutableSet<String>> {
+            while (cursor.moveToNext()) getOrPut(cursor.getString(0), ::linkedSetOf).add(cursor.getString(1))
+        }
+    }
+
     fun saveVerifiedPersonAttributeFact(
         mediaId: String,
         clusterId: String,
@@ -1649,6 +1669,15 @@ class GalleryDatabase(
             put("confidence", confidence.coerceIn(0f, 1f))
             put("region", JSONArray(region).toString())
             put("model_version", modelVersion.take(160))
+            put("person_ref", "")
+            put("relation", PersonVisualRelation.ACTION.name)
+            put("category", WornItemCategory.OTHER_WORN_ITEM.name)
+            put("attributes", "{}")
+            put("body_region", BodyRegion.UNKNOWN.name)
+            put("face_region", JSONArray(region).toString())
+            put("association_status", PersonAssociationStatus.CONFIDENT.name)
+            put("verdict", PersonVisualVerdict.VERIFIED_TRUE.name)
+            put("prompt_version", "query-visual-verification-v2")
             put("updated_at", System.currentTimeMillis())
         }, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -2523,6 +2552,12 @@ class GalleryDatabase(
         val factCount = db.rawQuery("SELECT COUNT(*) FROM semantic_fact", emptyArray()).use { cursor ->
             if (cursor.moveToFirst()) cursor.getInt(0) else 0
         }
+        val captionCount = db.rawQuery("SELECT COUNT(*) FROM semantic_caption", emptyArray()).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
+        val personVisualFactCount = db.rawQuery("SELECT COUNT(*) FROM person_attribute_fact", emptyArray()).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
         val latestError = db.rawQuery(
             "SELECT error FROM semantic_enrichment_job WHERE error IS NOT NULL AND error<>'' ORDER BY updated_at DESC LIMIT 1",
             emptyArray(),
@@ -2535,13 +2570,34 @@ class GalleryDatabase(
             failedJobs = counts[4],
             authenticationRequiredJobs = counts[5],
             factCount = factCount,
+            captionCount = captionCount,
+            personVisualFactCount = personVisualFactCount,
             latestError = latestError,
         )
     }
 
-    fun completeSemanticEnrichment(job: SemanticEnrichmentJobRecord, facts: List<SemanticFactRecord>) {
+    fun queueLegacySemanticCaptionJobs(): Int = writableDatabase.update(
+        "semantic_enrichment_job",
+        ContentValues().apply {
+            put("status", SemanticEnrichmentStatus.PENDING.name)
+            put("attempt_count", 0)
+            putNull("error")
+            putNull("lease_owner")
+            putNull("lease_expires_at")
+            put("next_attempt_at", 0L)
+            put("updated_at", System.currentTimeMillis())
+        },
+        "status=? AND (model_version IS NULL OR model_version NOT LIKE ?)",
+        arrayOf(SemanticEnrichmentStatus.COMPLETE.name, "caption-v2:%"),
+    )
+
+    fun completeSemanticEnrichment(job: SemanticEnrichmentJobRecord, facts: List<SemanticFactRecord>) =
+        completeSemanticEnrichment(job, SemanticEnrichmentResult(facts))
+
+    fun completeSemanticEnrichment(job: SemanticEnrichmentJobRecord, result: SemanticEnrichmentResult) {
         writableDatabase.transaction { db ->
             val now = System.currentTimeMillis()
+            val facts = result.facts
             facts.forEach { fact ->
                 val targets = if (fact.applicability == "SAFE_FOR_EXACT_DUPLICATES") {
                     exactDuplicateMediaIds(db, fact.evidenceMediaId)
@@ -2567,9 +2623,62 @@ class GalleryDatabase(
                     }, SQLiteDatabase.CONFLICT_REPLACE)
                 }
             }
+            result.caption?.let { caption ->
+                val stable = "${caption.scope}|${caption.subjectId}|${caption.evidenceMediaId}|${caption.modelVersion}|${caption.promptVersion}"
+                val captionId = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
+                db.insertWithOnConflict("semantic_caption", null, ContentValues().apply {
+                    put("id", captionId)
+                    put("scope", caption.scope.name)
+                    put("subject_id", caption.subjectId)
+                    put("text", caption.text.take(4_000))
+                    put("confidence", caption.confidence.coerceIn(0f, 1f))
+                    put("evidence_media_id", caption.evidenceMediaId)
+                    put("applicability", caption.applicability)
+                    put("model_version", caption.modelVersion)
+                    put("prompt_version", caption.promptVersion)
+                    put("updated_at", now)
+                }, SQLiteDatabase.CONFLICT_REPLACE)
+                db.delete("semantic_caption_person_ref", "caption_id=?", arrayOf(captionId))
+                caption.personRefs.forEach { ref ->
+                    db.insertWithOnConflict("semantic_caption_person_ref", null, ContentValues().apply {
+                        put("caption_id", captionId)
+                        put("person_ref", ref.personRef)
+                        put("cluster_id", ref.clusterId)
+                        put("face_region", JSONArray(ref.faceRegion).toString())
+                        if (ref.bodyRegion == null) putNull("body_region") else put("body_region", JSONArray(ref.bodyRegion).toString())
+                        put("association_status", ref.associationStatus.name)
+                    }, SQLiteDatabase.CONFLICT_REPLACE)
+                }
+            }
+            result.personFacts.forEach { fact ->
+                val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}"
+                db.insertWithOnConflict("person_attribute_fact", null, ContentValues().apply {
+                    put("id", UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString())
+                    put("media_id", job.representativeMediaId)
+                    put("cluster_id", fact.clusterId)
+                    put("predicate", fact.relation.name.lowercase(Locale.ROOT))
+                    put("value", fact.value.take(240))
+                    put("confidence", fact.confidence.coerceIn(0f, 1f))
+                    put("region", JSONArray(fact.evidenceRegion ?: fact.faceRegion).toString())
+                    put("model_version", fact.modelVersion)
+                    put("person_ref", fact.personRef)
+                    put("relation", fact.relation.name)
+                    put("category", fact.category?.name ?: WornItemCategory.OTHER_WORN_ITEM.name)
+                    if (fact.itemType == null) putNull("item_type") else put("item_type", fact.itemType.take(120))
+                    put("attributes", encodeAttributes(fact.attributes))
+                    put("body_region", fact.bodyRegion.name)
+                    put("face_region", JSONArray(fact.faceRegion).toString())
+                    put("association_status", fact.associationStatus.name)
+                    put("verdict", fact.verdict.name)
+                    if (fact.targetClusterId == null) putNull("target_cluster_id") else put("target_cluster_id", fact.targetClusterId)
+                    put("prompt_version", fact.promptVersion)
+                    put("updated_at", now)
+                }, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            val producer = result.caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
             db.update("semantic_enrichment_job", ContentValues().apply {
                 put("status", SemanticEnrichmentStatus.COMPLETE.name)
-                put("model_version", facts.firstOrNull()?.modelVersion)
+                put("model_version", producer?.let { "caption-v2:$it" } ?: "caption-v2:no-accepted-output")
                 putNull("error")
                 putNull("lease_owner")
                 putNull("lease_expires_at")
@@ -2582,7 +2691,7 @@ class GalleryDatabase(
                 job.representativeMediaId,
                 IndexStage.ENRICHMENT,
                 StageStatus.COMPLETE,
-                facts.firstOrNull()?.modelVersion ?: "adaptive-no-facts-v1",
+                producer ?: "adaptive-no-facts-v1",
             )
         }
     }
@@ -2709,6 +2818,96 @@ class GalleryDatabase(
         }
     }
 
+    fun allSemanticCaptions(): List<SemanticCaptionRecord> = readableDatabase.rawQuery(
+        "SELECT * FROM semantic_caption ORDER BY updated_at DESC",
+        emptyArray(),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(readSemanticCaption(cursor)) } }
+
+    fun semanticCaptionsForMedia(mediaId: String): List<SemanticCaptionRecord> = readableDatabase.rawQuery(
+        """
+        SELECT DISTINCT c.* FROM semantic_caption c
+        LEFT JOIN visual_group_member gm ON c.scope='VISUAL_GROUP' AND c.subject_id=gm.group_id
+        LEFT JOIN event_media em ON c.scope='EVENT' AND c.subject_id=CAST(em.event_id AS TEXT)
+        WHERE c.evidence_media_id=? OR c.subject_id=? OR gm.media_id=? OR em.media_id=?
+        ORDER BY c.updated_at DESC
+        """.trimIndent(),
+        arrayOf(mediaId, mediaId, mediaId, mediaId),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(readSemanticCaption(cursor)) } }
+
+    fun personVisualFactsForMedia(mediaId: String): List<PersonVisualFactRecord> = readableDatabase.rawQuery(
+        "SELECT f.*,p.label,p.relationship FROM person_attribute_fact f " +
+            "LEFT JOIN person_cluster p ON p.id=f.cluster_id WHERE f.media_id=? ORDER BY f.cluster_id,f.relation,f.value",
+        arrayOf(mediaId),
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                val region = decodeRegion(cursor.text("region"))
+                add(
+                    PersonVisualFactRecord(
+                        id = cursor.text("id"),
+                        mediaId = cursor.text("media_id"),
+                        clusterId = cursor.text("cluster_id"),
+                        resolvedLabel = cursor.nullableText("label") ?: cursor.nullableText("relationship"),
+                        personRef = cursor.text("person_ref"),
+                        relation = enumOrDefault(cursor.text("relation"), PersonVisualRelation.ACTION),
+                        category = enumOrNull<WornItemCategory>(cursor.text("category")),
+                        itemType = cursor.nullableText("item_type"),
+                        value = cursor.text("value"),
+                        attributes = decodeAttributes(cursor.text("attributes")),
+                        bodyRegion = enumOrDefault(cursor.text("body_region"), BodyRegion.UNKNOWN),
+                        confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
+                        faceRegion = cursor.nullableText("face_region")?.let(::decodeRegion) ?: region,
+                        evidenceRegion = region,
+                        associationStatus = enumOrDefault(cursor.text("association_status"), PersonAssociationStatus.CONFIDENT),
+                        verdict = enumOrDefault(cursor.text("verdict"), PersonVisualVerdict.VERIFIED_TRUE),
+                        targetClusterId = cursor.nullableText("target_cluster_id"),
+                        modelVersion = cursor.text("model_version"),
+                        promptVersion = cursor.text("prompt_version"),
+                        updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+                    ),
+                )
+            }
+        }
+    }
+
+    fun searchSemanticCaptions(
+        queries: Collection<String>,
+        allowedIds: Set<String>,
+        limit: Int = 500,
+    ): List<CaptionSearchHit> {
+        val terms = queries.flatMap {
+            Regex("[\\p{L}\\p{M}\\p{N}]+").findAll(it.lowercase(Locale.ROOT)).map(MatchResult::value).toList()
+        }.filter { it.length > 2 && it !in CAPTION_STOP_WORDS }.distinct().take(32)
+        if (terms.isEmpty() || allowedIds.isEmpty()) return emptyList()
+        return allSemanticCaptions().flatMap { caption ->
+            val haystack = caption.text.lowercase(Locale.ROOT)
+            val matched = terms.count { it in haystack }
+            if (matched == 0) return@flatMap emptyList()
+            val candidates = when (caption.scope) {
+                SemanticFactScope.MEDIA -> listOf(caption.evidenceMediaId)
+                SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
+                    "SELECT media_id FROM visual_group_member WHERE group_id=?",
+                    arrayOf(caption.subjectId),
+                ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+                SemanticFactScope.EVENT -> eventMembers(caption.subjectId.toLongOrNull() ?: Long.MIN_VALUE)
+            }
+            candidates.filter { it in allowedIds }.map { mediaId ->
+                val direct = mediaId == caption.evidenceMediaId
+                CaptionSearchHit(
+                    mediaId = mediaId,
+                    caption = caption,
+                    score = matched.toDouble() / terms.size * if (direct) 1.0 else 0.72,
+                    directEvidence = direct,
+                )
+            }
+        }.sortedByDescending(CaptionSearchHit::score).distinctBy(CaptionSearchHit::mediaId).take(limit)
+    }
+
+    fun semanticCaptionEvidenceCount(): Int = readableDatabase.rawQuery(
+        "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption",
+        emptyArray(),
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+
     fun hasAuthenticationProtectedOcr(mediaId: String): Boolean = readableDatabase.rawQuery(
         "SELECT 1 FROM ocr_entity WHERE media_id=? AND entity_type IN ('PASSWORD','EMAIL','PHONE','ORDER_ID') LIMIT 1",
         arrayOf(mediaId),
@@ -2724,7 +2923,69 @@ class GalleryDatabase(
         }
     }
 
+    private fun readSemanticCaption(cursor: android.database.Cursor): SemanticCaptionRecord {
+        val id = cursor.text("id")
+        return SemanticCaptionRecord(
+            id = id,
+            scope = SemanticFactScope.valueOf(cursor.text("scope")),
+            subjectId = cursor.text("subject_id"),
+            text = cursor.text("text"),
+            confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
+            evidenceMediaId = cursor.text("evidence_media_id"),
+            applicability = cursor.text("applicability"),
+            modelVersion = cursor.text("model_version"),
+            promptVersion = cursor.text("prompt_version"),
+            updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+            personRefs = captionPersonRefs(id),
+        )
+    }
+
+    private fun captionPersonRefs(captionId: String): List<SemanticCaptionPersonRefRecord> = readableDatabase.rawQuery(
+        "SELECT r.*,p.label,p.relationship FROM semantic_caption_person_ref r " +
+            "LEFT JOIN person_cluster p ON p.id=r.cluster_id WHERE r.caption_id=? ORDER BY r.person_ref",
+        arrayOf(captionId),
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(
+                SemanticCaptionPersonRefRecord(
+                    personRef = cursor.text("person_ref"),
+                    clusterId = cursor.text("cluster_id"),
+                    resolvedLabel = cursor.nullableText("label") ?: cursor.nullableText("relationship"),
+                    faceRegion = decodeRegion(cursor.text("face_region")),
+                    bodyRegion = cursor.nullableText("body_region")?.let(::decodeRegion),
+                    associationStatus = enumOrDefault(cursor.text("association_status"), PersonAssociationStatus.AMBIGUOUS),
+                ),
+            )
+        }
+    }
+
+    private fun encodeAttributes(attributes: Map<String, List<String>>): String = JSONObject().apply {
+        attributes.forEach { (key, values) -> put(key, JSONArray(values)) }
+    }.toString()
+
+    private fun decodeAttributes(encoded: String): Map<String, List<String>> = runCatching {
+        val json = JSONObject(encoded)
+        json.keys().asSequence().associateWith { key ->
+            val values = json.optJSONArray(key) ?: JSONArray()
+            List(values.length()) { values.optString(it) }
+        }
+    }.getOrDefault(emptyMap())
+
+    private fun decodeRegion(encoded: String): List<Float> = JSONArray(encoded).let { array ->
+        List(array.length()) { array.getDouble(it).toFloat() }
+    }
+
+    private inline fun <reified T : Enum<T>> enumOrNull(raw: String): T? =
+        enumValues<T>().firstOrNull { it.name == raw }
+
+    private inline fun <reified T : Enum<T>> enumOrDefault(raw: String, fallback: T): T =
+        enumOrNull<T>(raw) ?: fallback
+
     companion object {
+        private val CAPTION_STOP_WORDS = setOf(
+            "show", "photos", "photo", "pictures", "picture", "images", "image", "with", "where",
+            "that", "this", "from", "have", "wearing", "please", "some", "में", "वाली", "दिखाओ",
+        )
         private const val SQLITE_ID_CHUNK = 800
         const val PEOPLE_CONSENT_VERSION = 1
         const val PRIMARY_QUERY_SESSION = "primary"

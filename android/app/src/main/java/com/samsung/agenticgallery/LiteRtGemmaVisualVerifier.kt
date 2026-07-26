@@ -86,7 +86,7 @@ class LiteRtGemmaVisualVerifier(
                                     .filter { it.hardness == ConstraintStrength.HARD }
                                     .all { spec ->
                                         evaluationsById[spec.id]?.let { evaluation ->
-                                            SemanticPolarityNormalizer.conditionMatched(spec, evaluation.satisfied)
+                                            SemanticPolarityNormalizer.conditionMatched(spec, evaluation)
                                         } == true
                                     }
                                 val candidate = CandidateVerification(hit.item.id, decoded.payload.conditions, overallMatch)
@@ -94,7 +94,7 @@ class LiteRtGemmaVisualVerifier(
                                 if (candidate.overallMatch) accepted += hit.item.id
                                 decoded.payload.conditions.filter { evaluation ->
                                     val spec = boundConditions.single { it.id == evaluation.id }
-                                    SemanticPolarityNormalizer.conditionMatched(spec, evaluation.satisfied)
+                                    SemanticPolarityNormalizer.conditionMatched(spec, evaluation)
                                 }.forEach { evaluation ->
                                     val spec = boundConditions.single { it.id == evaluation.id }
                                     evidence += EvidenceRecord(
@@ -118,7 +118,7 @@ class LiteRtGemmaVisualVerifier(
                                             mediaId = hit.item.id,
                                             clusterId = binding.clusterId,
                                             predicate = spec.text,
-                                            value = evaluation.satisfied.toString(),
+                                            value = evaluation.verdict.name,
                                             confidence = evaluation.confidence,
                                             region = listOf(binding.left, binding.top, binding.right, binding.bottom),
                                             modelVersion = producerVersion(status),
@@ -196,7 +196,11 @@ class LiteRtGemmaVisualVerifier(
             For synthetic cards or diagrams, visible labels and illustrated clothing are valid image evidence.
             Query context: ${JSONObject.quote(plan.originalQuery)}
             Conditions: $array
-            Required shape: {"conditions":[{"id":"c1","satisfied":true,"confidence":0.95}],"overallMatch":true}
+            Required shape: {"conditions":[{"id":"c1","verdict":"VERIFIED_TRUE","confidence":0.95}],"overallMatch":true}
+            verdict must be VERIFIED_TRUE only when the predicate is visibly attached to the requested P-label.
+            Use VERIFIED_FALSE only when the relevant body region is visible and contradicts the predicate.
+            Use NOT_VISIBLE when the required head, torso, legs, feet, or hands are cropped, occluded, or too unclear.
+            Use AMBIGUOUS when multiple bodies or objects could be associated with the labelled face.
             Include every supplied ID exactly once. confidence must be from 0 to 1.
             overallMatch is advisory; Kotlin deterministically applies HARD constraints and polarity.
             Never emit media IDs, paths, URIs, boxes, tools, or additional fields.

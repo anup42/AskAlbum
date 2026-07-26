@@ -15,11 +15,19 @@ object PersonVerificationImageComposer {
         if (bindings.isEmpty()) return jpeg
         val source = requireNotNull(BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)) { "Verification image could not be decoded" }
         val cropSize = (source.width / bindings.size.coerceAtLeast(1)).coerceIn(160, 420)
-        val output = Bitmap.createBitmap(source.width, source.height + cropSize, Bitmap.Config.ARGB_8888)
+        val output = Bitmap.createBitmap(source.width, source.height + cropSize * 2, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
         canvas.drawColor(Color.BLACK)
         canvas.drawBitmap(source, 0f, 0f, null)
         val colors = intArrayOf(Color.YELLOW, Color.CYAN, Color.MAGENTA, Color.GREEN, Color.RED)
+        val orderedCenters = bindings.mapIndexed { index, binding ->
+            index to ((binding.left + binding.right) * source.width / 2f)
+        }.sortedBy { it.second }
+        val horizontalBounds = orderedCenters.mapIndexed { position, (index, center) ->
+            val left = if (position == 0) 0 else ((orderedCenters[position - 1].second + center) / 2f).toInt()
+            val right = if (position == orderedCenters.lastIndex) source.width else ((center + orderedCenters[position + 1].second) / 2f).toInt()
+            index to (left..right)
+        }.toMap()
         bindings.forEachIndexed { index, binding ->
             val color = colors[index % colors.size]
             val box = Rect(
@@ -49,15 +57,25 @@ object PersonVerificationImageComposer {
 
             val faceWidth = box.width().coerceAtLeast(1)
             val faceHeight = box.height().coerceAtLeast(1)
-            val expanded = Rect(
+            val upperBody = Rect(
                 (box.left - faceWidth).coerceAtLeast(0),
                 (box.top - faceHeight / 2).coerceAtLeast(0),
                 (box.right + faceWidth).coerceAtMost(source.width),
                 (box.bottom + faceHeight * 4).coerceAtMost(source.height),
             )
-            val destination = Rect(index * cropSize, source.height, minOf(source.width, (index + 1) * cropSize), source.height + cropSize)
-            canvas.drawBitmap(source, expanded, destination, null)
-            canvas.drawText(binding.stableLabel, destination.left + 8f, destination.top + labelPaint.textSize, labelPaint)
+            val corridor = requireNotNull(horizontalBounds[index])
+            val fullBody = Rect(
+                corridor.first.coerceAtMost(box.left),
+                (box.top - faceHeight / 2).coerceAtLeast(0),
+                corridor.last.coerceAtLeast(box.right).coerceAtMost(source.width),
+                source.height,
+            )
+            val fullDestination = Rect(index * cropSize, source.height, minOf(source.width, (index + 1) * cropSize), source.height + cropSize)
+            canvas.drawBitmap(source, fullBody, fullDestination, null)
+            canvas.drawText("${binding.stableLabel} FULL", fullDestination.left + 8f, fullDestination.top + labelPaint.textSize, labelPaint)
+            val upperDestination = Rect(index * cropSize, source.height + cropSize, minOf(source.width, (index + 1) * cropSize), source.height + cropSize * 2)
+            canvas.drawBitmap(source, upperBody, upperDestination, null)
+            canvas.drawText("${binding.stableLabel} UPPER", upperDestination.left + 8f, upperDestination.top + labelPaint.textSize, labelPaint)
         }
         return try {
             ByteArrayOutputStream().use { bytes ->

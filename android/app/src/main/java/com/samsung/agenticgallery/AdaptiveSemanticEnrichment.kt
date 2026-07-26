@@ -42,6 +42,8 @@ data class SemanticMemoryProgress(
     val failedJobs: Int = 0,
     val authenticationRequiredJobs: Int = 0,
     val factCount: Int = 0,
+    val captionCount: Int = 0,
+    val personVisualFactCount: Int = 0,
     val latestError: String? = null,
 ) {
     val processedJobs: Int
@@ -55,6 +57,8 @@ data class SemanticMemoryMedia(
     val item: GalleryItem,
     val facts: List<SemanticFactRecord>,
     val protectedFactCount: Int = 0,
+    val captions: List<SemanticCaptionRecord> = emptyList(),
+    val personVisualFacts: List<PersonVisualFactRecord> = emptyList(),
 )
 
 data class VisualGroupPlan(
@@ -84,6 +88,7 @@ internal object AdaptiveRepresentativeSelector {
         eventMembership: Map<String, Long>,
         embeddingReadyIds: Set<String>,
         frequentlyRetrievedIds: List<String> = emptyList(),
+        reviewedPeopleByMedia: Map<String, Set<String>> = emptyMap(),
     ): SemanticEnrichmentPlan {
         val eligible = items.filter {
             it.accessState == MediaAccessState.ACCESSIBLE &&
@@ -112,8 +117,25 @@ internal object AdaptiveRepresentativeSelector {
             }
             .flatMap { (eventId, entries) ->
                 val members = entries.mapNotNull { byId[it.key] }
-                selectDiverse(members, if (members.size >= 40) 3 else 2).mapIndexed { rank, item ->
-                    EventRepresentativePlan(eventId, item.id, rank, "quality_time_people_ocr_frame_diversity")
+                val peopleMembers = members.filter { reviewedPeopleByMedia[it.id].orEmpty().isNotEmpty() }
+                val contextMembers = members.filter { reviewedPeopleByMedia[it.id].orEmpty().isEmpty() }
+                val selected = if (peopleMembers.isEmpty()) {
+                    selectDiverse(members, if (members.size >= 40) 3 else 2)
+                } else {
+                    (
+                        selectDiverse(peopleMembers, 1) +
+                            selectDiverse(contextMembers, 1) +
+                            selectDiverse(members, if (members.size >= 40) 3 else 2)
+                        ).distinctBy(GalleryItem::id).take(if (members.size >= 40) 3 else 2)
+                }
+                val peopleIds = peopleMembers.mapTo(hashSetOf(), GalleryItem::id)
+                selected.mapIndexed { rank, item ->
+                    val reason = when {
+                        peopleMembers.isEmpty() -> "quality_time_people_ocr_frame_diversity"
+                        item.id in peopleIds -> "personal_event_people_representative"
+                        else -> "personal_event_context_representative"
+                    }
+                    EventRepresentativePlan(eventId, item.id, rank, reason)
                 }
             }
         val exactJobs = exact.flatMap { group ->
@@ -243,6 +265,7 @@ class SemanticEnrichmentCoordinator(private val database: GalleryDatabase) {
             eventMembership = database.eventMembership(),
             embeddingReadyIds = database.embeddingReadyMediaIds(),
             frequentlyRetrievedIds = database.frequentlyRetrievedMediaIds(),
+            reviewedPeopleByMedia = database.reviewedPersonClusterIdsByMedia(),
         )
         val adjusted = if (!userRequested) plan else plan.copy(
             jobs = plan.jobs.map { it.copy(userRequested = true) },

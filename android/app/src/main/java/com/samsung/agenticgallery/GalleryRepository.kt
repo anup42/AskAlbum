@@ -28,6 +28,10 @@ class GalleryRepository(context: Context) {
     fun initialize(): IndexSummary {
         val restartWorkersAfterUpdate = consumeWorkerUpdateRestart()
         database.recoverInterruptedJobs()
+        val legacyCaptionJobs = database.queueLegacySemanticCaptionJobs()
+        if (legacyCaptionJobs > 0 && indexingJobControlsStore.load().semanticMemoryEnabled) {
+            SemanticEnrichmentScheduler.schedule(appContext)
+        }
         database.seedDemoIfEmpty()
         database.ensureStageRows()
         services.ocrModelPackManager.current()?.let { database.requestOcrReindex(it.spec.producerVersion) }
@@ -118,6 +122,8 @@ class GalleryRepository(context: Context) {
         val entities = database.ocrEntities(mediaId)
         val keyframes = database.videoKeyframes(mediaId)
         val facts = database.semanticFactsForMedia(mediaId)
+        val captions = database.semanticCaptionsForMedia(mediaId)
+        val personVisualFacts = database.personVisualFactsForMedia(mediaId)
         val protectedTypes = setOf(OcrEntityType.PASSWORD, OcrEntityType.EMAIL, OcrEntityType.PHONE, OcrEntityType.ORDER_ID)
         val protectedEntities = entities.filter {
             it.type in protectedTypes ||
@@ -126,7 +132,8 @@ class GalleryRepository(context: Context) {
         val sensitiveFreeText = SensitiveContentClassifier.isSensitive(item.ocrText) ||
             blocks.any { SensitiveContentClassifier.isSensitive(it.text) } ||
             keyframes.any { SensitiveContentClassifier.isSensitive(it.ocrText) } ||
-            facts.any { SensitiveContentClassifier.isSensitive("${it.predicate} ${it.value}") }
+            facts.any { SensitiveContentClassifier.isSensitive("${it.predicate} ${it.value}") } ||
+            captions.any { SensitiveContentClassifier.isSensitive(it.text) }
         val hasProtectedContent = protectedEntities.isNotEmpty() ||
             database.hasAuthenticationProtectedOcr(mediaId) ||
             sensitiveFreeText
@@ -146,6 +153,8 @@ class GalleryRepository(context: Context) {
             semanticFacts = visibleFacts,
             sensitiveContentLocked = locked,
             protectedValueCount = protectedEntities.size + if (sensitiveFreeText) 1 else 0,
+            semanticCaptions = if (locked) captions.filterNot { SensitiveContentClassifier.isSensitive(it.text) } else captions,
+            personVisualFacts = personVisualFacts,
         )
     }
     fun peopleIndexStatus(): PeopleIndexStatus = database.peopleIndexStatus()
@@ -265,13 +274,21 @@ class GalleryRepository(context: Context) {
         SemanticEnrichmentCoordinator(database).rebuildPlan(userRequested = true).also {
             SemanticEnrichmentScheduler.schedule(appContext, userRequested = true)
         }
-    fun semanticMemoryProgress(): SemanticMemoryProgress = database.semanticMemoryProgress()
+    fun semanticMemoryProgress(): SemanticMemoryProgress {
+        val queued = database.queueLegacySemanticCaptionJobs()
+        if (queued > 0 && indexingJobControlsStore.load().semanticMemoryEnabled) {
+            SemanticEnrichmentScheduler.schedule(appContext)
+        }
+        return database.semanticMemoryProgress()
+    }
     fun semanticMemoryMedia(): List<SemanticMemoryMedia> {
         val accessibleItems = database.allItems().associateBy(GalleryItem::id)
-        return database.allSemanticFacts()
-            .groupBy(SemanticFactRecord::evidenceMediaId)
-            .mapNotNull { (mediaId, storedFacts) ->
+        val factsByMedia = database.allSemanticFacts().groupBy(SemanticFactRecord::evidenceMediaId)
+        val captionsByMedia = database.allSemanticCaptions().groupBy(SemanticCaptionRecord::evidenceMediaId)
+        return (factsByMedia.keys + captionsByMedia.keys)
+            .mapNotNull { mediaId ->
                 val item = accessibleItems[mediaId] ?: return@mapNotNull null
+                val storedFacts = factsByMedia[mediaId].orEmpty()
                 val (protectedFacts, visibleFacts) = storedFacts.partition {
                     SensitiveContentClassifier.isSensitive("${it.predicate} ${it.value}")
                 }
@@ -279,6 +296,8 @@ class GalleryRepository(context: Context) {
                     item = item,
                     facts = visibleFacts,
                     protectedFactCount = protectedFacts.size,
+                    captions = captionsByMedia[mediaId].orEmpty().filterNot { SensitiveContentClassifier.isSensitive(it.text) },
+                    personVisualFacts = database.personVisualFactsForMedia(mediaId),
                 )
             }
             .sortedWith(
@@ -436,6 +455,7 @@ class GalleryRepository(context: Context) {
             .sortedWith(compareByDescending<SearchHit> { it.score }.thenBy { it.item.title })
             .toList()
         val semanticQueries = SemanticQueryVariants.from(plan)
+        val captionRanked = database.searchSemanticCaptions(semanticQueries + terms, eligibleIds)
         val eligibleVectorIds = database.vectorIdsForMedia(eligibleIds)
         val semanticVectorReport = SemanticChannelReportFusion.fuse(
             semanticQueries.map { semanticQuery ->
@@ -451,6 +471,7 @@ class GalleryRepository(context: Context) {
         val semanticKeyframes = database.videoKeyframesByIds(rawSemanticRanked.mapTo(mutableSetOf()) { it.mediaId })
         val resolvedSemanticHits = resolveSemanticVideoHits(rawSemanticRanked, semanticKeyframes)
         val semanticRanked = resolvedSemanticHits.map { it.hit }
+        val captionById = captionRanked.associateBy(CaptionSearchHit::mediaId)
         val bestSemanticKeyframeByMedia = resolvedSemanticHits.mapNotNull { resolved ->
             resolved.keyframe?.let { it.mediaId to it }
         }.toMap()
@@ -485,6 +506,19 @@ class GalleryRepository(context: Context) {
             eventMediaRank.mapNotNull { id -> itemById[id]?.let { SearchHit(it, 1.0, emptyList()) } },
             modelVersion = EventCompiler.PRODUCER_VERSION,
         )
+        val captionCoverage = database.semanticCaptionEvidenceCount()
+        val captionChannelReport = RetrievalChannelReport(
+            RetrievalChannel.CAPTION,
+            if (captionCoverage == 0) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
+            allItems.size,
+            captionCoverage,
+            captionRanked.size,
+            captionRanked.mapNotNull { match ->
+                itemById[match.mediaId]?.let { SearchHit(it, match.score, emptyList()) }
+            },
+            modelVersion = captionRanked.firstOrNull()?.caption?.modelVersion,
+            errorCode = if (captionCoverage == 0) "NO_CACHED_CAPTIONS" else null,
+        )
         val peopleChannelReport = RetrievalChannelReport<SearchHit>(
             RetrievalChannel.PEOPLE,
             if (plan.peopleClauses.isEmpty()) ChannelStatus.NOT_REQUIRED else ChannelStatus.SUCCESS,
@@ -513,12 +547,14 @@ class GalleryRepository(context: Context) {
             listOf(
                 RankedChannel(1.0, lexicalRanked.map { it.item.id }),
                 RankedChannel(0.85, semanticRanked.map { it.mediaId }),
+                RankedChannel(0.80, captionRanked.map { it.mediaId }),
                 RankedChannel(0.95, eventMediaRank),
             ),
         ).let { ranked -> refinementIds?.let { eligible -> ranked.filter { it.first in eligible } } ?: ranked }
         val fusedHits = fused.mapNotNull { (id, score) ->
             val lexical = lexicalById[id]
             val semantic = semanticById[id]
+            val caption = captionById[id]
             val item = lexical?.item ?: itemById[id] ?: return@mapNotNull null
             val semanticEvidence = semantic?.let {
                 val keyframe = bestSemanticKeyframeByMedia[item.id]
@@ -542,7 +578,17 @@ class GalleryRepository(context: Context) {
                     producerVersion = event.producerVersion,
                 )
             }
-            SearchHit(item, score, lexical.orEmptyEvidence() + listOfNotNull(semanticEvidence, eventEvidence))
+            val captionEvidence = caption?.let {
+                EvidenceRecord(
+                    id = "${item.id}:semantic_caption:${it.caption.id}",
+                    mediaId = item.id,
+                    sourceField = if (it.directEvidence) "semantic_caption" else "semantic_caption_candidate_expansion",
+                    text = it.caption.text,
+                    confidence = (it.caption.confidence * if (it.directEvidence) 1f else 0.72f).coerceIn(0f, 1f),
+                    producerVersion = it.caption.modelVersion,
+                )
+            }
+            SearchHit(item, score, lexical.orEmptyEvidence() + listOfNotNull(semanticEvidence, captionEvidence, eventEvidence))
         }
         val ranked = when (plan.sort) {
             SortSpec.CAPTURE_TIME_DESC -> fusedHits.sortedWith(compareByDescending<SearchHit> { it.item.capturedAt ?: Long.MIN_VALUE }.thenByDescending { it.score })
@@ -623,6 +669,7 @@ class GalleryRepository(context: Context) {
         val channelReports = listOf(
             lexicalChannelReport,
             semanticChannelReport,
+            captionChannelReport,
             eventChannelReport,
             ocrChannelReport,
             peopleChannelReport,

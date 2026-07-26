@@ -74,6 +74,7 @@ data class VerificationConditionEvaluation(
     val id: String,
     val satisfied: Boolean,
     val confidence: Float,
+    val verdict: PersonVisualVerdict = if (satisfied) PersonVisualVerdict.VERIFIED_TRUE else PersonVisualVerdict.VERIFIED_FALSE,
 )
 
 data class CandidateVerification(

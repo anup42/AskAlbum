@@ -272,6 +272,17 @@ data class PersonAttributeFactEntity(
     val region: String,
     @ColumnInfo(name = "model_version") val modelVersion: String,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "person_ref", defaultValue = "''") val personRef: String = "",
+    @ColumnInfo(defaultValue = "'ACTION'") val relation: String = "ACTION",
+    @ColumnInfo(defaultValue = "'OTHER_WORN_ITEM'") val category: String = "OTHER_WORN_ITEM",
+    @ColumnInfo(name = "item_type") val itemType: String? = null,
+    @ColumnInfo(defaultValue = "'{}'") val attributes: String = "{}",
+    @ColumnInfo(name = "body_region", defaultValue = "'UNKNOWN'") val bodyRegion: String = "UNKNOWN",
+    @ColumnInfo(name = "face_region") val faceRegion: String? = null,
+    @ColumnInfo(name = "association_status", defaultValue = "'CONFIDENT'") val associationStatus: String = "CONFIDENT",
+    @ColumnInfo(defaultValue = "'VERIFIED_TRUE'") val verdict: String = "VERIFIED_TRUE",
+    @ColumnInfo(name = "target_cluster_id") val targetClusterId: String? = null,
+    @ColumnInfo(name = "prompt_version", defaultValue = "'legacy-person-attribute-v1'") val promptVersion: String = "legacy-person-attribute-v1",
 )
 
 @Entity(tableName = "query_turn")
@@ -428,6 +439,47 @@ data class SemanticFactEntity(
 )
 
 @Entity(
+    tableName = "semantic_caption",
+    indices = [
+        Index(name = "semantic_caption_subject_idx", value = ["scope", "subject_id"]),
+        Index(name = "semantic_caption_evidence_idx", value = ["evidence_media_id"]),
+    ],
+    foreignKeys = [
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["evidence_media_id"], onDelete = ForeignKey.CASCADE),
+    ],
+)
+data class SemanticCaptionEntity(
+    @PrimaryKey val id: String,
+    val scope: String,
+    @ColumnInfo(name = "subject_id") val subjectId: String,
+    val text: String,
+    val confidence: Float,
+    @ColumnInfo(name = "evidence_media_id") val evidenceMediaId: String,
+    val applicability: String,
+    @ColumnInfo(name = "model_version") val modelVersion: String,
+    @ColumnInfo(name = "prompt_version") val promptVersion: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+)
+
+@Entity(
+    tableName = "semantic_caption_person_ref",
+    primaryKeys = ["caption_id", "person_ref"],
+    indices = [Index(name = "semantic_caption_person_cluster_idx", value = ["cluster_id"])],
+    foreignKeys = [
+        ForeignKey(entity = SemanticCaptionEntity::class, parentColumns = ["id"], childColumns = ["caption_id"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = PersonClusterEntity::class, parentColumns = ["id"], childColumns = ["cluster_id"], onDelete = ForeignKey.CASCADE),
+    ],
+)
+data class SemanticCaptionPersonRefEntity(
+    @ColumnInfo(name = "caption_id") val captionId: String,
+    @ColumnInfo(name = "person_ref") val personRef: String,
+    @ColumnInfo(name = "cluster_id") val clusterId: String,
+    @ColumnInfo(name = "face_region") val faceRegion: String,
+    @ColumnInfo(name = "body_region") val bodyRegion: String?,
+    @ColumnInfo(name = "association_status") val associationStatus: String,
+)
+
+@Entity(
     tableName = "semantic_enrichment_job",
     indices = [
         Index(name = "semantic_enrichment_status_idx", value = ["status", "updated_at"]),
@@ -485,9 +537,11 @@ data class SemanticEnrichmentJobEntity(
         VisualGroupMemberEntity::class,
         EventRepresentativeEntity::class,
         SemanticFactEntity::class,
+        SemanticCaptionEntity::class,
+        SemanticCaptionPersonRefEntity::class,
         SemanticEnrichmentJobEntity::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -513,6 +567,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_12_13,
             MIGRATION_13_14,
             MIGRATION_14_15,
+            MIGRATION_15_16,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -717,6 +772,39 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                         "WHERE index_state='FAILED_RETRYABLE' AND id IN (" +
                         "SELECT media_id FROM media_index_stage WHERE stage='THUMBNAIL' AND status='FAILED_EXHAUSTED')",
                 )
+            }
+        }
+
+        internal val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN person_ref TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN relation TEXT NOT NULL DEFAULT 'ACTION'")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN category TEXT NOT NULL DEFAULT 'OTHER_WORN_ITEM'")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN item_type TEXT")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN attributes TEXT NOT NULL DEFAULT '{}'")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN body_region TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN face_region TEXT")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN association_status TEXT NOT NULL DEFAULT 'CONFIDENT'")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN verdict TEXT NOT NULL DEFAULT 'VERIFIED_TRUE'")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN target_cluster_id TEXT")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN prompt_version TEXT NOT NULL DEFAULT 'legacy-person-attribute-v1'")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS semantic_caption (" +
+                        "id TEXT NOT NULL, scope TEXT NOT NULL, subject_id TEXT NOT NULL, text TEXT NOT NULL, " +
+                        "confidence REAL NOT NULL, evidence_media_id TEXT NOT NULL, applicability TEXT NOT NULL, " +
+                        "model_version TEXT NOT NULL, prompt_version TEXT NOT NULL, updated_at INTEGER NOT NULL, " +
+                        "PRIMARY KEY(id), FOREIGN KEY(evidence_media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_subject_idx ON semantic_caption(scope,subject_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_evidence_idx ON semantic_caption(evidence_media_id)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS semantic_caption_person_ref (" +
+                        "caption_id TEXT NOT NULL, person_ref TEXT NOT NULL, cluster_id TEXT NOT NULL, face_region TEXT NOT NULL, " +
+                        "body_region TEXT, association_status TEXT NOT NULL, PRIMARY KEY(caption_id,person_ref), " +
+                        "FOREIGN KEY(caption_id) REFERENCES semantic_caption(id) ON UPDATE NO ACTION ON DELETE CASCADE, " +
+                        "FOREIGN KEY(cluster_id) REFERENCES person_cluster(id) ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_person_cluster_idx ON semantic_caption_person_ref(cluster_id)")
             }
         }
 

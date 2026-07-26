@@ -1533,7 +1533,7 @@ private fun SemanticMemoryScreen(
                         onLongClick = { selectedMediaId = entry.item.id },
                     )
                     Text(
-                        "${entry.facts.size + entry.protectedFactCount} stored facts",
+                        "${entry.captions.size} caption(s), ${entry.facts.size + entry.protectedFactCount} facts",
                         modifier = Modifier.padding(top = 5.dp, start = 2.dp),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -1555,7 +1555,7 @@ private fun SemanticMemoryDetail(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            Text("Stored Gemma facts", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+            Text("Stored Gemma memory", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(10.dp))
             MediaThumbnail(
                 item = entry.item,
@@ -1583,7 +1583,8 @@ private fun SemanticMemoryDetail(
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "${entry.facts.size + entry.protectedFactCount} cached facts for this evidence item",
+                "${entry.captions.size} comprehensive caption(s), ${entry.facts.size + entry.protectedFactCount} facts, " +
+                    "${entry.personVisualFacts.size} person observations",
                 fontWeight = FontWeight.Bold,
             )
             Text(
@@ -1609,6 +1610,21 @@ private fun SemanticMemoryDetail(
                 }
             }
         }
+        lazyItems(entry.captions, key = { it.id }) { caption ->
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                SelectionContainer {
+                    Text(
+                        semanticCaptionStoredText(caption),
+                        modifier = Modifier.padding(14.dp),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        }
         lazyItems(entry.facts, key = { "${it.scope}:${it.subjectId}:${it.predicate}:${it.value}:${it.modelVersion}:${it.promptVersion}" }) { fact ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1617,6 +1633,21 @@ private fun SemanticMemoryDetail(
                 SelectionContainer {
                     Text(
                         semanticFactStoredText(fact),
+                        modifier = Modifier.padding(14.dp),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        }
+        lazyItems(entry.personVisualFacts, key = { it.id }) { fact ->
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                SelectionContainer {
+                    Text(
+                        personVisualFactStoredText(fact),
                         modifier = Modifier.padding(14.dp),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
@@ -1636,6 +1667,38 @@ private fun semanticFactStoredText(fact: SemanticFactRecord): String = buildStri
     appendLine("evidence_media_id=${fact.evidenceMediaId}")
     appendLine("region=${fact.region?.joinToString(prefix = "[", postfix = "]") ?: "null"}")
     appendLine("applicability=${fact.applicability}")
+    appendLine("model_version=${fact.modelVersion}")
+    append("prompt_version=${fact.promptVersion}")
+}
+
+private fun semanticCaptionStoredText(caption: SemanticCaptionRecord): String = buildString {
+    appendLine("caption=${caption.text}")
+    appendLine("scope=${caption.scope.name}")
+    appendLine("subject_id=${caption.subjectId}")
+    appendLine("confidence=${caption.confidence}")
+    appendLine("evidence_media_id=${caption.evidenceMediaId}")
+    appendLine("applicability=${caption.applicability}")
+    caption.personRefs.forEach { ref ->
+        appendLine("${ref.personRef}=cluster:${ref.clusterId} label:${ref.resolvedLabel ?: "unlabelled"} association:${ref.associationStatus}")
+    }
+    appendLine("model_version=${caption.modelVersion}")
+    append("prompt_version=${caption.promptVersion}")
+}
+
+private fun personVisualFactStoredText(fact: PersonVisualFactRecord): String = buildString {
+    appendLine("person_ref=${fact.personRef}")
+    appendLine("cluster_id=${fact.clusterId}")
+    appendLine("label=${fact.resolvedLabel ?: "unlabelled"}")
+    appendLine("relation=${fact.relation}")
+    appendLine("category=${fact.category}")
+    appendLine("item_type=${fact.itemType}")
+    appendLine("value=${fact.value}")
+    appendLine("attributes=${fact.attributes}")
+    appendLine("body_region=${fact.bodyRegion}")
+    appendLine("verdict=${fact.verdict}")
+    appendLine("association=${fact.associationStatus}")
+    appendLine("confidence=${fact.confidence}")
+    appendLine("region=${fact.evidenceRegion}")
     appendLine("model_version=${fact.modelVersion}")
     append("prompt_version=${fact.promptVersion}")
 }
@@ -3293,6 +3356,18 @@ private fun IndexedMetadataRecords(
                 append(" | prompt ").append(fact.promptVersion)
                 fact.region?.let { append(" | region ").append(it.joinToString(prefix = "[", postfix = "]")) }
             }
+        },
+    )
+    MetadataSection(
+        "Gemma comprehensive captions",
+        metadata.semanticCaptions.mapIndexed { index, caption ->
+            "Caption ${index + 1}" to semanticCaptionStoredText(caption)
+        },
+    )
+    MetadataSection(
+        "Person-specific visual facts",
+        metadata.personVisualFacts.mapIndexed { index, fact ->
+            "Observation ${index + 1}" to personVisualFactStoredText(fact)
         },
     )
     MetadataSection(

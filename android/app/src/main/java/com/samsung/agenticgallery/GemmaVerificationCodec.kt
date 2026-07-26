@@ -13,10 +13,27 @@ class GemmaVerificationCodec {
         require(array.length() == expected.size) { "Verifier must return every condition exactly once" }
         val byId = buildMap {
             repeat(array.length()) { index ->
-                val item = array.getJSONObject(index).requireExactKeys("id", "satisfied", "confidence")
+                val item = array.getJSONObject(index)
+                val keys = item.keys().asSequence().toSet()
+                require(keys == setOf("id", "verdict", "confidence") || keys == setOf("id", "satisfied", "confidence")) {
+                    "Verifier emitted missing or unsupported condition fields"
+                }
                 val id = item.getString("id")
                 require(id in expected.map { it.id }) { "Verifier returned an unknown condition ID" }
-                require(put(id, VerificationConditionEvaluation(id, item.getBoolean("satisfied"), item.getDouble("confidence").toValidatedConfidence())) == null) {
+                val verdict = if (item.has("verdict")) {
+                    runCatching { PersonVisualVerdict.valueOf(item.getString("verdict")) }
+                        .getOrElse { throw IllegalArgumentException("Verifier returned an invalid verdict") }
+                } else if (item.getBoolean("satisfied")) {
+                    PersonVisualVerdict.VERIFIED_TRUE
+                } else {
+                    PersonVisualVerdict.VERIFIED_FALSE
+                }
+                require(put(id, VerificationConditionEvaluation(
+                    id = id,
+                    satisfied = verdict == PersonVisualVerdict.VERIFIED_TRUE,
+                    confidence = item.getDouble("confidence").toValidatedConfidence(),
+                    verdict = verdict,
+                )) == null) {
                     "Verifier returned a duplicate condition ID"
                 }
             }
@@ -38,7 +55,8 @@ class GemmaVerificationCodec {
         Return exactly one JSON object and no markdown.
         Error: ${JSONObject.quote(error.take(240))}
         Required condition IDs in this exact set: ${expected.joinToString(prefix = "[", postfix = "]") { JSONObject.quote(it.id) }}
-        Required shape: {"conditions":[{"id":"c1","satisfied":true,"confidence":0.95}],"overallMatch":true}
+        Required shape: {"conditions":[{"id":"c1","verdict":"VERIFIED_TRUE","confidence":0.95}],"overallMatch":true}
+        verdict must be VERIFIED_TRUE, VERIFIED_FALSE, AMBIGUOUS, or NOT_VISIBLE.
         Include every required ID exactly once. confidence must be a finite number from 0 to 1.
         overallMatch must be true exactly when every HARD condition is satisfied; SOFT conditions do not control it.
         Do not add media IDs, paths, URIs, explanations, boxes, tools, or any other fields.
