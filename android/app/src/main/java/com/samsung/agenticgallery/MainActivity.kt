@@ -44,6 +44,8 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -1343,7 +1345,7 @@ private fun SemanticMemoryDetail(
                 }
             }
         }
-        items(entry.facts, key = { "${it.scope}:${it.subjectId}:${it.predicate}:${it.value}:${it.modelVersion}:${it.promptVersion}" }) { fact ->
+        lazyItems(entry.facts, key = { "${it.scope}:${it.subjectId}:${it.predicate}:${it.value}:${it.modelVersion}:${it.promptVersion}" }) { fact ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(16.dp),
