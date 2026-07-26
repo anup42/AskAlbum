@@ -26,6 +26,9 @@ class LiteRtImageTextEmbeddingEngine(
     private val resources: InferenceResourceManager,
 ) : ImageTextEmbeddingEngine {
     @Volatile private var cachedTokenizer: CachedTokenizer? = null
+    internal val onnxInferenceThreads = EmbeddingInferencePolicy.onnxThreads(
+        Runtime.getRuntime().availableProcessors(),
+    )
 
     override suspend fun embedImage(image: ModelImage): FloatArray = embedImages(listOf(image)).single()
 
@@ -134,7 +137,7 @@ class LiteRtImageTextEmbeddingEngine(
         require(modelFile.isFile) { "ONNX image encoder artifact is unavailable" }
         val environment = OrtEnvironment.getEnvironment()
         OrtSession.SessionOptions().use { options ->
-            options.setIntraOpNumThreads(2)
+            options.setIntraOpNumThreads(onnxInferenceThreads)
             environment.createSession(modelFile.absolutePath, options).use { session ->
                 require(session.inputNames == setOf(ONNX_IMAGE_INPUT)) { "Unexpected ONNX image inputs" }
                 require(ONNX_POOLER_OUTPUT in session.outputNames) { "ONNX image encoder has no pooler output" }
@@ -159,7 +162,7 @@ class LiteRtImageTextEmbeddingEngine(
         require(manifest.textInputType == "INT64") { "ONNX SigLIP2 text input must be INT64" }
         val environment = OrtEnvironment.getEnvironment()
         OrtSession.SessionOptions().use { options ->
-            options.setIntraOpNumThreads(2)
+            options.setIntraOpNumThreads(onnxInferenceThreads)
             environment.createSession(modelFile.absolutePath, options).use { session ->
                 require(session.inputNames == setOf(ONNX_TEXT_INPUT)) { "Unexpected ONNX text inputs" }
                 require(ONNX_POOLER_OUTPUT in session.outputNames) { "ONNX text encoder has no pooler output" }
@@ -191,6 +194,15 @@ class LiteRtImageTextEmbeddingEngine(
     }
 
     private data class CachedTokenizer(val key: String, val tokenizer: Siglip2VocabTokenizer)
+}
+
+internal object EmbeddingInferencePolicy {
+    fun onnxThreads(availableProcessors: Int): Int = when {
+        availableProcessors <= 2 -> 1
+        availableProcessors <= 5 -> 2
+        availableProcessors <= 7 -> 3
+        else -> 4
+    }
 }
 
 internal object Siglip2ImagePreprocessor {

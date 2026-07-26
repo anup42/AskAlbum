@@ -3394,3 +3394,16 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; REAL GEMMA FACT
 - Connected UI: PASS. Index Manager shows `SigLIP2 image vectors`, active pack `ba1f3b0-q8-core05`, `768D`, `2206 / 11508`, and a live progress bar.
 - Embeddings and semantic memory are enabled; Media Analysis remains enabled and the separate People worker remains stopped.
 - Installed APK SHA-256: `0D48FC584A4BC86DED0BB0077C0779A0371C0C918BDCED4A49F48C4EAF382126`.
+
+## 2026-07-26 - Indexing worker throughput repair
+
+- Connected profiling found SigLIP2 was making forward progress with no inference failures and no thermal throttling, but the app was capped near two CPU cores.
+- Every 24-item embedding batch ended its WorkManager worker and created another JobScheduler job; the device recorded hundreds of pending/active transitions and several vendor background interruptions.
+- Media analysis had the same one-batch-per-system-job lifecycle and recreated its processor resources for every continuation.
+- Media analysis and SigLIP2 now process multiple batches inside one bounded eight-minute worker run, reusing processor resources and scheduling only one continuation when the run budget expires.
+- User stop controls, WorkManager cancellation, battery admission, thermal admission, storage constraints, retryable failure handling, and process-death stage recovery remain active between and within batches.
+- High-memory devices now process 48 SigLIP2 candidates per batch; lower-memory limits remain 4, 12, or 24.
+- ONNX intra-op parallelism now scales from one to four threads based on available processors instead of being fixed at two on all devices.
+- Aggregate worker logs now report batch count, processed count, failures, elapsed time, and selected ONNX thread count.
+- Existing gallery rows, completed stages, SigLIP2 vectors, people data, semantic facts, model generations, and source media are not reset or deleted.
+- Tests: NOT RUN for this focused device-throughput phase.

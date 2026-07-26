@@ -21,28 +21,68 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
     private val jobControls = IndexingJobControlsStore(appContext)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        Log.i(TAG, "SigLIP2 embedding worker started")
         if (!jobControls.load().embeddingsEnabled) return@withContext Result.success()
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         repository.recoverInterruptedJobs()
-        val batch = EmbeddingIndexBatchProcessor(
+        val processor = EmbeddingIndexBatchProcessor(
             context = applicationContext,
             repository = repository,
             vectors = app.services.semanticVectorStore,
             engine = app.services.embeddingEngine,
-        ).processBatch(
-            canContinue = {
-                !isStopped &&
-                    jobControls.load().embeddingsEnabled &&
-                    workAdmission.evaluate().allowed
-            },
         )
-        if (batch.hasMore) EmbeddingIndexScheduler.scheduleContinuation(applicationContext)
+        val inferenceThreads = (app.services.embeddingEngine as? LiteRtImageTextEmbeddingEngine)
+            ?.onnxInferenceThreads
         Log.i(
             TAG,
-            "SigLIP2 embedding batch finished hasMore=${batch.hasMore} stopped=${batch.stopped} retryableFailures=${batch.retryableFailures}",
+            "SigLIP2 embedding worker started batchSize=${processor.batchSize} onnxThreads=${inferenceThreads ?: "runtime"}",
         )
-        if (batch.stopped || batch.retryableFailures > 0) Result.retry() else Result.success()
+        val budget = IndexingWorkerRunBudget()
+        var batches = 0
+        var processed = 0
+        var retryableFailures = 0
+        var permanentFailures = 0
+        var hasMore = true
+        var stoppedDuringBatch = false
+        while (
+            hasMore &&
+            budget.hasTimeRemaining() &&
+            !isStopped &&
+            jobControls.load().embeddingsEnabled &&
+            workAdmission.evaluate().allowed
+        ) {
+            val batch = processor.processBatch(
+                canContinue = {
+                    !isStopped &&
+                        jobControls.load().embeddingsEnabled &&
+                        workAdmission.evaluate().allowed
+                },
+            )
+            batches++
+            processed += batch.processed
+            retryableFailures += batch.retryableFailures
+            permanentFailures += batch.permanentFailures
+            hasMore = batch.hasMore
+            stoppedDuringBatch = batch.stopped
+            if (batch.stopped || batch.retryableFailures > 0) break
+        }
+
+        val enabled = jobControls.load().embeddingsEnabled
+        val admission = workAdmission.evaluate()
+        val shouldRetry = isStopped || stoppedDuringBatch || !admission.allowed || retryableFailures > 0
+        if (hasMore && enabled && !shouldRetry) {
+            EmbeddingIndexScheduler.scheduleContinuation(applicationContext)
+        }
+        Log.i(
+            TAG,
+            "SigLIP2 embedding run finished batches=$batches processed=$processed hasMore=$hasMore " +
+                "stopped=${isStopped || stoppedDuringBatch} retryableFailures=$retryableFailures " +
+                "permanentFailures=$permanentFailures elapsedMs=${budget.elapsedMillis()}",
+        )
+        when {
+            !enabled -> Result.success()
+            shouldRetry -> Result.retry()
+            else -> Result.success()
+        }
     }
 
     private companion object {
@@ -54,7 +94,8 @@ internal object EmbeddingBatchPolicy {
     fun forDevice(memoryClassMb: Int, totalRamMb: Int): Int = when {
         memoryClassMb <= 192 || totalRamMb < 4_096 -> 4
         totalRamMb < 6_144 -> 12
-        else -> 24
+        totalRamMb < 8_192 -> 24
+        else -> 48
     }
 }
 
