@@ -38,6 +38,8 @@ data class GalleryUiState(
     val selectedEvidenceMetadataUnlocked: Boolean = false,
     val destination: AppDestination = AppDestination.GALLERY,
     val indexingActive: Boolean = false,
+    val indexingRunCriteria: IndexingRunCriteria = IndexingRunCriteria(),
+    val indexingAdmission: BackgroundWorkAdmission = BackgroundWorkAdmission(true, 0, null),
     val operationMessage: String? = null,
     val semanticMemory: SemanticMemoryProgress = SemanticMemoryProgress(),
     val semanticMemoryPlanning: Boolean = false,
@@ -67,6 +69,8 @@ private data class GalleryInitialization(
     val peopleIndex: PeopleIndexStatus,
     val conversation: ConversationSearchState,
     val semanticMemory: SemanticMemoryProgress,
+    val indexingRunCriteria: IndexingRunCriteria,
+    val indexingAdmission: BackgroundWorkAdmission,
 )
 
 private data class ModelInitialization(
@@ -121,6 +125,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         repository.peopleIndexStatus(),
                         repository.conversationState(),
                         repository.semanticMemoryProgress(),
+                        repository.indexingRunCriteria(),
+                        repository.indexingAdmission(),
                     )
                 }
             }.onSuccess { initial ->
@@ -131,6 +137,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     peopleIndex = initial.peopleIndex,
                     conversation = initial.conversation,
                     semanticMemory = initial.semanticMemory,
+                    indexingRunCriteria = initial.indexingRunCriteria,
+                    indexingAdmission = initial.indexingAdmission,
                 )
                 if (initial.peopleIndex.enabled) loadPeopleReviewClusters()
                 monitorIndexing()
@@ -295,16 +303,57 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 withContext(Dispatchers.IO) {
                     repository.recoverInterruptedJobs()
                     IndexScheduler.restart(getApplication())
+                    if (retrievalPacks.status().installed) EmbeddingIndexScheduler.restart(getApplication())
                     if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.restart(getApplication())
+                    repository.indexingAdmission()
                 }
-            }.onSuccess {
-                state = state.copy(operationMessage = "Indexing in progress")
+            }.onSuccess { admission ->
+                state = state.copy(
+                    indexingAdmission = admission,
+                    indexingActive = admission.allowed,
+                    operationMessage = if (admission.allowed) {
+                        "Indexing in progress"
+                    } else {
+                        "Indexing paused: ${admission.reason}"
+                    },
+                )
                 monitorIndexing()
             }.onFailure { error ->
                 state = state.copy(
                     indexingActive = false,
                     operationMessage = error.message ?: "Indexing could not be restarted",
                 )
+            }
+        }
+    }
+
+    fun saveIndexingRunCriteria(criteria: IndexingRunCriteria) {
+        state = state.copy(operationMessage = "Applying indexing stop and resume criteria...")
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val saved = repository.saveIndexingRunCriteria(criteria)
+                    repository.recoverInterruptedJobs()
+                    IndexScheduler.restart(getApplication())
+                    if (retrievalPacks.status().installed) EmbeddingIndexScheduler.restart(getApplication())
+                    if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.restart(getApplication())
+                    Triple(saved, repository.indexingAdmission(), repository.indexSummary())
+                }
+            }.onSuccess { (saved, admission, summary) ->
+                state = state.copy(
+                    indexingRunCriteria = saved,
+                    indexingAdmission = admission,
+                    index = summary,
+                    indexingActive = admission.allowed && (summary.pending > 0 || state.peopleIndex.pendingMediaCount > 0),
+                    operationMessage = if (admission.allowed) {
+                        "Indexing criteria saved. Pending indexing can run now."
+                    } else {
+                        "Indexing criteria saved. Paused: ${admission.reason}"
+                    },
+                )
+                monitorIndexing()
+            }.onFailure { error ->
+                state = state.copy(operationMessage = error.message ?: "Could not save indexing criteria")
             }
         }
     }
@@ -937,20 +986,31 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun reload(message: String? = state.operationMessage) {
-        val (summary, items, peopleIndex) = withContext(Dispatchers.IO) {
-            Triple(repository.indexSummary(), repository.allItems(), repository.peopleIndexStatus())
+        val refreshed = withContext(Dispatchers.IO) {
+            GalleryRefresh(
+                repository.indexSummary(),
+                repository.allItems(),
+                repository.peopleIndexStatus(),
+                repository.indexingAdmission(),
+            )
         }
-        state = state.copy(index = summary, items = items, peopleIndex = peopleIndex, operationMessage = message)
-        if (state.destination == AppDestination.PEOPLE && peopleIndex.enabled) {
+        state = state.copy(
+            index = refreshed.summary,
+            items = refreshed.items,
+            peopleIndex = refreshed.peopleIndex,
+            indexingAdmission = refreshed.admission,
+            operationMessage = message,
+        )
+        if (state.destination == AppDestination.PEOPLE && refreshed.peopleIndex.enabled) {
             loadPeopleReviewClusters()
-        } else if (!peopleIndex.enabled) {
+        } else if (!refreshed.peopleIndex.enabled) {
             state = state.copy(peopleReviewClusters = emptyList())
         }
     }
 
     private fun monitorIndexing() {
         indexMonitorJob?.cancel()
-        state = state.copy(indexingActive = true)
+        state = state.copy(indexingActive = state.indexingAdmission.allowed)
         indexMonitorJob = viewModelScope.launch {
             repeat(90) {
                 delay(1_000)
@@ -960,7 +1020,18 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     state = state.copy(indexingActive = false)
                     return@launch
                 }
-                state = state.copy(indexingActive = true)
+                state = if (state.indexingAdmission.allowed) {
+                    state.copy(
+                        indexingActive = true,
+                        operationMessage = state.operationMessage?.takeUnless { it.startsWith("Indexing paused:") }
+                            ?: "Indexing in progress",
+                    )
+                } else {
+                    state.copy(
+                        indexingActive = false,
+                        operationMessage = "Indexing paused: ${state.indexingAdmission.reason}",
+                    )
+                }
             }
             state = state.copy(
                 indexingActive = false,
@@ -968,6 +1039,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             )
         }
     }
+
+    private data class GalleryRefresh(
+        val summary: IndexSummary,
+        val items: List<GalleryItem>,
+        val peopleIndex: PeopleIndexStatus,
+        val admission: BackgroundWorkAdmission,
+    )
 
     private fun monitorSemanticMemory() {
         semanticMemoryMonitorJob?.cancel()

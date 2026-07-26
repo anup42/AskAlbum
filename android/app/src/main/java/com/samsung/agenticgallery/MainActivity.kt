@@ -301,7 +301,10 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
                     semanticMemory = state.semanticMemory,
                     semanticMemoryPlanning = state.semanticMemoryPlanning,
                     indexingActive = state.indexingActive,
+                    indexingRunCriteria = state.indexingRunCriteria,
+                    indexingAdmission = state.indexingAdmission,
                     onRetry = viewModel::retryIndexing,
+                    onSaveIndexingRunCriteria = viewModel::saveIndexingRunCriteria,
                     onBuildSemanticMemory = viewModel::requestSemanticEnrichment,
                     onOpenSemanticMemory = { viewModel.navigate(AppDestination.SEMANTIC_MEMORY) },
                     onImportRetrievalModel = {
@@ -792,7 +795,10 @@ private fun IndexManagerScreen(
     semanticMemory: SemanticMemoryProgress,
     semanticMemoryPlanning: Boolean,
     indexingActive: Boolean,
+    indexingRunCriteria: IndexingRunCriteria,
+    indexingAdmission: BackgroundWorkAdmission,
     onRetry: () -> Unit,
+    onSaveIndexingRunCriteria: (IndexingRunCriteria) -> Unit,
     onBuildSemanticMemory: () -> Unit,
     onOpenSemanticMemory: () -> Unit,
     onImportRetrievalModel: () -> Unit,
@@ -847,6 +853,12 @@ private fun IndexManagerScreen(
             inProgress = indexingActive && peopleIndex.pendingMediaCount > 0,
         )
         IndexMetric("Events", index.events, index.events, "deterministic day grouping")
+        IndexingRunCriteriaCard(
+            criteria = indexingRunCriteria,
+            admission = indexingAdmission,
+            onSave = onSaveIndexingRunCriteria,
+        )
+        Spacer(Modifier.height(10.dp))
         val pendingCount = index.pending + peopleIndex.pendingMediaCount
         if (pendingCount > 0 || index.failed > 0) {
             if (indexingActive) {
@@ -1161,6 +1173,93 @@ private fun SettingsCircularProgress(fraction: Float) {
         Box(Modifier.size(48.dp).testTag("settings-card-progress"), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(progress = { safeFraction }, modifier = Modifier.fillMaxSize(), strokeWidth = 4.dp)
             Text("${(safeFraction * 100).toInt()}%", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun IndexingRunCriteriaCard(
+    criteria: IndexingRunCriteria,
+    admission: BackgroundWorkAdmission,
+    onSave: (IndexingRunCriteria) -> Unit,
+) {
+    var draft by remember(criteria) { mutableStateOf(criteria) }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Text("Indexing stop and resume criteria", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text(
+                "These settings control when workers pause. They do not exclude media or delete completed indexes.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+            FilterChip(
+                selected = draft.requireCharging,
+                onClick = { draft = draft.copy(requireCharging = !draft.requireCharging) },
+                label = { Text(if (draft.requireCharging) "Charging required" else "Charging not required") },
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("Pause below battery", fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                listOf(15, 25, 40).forEach { threshold ->
+                    FilterChip(
+                        selected = draft.minimumBatteryPercent == threshold,
+                        onClick = { draft = draft.copy(minimumBatteryPercent = threshold) },
+                        label = { Text("$threshold%") },
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text("Pause at thermal state", fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                listOf(
+                    android.os.PowerManager.THERMAL_STATUS_LIGHT to "Cool",
+                    android.os.PowerManager.THERMAL_STATUS_MODERATE to "Balanced",
+                    android.os.PowerManager.THERMAL_STATUS_SEVERE to "Performance",
+                ).forEach { (status, label) ->
+                    FilterChip(
+                        selected = draft.pauseAtThermalStatus == status,
+                        onClick = { draft = draft.copy(pauseAtThermalStatus = status) },
+                        label = { Text(label) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Surface(
+                color = if (admission.allowed) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        if (admission.allowed) "Ready to index" else "Indexing paused",
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        admission.reason ?: "Battery ${admission.batteryPercent}% | " +
+                            (if (admission.charging) "charging" else "not charging") +
+                            " | thermal ${thermalStatusLabel(admission.thermalStatus)}",
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { onSave(draft) },
+                enabled = draft != criteria,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Apply criteria")
+            }
+            Text(
+                "Pending work resumes automatically when the selected conditions are satisfied.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+            )
         }
     }
 }

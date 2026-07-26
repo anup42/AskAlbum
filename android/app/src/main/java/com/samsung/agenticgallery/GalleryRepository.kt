@@ -20,6 +20,7 @@ class GalleryRepository(context: Context) {
     private val visualVerifier = services.visualVerifier
     private val groundedAnswerComposer = services.groundedAnswerComposer
     private val importer = MediaImporter(context.applicationContext)
+    private val indexingRunCriteriaStore = IndexingRunCriteriaStore(appContext)
     private val planPatchResolver = ResultSetPlanPatchResolver()
     private val sessionPlans = ConcurrentHashMap<String, GalleryQueryPlan>()
 
@@ -40,6 +41,10 @@ class GalleryRepository(context: Context) {
     fun allItems(): List<GalleryItem> = database.allItems()
 
     fun indexSummary(): IndexSummary = database.summary()
+    fun indexingRunCriteria(): IndexingRunCriteria = indexingRunCriteriaStore.load()
+    fun indexingAdmission(): BackgroundWorkAdmission = BackgroundWorkAdmissionPolicy(appContext).evaluate()
+    fun saveIndexingRunCriteria(criteria: IndexingRunCriteria): IndexingRunCriteria =
+        indexingRunCriteriaStore.save(criteria)
     fun indexCoverageForContentUris(contentUris: Collection<String>): ScopedIndexCoverage =
         database.indexCoverageForContentUris(contentUris)
 

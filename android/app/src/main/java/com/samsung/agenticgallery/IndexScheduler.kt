@@ -13,35 +13,29 @@ object IndexScheduler {
     private const val UNIQUE_WORK = "gallery-index"
 
     fun schedule(context: Context) {
-        WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.KEEP, request())
+        WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.KEEP, request(context))
     }
 
     fun scheduleContinuation(context: Context) {
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
-            request(),
+            request(context),
         )
     }
 
     fun restart(context: Context) {
         val workManager = WorkManager.getInstance(context)
         workManager.cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
-        workManager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.REPLACE, request())
+        workManager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.REPLACE, request(context))
     }
 
     fun cancelAndWait(context: Context) {
         WorkManager.getInstance(context).cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
     }
 
-    private fun request() = OneTimeWorkRequestBuilder<GalleryIndexWorker>()
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-                    .setRequiresBatteryNotLow(true)
-                    .setRequiresStorageNotLow(true)
-                    .build(),
-            )
+    private fun request(context: Context) = OneTimeWorkRequestBuilder<GalleryIndexWorker>()
+            .setConstraints(indexingWorkerConstraints(context))
             .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
             .addTag(UNIQUE_WORK)
             .build()

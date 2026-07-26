@@ -115,7 +115,7 @@ object SemanticEnrichmentScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             if (userRequested) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
-            request(userRequested, USER_REQUESTED_START_DELAY_SECONDS),
+            request(context, userRequested, USER_REQUESTED_START_DELAY_SECONDS),
         )
     }
 
@@ -123,26 +123,21 @@ object SemanticEnrichmentScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
-            request(userRequested = true, initialDelaySeconds = CONTINUATION_COOLING_DELAY_SECONDS),
+            request(context, userRequested = true, initialDelaySeconds = CONTINUATION_COOLING_DELAY_SECONDS),
         )
     }
 
     private fun request(
+        context: Context,
         userRequested: Boolean,
         initialDelaySeconds: Long = 0L,
     ) = OneTimeWorkRequestBuilder<SemanticEnrichmentWorker>()
         .setConstraints(
-            Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-                .setRequiresBatteryNotLow(true)
-                .setRequiresStorageNotLow(true)
-                .apply {
-                    if (!userRequested) {
-                        setRequiresCharging(true)
-                        setRequiresDeviceIdle(true)
-                    }
-                }
-                .build(),
+            indexingWorkerConstraints(
+                context = context,
+                forceCharging = !userRequested,
+                requireDeviceIdle = !userRequested,
+            ),
         )
         .apply {
             if (initialDelaySeconds > 0L) setInitialDelay(initialDelaySeconds, TimeUnit.SECONDS)
