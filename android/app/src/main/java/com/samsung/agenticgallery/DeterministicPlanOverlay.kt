@@ -23,7 +23,11 @@ class DeterministicPlanOverlay(
         val deterministicAggregationOnly = deterministic.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
             deterministic.aggregation != null && deterministic.semanticClauses.isEmpty() && deterministic.terms.isEmpty()
         val merged = modelPlan.copy(
-            intent = if (deterministic.intent != QueryIntent.FIND_MEDIA) deterministic.intent else modelPlan.intent,
+            intent = when {
+                shouldForceMediaDisplayIntent(query) -> QueryIntent.FIND_MEDIA
+                deterministic.intent != QueryIntent.FIND_MEDIA -> deterministic.intent
+                else -> modelPlan.intent
+            },
             mediaScope = if (deterministic.mediaScope != MediaScope.ALL) deterministic.mediaScope else modelPlan.mediaScope,
             filter = mergeFilter(modelPlan.filter, deterministic.filter),
             ocrClause = mergeOcrClause(modelPlan.ocrClause, deterministic.ocrClause),
@@ -40,6 +44,11 @@ class DeterministicPlanOverlay(
             applied = merged != modelPlan,
         )
     }
+
+    private fun shouldForceMediaDisplayIntent(query: String): Boolean =
+        MEDIA_DISPLAY_VERB.containsMatchIn(query) &&
+            MEDIA_NOUN.containsMatchIn(query) &&
+            !ANALYTICAL_REQUEST.containsMatchIn(query)
 
     private fun mergeFilter(model: FilterExpression, deterministic: FilterExpression): FilterExpression {
         val exact = flattenFilter(deterministic)
@@ -76,6 +85,21 @@ class DeterministicPlanOverlay(
             query = model.query ?: deterministic.query,
             merchant = model.merchant ?: deterministic.merchant,
             requestedField = model.requestedField ?: deterministic.requestedField,
+        )
+    }
+
+    private companion object {
+        val MEDIA_DISPLAY_VERB = Regex(
+            """^\s*(?:show|find|display|open|locate|dikhao|dikha\s+do|दिखाओ|दिखाएं|दिखा\s+दो)(?:\s|$)""",
+            RegexOption.IGNORE_CASE,
+        )
+        val MEDIA_NOUN = Regex(
+            """\b(?:photos?|pictures?|images?|videos?|pics?)\b|(?:फोटो|तस्वीर(?:ें)?|वीडियो)""",
+            RegexOption.IGNORE_CASE,
+        )
+        val ANALYTICAL_REQUEST = Regex(
+            """\b(?:summary|summarize|timeline|compare|comparison|how\s+many|count\s+of|sum\s+of)\b|(?:सारांश|तुलना|समयरेखा)""",
+            RegexOption.IGNORE_CASE,
         )
     }
 }

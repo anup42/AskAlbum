@@ -370,12 +370,18 @@ class GalleryRepository(context: Context) {
         } else {
             null to compiledPlan
         }
-        val resolvedPersonIds = database.resolveReviewedPersonIds(query)
-        val plan = if (resolvedPersonIds.isEmpty()) {
+        val resolvedPersonGroups = database.resolveReviewedPersonGroups(query)
+        val plan = if (resolvedPersonGroups.isEmpty()) {
             patchedPlan
         } else {
             patchedPlan.copy(
-                peopleClauses = (patchedPlan.peopleClauses + resolvedPersonIds.map { PersonClause(it) })
+                peopleClauses = (
+                    patchedPlan.peopleClauses + resolvedPersonGroups.flatMap { group ->
+                        group.personIds.map { personId ->
+                            PersonClause(personId = personId, alternativeGroup = group.alternativeGroup)
+                        }
+                    }
+                )
                     .distinctBy { it.personId to it.mustBePresent },
             )
         }

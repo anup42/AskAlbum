@@ -3455,3 +3455,18 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND INSTALLED; BACKGROUND CAPTION UPGRADE 
 - Post-install v16 snapshot retained 11,511 media and all prior facts; indexing continued to 1,230 clusters, 3,325 faces, 430 facts, and 3 comprehensive captions with integrity `ok`.
 - Caption upgrade snapshot: 196 pending, 1 running, 1 completed, 2 authentication-protected, and zero legacy completed jobs remaining.
 - Full caption-queue completion, real-gallery swapped-person clothing query acceptance, cropped-footwear acceptance, and the broader requested apparel corpus are NOT RUN. These require the background queue and targeted device corpus to complete.
+
+## 2026-07-27 - Existing-person assignment and duplicate identity retrieval
+
+Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; FINAL QUERY COMPLETION INTERRUPTED.**
+
+- The unreviewed-cluster editor now lists existing reviewed people with face counts and requires a separate confirmation before transactionally assigning the cluster to that person.
+- The previous internal cluster-ID field remains only for advanced reviewed-cluster correction; normal tagging no longer requires users to know database IDs.
+- Duplicate reviewed clusters matching one name, relationship, or alias are logical OR alternatives. Different requested people remain AND requirements for both hard eligibility and face-to-body verification.
+- Deterministic intent overlays now also apply when Gemma planning falls back, preventing explicit `Show pictures...` requests containing `where` from becoming `EVENT_SUMMARY`.
+- Caption retrieval always retains the caption's own evidence media before lower-confidence event/group expansion.
+- Focused JVM tests for planner intent, duplicate identity grouping, people OR/AND scope, people state, and plan validation: PASS.
+- `ConsumerDebug` build and replacement install on SM-S928B: PASS. No uninstall, clear-data, people merge, relabel, or reindex action was performed.
+- Connected People UI: PASS. Existing Pooja, Me, Avyaan, and duplicate-Pooja choices rendered; selection exposed the confirmation action without committing it.
+- Connected red-dress retrieval reached 339 Pooja-eligible images and displayed the exact cached caption with caption-expansion evidence. Final answer completion was INTERRUPTED after thermal admission paused verification and a different query was entered on the device.
+- Target-process crash, ANR, OOM, Room, and SQLite exception check: PASS for the observed window.

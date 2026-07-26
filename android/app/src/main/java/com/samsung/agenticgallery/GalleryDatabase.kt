@@ -1562,13 +1562,22 @@ class GalleryDatabase(
         return target
     }
 
-    fun resolveReviewedPersonIds(query: String): Set<String> {
+    fun resolveReviewedPersonIds(query: String): Set<String> =
+        resolveReviewedPersonGroups(query).flatMapTo(linkedSetOf(), ReviewedPersonMatchGroup::personIds)
+
+    internal fun resolveReviewedPersonGroups(query: String): List<ReviewedPersonMatchGroup> {
         val normalizedQuery = query.lowercase(Locale.ROOT)
-        return readableDatabase.rawQuery(
-            "SELECT id,label,relationship,aliases FROM person_cluster WHERE reviewed=1 AND hidden=0",
+        val candidates = readableDatabase.rawQuery(
+            """
+            SELECT c.id,c.label,c.relationship,c.aliases,
+                (SELECT COUNT(*) FROM face_instance f WHERE f.cluster_id=c.id) AS face_count,
+                c.updated_at
+            FROM person_cluster c
+            WHERE c.reviewed=1 AND c.hidden=0
+            """.trimIndent(),
             null,
         ).use { cursor ->
-            buildSet {
+            buildList {
                 while (cursor.moveToNext()) {
                     val id = cursor.getString(0)
                     val terms = buildList {
@@ -1580,10 +1589,21 @@ class GalleryDatabase(
                         }.getOrDefault(emptyList())
                         addAll(aliases)
                     }
-                    if (terms.any { identityTermMatches(normalizedQuery, it) }) add(id)
+                    val matchedTerms = terms.filter { identityTermMatches(normalizedQuery, it) }
+                    if (matchedTerms.isNotEmpty()) {
+                        add(
+                            ReviewedPersonMatchCandidate(
+                                personId = id,
+                                matchedIdentityTerms = matchedTerms,
+                                faceCount = cursor.getInt(4),
+                                updatedAt = cursor.getLong(5),
+                            ),
+                        )
+                    }
                 }
             }
         }
+        return ReviewedPersonMatchSelector.group(candidates)
     }
 
     fun reviewedFaceBindings(mediaId: String, requestedPeople: Set<String>): List<PersonVerificationBinding> {
@@ -2883,14 +2903,15 @@ class GalleryDatabase(
             val haystack = caption.text.lowercase(Locale.ROOT)
             val matched = terms.count { it in haystack }
             if (matched == 0) return@flatMap emptyList()
-            val candidates = when (caption.scope) {
-                SemanticFactScope.MEDIA -> listOf(caption.evidenceMediaId)
+            val expandedCandidates = when (caption.scope) {
+                SemanticFactScope.MEDIA -> emptyList()
                 SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
                     "SELECT media_id FROM visual_group_member WHERE group_id=?",
                     arrayOf(caption.subjectId),
                 ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
                 SemanticFactScope.EVENT -> eventMembers(caption.subjectId.toLongOrNull() ?: Long.MIN_VALUE)
             }
+            val candidates = (listOf(caption.evidenceMediaId) + expandedCandidates).distinct()
             candidates.filter { it in allowedIds }.map { mediaId ->
                 val direct = mediaId == caption.evidenceMediaId
                 CaptionSearchHit(

@@ -34,4 +34,21 @@ class PeopleClauseResolverTest {
         assertNull(scope.requiredIds)
         assertEquals(setOf("three", "four"), scope.excludedIds)
     }
+
+    @Test
+    fun duplicateClustersAreAlternativesWhileDifferentPeopleRemainRequired() {
+        val scopedMedia = media + mapOf(
+            "pooja-primary" to setOf("one"),
+            "pooja-duplicate" to setOf("two"),
+        )
+        val scope = PeopleClauseResolver.resolve(
+            listOf(
+                PersonClause("pooja-primary", alternativeGroup = "identity_pooja"),
+                PersonClause("pooja-duplicate", alternativeGroup = "identity_pooja"),
+                PersonClause("me"),
+            ),
+        ) { scopedMedia[it].orEmpty() }
+
+        assertEquals(setOf("one", "two"), scope.requiredIds)
+    }
 }

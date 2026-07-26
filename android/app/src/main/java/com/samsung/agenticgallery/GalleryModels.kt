@@ -54,6 +54,7 @@ data class PersonClause(
     val personId: String,
     val mustBePresent: Boolean = true,
     val hardness: ConstraintStrength = ConstraintStrength.HARD,
+    val alternativeGroup: String? = null,
 )
 
 data class OcrClause(

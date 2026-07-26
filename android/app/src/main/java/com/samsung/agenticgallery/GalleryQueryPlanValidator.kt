@@ -32,7 +32,10 @@ class GalleryQueryPlanValidator(
             it.relationToPerson?.let { person -> validateIdentifier("person relation", person, errors) }
         }
         if (plan.peopleClauses.size > 8) errors += "Too many people clauses"
-        plan.peopleClauses.forEach { validateIdentifier("person", it.personId, errors) }
+        plan.peopleClauses.forEach {
+            validateIdentifier("person", it.personId, errors)
+            it.alternativeGroup?.let { group -> validateIdentifier("person alternative group", group, errors) }
+        }
         plan.ocrClause?.let {
             it.query?.let { text -> validateText("OCR query", text, errors, 240) }
             it.merchant?.let { text -> validateText("merchant", text, errors, 120) }

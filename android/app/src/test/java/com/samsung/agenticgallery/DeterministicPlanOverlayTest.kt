@@ -132,6 +132,24 @@ class DeterministicPlanOverlayTest {
         assertTrue(result.plan.semanticClauses.isEmpty())
     }
 
+    @Test
+    fun explicitPictureDisplayOverridesIncorrectEventSummaryIntent() {
+        val model = plan(FilterExpression.True, null).copy(intent = QueryIntent.EVENT_SUMMARY)
+
+        val result = overlay.apply("Show pictures where Pooja is wearing a red dress", model, null)
+
+        assertEquals(QueryIntent.FIND_MEDIA, result.plan.intent)
+    }
+
+    @Test
+    fun explicitSummaryRequestKeepsEventSummaryIntent() {
+        val model = plan(FilterExpression.True, null).copy(intent = QueryIntent.EVENT_SUMMARY)
+
+        val result = overlay.apply("Show a summary of the birthday event photos", model, null)
+
+        assertEquals(QueryIntent.EVENT_SUMMARY, result.plan.intent)
+    }
+
     private fun plan(filter: FilterExpression, place: String?) = GalleryQueryPlan(
         originalQuery = "fixture",
         intent = QueryIntent.FIND_MEDIA,

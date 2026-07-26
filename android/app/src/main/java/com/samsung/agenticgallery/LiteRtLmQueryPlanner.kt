@@ -147,13 +147,18 @@ class LiteRtLmQueryPlanner(
         activeResultIds: Set<String>?,
         started: Long,
         reason: String,
-    ) = PlannerExecutionTrace(
-        plan = fallback.compile(query, activeResultIds),
-        usedGemma = false,
-        backend = PlannerInferenceBackend.DETERMINISTIC,
-        elapsedMs = android.os.SystemClock.elapsedRealtime() - started,
-        fallbackReason = reason.take(240),
-    )
+    ): PlannerExecutionTrace {
+        val fallbackPlan = fallback.compile(query, activeResultIds)
+        val overlay = deterministicOverlay.apply(query, fallbackPlan, activeResultIds)
+        return PlannerExecutionTrace(
+            plan = overlay.plan,
+            usedGemma = false,
+            backend = PlannerInferenceBackend.DETERMINISTIC,
+            deterministicOverlayApplied = overlay.applied,
+            elapsedMs = android.os.SystemClock.elapsedRealtime() - started,
+            fallbackReason = reason.take(240),
+        )
+    }
 
     private fun plannerPrompt(query: String) = """
         Compile the personal-gallery request into exactly one JSON object. Return JSON only.

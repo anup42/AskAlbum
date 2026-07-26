@@ -56,15 +56,17 @@ class LiteRtGemmaVisualVerifier(
                     var generationMs = 0L
                     bounded.forEach { hit ->
                             runCatching {
-                                val requiredPeople = plan.peopleClauses.filter(PersonClause::mustBePresent)
-                                    .map(PersonClause::personId).toSet()
+                                val requiredGroups = PeopleClauseResolver.requiredGroups(plan.peopleClauses)
+                                val requiredPeople = requiredGroups.flatten().map(PersonClause::personId).toSet()
                                 val bindings = database.reviewedFaceBindings(hit.item.id, requiredPeople)
                                 if (requiredPeople.isNotEmpty()) {
                                     val grouped = bindings.groupBy(PersonVerificationBinding::clusterId)
-                                    val everyRequestedIdentityBound = requiredPeople.all { requested ->
-                                        bindings.any { binding ->
-                                            binding.clusterId == requested ||
-                                                binding.identityTerms.any { it.equals(requested, ignoreCase = true) }
+                                    val everyRequestedIdentityBound = requiredGroups.all { alternatives ->
+                                        alternatives.any { clause ->
+                                            bindings.any { binding ->
+                                                binding.clusterId == clause.personId ||
+                                                    binding.identityTerms.any { it.equals(clause.personId, ignoreCase = true) }
+                                            }
                                         }
                                     }
                                     require(everyRequestedIdentityBound && grouped.values.all { it.size == 1 }) {

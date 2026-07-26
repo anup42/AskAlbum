@@ -2113,6 +2113,9 @@ private fun PeopleScreen(
         var relationship by remember(cluster.id) { mutableStateOf(cluster.relationship.orEmpty()) }
         var aliases by remember(cluster.id) { mutableStateOf(cluster.aliases.joinToString(", ")) }
         var mergeTarget by remember(cluster.id) { mutableStateOf("") }
+        var existingPersonTargetId by remember(cluster.id) { mutableStateOf<String?>(null) }
+        val existingPeople = named.filterNot { it.id == cluster.id }
+        val existingPersonTarget = existingPeople.firstOrNull { it.id == existingPersonTargetId }
         AlertDialog(
             onDismissRequest = { editingCluster = null },
             title = { Text(if (cluster.reviewed) "Edit ${cluster.label}" else "Tag this person") },
@@ -2124,6 +2127,44 @@ private fun PeopleScreen(
                     }
                     Text("Names, relationships, and aliases stay only in the app-private people index.")
                     Spacer(Modifier.height(8.dp))
+                    if (!cluster.reviewed && existingPeople.isNotEmpty()) {
+                        Text("Use an existing person", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Assign every face in this cluster to a person you already tagged.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        existingPeople.forEach { existing ->
+                            val name = existing.label ?: existing.relationship ?: "Existing person"
+                            TextButton(
+                                onClick = { existingPersonTargetId = existing.id },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (existing.id == existingPersonTargetId) {
+                                        "Selected: $name (${existing.faceCount} faces)"
+                                    } else {
+                                        "Assign to $name (${existing.faceCount} faces)"
+                                    },
+                                )
+                            }
+                        }
+                        existingPersonTarget?.let { target ->
+                            val name = target.label ?: target.relationship ?: "existing person"
+                            Button(
+                                onClick = {
+                                    onMerge(target.id, cluster.id)
+                                    editingCluster = null
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Confirm assignment to $name")
+                            }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        Text("Or create a new person", fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(8.dp))
+                    }
                     OutlinedTextField(value = label, onValueChange = { label = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
@@ -2143,16 +2184,18 @@ private fun PeopleScreen(
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { onReviewCluster(cluster.id, label, relationship.ifBlank { null }, parseAliases(aliases)) ; editingCluster = null }),
                     )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = mergeTarget,
-                        onValueChange = { mergeTarget = it },
-                        label = { Text("Target cluster ID for merge/move") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (mergeTarget.isNotBlank()) {
-                        TextButton(onClick = { onMerge(mergeTarget.trim(), cluster.id); editingCluster = null }) {
-                            Text("Merge this cluster into target")
+                    if (cluster.reviewed) {
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = mergeTarget,
+                            onValueChange = { mergeTarget = it },
+                            label = { Text("Target cluster ID for merge/move") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (mergeTarget.isNotBlank()) {
+                            TextButton(onClick = { onMerge(mergeTarget.trim(), cluster.id); editingCluster = null }) {
+                                Text("Merge this cluster into target")
+                            }
                         }
                     }
                     if (cluster.supportingFaces.isNotEmpty()) {
