@@ -382,6 +382,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         summary,
                         state.peopleIndex,
                         state.indexingJobControls,
+                        state.retrievalPack.installed,
                     ),
                     operationMessage = if (admission.allowed) {
                         "Indexing criteria saved. Pending indexing can run now."
@@ -441,7 +442,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     index = summary,
                     semanticMemory = semanticMemory,
                     indexingActive = state.indexingAdmission.allowed &&
-                        hasRunnableIndexing(summary, state.peopleIndex, controls),
+                        hasRunnableIndexing(summary, state.peopleIndex, controls, state.retrievalPack.installed),
                     operationMessage = "${indexingJobLabel(job)} ${if (enabled) "started" else "stopped"}. Completed index data was kept.",
                 )
                 monitorIndexing()
@@ -1125,7 +1126,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             while (true) {
                 delay(2_500)
                 reloadIndexStatus()
-                val hasPending = state.index.pending > 0 || state.peopleIndex.pendingMediaCount > 0
+                val hasPending = state.index.pending > 0 ||
+                    state.peopleIndex.pendingMediaCount > 0 ||
+                    (
+                        state.retrievalPack.installed &&
+                            state.indexingJobControls.embeddingsEnabled &&
+                            state.index.siglipVectorsReady < state.index.discovered
+                    )
                 if (!hasPending) {
                     reload()
                     state = state.copy(indexingActive = false)
@@ -1133,7 +1140,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 }
                 state = if (
                     state.indexingAdmission.allowed &&
-                    hasRunnableIndexing(state.index, state.peopleIndex, state.indexingJobControls)
+                    hasRunnableIndexing(
+                        state.index,
+                        state.peopleIndex,
+                        state.indexingJobControls,
+                        state.retrievalPack.installed,
+                    )
                 ) {
                     state.copy(
                         indexingActive = true,
@@ -1166,13 +1178,19 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         summary: IndexSummary,
         peopleIndex: PeopleIndexStatus,
         controls: IndexingJobControls,
+        retrievalPackInstalled: Boolean,
     ): Boolean =
         (summary.pending > 0 && controls.mediaAnalysisEnabled) ||
-            (peopleIndex.pendingMediaCount > 0 && controls.peopleEnabled)
+            (peopleIndex.pendingMediaCount > 0 && controls.peopleEnabled) ||
+            (
+                retrievalPackInstalled &&
+                    controls.embeddingsEnabled &&
+                    summary.siglipVectorsReady < summary.discovered
+            )
 
     private fun indexingJobLabel(job: IndexingJob): String = when (job) {
         IndexingJob.MEDIA_ANALYSIS -> "Media analysis"
-        IndexingJob.EMBEDDINGS -> "Image embeddings"
+        IndexingJob.EMBEDDINGS -> "SigLIP2 vectors"
         IndexingJob.PEOPLE -> "People indexing"
         IndexingJob.SEMANTIC_MEMORY -> "Gemma semantic memory"
     }

@@ -1,6 +1,7 @@
 package com.samsung.agenticgallery
 
 import android.content.Context
+import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -20,6 +21,7 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
     private val jobControls = IndexingJobControlsStore(appContext)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        Log.i(TAG, "SigLIP2 embedding worker started")
         if (!jobControls.load().embeddingsEnabled) return@withContext Result.success()
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         repository.recoverInterruptedJobs()
@@ -36,7 +38,15 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
             },
         )
         if (batch.hasMore) EmbeddingIndexScheduler.scheduleContinuation(applicationContext)
+        Log.i(
+            TAG,
+            "SigLIP2 embedding batch finished hasMore=${batch.hasMore} stopped=${batch.stopped} retryableFailures=${batch.retryableFailures}",
+        )
         if (batch.stopped || batch.retryableFailures > 0) Result.retry() else Result.success()
+    }
+
+    private companion object {
+        const val TAG = "AgenticGalleryEmbedding"
     }
 }
 
@@ -79,7 +89,7 @@ object EmbeddingIndexScheduler {
 
     private fun request(context: Context) = OneTimeWorkRequestBuilder<EmbeddingIndexWorker>()
         .setConstraints(indexingWorkerConstraints(context))
-        .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
+        .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.SECONDS)
         .addTag(UNIQUE_WORK)
         .build()
 }

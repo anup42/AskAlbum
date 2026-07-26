@@ -1709,6 +1709,10 @@ class GalleryDatabase(
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
             ocrReady = mediaCounts[1],
             visualLabelsReady = mediaCounts[2],
+            siglipVectorsReady = readableDatabase.rawQuery(
+                "SELECT COUNT(*) FROM media_index_stage WHERE stage='EMBEDDING' AND status='COMPLETE'",
+                null,
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
             videoKeyframesReady = readableDatabase.rawQuery(
                 "SELECT COUNT(*) FROM video_keyframe", null,
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },

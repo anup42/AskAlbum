@@ -255,6 +255,7 @@ data class IndexSummary(
     val semanticFactsReady: Int = 0,
     val ocrReady: Int = 0,
     val visualLabelsReady: Int = 0,
+    val siglipVectorsReady: Int = 0,
     val videoKeyframesReady: Int = 0,
     val facesScanned: Int = 0,
     val faceEligible: Int = 0,

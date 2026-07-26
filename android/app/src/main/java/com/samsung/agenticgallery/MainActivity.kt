@@ -853,6 +853,20 @@ private fun IndexManagerScreen(
             inProgress = indexingActive && indexingJobControls.mediaAnalysisEnabled && index.ocrReady < index.discovered,
         )
         IndexMetric("Visual labels ready", index.visualLabelsReady, index.discovered, "mlkit-image-label-v1 bundled", inProgress = indexingActive && indexingJobControls.mediaAnalysisEnabled && index.visualLabelsReady < index.discovered)
+        IndexMetric(
+            "SigLIP2 image vectors",
+            index.siglipVectorsReady,
+            index.discovered,
+            when {
+                !retrievalPack.installed -> "Retrieval model unavailable"
+                !indexingJobControls.embeddingsEnabled -> "SigLIP2 ${retrievalPack.packVersion ?: "Base"} - stopped"
+                else -> "SigLIP2 ${retrievalPack.packVersion ?: "Base"} - ${retrievalPack.embeddingDimension ?: 0}D"
+            },
+            enabled = retrievalPack.installed,
+            inProgress = indexingActive &&
+                indexingJobControls.embeddingsEnabled &&
+                index.siglipVectorsReady < index.discovered,
+        )
         IndexMetric("Video keyframes", index.videoKeyframesReady, index.videoKeyframesReady, VideoKeyframePolicy.PRODUCER_VERSION)
         IndexMetric(
             "Face indexing",
@@ -1251,8 +1265,8 @@ private fun IndexingJobsCard(
             )
             HorizontalDivider()
             IndexingJobControlRow(
-                title = "Image embeddings",
-                description = "SigLIP2 vectors used for semantic retrieval",
+                title = "SigLIP2 vectors",
+                description = "Image and video-keyframe vectors used for semantic retrieval",
                 enabled = controls.embeddingsEnabled,
                 available = embeddingsAvailable,
                 unavailableReason = "Retrieval model required",

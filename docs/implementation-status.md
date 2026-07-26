@@ -3379,3 +3379,18 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; REAL GEMMA FACT
 - Final control inspection found semantic memory explicitly stopped while media analysis remained enabled; semantic memory was re-enabled for this requested run without changing the separate stopped Embeddings or People controls.
 - Final connected run: Gemma initialized with GPU, MTP, and multimodal support, then completed two representatives; one stored eight validated facts and one safely stored no unsupported facts.
 - Installed APK SHA-256: `5C3211D92C2F72C5EF3429E6183D2FC6105B4F23CBD7E5A593E684AC54F1DC4B`.
+
+## 2026-07-26 - Visible SigLIP2 vector indexing
+
+- Device inspection confirmed the verified SigLIP2 retrieval generation is installed, but the Embeddings worker was explicitly stopped and the Index Manager had no vector coverage metric.
+- Added a `SigLIP2 image vectors` metric showing completed embedding stages against discovered media, retrieval pack version, embedding dimension, stopped state, and live progress.
+- Renamed the generic `Image embeddings` worker control to `SigLIP2 vectors` and clarified that it indexes images plus video keyframes for semantic retrieval.
+- Index monitoring now treats enabled incomplete SigLIP2 coverage as runnable work, so progress remains live after media analysis itself completes.
+- Connected diagnosis found Android stopped the newly enabled embedding worker with WorkManager stop reason `11`; its old 15-minute backoff made the enabled worker appear inactive.
+- SigLIP2 retries now resume after 30 seconds, with focused worker start and batch-completion logs for connected diagnostics.
+- Existing vectors, gallery analysis, people data, semantic facts, and model generations remain intact.
+- `ConsumerDebug` source compilation, assemble, and replacement install: PASS on SM-S928B.
+- Connected execution: PASS. Three consecutive batches completed successfully and vector coverage increased from 2,086 to 2,158 with another 20 media running; it reached 2,206 before the UI capture.
+- Connected UI: PASS. Index Manager shows `SigLIP2 image vectors`, active pack `ba1f3b0-q8-core05`, `768D`, `2206 / 11508`, and a live progress bar.
+- Embeddings and semantic memory are enabled; Media Analysis remains enabled and the separate People worker remains stopped.
+- Installed APK SHA-256: `0D48FC584A4BC86DED0BB0077C0779A0371C0C918BDCED4A49F48C4EAF382126`.
