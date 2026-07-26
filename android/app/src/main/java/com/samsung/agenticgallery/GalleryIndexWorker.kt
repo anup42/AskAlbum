@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -34,29 +35,53 @@ class GalleryIndexWorker(
                 jobControls.load().mediaAnalysisEnabled &&
                 workAdmission.evaluate().allowed
             ) {
-                val batch = processor.processBatch(
-                    canContinue = {
-                        !isStopped &&
-                            jobControls.load().mediaAnalysisEnabled &&
-                            workAdmission.evaluate().allowed
-                    },
-                )
+                val batch = IndexingResourceCoordinator.withBackgroundPermit {
+                    processor.processBatch(
+                        ownerId = id.toString(),
+                        canContinue = {
+                            !isStopped &&
+                                jobControls.load().mediaAnalysisEnabled &&
+                                workAdmission.evaluate().allowed
+                        },
+                    )
+                }
                 batches++
                 processed += batch.processed
                 retryableFailures += batch.retryableFailures
                 permanentFailures += batch.permanentFailures
                 hasMore = batch.hasMore
                 stoppedDuringBatch = batch.stopped
-                if (batch.stopped || batch.retryableFailures > 0) break
+                setProgress(
+                    workDataOf(
+                        "processed" to processed,
+                        "batches" to batches,
+                        "in_flight" to if (hasMore) GalleryIndexBatchProcessor.DEFAULT_BATCH_SIZE else 0,
+                        "retryable_failures" to retryableFailures,
+                    ),
+                )
+                if (batch.stopped) break
             }
         }
 
         if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.schedule(applicationContext)
         val enabled = jobControls.load().mediaAnalysisEnabled
         val admission = workAdmission.evaluate()
-        val shouldRetry = isStopped || stoppedDuringBatch || !admission.allowed || retryableFailures > 0
+        val shouldRetry = IndexingWorkerResultPolicy.shouldRetryWorker(
+            processed = processed,
+            retryableFailures = retryableFailures,
+            stopped = isStopped || stoppedDuringBatch,
+            admissionAllowed = admission.allowed,
+            hasImmediateWork = hasMore,
+        )
         if (hasMore && enabled && !shouldRetry) {
             IndexScheduler.scheduleContinuation(applicationContext)
+        } else if (!hasMore && enabled) {
+            repository.nextMediaRetryAt()?.let { retryAt ->
+                IndexScheduler.scheduleContinuation(
+                    applicationContext,
+                    (retryAt - System.currentTimeMillis()).coerceAtLeast(10_000L),
+                )
+            }
         }
         Log.i(
             TAG,

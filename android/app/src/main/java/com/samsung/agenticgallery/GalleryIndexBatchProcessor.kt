@@ -25,6 +25,7 @@ internal class GalleryIndexBatchProcessor(
         allowedMediaIds: Set<String>? = null,
         limit: Int = DEFAULT_BATCH_SIZE,
         rebuildEvents: Boolean = true,
+        ownerId: String = "gallery-index",
         canContinue: () -> Boolean = { true },
     ): IndexBatchResult {
         require(limit in 1..MAX_BATCH_SIZE) { "Gallery index batch is out of bounds" }
@@ -39,7 +40,7 @@ internal class GalleryIndexBatchProcessor(
                 stopped = true
                 break
             }
-            repository.markIndexing(item.id)
+            if (!repository.markIndexing(item.id, ownerId)) continue
             try {
                 val analyses = when (item.kind) {
                     MediaKind.VIDEO -> VideoKeyframeExtractor(appContext).extract(item).map { frame ->
@@ -81,8 +82,10 @@ internal class GalleryIndexBatchProcessor(
                 throw error
             } catch (error: Throwable) {
                 val permanent = error is SecurityException || error is FileNotFoundException
-                repository.failIndex(item.id, error::class.java.simpleName, permanent)
-                if (permanent) permanentFailures++ else retryableFailures++
+                when (repository.failIndex(item.id, error::class.java.simpleName, permanent)) {
+                    StageStatus.FAILED_RETRYABLE -> retryableFailures++
+                    else -> permanentFailures++
+                }
             }
         }
         if (processed > 0 && rebuildEvents) repository.rebuildEvents()
@@ -92,6 +95,7 @@ internal class GalleryIndexBatchProcessor(
             retryableFailures = retryableFailures,
             permanentFailures = permanentFailures,
             stopped = stopped,
+            nextAttemptAtMillis = repository.nextMediaRetryAt(),
         )
     }
 

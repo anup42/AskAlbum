@@ -6,4 +6,5 @@ internal data class IndexBatchResult(
     val retryableFailures: Int = 0,
     val permanentFailures: Int = 0,
     val stopped: Boolean = false,
+    val nextAttemptAtMillis: Long? = null,
 )

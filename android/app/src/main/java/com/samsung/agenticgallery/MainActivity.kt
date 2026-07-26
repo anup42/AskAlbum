@@ -306,6 +306,7 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
                     indexingRunCriteria = state.indexingRunCriteria,
                     indexingAdmission = state.indexingAdmission,
                     indexingJobControls = state.indexingJobControls,
+                    indexingPipelines = state.indexingPipelines,
                     onRetry = viewModel::retryIndexing,
                     onSaveIndexingRunCriteria = viewModel::saveIndexingRunCriteria,
                     onSetIndexingJobEnabled = viewModel::setIndexingJobEnabled,
@@ -809,6 +810,7 @@ private fun IndexManagerScreen(
     indexingRunCriteria: IndexingRunCriteria,
     indexingAdmission: BackgroundWorkAdmission,
     indexingJobControls: IndexingJobControls,
+    indexingPipelines: Map<IndexingJob, IndexingPipelineSnapshot>,
     onRetry: () -> Unit,
     onSaveIndexingRunCriteria: (IndexingRunCriteria) -> Unit,
     onSetIndexingJobEnabled: (IndexingJob, Boolean) -> Unit,
@@ -889,6 +891,7 @@ private fun IndexManagerScreen(
         )
         IndexingJobsCard(
             controls = indexingJobControls,
+            snapshots = indexingPipelines,
             peopleAvailable = peopleIndex.enabled,
             embeddingsAvailable = retrievalPack.installed,
             semanticMemoryAvailable = modelPack.installed && modelPack.multimodal,
@@ -1237,6 +1240,7 @@ private fun SettingsCircularProgress(fraction: Float) {
 @Composable
 private fun IndexingJobsCard(
     controls: IndexingJobControls,
+    snapshots: Map<IndexingJob, IndexingPipelineSnapshot>,
     peopleAvailable: Boolean,
     embeddingsAvailable: Boolean,
     semanticMemoryAvailable: Boolean,
@@ -1261,6 +1265,7 @@ private fun IndexingJobsCard(
                 enabled = controls.mediaAnalysisEnabled,
                 available = true,
                 unavailableReason = null,
+                snapshot = snapshots[IndexingJob.MEDIA_ANALYSIS],
                 onToggle = { onSetEnabled(IndexingJob.MEDIA_ANALYSIS, it) },
             )
             HorizontalDivider()
@@ -1270,6 +1275,7 @@ private fun IndexingJobsCard(
                 enabled = controls.embeddingsEnabled,
                 available = embeddingsAvailable,
                 unavailableReason = "Retrieval model required",
+                snapshot = snapshots[IndexingJob.EMBEDDINGS],
                 onToggle = { onSetEnabled(IndexingJob.EMBEDDINGS, it) },
             )
             HorizontalDivider()
@@ -1279,6 +1285,7 @@ private fun IndexingJobsCard(
                 enabled = controls.peopleEnabled,
                 available = peopleAvailable,
                 unavailableReason = "Enable face indexing in People first",
+                snapshot = snapshots[IndexingJob.PEOPLE],
                 onToggle = { onSetEnabled(IndexingJob.PEOPLE, it) },
             )
             HorizontalDivider()
@@ -1288,6 +1295,7 @@ private fun IndexingJobsCard(
                 enabled = controls.semanticMemoryEnabled,
                 available = semanticMemoryAvailable,
                 unavailableReason = "Verified multimodal Gemma required",
+                snapshot = snapshots[IndexingJob.SEMANTIC_MEMORY],
                 onToggle = { onSetEnabled(IndexingJob.SEMANTIC_MEMORY, it) },
             )
         }
@@ -1301,6 +1309,7 @@ private fun IndexingJobControlRow(
     enabled: Boolean,
     available: Boolean,
     unavailableReason: String?,
+    snapshot: IndexingPipelineSnapshot?,
     onToggle: (Boolean) -> Unit,
 ) {
     Row(
@@ -1313,7 +1322,11 @@ private fun IndexingJobControlRow(
             if (!available) {
                 Text(requireNotNull(unavailableReason), color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
             } else {
-                Text(if (enabled) "Running when criteria allow" else "Stopped", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                Text(
+                    if (!enabled) "Stopped" else snapshot?.message ?: "Enabled; checking worker state",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 11.sp,
+                )
             }
         }
         Spacer(Modifier.width(10.dp))

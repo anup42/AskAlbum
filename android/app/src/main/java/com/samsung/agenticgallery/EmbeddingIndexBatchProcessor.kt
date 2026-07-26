@@ -27,6 +27,7 @@ internal class EmbeddingIndexBatchProcessor(
 
     suspend fun processBatch(
         allowedMediaIds: Set<String>? = null,
+        ownerId: String = "gallery-image-embeddings",
         canContinue: () -> Boolean = { true },
     ): IndexBatchResult {
         val producer = vectors.producerVersion() ?: return IndexBatchResult(processed = 0, hasMore = false)
@@ -46,15 +47,17 @@ internal class EmbeddingIndexBatchProcessor(
                 repository.recoverInterruptedJobs()
                 return result(producer, allowedMediaIds, processed, retryableFailures, permanentFailures, stopped = true)
             }
-            repository.markEmbedding(item.id, producer)
+            if (!repository.markEmbedding(item.id, producer, ownerId)) continue
             try {
                 prepared += item to decodeModelImage(item)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
                 val permanent = error is SecurityException || error is FileNotFoundException || error is IllegalArgumentException
-                repository.failEmbedding(item.id, producer, error::class.java.simpleName, permanent)
-                if (permanent) permanentFailures++ else retryableFailures++
+                when (repository.failEmbedding(item.id, producer, error::class.java.simpleName, permanent)) {
+                    StageStatus.FAILED_RETRYABLE -> retryableFailures++
+                    else -> permanentFailures++
+                }
             }
         }
 
@@ -90,8 +93,10 @@ internal class EmbeddingIndexBatchProcessor(
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Throwable) {
-                    repository.failEmbedding(item.id, producer, error::class.java.simpleName, false)
-                    retryableFailures++
+                    when (repository.failEmbedding(item.id, producer, error::class.java.simpleName, false)) {
+                        StageStatus.FAILED_RETRYABLE -> retryableFailures++
+                        else -> permanentFailures++
+                    }
                 }
             }
         }
@@ -136,6 +141,7 @@ internal class EmbeddingIndexBatchProcessor(
         retryableFailures = retryableFailures,
         permanentFailures = permanentFailures,
         stopped = stopped,
+        nextAttemptAtMillis = repository.nextEmbeddingRetryAt(),
     )
 
     private fun pendingItems(producer: String, allowedMediaIds: Set<String>?, limit: Int): List<GalleryItem> {

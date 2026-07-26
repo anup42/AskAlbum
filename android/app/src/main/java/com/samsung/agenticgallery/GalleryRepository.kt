@@ -226,12 +226,16 @@ class GalleryRepository(context: Context) {
         limit: Int,
     ): List<VideoKeyframeRecord> = database.keyframeEmbeddingPendingItemsForIds(producerVersion, mediaIds, limit)
     fun completeKeyframeEmbedding(id: String, producerVersion: String) = database.completeKeyframeEmbedding(id, producerVersion)
-    fun markEmbedding(id: String, producerVersion: String) = database.markEmbedding(id, producerVersion)
+    fun markEmbedding(id: String, producerVersion: String, owner: String = "repository-direct"): Boolean =
+        database.markEmbedding(id, producerVersion, owner)
     fun completeEmbedding(id: String, producerVersion: String) = database.completeEmbedding(id, producerVersion)
-    fun failEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean) =
+    fun failEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean): StageStatus =
         database.failEmbedding(id, producerVersion, message, permanent)
     fun recoverInterruptedJobs() = database.recoverInterruptedJobs()
-    fun markIndexing(id: String) = database.markIndexing(id)
+    fun markIndexing(
+        id: String,
+        owner: String = "repository-direct",
+    ): Boolean = database.markIndexing(id, owner)
     fun completeIndex(
         id: String,
         labels: List<String>,
@@ -249,7 +253,10 @@ class GalleryRepository(context: Context) {
         id, labels, description, ocrText, faceCount, previewPath, blocks, entities,
         ocrAttempted, ocrProducerVersion, visualFeatures, keyframes,
     )
-    fun failIndex(id: String, message: String, permanent: Boolean) = database.failIndex(id, message, permanent)
+    fun failIndex(id: String, message: String, permanent: Boolean): StageStatus =
+        database.failIndex(id, message, permanent)
+    fun nextMediaRetryAt(): Long? = database.nextMediaRetryAt()
+    fun nextEmbeddingRetryAt(): Long? = database.nextEmbeddingRetryAt()
     fun rebuildEvents() {
         database.rebuildEvents()
         SemanticEnrichmentScheduler.schedule(appContext)

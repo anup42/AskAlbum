@@ -1,5 +1,15 @@
 # Agentic Gallery implementation status
 
+## 2026-07-26 - Self-recovering indexing reliability
+
+- Added non-destructive v15 leases, delayed item retries, exhausted-item quarantine, and stale-only recovery.
+- Media Analysis and SigLIP2 no longer turn mixed-success batches into whole-worker retries.
+- Added durable WorkManager progress, truthful per-pipeline runtime states, and a self-healing supervisor.
+- Explicit Media Analysis or SigLIP2 starts use the existing foreground service with media-processing type and stop action.
+- Heavy background indexing lanes are serialized; malformed Gemma semantic output receives one bounded retry.
+- Completed gallery, People, vector, semantic-fact, and model data remains unchanged by the migration.
+- Tests and device delivery are pending for this phase.
+
 ## Phase 6 - connected-device hardening and delivery (25 July 2026)
 
 Status: **PARTIAL.**
@@ -3407,3 +3417,22 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; REAL GEMMA FACT
 - Aggregate worker logs now report batch count, processed count, failures, elapsed time, and selected ONNX thread count.
 - Existing gallery rows, completed stages, SigLIP2 vectors, people data, semantic facts, model generations, and source media are not reset or deleted.
 - Tests: NOT RUN for this focused device-throughput phase.
+
+## 2026-07-26 - Reliable, self-recovering indexing
+
+Status: **IMPLEMENTED, TESTED, BUILT, AND INSTALLED.**
+
+- Room schema v15 adds per-item claim owner, lease expiry, next-attempt time, and last-progress timestamps to media-stage and semantic-enrichment queues.
+- Interrupted-job recovery is now pipeline-specific and reclaims only expired leases. One worker no longer resets another pipeline's active claims.
+- Retryable item failures use bounded exponential delay and become `FAILED_EXHAUSTED` after three attempts. Mixed-success batches continue without applying whole-worker backoff.
+- Media Analysis and SigLIP2 workers process short checkpointed batches, persist progress after every batch, publish WorkManager progress, and retry the whole worker only after systemic zero-progress failure.
+- Explicit Start/Resume uses a `mediaProcessing` foreground service with count/total progress and Stop action. WorkManager remains the incremental, process-death, and reboot fallback.
+- Heavy background inference is serialized. Semantic enrichment yields to primary indexing and retries malformed structured output once before quarantining that representative.
+- The Index Manager now derives pipeline state from WorkManager and durable queue state, including running, constraints, backoff, stopped, degraded, complete, in-flight, delayed, quarantined, rate, and ETA values.
+- The self-healing supervisor re-enqueues enabled incomplete work only when no active work or live foreground indexing session exists.
+- Migration fixture test: PASS on the isolated `com.samsung.agenticgallery.ci` package. The migration test is CI-flavor-only so connected test teardown cannot touch consumer data.
+- `IndexingReliabilityPolicyTest`: PASS. `ConsumerDebug` and `OfflineDemoDebug` assemble: PASS. Offline APK inspection: PASS, no `android.permission.INTERNET`.
+- Actual v14 snapshot migration: PASS. Version advanced to 15 with integrity `ok`; 11,511 media rows, 103,599 stage rows, 32 People clusters, 66 face instances, 427 semantic facts, 168 semantic jobs, 112 visual groups, and 258 events were preserved.
+- Connected 90-second screen-off run: PASS. Thumbnail completion advanced by 167, OCR by 39, and SigLIP2 vectors by 224; media count stayed 11,511 with no observed app crash, ANR, or OOM.
+- Full 30-minute screen-off soak: NOT RUN. Process-death, Doze, service-timeout, 5,000/20,000-item load, ANR, and OOM acceptance remain pending beyond the focused connected run.
+- During the first consumer-flavor migration test, Android instrumentation teardown removed the consumer package. The complete 19:48 database snapshot was restored and verified before relaunch; media permissions were restored. The prior app-private Gemma pack and shared preferences were not present in the snapshot, so automatic E2B provisioning is queued again.

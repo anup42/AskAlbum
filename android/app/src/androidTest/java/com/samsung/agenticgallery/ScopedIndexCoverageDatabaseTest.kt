@@ -31,7 +31,7 @@ class ScopedIndexCoverageDatabaseTest {
         val first = imported("one", "content://media/external_primary/file/1")
         val second = imported("two", "content://media/external_primary/file/2")
         assertEquals(2, store.upsertImported(listOf(first, second)))
-        store.markIndexing(first.stableId)
+        store.markIndexing(first.stableId, owner = "scoped-coverage-test")
 
         val firstOnly = store.indexCoverageForContentUris(listOf(first.uri))
         assertEquals(1, firstOnly.mediaCount)

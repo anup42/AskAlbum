@@ -337,7 +337,11 @@ data class ResultSetMediaEntity(
     tableName = "media_index_stage",
     primaryKeys = ["media_id", "stage"],
     foreignKeys = [ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["media_id"], onDelete = ForeignKey.CASCADE)],
-    indices = [Index(name = "media_index_stage_status_idx", value = ["status"]), Index(value = ["media_id"])],
+    indices = [
+        Index(name = "media_index_stage_status_idx", value = ["status"]),
+        Index(value = ["media_id"]),
+        Index(name = "media_index_stage_queue_idx", value = ["stage", "status", "next_attempt_at"]),
+    ],
 )
 data class MediaIndexStageEntity(
     @ColumnInfo(name = "media_id") val mediaId: String,
@@ -347,6 +351,10 @@ data class MediaIndexStageEntity(
     @ColumnInfo(name = "attempt_count", defaultValue = "0") val attemptCount: Int,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
     val error: String?,
+    @ColumnInfo(name = "lease_owner") val leaseOwner: String?,
+    @ColumnInfo(name = "lease_expires_at") val leaseExpiresAt: Long?,
+    @ColumnInfo(name = "next_attempt_at", defaultValue = "0") val nextAttemptAt: Long,
+    @ColumnInfo(name = "last_progress_at") val lastProgressAt: Long?,
 )
 
 @Entity(
@@ -424,6 +432,7 @@ data class SemanticFactEntity(
     indices = [
         Index(name = "semantic_enrichment_status_idx", value = ["status", "updated_at"]),
         Index(name = "semantic_enrichment_media_idx", value = ["representative_media_id"]),
+        Index(name = "semantic_enrichment_queue_idx", value = ["status", "next_attempt_at"]),
         Index(
             name = "semantic_enrichment_unique_idx",
             value = ["scope", "subject_id", "representative_media_id", "reason"],
@@ -446,6 +455,10 @@ data class SemanticEnrichmentJobEntity(
     @ColumnInfo(name = "model_version") val modelVersion: String?,
     val error: String?,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "lease_owner") val leaseOwner: String?,
+    @ColumnInfo(name = "lease_expires_at") val leaseExpiresAt: Long?,
+    @ColumnInfo(name = "next_attempt_at", defaultValue = "0") val nextAttemptAt: Long,
+    @ColumnInfo(name = "last_progress_at") val lastProgressAt: Long?,
 )
 
 @Database(
@@ -474,7 +487,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticFactEntity::class,
         SemanticEnrichmentJobEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -499,6 +512,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_11_12,
             MIGRATION_12_13,
             MIGRATION_13_14,
+            MIGRATION_14_15,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -662,6 +676,47 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
         internal val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE person_cluster ADD COLUMN representative_face_id TEXT")
+            }
+        }
+
+        internal val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE media_index_stage ADD COLUMN lease_owner TEXT")
+                db.execSQL("ALTER TABLE media_index_stage ADD COLUMN lease_expires_at INTEGER")
+                db.execSQL("ALTER TABLE media_index_stage ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE media_index_stage ADD COLUMN last_progress_at INTEGER")
+                db.execSQL("ALTER TABLE semantic_enrichment_job ADD COLUMN lease_owner TEXT")
+                db.execSQL("ALTER TABLE semantic_enrichment_job ADD COLUMN lease_expires_at INTEGER")
+                db.execSQL("ALTER TABLE semantic_enrichment_job ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE semantic_enrichment_job ADD COLUMN last_progress_at INTEGER")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS media_index_stage_queue_idx " +
+                        "ON media_index_stage(stage,status,next_attempt_at)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS semantic_enrichment_queue_idx " +
+                        "ON semantic_enrichment_job(status,next_attempt_at)",
+                )
+                db.execSQL(
+                    "UPDATE media_index_stage SET status='PENDING',lease_owner=NULL,lease_expires_at=NULL," +
+                        "error='upgrade_interrupted' WHERE status='RUNNING'",
+                )
+                db.execSQL(
+                    "UPDATE semantic_enrichment_job SET status='PENDING'," +
+                        "attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END," +
+                        "lease_owner=NULL,lease_expires_at=NULL,error='upgrade_interrupted' WHERE status='RUNNING'",
+                )
+                db.execSQL(
+                    "UPDATE media_index_stage SET status='FAILED_EXHAUSTED'," +
+                        "error='retry_exhausted:'||COALESCE(error,'unknown') " +
+                        "WHERE status='FAILED_RETRYABLE' AND attempt_count>=3",
+                )
+                db.execSQL(
+                    "UPDATE media_item SET index_state='FAILED_EXHAUSTED'," +
+                        "index_error='retry_exhausted:'||COALESCE(index_error,'unknown') " +
+                        "WHERE index_state='FAILED_RETRYABLE' AND id IN (" +
+                        "SELECT media_id FROM media_index_stage WHERE stage='THUMBNAIL' AND status='FAILED_EXHAUSTED')",
+                )
             }
         }
 

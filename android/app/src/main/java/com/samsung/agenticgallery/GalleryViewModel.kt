@@ -41,6 +41,7 @@ data class GalleryUiState(
     val indexingRunCriteria: IndexingRunCriteria = IndexingRunCriteria(),
     val indexingAdmission: BackgroundWorkAdmission = BackgroundWorkAdmission(true, 0, null),
     val indexingJobControls: IndexingJobControls = IndexingJobControls(),
+    val indexingPipelines: Map<IndexingJob, IndexingPipelineSnapshot> = emptyMap(),
     val operationMessage: String? = null,
     val semanticMemory: SemanticMemoryProgress = SemanticMemoryProgress(),
     val semanticMemoryPlanning: Boolean = false,
@@ -417,11 +418,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     val controls = repository.setIndexingJobEnabled(job, enabled)
                     when (job) {
                         IndexingJob.MEDIA_ANALYSIS -> {
-                            if (enabled) IndexScheduler.schedule(getApplication())
+                            if (enabled) InitialImportService.startIndexing(getApplication())
                             else IndexScheduler.cancelAndWait(getApplication())
                         }
                         IndexingJob.EMBEDDINGS -> {
-                            if (enabled) EmbeddingIndexScheduler.schedule(getApplication())
+                            if (enabled) InitialImportService.startIndexing(getApplication())
                             else EmbeddingIndexScheduler.cancelAndWait(getApplication())
                         }
                         IndexingJob.PEOPLE -> {
@@ -1126,40 +1127,58 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             while (true) {
                 delay(2_500)
                 reloadIndexStatus()
-                val hasPending = state.index.pending > 0 ||
-                    state.peopleIndex.pendingMediaCount > 0 ||
-                    (
-                        state.retrievalPack.installed &&
-                            state.indexingJobControls.embeddingsEnabled &&
-                            state.index.siglipVectorsReady < state.index.discovered
+                val pipelines = withContext(Dispatchers.IO) {
+                    IndexingRuntimeStatusReader(getApplication()).read(
+                        state.index,
+                        state.peopleIndex,
+                        state.semanticMemory,
+                        state.indexingJobControls,
+                        state.indexingAdmission,
                     )
+                }
+                state = state.copy(indexingPipelines = pipelines)
+                val hasPending = pipelines.values.any {
+                    it.state !in setOf(
+                        IndexingPipelineState.COMPLETE,
+                        IndexingPipelineState.DEGRADED,
+                        IndexingPipelineState.STOPPED_BY_USER,
+                    )
+                }
                 if (!hasPending) {
                     reload()
                     state = state.copy(indexingActive = false)
                     return@launch
                 }
-                state = if (
-                    state.indexingAdmission.allowed &&
-                    hasRunnableIndexing(
-                        state.index,
-                        state.peopleIndex,
-                        state.indexingJobControls,
-                        state.retrievalPack.installed,
-                    )
-                ) {
+                val running = pipelines.values.any { it.state == IndexingPipelineState.RUNNING }
+                state = if (running) {
                     state.copy(
                         indexingActive = true,
                         operationMessage = state.operationMessage?.takeUnless { it.startsWith("Indexing paused:") }
                             ?: "Indexing in progress",
                     )
                 } else {
+                    val waiting = pipelines.values.firstOrNull {
+                        it.state == IndexingPipelineState.BACKOFF ||
+                            it.state == IndexingPipelineState.WAITING_CONSTRAINTS ||
+                            it.state == IndexingPipelineState.FAILED
+                    }
                     state.copy(
                         indexingActive = false,
-                        operationMessage = "Indexing paused: ${state.indexingAdmission.reason}",
+                        operationMessage = waiting?.message ?: state.operationMessage,
                     )
                 }
                 pollCount += 1
                 if (pollCount % 12 == 0) {
+                    withContext(Dispatchers.IO) {
+                        IndexingSupervisor.reconcile(
+                            getApplication(),
+                            state.index,
+                            state.peopleIndex,
+                            state.semanticMemory,
+                            state.indexingJobControls,
+                            state.retrievalPack.installed,
+                        )
+                    }
                     val items = withContext(Dispatchers.IO) { repository.allItems() }
                     state = state.copy(items = items)
                 }

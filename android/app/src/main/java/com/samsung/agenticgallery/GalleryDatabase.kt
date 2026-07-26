@@ -159,20 +159,57 @@ class GalleryDatabase(
         return changed
     }
 
-    fun pendingItems(limit: Int): List<GalleryItem> = queryItems(
-        "index_state IN ('PENDING','FAILED_RETRYABLE') AND source_kind != 'DEMO_ASSET'",
-        null,
-        "modified_at DESC",
-        limit.toString(),
-    )
+    fun pendingItems(limit: Int): List<GalleryItem> {
+        val now = System.currentTimeMillis()
+        return readableDatabase.rawQuery(
+            """
+            SELECT m.* FROM media_item m
+            JOIN media_index_stage s ON s.media_id=m.id AND s.stage='THUMBNAIL'
+            WHERE m.source_kind!='DEMO_ASSET'
+              AND (
+                m.index_state='PENDING'
+                OR (
+                  m.index_state='FAILED_RETRYABLE'
+                  AND s.attempt_count<?
+                  AND s.next_attempt_at<=?
+                )
+              )
+              AND (s.lease_expires_at IS NULL OR s.lease_expires_at<=?)
+            ORDER BY CASE m.index_state WHEN 'PENDING' THEN 0 ELSE 1 END, m.modified_at DESC
+            LIMIT ?
+            """.trimIndent(),
+            arrayOf(
+                IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
+                now.toString(),
+                now.toString(),
+                limit.toString(),
+            ),
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorItem(cursor)) } }
+    }
 
     fun pendingItemsForIds(mediaIds: Set<String>, limit: Int): List<GalleryItem> = queryScoped(mediaIds, limit) { ids, remaining ->
-        queryItems(
-            "id IN (${ids.joinToString(",") { "?" }}) AND index_state IN ('PENDING','FAILED_RETRYABLE') AND source_kind != 'DEMO_ASSET'",
-            ids.toTypedArray(),
-            "modified_at DESC",
-            remaining.toString(),
-        )
+        val now = System.currentTimeMillis()
+        readableDatabase.rawQuery(
+            """
+            SELECT m.* FROM media_item m
+            JOIN media_index_stage s ON s.media_id=m.id AND s.stage='THUMBNAIL'
+            WHERE m.id IN (${ids.joinToString(",") { "?" }})
+              AND m.source_kind!='DEMO_ASSET'
+              AND (
+                m.index_state='PENDING'
+                OR (m.index_state='FAILED_RETRYABLE' AND s.attempt_count<? AND s.next_attempt_at<=?)
+              )
+              AND (s.lease_expires_at IS NULL OR s.lease_expires_at<=?)
+            ORDER BY CASE m.index_state WHEN 'PENDING' THEN 0 ELSE 1 END, m.modified_at DESC
+            LIMIT ?
+            """.trimIndent(),
+            (ids + listOf(
+                IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
+                now.toString(),
+                now.toString(),
+                remaining.toString(),
+            )).toTypedArray(),
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorItem(cursor)) } }
     }
 
     fun requestGalleryReindex(mediaIds: Set<String>) {
@@ -223,23 +260,50 @@ class GalleryDatabase(
         }
     }
 
-    fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> = readableDatabase.rawQuery(
+    fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> {
+        val now = System.currentTimeMillis()
+        return readableDatabase.rawQuery(
         """SELECT m.* FROM media_item m
             JOIN media_index_stage s ON s.media_id=m.id AND s.stage='EMBEDDING'
-            WHERE m.access_state='ACCESSIBLE' AND (s.status!='COMPLETE' OR s.producer_version!=?)
+            WHERE m.access_state='ACCESSIBLE'
+              AND (
+                s.status='PENDING'
+                OR (s.status='FAILED_RETRYABLE' AND s.attempt_count<? AND s.next_attempt_at<=?)
+                OR (s.status='COMPLETE' AND s.producer_version!=?)
+              )
+              AND (s.lease_expires_at IS NULL OR s.lease_expires_at<=?)
             ORDER BY COALESCE(m.captured_at,0) DESC, m.id LIMIT ?""".trimIndent(),
-        arrayOf(producerVersion, limit.toString()),
+        arrayOf(
+            IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
+            now.toString(),
+            producerVersion,
+            now.toString(),
+            limit.toString(),
+        ),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorItem(cursor)) } }
+    }
 
     fun embeddingPendingItemsForIds(producerVersion: String, mediaIds: Set<String>, limit: Int): List<GalleryItem> =
         queryScoped(mediaIds, limit) { ids, remaining ->
+            val now = System.currentTimeMillis()
             readableDatabase.rawQuery(
                 """SELECT m.* FROM media_item m
                     JOIN media_index_stage s ON s.media_id=m.id AND s.stage='EMBEDDING'
                     WHERE m.access_state='ACCESSIBLE' AND m.id IN (${ids.joinToString(",") { "?" }})
-                    AND (s.status!='COMPLETE' OR s.producer_version!=?)
+                    AND (
+                      s.status='PENDING'
+                      OR (s.status='FAILED_RETRYABLE' AND s.attempt_count<? AND s.next_attempt_at<=?)
+                      OR (s.status='COMPLETE' AND s.producer_version!=?)
+                    )
+                    AND (s.lease_expires_at IS NULL OR s.lease_expires_at<=?)
                     ORDER BY COALESCE(m.captured_at,0) DESC, m.id LIMIT ?""".trimIndent(),
-                (ids + producerVersion + remaining.toString()).toTypedArray(),
+                (ids + listOf(
+                    IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
+                    now.toString(),
+                    producerVersion,
+                    now.toString(),
+                    remaining.toString(),
+                )).toTypedArray(),
             ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorItem(cursor)) } }
         }
 
@@ -307,27 +371,85 @@ class GalleryDatabase(
         ).use { cursor -> buildMap { while (cursor.moveToNext()) cursorVideoKeyframe(cursor).also { put(it.id, it) } } }
     }
 
-    fun markEmbedding(id: String, producerVersion: String) =
-        updateStage(writableDatabase, id, IndexStage.EMBEDDING, StageStatus.RUNNING, producerVersion, incrementAttempt = true)
-
-    fun completeEmbedding(id: String, producerVersion: String) =
-        updateStage(writableDatabase, id, IndexStage.EMBEDDING, StageStatus.COMPLETE, producerVersion)
-
-    fun failEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean) = updateStage(
-        writableDatabase,
-        id,
-        IndexStage.EMBEDDING,
-        if (permanent) StageStatus.FAILED_PERMANENT else StageStatus.FAILED_RETRYABLE,
-        producerVersion,
-        error = message,
-    )
-
-    fun markIndexing(id: String) {
+    fun markEmbedding(
+        id: String,
+        producerVersion: String,
+        owner: String = "database-direct",
+    ): Boolean {
         val db = writableDatabase
-        db.update("media_item", ContentValues().apply {
+        val now = System.currentTimeMillis()
+        val changed = db.update(
+            "media_index_stage",
+            ContentValues().apply {
+                put("status", StageStatus.RUNNING.name)
+                put("producer_version", producerVersion)
+                put("updated_at", now)
+                put("last_progress_at", now)
+                put("lease_owner", owner)
+                put("lease_expires_at", now + IndexingRetryPolicy.LEASE_MILLIS)
+                putNull("error")
+            },
+            "media_id=? AND stage=? AND (" +
+                "status='PENDING' OR (status='FAILED_RETRYABLE' AND attempt_count<? AND next_attempt_at<=?) " +
+                "OR (status='COMPLETE' AND producer_version!=?)) " +
+                "AND (lease_expires_at IS NULL OR lease_expires_at<=?)",
+            arrayOf(
+                id,
+                IndexStage.EMBEDDING.name,
+                IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
+                now.toString(),
+                producerVersion,
+                now.toString(),
+            ),
+        )
+        if (changed > 0) {
+            db.execSQL(
+                "UPDATE media_index_stage SET attempt_count=attempt_count+1 WHERE media_id=? AND stage=?",
+                arrayOf(id, IndexStage.EMBEDDING.name),
+            )
+        }
+        return changed > 0
+    }
+
+    fun completeEmbedding(id: String, producerVersion: String) {
+        updateStage(writableDatabase, id, IndexStage.EMBEDDING, StageStatus.COMPLETE, producerVersion)
+        clearStageLease(writableDatabase, id, IndexStage.EMBEDDING)
+    }
+
+    fun failEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean): StageStatus {
+        val db = writableDatabase
+        val attempts = stageAttemptCount(db, id, IndexStage.EMBEDDING)
+        val status = IndexingRetryPolicy.failedStatus(permanent, attempts)
+        updateStage(db, id, IndexStage.EMBEDDING, status, producerVersion, error = message)
+        db.update("media_index_stage", ContentValues().apply {
+            putNull("lease_owner")
+            putNull("lease_expires_at")
+            put("last_progress_at", System.currentTimeMillis())
+            put(
+                "next_attempt_at",
+                if (status == StageStatus.FAILED_RETRYABLE) {
+                    IndexingRetryPolicy.nextAttemptAt(System.currentTimeMillis(), attempts)
+                } else {
+                    0L
+                },
+            )
+            if (status == StageStatus.FAILED_EXHAUSTED) put("error", "retry_exhausted:${message.take(220)}")
+        }, "media_id=? AND stage=?", arrayOf(id, IndexStage.EMBEDDING.name))
+        return status
+    }
+
+    fun markIndexing(id: String, owner: String): Boolean {
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        val changed = db.update("media_item", ContentValues().apply {
             put("index_state", IndexState.INDEXING.name)
             putNull("index_error")
-        }, "id=?", arrayOf(id))
+        }, "id=? AND index_state IN (?,?)", arrayOf(
+            id,
+            IndexState.PENDING.name,
+            IndexState.FAILED_RETRYABLE.name,
+        ))
+        if (changed == 0) return false
         listOf(IndexStage.THUMBNAIL, IndexStage.OCR, IndexStage.ENRICHMENT).forEach {
             updateStage(db, id, it, StageStatus.RUNNING, "mlkit-mobile-v1", incrementAttempt = true)
         }
@@ -340,6 +462,12 @@ class GalleryDatabase(
             if (item?.kind == MediaKind.VIDEO) VideoKeyframePolicy.PRODUCER_VERSION else "not-video",
             incrementAttempt = item?.kind == MediaKind.VIDEO,
         )
+        db.update("media_index_stage", ContentValues().apply {
+            put("lease_owner", owner)
+            put("lease_expires_at", now + IndexingRetryPolicy.LEASE_MILLIS)
+            put("last_progress_at", now)
+        }, "media_id=? AND status=?", arrayOf(id, StageStatus.RUNNING.name))
+        return true
     }
 
     fun completeIndex(
@@ -445,44 +573,112 @@ class GalleryDatabase(
             } else {
                 updateStage(db, id, IndexStage.FACES, StageStatus.SKIPPED, "disabled-until-opt-in")
             }
+            clearMediaIndexLeases(db, id)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
     }
 
-    fun failIndex(id: String, message: String, permanent: Boolean) {
+    fun failIndex(id: String, message: String, permanent: Boolean): StageStatus {
         val db = writableDatabase
+        val attempts = stageAttemptCount(db, id, IndexStage.THUMBNAIL)
+        val status = IndexingRetryPolicy.failedStatus(permanent, attempts)
         db.update("media_item", ContentValues().apply {
-            put("index_state", if (permanent) IndexState.FAILED_PERMANENT.name else IndexState.FAILED_RETRYABLE.name)
-            put("index_error", message.take(300))
+            put("index_state", when (status) {
+                StageStatus.FAILED_RETRYABLE -> IndexState.FAILED_RETRYABLE.name
+                StageStatus.FAILED_EXHAUSTED -> IndexState.FAILED_EXHAUSTED.name
+                else -> IndexState.FAILED_PERMANENT.name
+            })
+            put(
+                "index_error",
+                if (status == StageStatus.FAILED_EXHAUSTED) "retry_exhausted:${message.take(220)}" else message.take(300),
+            )
         }, "id=?", arrayOf(id))
-        val status = if (permanent) StageStatus.FAILED_PERMANENT else StageStatus.FAILED_RETRYABLE
         listOf(IndexStage.THUMBNAIL, IndexStage.VIDEO_KEYFRAMES, IndexStage.OCR, IndexStage.ENRICHMENT).forEach {
             updateStage(db, id, it, status, "mlkit-mobile-v1", error = message)
         }
+        db.update("media_index_stage", ContentValues().apply {
+            putNull("lease_owner")
+            putNull("lease_expires_at")
+            put("last_progress_at", System.currentTimeMillis())
+            put(
+                "next_attempt_at",
+                if (status == StageStatus.FAILED_RETRYABLE) {
+                    IndexingRetryPolicy.nextAttemptAt(System.currentTimeMillis(), attempts)
+                } else {
+                    0L
+                },
+            )
+            if (status == StageStatus.FAILED_EXHAUSTED) put("error", "retry_exhausted:${message.take(220)}")
+        }, "media_id=?", arrayOf(id))
+        return status
     }
 
     fun recoverInterruptedJobs() {
         val db = writableDatabase
+        val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
-            db.execSQL("UPDATE media_item SET index_state='PENDING' WHERE index_state='INDEXING'")
-            db.execSQL("UPDATE media_index_stage SET status='PENDING', updated_at=${System.currentTimeMillis()}, error='process_interrupted' WHERE status='RUNNING'")
+            db.execSQL(
+                "UPDATE media_item SET index_state='PENDING' WHERE index_state='INDEXING' AND id IN (" +
+                    "SELECT media_id FROM media_index_stage WHERE stage='THUMBNAIL' AND status='RUNNING' " +
+                    "AND lease_expires_at IS NOT NULL AND lease_expires_at<=?)",
+                arrayOf(now),
+            )
+            db.execSQL(
+                "UPDATE media_index_stage SET status='PENDING'," +
+                    "attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END," +
+                    "updated_at=?,error='lease_expired',lease_owner=NULL,lease_expires_at=NULL " +
+                    "WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?",
+                arrayOf(now, now),
+            )
             db.execSQL(
                 """
                 UPDATE semantic_enrichment_job
                 SET status='PENDING',
                     attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
-                    updated_at=${System.currentTimeMillis()},
-                    error='process_interrupted'
-                WHERE status='RUNNING'
+                    updated_at=$now,
+                    error='lease_expired',
+                    lease_owner=NULL,
+                    lease_expires_at=NULL
+                WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=$now
                 """.trimIndent(),
             )
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
+    }
+
+    fun nextMediaRetryAt(): Long? = readableDatabase.rawQuery(
+        "SELECT MIN(next_attempt_at) FROM media_index_stage WHERE stage='THUMBNAIL' " +
+            "AND status='FAILED_RETRYABLE' AND attempt_count<?",
+        arrayOf(IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString()),
+    ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
+
+    fun nextEmbeddingRetryAt(): Long? = readableDatabase.rawQuery(
+        "SELECT MIN(next_attempt_at) FROM media_index_stage WHERE stage='EMBEDDING' " +
+            "AND status='FAILED_RETRYABLE' AND attempt_count<?",
+        arrayOf(IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString()),
+    ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
+
+    private fun clearMediaIndexLeases(db: GallerySqlDatabase, id: String) {
+        db.update("media_index_stage", ContentValues().apply {
+            putNull("lease_owner")
+            putNull("lease_expires_at")
+            put("next_attempt_at", 0L)
+            put("last_progress_at", System.currentTimeMillis())
+        }, "media_id=?", arrayOf(id))
+    }
+
+    private fun clearStageLease(db: GallerySqlDatabase, id: String, stage: IndexStage) {
+        db.update("media_index_stage", ContentValues().apply {
+            putNull("lease_owner")
+            putNull("lease_expires_at")
+            put("next_attempt_at", 0L)
+            put("last_progress_at", System.currentTimeMillis())
+        }, "media_id=? AND stage=?", arrayOf(id, stage.name))
     }
 
     fun allItems(): List<GalleryItem> = allItems(readableDatabase)
@@ -2230,13 +2426,17 @@ class GalleryDatabase(
         }
     }
 
-    fun claimSemanticEnrichmentJob(userRequestedOnly: Boolean = false): SemanticEnrichmentJobRecord? {
+    fun claimSemanticEnrichmentJob(
+        userRequestedOnly: Boolean = false,
+        owner: String = "semantic-enrichment",
+    ): SemanticEnrichmentJobRecord? {
         var selected: SemanticEnrichmentJobRecord? = null
         writableDatabase.transaction { db ->
             val where = if (userRequestedOnly) " AND user_requested=1" else ""
             selected = db.rawQuery(
-                "SELECT * FROM semantic_enrichment_job WHERE status=?$where ORDER BY user_requested DESC,updated_at LIMIT 1",
-                arrayOf(SemanticEnrichmentStatus.PENDING.name),
+                "SELECT * FROM semantic_enrichment_job WHERE status=? AND next_attempt_at<=?$where " +
+                    "ORDER BY user_requested DESC,updated_at LIMIT 1",
+                arrayOf(SemanticEnrichmentStatus.PENDING.name, System.currentTimeMillis().toString()),
             ).use { cursor ->
                 if (!cursor.moveToFirst()) null else SemanticEnrichmentJobRecord(
                     id = cursor.text("id"),
@@ -2256,6 +2456,9 @@ class GalleryDatabase(
                     put("status", SemanticEnrichmentStatus.RUNNING.name)
                     put("attempt_count", job.attemptCount)
                     put("updated_at", System.currentTimeMillis())
+                    put("last_progress_at", System.currentTimeMillis())
+                    put("lease_owner", owner)
+                    put("lease_expires_at", System.currentTimeMillis() + IndexingRetryPolicy.LEASE_MILLIS)
                     putNull("error")
                 }, "id=? AND status=?", arrayOf(job.id, SemanticEnrichmentStatus.PENDING.name))
             }
@@ -2368,6 +2571,10 @@ class GalleryDatabase(
                 put("status", SemanticEnrichmentStatus.COMPLETE.name)
                 put("model_version", facts.firstOrNull()?.modelVersion)
                 putNull("error")
+                putNull("lease_owner")
+                putNull("lease_expires_at")
+                put("next_attempt_at", 0L)
+                put("last_progress_at", now)
                 put("updated_at", now)
             }, "id=?", arrayOf(job.id))
             updateStage(
@@ -2395,6 +2602,17 @@ class GalleryDatabase(
             db.update("semantic_enrichment_job", ContentValues().apply {
                 put("status", status.name)
                 put("error", error.take(240))
+                putNull("lease_owner")
+                putNull("lease_expires_at")
+                put("last_progress_at", System.currentTimeMillis())
+                put(
+                    "next_attempt_at",
+                    if (status == SemanticEnrichmentStatus.PENDING) {
+                        IndexingRetryPolicy.nextAttemptAt(System.currentTimeMillis(), job.attemptCount)
+                    } else {
+                        0L
+                    },
+                )
                 put("updated_at", System.currentTimeMillis())
             }, "id=?", arrayOf(job.id))
             if (status == SemanticEnrichmentStatus.FAILED) {

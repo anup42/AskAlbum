@@ -30,7 +30,12 @@ class InitialImportService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action != ACTION_IMPORT) {
+        if (intent?.action == ACTION_STOP) {
+            importJob?.cancel()
+            stopForegroundAndSelf()
+            return START_NOT_STICKY
+        }
+        if (intent?.action != ACTION_IMPORT && intent?.action != ACTION_INDEX) {
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -38,19 +43,24 @@ class InitialImportService : Service() {
             this,
             NOTIFICATION_ID,
             notification("Reading your permitted gallery", indeterminate = true),
-            if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0,
+            if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+            else if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            else 0,
         )
         if (importJob?.isActive != true) {
+            ForegroundIndexRuntime.started()
             importJob = scope.launch {
                 val app = application as AgenticGalleryApplication
                 val result = runCatching {
-                    val imported = app.repository.scanAccessibleGallery()
+                    val imported = if (intent.action == ACTION_IMPORT) app.repository.scanAccessibleGallery() else 0
                     val indexed = ForegroundIndexCoordinator(this@InitialImportService).run(
                         onProgress = { progress ->
+                            val summary = app.repository.indexSummary()
                             getSystemService(NotificationManager::class.java).notify(
                                 NOTIFICATION_ID,
                                 notification(
-                                    "Analyzed ${progress.galleryProcessed}; visual memory ${progress.embeddingsProcessed}",
+                                    "Media ${summary.discovered - summary.pending}/${summary.discovered}; " +
+                                        "vectors ${summary.siglipVectorsReady}/${summary.discovered}",
                                     indeterminate = true,
                                 ),
                             )
@@ -81,16 +91,23 @@ class InitialImportService : Service() {
                     NOTIFICATION_ID,
                     notification(message, indeterminate = false),
                 )
-                ServiceCompat.stopForeground(this@InitialImportService, ServiceCompat.STOP_FOREGROUND_DETACH)
-                stopSelf()
+                stopForegroundAndSelf()
             }
         }
         return START_REDELIVER_INTENT
     }
 
     override fun onDestroy() {
+        ForegroundIndexRuntime.stopped()
         scope.cancel()
         super.onDestroy()
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        importJob?.cancel()
+        IndexScheduler.schedule(this)
+        EmbeddingIndexScheduler.schedule(this)
+        stopForegroundAndSelf()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -118,6 +135,16 @@ class InitialImportService : Service() {
             .setContentTitle("AgenticGallery local import")
             .setContentText(message)
             .setContentIntent(openApp)
+            .addAction(
+                android.R.drawable.ic_media_pause,
+                "Stop",
+                PendingIntent.getService(
+                    this,
+                    1,
+                    Intent(this, InitialImportService::class.java).setAction(ACTION_STOP),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
             .setOnlyAlertOnce(true)
             .setOngoing(indeterminate)
             .setProgress(if (indeterminate) 0 else 1, if (indeterminate) 0 else 1, indeterminate)
@@ -126,6 +153,8 @@ class InitialImportService : Service() {
 
     companion object {
         private const val ACTION_IMPORT = "com.samsung.agenticgallery.action.INITIAL_IMPORT"
+        private const val ACTION_INDEX = "com.samsung.agenticgallery.action.INDEX"
+        private const val ACTION_STOP = "com.samsung.agenticgallery.action.STOP_INDEX"
         private const val CHANNEL_ID = "gallery_initial_import"
         private const val NOTIFICATION_ID = 4102
 
@@ -135,5 +164,18 @@ class InitialImportService : Service() {
                 Intent(context, InitialImportService::class.java).setAction(ACTION_IMPORT),
             )
         }
+
+        fun startIndexing(context: Context) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, InitialImportService::class.java).setAction(ACTION_INDEX),
+            )
+        }
+    }
+
+    private fun stopForegroundAndSelf() {
+        ForegroundIndexRuntime.stopped()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
+        stopSelf()
     }
 }

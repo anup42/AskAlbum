@@ -17,12 +17,12 @@ object IndexScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.KEEP, request(context))
     }
 
-    fun scheduleContinuation(context: Context) {
+    fun scheduleContinuation(context: Context, initialDelayMillis: Long = 0L) {
         if (!IndexingJobControlsStore(context).load().mediaAnalysisEnabled) return
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
-            request(context),
+            request(context, initialDelayMillis),
         )
     }
 
@@ -38,9 +38,13 @@ object IndexScheduler {
         WorkManager.getInstance(context).cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
     }
 
-    private fun request(context: Context) = OneTimeWorkRequestBuilder<GalleryIndexWorker>()
+    private fun request(context: Context, initialDelayMillis: Long = 0L) =
+        OneTimeWorkRequestBuilder<GalleryIndexWorker>()
             .setConstraints(indexingWorkerConstraints(context))
             .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.SECONDS)
             .addTag(UNIQUE_WORK)
+            .apply {
+                if (initialDelayMillis > 0L) setInitialDelay(initialDelayMillis, TimeUnit.MILLISECONDS)
+            }
             .build()
 }

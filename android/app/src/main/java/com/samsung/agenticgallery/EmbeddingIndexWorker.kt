@@ -10,6 +10,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
@@ -50,27 +51,51 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
             jobControls.load().embeddingsEnabled &&
             workAdmission.evaluate().allowed
         ) {
-            val batch = processor.processBatch(
-                canContinue = {
-                    !isStopped &&
-                        jobControls.load().embeddingsEnabled &&
-                        workAdmission.evaluate().allowed
-                },
-            )
+            val batch = IndexingResourceCoordinator.withBackgroundPermit {
+                processor.processBatch(
+                    ownerId = id.toString(),
+                    canContinue = {
+                        !isStopped &&
+                            jobControls.load().embeddingsEnabled &&
+                            workAdmission.evaluate().allowed
+                    },
+                )
+            }
             batches++
             processed += batch.processed
             retryableFailures += batch.retryableFailures
             permanentFailures += batch.permanentFailures
             hasMore = batch.hasMore
             stoppedDuringBatch = batch.stopped
-            if (batch.stopped || batch.retryableFailures > 0) break
+            setProgress(
+                workDataOf(
+                    "processed" to processed,
+                    "batches" to batches,
+                    "in_flight" to if (hasMore) processor.batchSize else 0,
+                    "retryable_failures" to retryableFailures,
+                ),
+            )
+            if (batch.stopped) break
         }
 
         val enabled = jobControls.load().embeddingsEnabled
         val admission = workAdmission.evaluate()
-        val shouldRetry = isStopped || stoppedDuringBatch || !admission.allowed || retryableFailures > 0
+        val shouldRetry = IndexingWorkerResultPolicy.shouldRetryWorker(
+            processed = processed,
+            retryableFailures = retryableFailures,
+            stopped = isStopped || stoppedDuringBatch,
+            admissionAllowed = admission.allowed,
+            hasImmediateWork = hasMore,
+        )
         if (hasMore && enabled && !shouldRetry) {
             EmbeddingIndexScheduler.scheduleContinuation(applicationContext)
+        } else if (!hasMore && enabled) {
+            repository.nextEmbeddingRetryAt()?.let { retryAt ->
+                EmbeddingIndexScheduler.scheduleContinuation(
+                    applicationContext,
+                    (retryAt - System.currentTimeMillis()).coerceAtLeast(10_000L),
+                )
+            }
         }
         Log.i(
             TAG,
@@ -95,7 +120,7 @@ internal object EmbeddingBatchPolicy {
         memoryClassMb <= 192 || totalRamMb < 4_096 -> 4
         totalRamMb < 6_144 -> 12
         totalRamMb < 8_192 -> 24
-        else -> 48
+        else -> 32
     }
 }
 
@@ -107,12 +132,12 @@ object EmbeddingIndexScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.KEEP, request(context))
     }
 
-    fun scheduleContinuation(context: Context) {
+    fun scheduleContinuation(context: Context, initialDelayMillis: Long = 0L) {
         if (!IndexingJobControlsStore(context).load().embeddingsEnabled) return
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
-            request(context),
+            request(context, initialDelayMillis),
         )
     }
 
@@ -128,9 +153,13 @@ object EmbeddingIndexScheduler {
         WorkManager.getInstance(context).cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
     }
 
-    private fun request(context: Context) = OneTimeWorkRequestBuilder<EmbeddingIndexWorker>()
-        .setConstraints(indexingWorkerConstraints(context))
-        .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.SECONDS)
-        .addTag(UNIQUE_WORK)
-        .build()
+    private fun request(context: Context, initialDelayMillis: Long = 0L) =
+        OneTimeWorkRequestBuilder<EmbeddingIndexWorker>()
+            .setConstraints(indexingWorkerConstraints(context))
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.SECONDS)
+            .addTag(UNIQUE_WORK)
+            .apply {
+                if (initialDelayMillis > 0L) setInitialDelay(initialDelayMillis, TimeUnit.MILLISECONDS)
+            }
+            .build()
 }

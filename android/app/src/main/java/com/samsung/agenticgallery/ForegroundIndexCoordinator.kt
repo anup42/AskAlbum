@@ -16,7 +16,7 @@ internal enum class ForegroundIndexStopReason {
 
 internal data class ForegroundIndexRunLimits(
     val maxCycles: Int = 5_000,
-    val maxDurationMs: Long = 2 * 60 * 60_000L,
+    val maxDurationMs: Long = 5 * 60 * 60_000L + 45 * 60_000L,
 ) {
     init {
         require(maxCycles in 1..5_000) { "Foreground index cycle limit is out of bounds" }
@@ -110,22 +110,28 @@ internal class ForegroundIndexCoordinator(context: Context) {
                     job?.isActive != false && admissionPolicy.evaluate().allowed
                 }
                 val controls = jobControls.load()
-                val galleryBatch = if (controls.mediaAnalysisEnabled) {
-                    gallery.processBatch(
-                        allowedMediaIds = allowedMediaIds,
-                        rebuildEvents = false,
-                        canContinue = { canContinue() && jobControls.load().mediaAnalysisEnabled },
-                    )
-                } else {
-                    IndexBatchResult(processed = 0, hasMore = false)
+                val galleryBatch = IndexingResourceCoordinator.withBackgroundPermit {
+                    if (controls.mediaAnalysisEnabled) {
+                        gallery.processBatch(
+                            allowedMediaIds = allowedMediaIds,
+                            rebuildEvents = false,
+                            ownerId = "foreground-gallery",
+                            canContinue = { canContinue() && jobControls.load().mediaAnalysisEnabled },
+                        )
+                    } else {
+                        IndexBatchResult(processed = 0, hasMore = false)
+                    }
                 }
-                val embeddingBatch = if (controls.embeddingsEnabled) {
-                    embeddings.processBatch(
-                        allowedMediaIds,
-                        canContinue = { canContinue() && jobControls.load().embeddingsEnabled },
-                    )
-                } else {
-                    IndexBatchResult(processed = 0, hasMore = false)
+                val embeddingBatch = IndexingResourceCoordinator.withBackgroundPermit {
+                    if (controls.embeddingsEnabled) {
+                        embeddings.processBatch(
+                            allowedMediaIds,
+                            ownerId = "foreground-embeddings",
+                            canContinue = { canContinue() && jobControls.load().embeddingsEnabled },
+                        )
+                    } else {
+                        IndexBatchResult(processed = 0, hasMore = false)
+                    }
                 }
                 cycles++
                 galleryProcessed += galleryBatch.processed
@@ -148,8 +154,6 @@ internal class ForegroundIndexCoordinator(context: Context) {
                 val reason = when {
                     !after.allowed -> ForegroundIndexStopReason.THERMAL
                     job?.isActive == false || galleryBatch.stopped || embeddingBatch.stopped -> ForegroundIndexStopReason.CANCELLED
-                    galleryBatch.retryableFailures + embeddingBatch.retryableFailures > 0 ->
-                        ForegroundIndexStopReason.RETRYABLE_FAILURE
                     !galleryBatch.hasMore && !embeddingBatch.hasMore -> ForegroundIndexStopReason.COMPLETE
                     else -> null
                 }

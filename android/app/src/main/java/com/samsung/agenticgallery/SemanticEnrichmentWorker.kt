@@ -39,10 +39,10 @@ class SemanticEnrichmentWorker(
         if (database.semanticEnrichmentPlanNeedsRebuild()) {
             SemanticEnrichmentCoordinator(database).rebuildPlan(userRequested = true)
         }
-        var job = database.claimSemanticEnrichmentJob()
+        var job = database.claimSemanticEnrichmentJob(owner = id.toString())
         if (job == null) {
             SemanticEnrichmentCoordinator(database).rebuildPlan()
-            job = database.claimSemanticEnrichmentJob() ?: run {
+            job = database.claimSemanticEnrichmentJob(owner = id.toString()) ?: run {
                 Log.i(TAG, "Semantic enrichment queue is complete")
                 return Result.success()
             }
@@ -58,7 +58,7 @@ class SemanticEnrichmentWorker(
                     true,
                 )
                 processed += 1
-                job = database.claimSemanticEnrichmentJob()
+                job = database.claimSemanticEnrichmentJob(owner = id.toString())
                 continue
             }
             val item = database.itemById(currentJob.representativeMediaId)
@@ -69,7 +69,7 @@ class SemanticEnrichmentWorker(
                     retryable = false,
                 )
                 processed += 1
-                job = database.claimSemanticEnrichmentJob()
+                job = database.claimSemanticEnrichmentJob(owner = id.toString())
                 continue
             }
             try {
@@ -87,10 +87,18 @@ class SemanticEnrichmentWorker(
                     hit,
                     database.videoKeyframes(item.id),
                 )
-                val facts = AdaptiveGemmaSemanticEnricher(
+                val enricher = AdaptiveGemmaSemanticEnricher(
                     services.modelPackManager,
                     services.gemmaSessions,
-                ).enrich(currentJob, loaded.bytes)
+                )
+                val facts = IndexingResourceCoordinator.withBackgroundPermit {
+                    try {
+                        enricher.enrich(currentJob, loaded.bytes)
+                    } catch (malformed: SemanticEnrichmentOutputException) {
+                        Log.w(TAG, "Retrying malformed Gemma semantic output once for job=${currentJob.id}")
+                        enricher.enrich(currentJob, loaded.bytes)
+                    }
+                }
                 database.completeSemanticEnrichment(currentJob, facts)
                 Log.i(
                     TAG,
@@ -111,7 +119,7 @@ class SemanticEnrichmentWorker(
                 if (retryable) return Result.retry()
             }
             processed += 1
-            job = database.claimSemanticEnrichmentJob()
+            job = database.claimSemanticEnrichmentJob(owner = id.toString())
         }
         if (database.hasPendingSemanticEnrichmentJobs()) {
             Log.i(TAG, "Semantic enrichment scheduling continuation after $processed representatives")

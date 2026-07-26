@@ -74,6 +74,10 @@ android {
         }
     }
 
+    sourceSets {
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    }
+
     ndkVersion = "28.2.13676358"
 
     externalNativeBuild {
@@ -175,6 +179,7 @@ dependencies {
     implementation("com.google.mlkit:image-labeling:17.0.9")
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.8.1")
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.14.0")
     implementation(libs.google.ai.edge.litert)
     implementation(libs.microsoft.onnxruntime.android)
@@ -183,6 +188,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.room:room-testing:2.8.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4:1.10.3")
     debugImplementation("androidx.compose.ui:ui-tooling:1.10.3")
