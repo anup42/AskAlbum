@@ -27,9 +27,13 @@ data class SemanticCaptionRecord(
     val text: String,
     val confidence: Float,
     val evidenceMediaId: String,
+    val representativeMediaId: String? = evidenceMediaId,
+    val sourceType: String = "GEMMA_DIRECT",
     val applicability: String = "EVIDENCE_MEDIA_ONLY",
+    val bodyRegionVersion: String = PersonalSemanticMemoryPolicy.BODY_REGION_VERSION,
     val modelVersion: String,
     val promptVersion: String,
+    val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
     val personRefs: List<SemanticCaptionPersonRefRecord> = emptyList(),
 )
@@ -74,7 +78,7 @@ internal object SemanticEnrichmentCodec {
     private const val MAX_CAPTION_LENGTH = 4_000
     private const val MAX_PEOPLE = 12
     private const val MAX_ITEMS_PER_PERSON = 24
-    private const val PROMPT_VERSION = "adaptive-comprehensive-caption-v2"
+    internal const val PROMPT_VERSION = "adaptive-comprehensive-caption-v3"
 
     fun decode(
         job: SemanticEnrichmentJobRecord,
@@ -100,11 +104,20 @@ internal object SemanticEnrichmentCodec {
                     text = it,
                     confidence = captionConfidence ?: facts.maxOfOrNull(SemanticFactRecord::confidence) ?: 0.5f,
                     evidenceMediaId = job.representativeMediaId,
-                    applicability = if (job.reason == "exact_duplicate_canonical") {
+                    representativeMediaId = job.representativeMediaId,
+                    sourceType = when {
+                        PersonalSemanticMemoryPolicy.isPersonalJob(job.reason) -> "GEMMA_MEDIA_DIRECT"
+                        job.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP -> "GEMMA_EXACT_DUPLICATE_REPRESENTATIVE"
+                        job.scope == SemanticFactScope.VISUAL_GROUP -> "GEMMA_VISUAL_GROUP_REPRESENTATIVE"
+                        job.scope == SemanticFactScope.EVENT -> "GEMMA_EVENT_REPRESENTATIVE"
+                        else -> "GEMMA_MEDIA_DIRECT"
+                    },
+                    applicability = if (job.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP) {
                         "SAFE_FOR_EXACT_DUPLICATES"
                     } else {
                         "EVIDENCE_MEDIA_ONLY"
                     },
+                    bodyRegionVersion = PersonalSemanticMemoryPolicy.BODY_REGION_VERSION,
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
                 )

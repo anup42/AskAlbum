@@ -706,7 +706,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun saveReviewedPersonCluster(id: String, label: String, relationship: String?, aliases: List<String>) {
+    fun saveReviewedPersonCluster(
+        id: String,
+        label: String,
+        relationship: String?,
+        aliases: List<String>,
+        includeInPersonalSemanticMemory: Boolean,
+    ) {
         if (label.isBlank()) return
         val safeLabel = label.trim()
         val safeRelationship = relationship?.trim()?.takeIf(String::isNotBlank)
@@ -719,6 +725,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 label = safeLabel,
                 relationship = safeRelationship,
                 aliases = safeAliases,
+                includeInPersonalSemanticMemory = includeInPersonalSemanticMemory,
             ),
             operationMessage = "Saving identity for $safeLabel...",
         )
@@ -730,6 +737,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         label = safeLabel,
                         relationship = safeRelationship,
                         aliases = safeAliases,
+                        includeInPersonalSemanticMemory = includeInPersonalSemanticMemory,
                     )
                 }
             }.onSuccess { status ->
@@ -1385,6 +1393,7 @@ internal object PeopleClusterStateReducer {
         label: String,
         relationship: String?,
         aliases: List<String>,
+        includeInPersonalSemanticMemory: Boolean = PersonalSemanticMemoryPolicy.defaultEnabled(relationship),
     ): List<PersonClusterReviewItem> = clusters.map { cluster ->
         when {
             cluster.id == id -> cluster.copy(
@@ -1393,6 +1402,7 @@ internal object PeopleClusterStateReducer {
                 aliases = aliases,
                 reviewed = true,
                 hidden = false,
+                includeInPersonalSemanticMemory = includeInPersonalSemanticMemory,
             )
             relationship.equals("me", ignoreCase = true) && cluster.relationship.equals("me", ignoreCase = true) ->
                 cluster.copy(relationship = null)

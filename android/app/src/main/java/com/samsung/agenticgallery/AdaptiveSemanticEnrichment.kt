@@ -1,11 +1,12 @@
 package com.samsung.agenticgallery
 
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.max
 
-enum class SemanticFactScope { MEDIA, VISUAL_GROUP, EVENT }
+enum class SemanticFactScope { MEDIA, EXACT_DUPLICATE_GROUP, VISUAL_GROUP, EVENT, QUERY_VERIFICATION }
 enum class SemanticEnrichmentStatus { PENDING, RUNNING, COMPLETE, FAILED, AUTH_REQUIRED }
 
 data class SemanticFactRecord(
@@ -44,6 +45,12 @@ data class SemanticMemoryProgress(
     val factCount: Int = 0,
     val captionCount: Int = 0,
     val personVisualFactCount: Int = 0,
+    val personalEligibleCount: Int = 0,
+    val personalCompletedCount: Int = 0,
+    val personalPendingCount: Int = 0,
+    val personalFailedCount: Int = 0,
+    val personalExactReuseCount: Int = 0,
+    val personalStaleCount: Int = 0,
     val latestError: String? = null,
 ) {
     val processedJobs: Int
@@ -82,6 +89,43 @@ data class SemanticEnrichmentPlan(
     val jobs: List<SemanticEnrichmentJobRecord>,
 )
 
+internal object PersonalSemanticMemoryPolicy {
+    const val JOB_PREFIX = "personal_media:"
+    const val CAPTION_POLICY_VERSION = "personal-caption-policy-v1"
+    const val BODY_REGION_VERSION = "person-body-regions-v1"
+    const val PROMPT_VERSION = "adaptive-comprehensive-caption-v3"
+
+    private val familyRelationships = setOf(
+        "me", "mother", "mom", "mum", "father", "dad", "brother", "sister",
+        "partner", "spouse", "wife", "husband", "child", "son", "daughter",
+        "grandparent", "grandmother", "grandfather", "grandma", "grandpa",
+    )
+
+    fun defaultEnabled(relationship: String?): Boolean =
+        relationship?.trim()?.lowercase() in familyRelationships
+
+    fun jobReason(modelVersion: String?): String {
+        val model = modelVersion.orEmpty().ifBlank { "active-model" }
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .take(80)
+        return "$JOB_PREFIX$model:$PROMPT_VERSION:$BODY_REGION_VERSION:$CAPTION_POLICY_VERSION"
+    }
+
+    fun isPersonalJob(reason: String): Boolean = reason.startsWith(JOB_PREFIX)
+
+    fun exactContentDigest(bytes: ByteArray, width: Int, height: Int): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        return buildString(96) {
+            append("sha256-file-v1:")
+            append(width)
+            append('x')
+            append(height)
+            append(':')
+            digest.forEach { append("%02x".format(it.toInt() and 0xff)) }
+        }
+    }
+}
+
 internal object AdaptiveRepresentativeSelector {
     fun buildPlan(
         items: List<GalleryItem>,
@@ -97,10 +141,13 @@ internal object AdaptiveRepresentativeSelector {
                 (it.kind == MediaKind.IMAGE || it.kind == MediaKind.VIDEO || it.kind == MediaKind.PDF)
         }
         val byId = eligible.associateBy(GalleryItem::id)
-        val exact = eligible.filter { it.perceptualHash != null }
-            .groupBy { requireNotNull(it.perceptualHash) }
+        val exact = eligible.filter { it.kind == MediaKind.IMAGE && it.exactContentDigest != null }
+            .groupBy { requireNotNull(it.exactContentDigest) }
             .filterValues { it.size > 1 }
-            .map { (hash, members) -> group("exact:$hash", "EXACT_DUPLICATE", members, 1) }
+            .map { (digest, members) ->
+                val stable = UUID.nameUUIDFromBytes(digest.toByteArray(StandardCharsets.UTF_8))
+                group("exact:$stable", "EXACT_DUPLICATE", members, 1)
+            }
         val exactMembers = exact.flatMapTo(hashSetOf(), VisualGroupPlan::members)
         val bursts = eligible.filterNot { it.id in exactMembers }
             .filter { it.capturedAt != null }
@@ -141,7 +188,7 @@ internal object AdaptiveRepresentativeSelector {
         val exactJobs = exact.flatMap { group ->
             group.representatives.map { mediaId ->
                 job(
-                    scope = SemanticFactScope.VISUAL_GROUP,
+                    scope = SemanticFactScope.EXACT_DUPLICATE_GROUP,
                     subjectId = group.id,
                     mediaId = mediaId,
                     reason = "exact_duplicate_canonical",
@@ -259,7 +306,7 @@ internal object AdaptiveRepresentativeSelector {
 }
 
 class SemanticEnrichmentCoordinator(private val database: GalleryDatabase) {
-    fun rebuildPlan(userRequested: Boolean = false): SemanticEnrichmentPlan {
+    fun rebuildPlan(userRequested: Boolean = false, modelVersion: String? = null): SemanticEnrichmentPlan {
         val plan = AdaptiveRepresentativeSelector.buildPlan(
             items = database.allItems(),
             eventMembership = database.eventMembership(),
@@ -271,6 +318,7 @@ class SemanticEnrichmentCoordinator(private val database: GalleryDatabase) {
             jobs = plan.jobs.map { it.copy(userRequested = true) },
         )
         database.replaceSemanticEnrichmentPlan(adjusted)
+        database.queueEligiblePersonalSemanticMemoryJobs(modelVersion, userRequested)
         return adjusted
     }
 }

@@ -833,6 +833,11 @@ class GalleryDatabase(
         val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
+            db.delete(
+                "semantic_enrichment_job",
+                "reason LIKE ? AND status<>?",
+                arrayOf("${PersonalSemanticMemoryPolicy.JOB_PREFIX}%", SemanticEnrichmentStatus.COMPLETE.name),
+            )
             db.delete("face_instance", null, null)
             db.delete("person_cluster", null, null)
             db.execSQL("UPDATE media_item SET face_count=0")
@@ -856,6 +861,7 @@ class GalleryDatabase(
         label: String,
         relationship: String?,
         aliases: List<String>,
+        includeInPersonalSemanticMemory: Boolean? = null,
     ): PeopleIndexStatus {
         require(PERSON_ID.matches(id)) { "Invalid local person ID" }
         val safeLabel = label.trim().also { require(it.isNotBlank() && it.length <= 80) { "Invalid person label" } }
@@ -864,6 +870,8 @@ class GalleryDatabase(
         }
         val safeAliases = aliases.asSequence().map(String::trim).filter(String::isNotBlank).distinct().take(MAX_PERSON_ALIASES + 1).toList()
         require(safeAliases.size <= MAX_PERSON_ALIASES && safeAliases.all { it.length <= 80 }) { "Invalid person aliases" }
+        val includeInPersonalMemory = includeInPersonalSemanticMemory
+            ?: PersonalSemanticMemoryPolicy.defaultEnabled(safeRelationship)
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -884,6 +892,7 @@ class GalleryDatabase(
                 put("aliases", JSONArray(safeAliases).toString())
                 put("reviewed", 1)
                 put("hidden", 0)
+                put("include_in_personal_memory", if (includeInPersonalMemory) 1 else 0)
                 put("updated_at", now)
             }, "id=?", arrayOf(id))
             if (safeRelationship.equals("me", ignoreCase = true)) {
@@ -1155,10 +1164,10 @@ class GalleryDatabase(
     fun personClusterSummaries(includeHidden: Boolean = false): List<PersonClusterReviewItem> {
         val summaries = readableDatabase.rawQuery(
             "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(f.id) AS face_count, MAX(f.media_id) AS sample_media_id " +
-                ", c.reviewed, c.hidden, c.representative_face_id " +
+                ", c.reviewed, c.hidden, c.representative_face_id, c.include_in_personal_memory " +
                 "FROM person_cluster c LEFT JOIN face_instance f ON c.id = f.cluster_id " +
                 (if (includeHidden) "" else "WHERE c.hidden = 0 ") +
-                "GROUP BY c.id, c.label, c.relationship, c.aliases, c.reviewed, c.hidden, c.representative_face_id " +
+                "GROUP BY c.id, c.label, c.relationship, c.aliases, c.reviewed, c.hidden, c.representative_face_id, c.include_in_personal_memory " +
                 "ORDER BY c.hidden ASC, c.reviewed ASC, face_count DESC, c.updated_at DESC, c.id",
             null,
         ).use { cursor ->
@@ -1178,6 +1187,7 @@ class GalleryDatabase(
                             reviewed = cursor.getInt(6) != 0,
                             hidden = cursor.getInt(7) != 0,
                             representativeFaceId = if (cursor.isNull(8)) null else cursor.getString(8),
+                            includeInPersonalSemanticMemory = cursor.getInt(9) != 0,
                         ),
                     )
                 }
@@ -1401,14 +1411,7 @@ class GalleryDatabase(
                         "cluster_id=? AND user_corrected=0 AND id IN ($placeholders)",
                         selectionArgs,
                     )
-                    mediaIds.chunked(SQLITE_ID_CHUNK).forEach { mediaChunk ->
-                        val mediaPlaceholders = mediaChunk.joinToString(",") { "?" }
-                        db.delete(
-                            "person_attribute_fact",
-                            "cluster_id=? AND media_id IN ($mediaPlaceholders)",
-                            (listOf(clusterId) + mediaChunk).toTypedArray(),
-                        )
-                    }
+                    invalidatePersonalSemanticEvidence(db, mediaIds)
                 }
                 if (moved == 0) db.delete("person_cluster", "id=? AND reviewed=0", arrayOf(quarantineId))
             }
@@ -1440,7 +1443,7 @@ class GalleryDatabase(
                 putNull("representative_face_id")
                 put("updated_at", System.currentTimeMillis())
             }, "id=? AND representative_face_id=?", arrayOf(source.first, faceId))
-            db.delete("person_attribute_fact", "media_id=? AND cluster_id=?", arrayOf(source.second, source.first))
+            invalidatePersonalSemanticEvidence(db, setOf(source.second))
             db.setTransactionSuccessful()
             source.first
         } finally {
@@ -1450,22 +1453,29 @@ class GalleryDatabase(
 
     fun removePersonLabel(clusterId: String): PeopleIndexStatus {
         require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
-        writableDatabase.update("person_cluster", ContentValues().apply {
+        val db = writableDatabase
+        val affectedMediaIds = mediaIdsForClusters(db, setOf(clusterId))
+        db.update("person_cluster", ContentValues().apply {
             putNull("label")
             putNull("relationship")
             put("aliases", "[]")
             put("reviewed", 0)
+            put("include_in_personal_memory", 0)
             put("updated_at", System.currentTimeMillis())
         }, "id=?", arrayOf(clusterId))
+        dropPendingPersonalJobs(db, affectedMediaIds)
         return peopleIndexStatus()
     }
 
     fun setPersonClusterHidden(clusterId: String, hidden: Boolean): PeopleIndexStatus {
         require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
-        writableDatabase.update("person_cluster", ContentValues().apply {
+        val db = writableDatabase
+        val affectedMediaIds = mediaIdsForClusters(db, setOf(clusterId))
+        db.update("person_cluster", ContentValues().apply {
             put("hidden", if (hidden) 1 else 0)
             put("updated_at", System.currentTimeMillis())
         }, "id=?", arrayOf(clusterId))
+        if (hidden) dropPendingPersonalJobs(db, affectedMediaIds)
         return peopleIndexStatus()
     }
 
@@ -1483,9 +1493,10 @@ class GalleryDatabase(
                 val relationship: String?,
                 val aliases: List<String>,
                 val representativeFaceId: String?,
+                val includeInPersonalMemory: Boolean,
             )
             fun identity(clusterId: String): ClusterIdentity = db.rawQuery(
-                "SELECT label,relationship,aliases,representative_face_id FROM person_cluster WHERE id=?",
+                "SELECT label,relationship,aliases,representative_face_id,include_in_personal_memory FROM person_cluster WHERE id=?",
                 arrayOf(clusterId),
             ).use { cursor ->
                 check(cursor.moveToFirst())
@@ -1497,10 +1508,15 @@ class GalleryDatabase(
                         List(json.length()) { json.getString(it) }
                     }.getOrDefault(emptyList()),
                     representativeFaceId = if (cursor.isNull(3)) null else cursor.getString(3),
+                    includeInPersonalMemory = cursor.getInt(4) != 0,
                 )
             }
             val targetIdentity = identity(targetClusterId)
             val sourceIdentity = identity(sourceClusterId)
+            val affectedMediaIds = db.rawQuery(
+                "SELECT DISTINCT media_id FROM face_instance WHERE cluster_id IN (?,?)",
+                arrayOf(targetClusterId, sourceClusterId),
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
             val aliases = (targetIdentity.aliases + sourceIdentity.aliases + listOfNotNull(sourceIdentity.label))
                 .map(String::trim).filter(String::isNotBlank).distinct().take(MAX_PERSON_ALIASES)
             db.update("face_instance", ContentValues().apply {
@@ -1518,8 +1534,13 @@ class GalleryDatabase(
                 if (representativeFaceId == null) putNull("representative_face_id") else put("representative_face_id", representativeFaceId)
                 put("aliases", JSONArray(aliases).toString())
                 put("reviewed", if (label != null) 1 else 0)
+                put(
+                    "include_in_personal_memory",
+                    if (targetIdentity.includeInPersonalMemory || sourceIdentity.includeInPersonalMemory) 1 else 0,
+                )
                 put("updated_at", now)
             }, "id=?", arrayOf(targetClusterId))
+            invalidatePersonalSemanticEvidence(db, affectedMediaIds)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -1544,6 +1565,7 @@ class GalleryDatabase(
                 put("cluster_id", target)
                 put("user_corrected", 1)
             }, "id=?", arrayOf(faceId))
+            invalidatePersonalSemanticEvidence(db, setOf(source.second))
             source.first?.let { sourceClusterId ->
                 db.update("person_cluster", ContentValues().apply {
                     putNull("representative_face_id")
@@ -2177,6 +2199,7 @@ class GalleryDatabase(
         put("access_state", item.accessState.name)
         put("last_seen_at", item.lastSeenAt)
         put("perceptual_hash", item.perceptualHash?.let { java.lang.Long.toUnsignedString(it, 16) })
+        put("exact_content_digest", item.exactContentDigest)
         put("blur_score", item.blurScore)
         put("exposure_score", item.exposureScore)
         put("quality_score", item.qualityScore)
@@ -2245,6 +2268,7 @@ class GalleryDatabase(
             accessState = runCatching { MediaAccessState.valueOf(text("access_state")) }.getOrDefault(MediaAccessState.ACCESSIBLE),
             lastSeenAt = nullableLong("last_seen_at"),
             perceptualHash = nullableText("perceptual_hash")?.let { java.lang.Long.parseUnsignedLong(it, 16) },
+            exactContentDigest = nullableText("exact_content_digest"),
             blurScore = cursor.getColumnIndexOrThrow("blur_score").let { if (cursor.isNull(it)) null else cursor.getFloat(it) },
             exposureScore = cursor.getColumnIndexOrThrow("exposure_score").let { if (cursor.isNull(it)) null else cursor.getFloat(it) },
             qualityScore = cursor.getColumnIndexOrThrow("quality_score").let { if (cursor.isNull(it)) null else cursor.getFloat(it) },
@@ -2403,18 +2427,248 @@ class GalleryDatabase(
         arrayOf(limit.coerceIn(1, 128).toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
 
-    fun replaceSemanticEnrichmentPlan(plan: SemanticEnrichmentPlan) {
-        writableDatabase.transaction { db ->
-            db.delete(
-                "semantic_enrichment_job",
-                "status IN (?,?,?,?)",
-                arrayOf(
-                    SemanticEnrichmentStatus.PENDING.name,
-                    SemanticEnrichmentStatus.FAILED.name,
-                    SemanticEnrichmentStatus.AUTH_REQUIRED.name,
-                    SemanticEnrichmentStatus.RUNNING.name,
+    fun queueEligiblePersonalSemanticMemoryJobs(
+        modelVersion: String?,
+        userRequested: Boolean = false,
+        mediaIds: Set<String>? = null,
+    ): Int = writableDatabase.transaction { db ->
+        val reason = PersonalSemanticMemoryPolicy.jobReason(modelVersion)
+        val now = System.currentTimeMillis()
+        personalSemanticMemoryEligibleMediaIds(db, mediaIds).sumOf { mediaId ->
+            val stable = "${SemanticFactScope.MEDIA}|$mediaId|$mediaId|$reason"
+            val inserted = db.insertWithOnConflict("semantic_enrichment_job", null, ContentValues().apply {
+                put("id", UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString())
+                put("scope", SemanticFactScope.MEDIA.name)
+                put("subject_id", mediaId)
+                put("representative_media_id", mediaId)
+                put("reason", reason)
+                put("status", SemanticEnrichmentStatus.PENDING.name)
+                put("attempt_count", 0)
+                put("user_requested", userRequested)
+                putNull("model_version")
+                putNull("error")
+                putNull("lease_owner")
+                putNull("lease_expires_at")
+                put("next_attempt_at", 0L)
+                putNull("last_progress_at")
+                put("updated_at", now)
+            }, SQLiteDatabase.CONFLICT_IGNORE)
+            if (userRequested) {
+                db.update("semantic_enrichment_job", ContentValues().apply {
+                    put("user_requested", true)
+                    put("updated_at", now)
+                }, "id=? AND status<>?", arrayOf(
+                    UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString(),
+                    SemanticEnrichmentStatus.COMPLETE.name,
+                ))
+            }
+            if (inserted >= 0L) 1 else 0
+        }
+    }
+
+    fun recordExactContentDigest(mediaId: String, digest: String) {
+        require(digest.startsWith("sha256-file-v1:") && digest.length <= 128) { "Invalid exact-content digest" }
+        writableDatabase.update(
+            "media_item",
+            ContentValues().apply { put("exact_content_digest", digest) },
+            "id=?",
+            arrayOf(mediaId),
+        )
+    }
+
+    fun reuseExactDuplicateSemanticEnrichment(
+        job: SemanticEnrichmentJobRecord,
+        targetBindings: List<PersonVerificationBinding>,
+        digest: String,
+    ): Boolean {
+        if (job.scope != SemanticFactScope.MEDIA || !PersonalSemanticMemoryPolicy.isPersonalJob(job.reason)) return false
+        val sourceIds = readableDatabase.rawQuery(
+            """
+            SELECT DISTINCT m.id
+            FROM media_item m
+            JOIN semantic_enrichment_job j ON j.representative_media_id=m.id
+            WHERE m.exact_content_digest=? AND m.id<>? AND j.reason=? AND j.status='COMPLETE'
+            ORDER BY j.updated_at DESC
+            """.trimIndent(),
+            arrayOf(digest, job.representativeMediaId, job.reason),
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+        for (sourceId in sourceIds) {
+            val sourceBindings = reviewedFaceBindingsForMedia(sourceId)
+            if (!equivalentReviewedBindings(sourceBindings, targetBindings)) continue
+            val caption = semanticCaptionsForMedia(sourceId).firstOrNull {
+                it.scope == SemanticFactScope.MEDIA &&
+                    it.subjectId == sourceId &&
+                    it.applicability != "STALE_PERSON_BINDING" &&
+                    it.promptVersion == SemanticEnrichmentCodec.PROMPT_VERSION
+            } ?: continue
+            val targetByLabel = targetBindings.associateBy(PersonVerificationBinding::stableLabel)
+            val copiedRefs = caption.personRefs.mapNotNull { sourceRef ->
+                val target = targetByLabel[sourceRef.personRef]
+                    ?.takeIf { it.clusterId == sourceRef.clusterId }
+                    ?: return@mapNotNull null
+                sourceRef.copy(
+                    faceRegion = listOf(target.left, target.top, target.right, target.bottom),
+                )
+            }
+            if (copiedRefs.size != caption.personRefs.size) continue
+            val copiedFacts = semanticFacts(listOf(sourceId))
+                .filter {
+                    it.scope == SemanticFactScope.MEDIA &&
+                        it.subjectId == sourceId &&
+                        it.applicability !in setOf(
+                            "GROUP_CONTEXT_ONLY",
+                            "LEGACY_GROUP_CONTEXT_ONLY",
+                            "STALE_PERSON_BINDING",
+                        )
+                }
+                .map {
+                    it.copy(
+                        subjectId = job.representativeMediaId,
+                        evidenceMediaId = job.representativeMediaId,
+                        applicability = "EXACT_DUPLICATE_SHARED",
+                    )
+                }
+            val sourcePersonFacts = personVisualFactsForMedia(sourceId)
+            val copiedPersonFacts = sourcePersonFacts.mapNotNull { sourceFact ->
+                val target = targetBindings.firstOrNull {
+                    it.clusterId == sourceFact.clusterId && it.stableLabel == sourceFact.personRef
+                } ?: return@mapNotNull null
+                sourceFact.copy(
+                    id = "",
+                    mediaId = job.representativeMediaId,
+                    faceRegion = listOf(target.left, target.top, target.right, target.bottom),
+                    updatedAt = 0L,
+                )
+            }
+            if (copiedPersonFacts.size != sourcePersonFacts.size) continue
+            completeSemanticEnrichment(
+                job,
+                SemanticEnrichmentResult(
+                    facts = copiedFacts,
+                    caption = caption.copy(
+                        id = "",
+                        scope = SemanticFactScope.MEDIA,
+                        subjectId = job.representativeMediaId,
+                        evidenceMediaId = job.representativeMediaId,
+                        representativeMediaId = sourceId,
+                        sourceType = "EXACT_DUPLICATE_REUSE",
+                        applicability = "EXACT_DUPLICATE_SHARED",
+                        createdAt = System.currentTimeMillis(),
+                        updatedAt = 0L,
+                        personRefs = copiedRefs,
+                    ),
+                    personFacts = copiedPersonFacts,
                 ),
             )
+            return true
+        }
+        return false
+    }
+
+    private fun personalSemanticMemoryEligibleMediaIds(
+        db: GallerySqlDatabase,
+        mediaIds: Set<String>? = null,
+    ): List<String> {
+        if (mediaIds != null && mediaIds.isEmpty()) return emptyList()
+        val mediaFilter = if (mediaIds == null) {
+            ""
+        } else {
+            " AND m.id IN (${mediaIds.joinToString(",") { "?" }})"
+        }
+        return db.rawQuery(
+            """
+        SELECT DISTINCT m.id
+        FROM media_item m
+        JOIN face_instance f ON f.media_id=m.id
+        JOIN person_cluster p ON p.id=f.cluster_id
+        WHERE m.media_kind='IMAGE' AND m.access_state='ACCESSIBLE' AND m.index_state='READY'
+          AND p.reviewed=1 AND p.hidden=0 AND p.include_in_personal_memory=1
+          $mediaFilter
+        ORDER BY COALESCE(m.captured_at,m.modified_at,0) DESC,m.id
+            """.trimIndent(),
+            mediaIds?.toTypedArray() ?: emptyArray(),
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+    }
+
+    private fun invalidatePersonalSemanticEvidence(db: GallerySqlDatabase, mediaIds: Collection<String>) {
+        mediaIds.distinct().chunked(SQLITE_ID_CHUNK).forEach { ids ->
+            if (ids.isEmpty()) return@forEach
+            val placeholders = ids.joinToString(",") { "?" }
+            val args = ids.toTypedArray()
+            db.delete("person_attribute_fact", "media_id IN ($placeholders)", args)
+            db.delete(
+                "semantic_caption_person_ref",
+                "caption_id IN (SELECT id FROM semantic_caption WHERE evidence_media_id IN ($placeholders))",
+                args,
+            )
+            db.update(
+                "semantic_caption",
+                ContentValues().apply { put("applicability", "STALE_PERSON_BINDING") },
+                "scope='MEDIA' AND evidence_media_id IN ($placeholders) AND source_type IN ('GEMMA_MEDIA_DIRECT','EXACT_DUPLICATE_REUSE')",
+                args,
+            )
+            val now = System.currentTimeMillis()
+            db.execSQL(
+                """
+                UPDATE semantic_enrichment_job
+                SET status='PENDING',attempt_count=0,error=NULL,lease_owner=NULL,lease_expires_at=NULL,
+                    next_attempt_at=0,last_progress_at=NULL,updated_at=$now
+                WHERE representative_media_id IN ($placeholders) AND reason LIKE ?
+                  AND EXISTS (
+                    SELECT 1 FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id
+                    WHERE f.media_id=semantic_enrichment_job.representative_media_id
+                      AND p.reviewed=1 AND p.hidden=0 AND p.include_in_personal_memory=1
+                  )
+                """.trimIndent(),
+                arrayOf<Any?>(*args, "${PersonalSemanticMemoryPolicy.JOB_PREFIX}%"),
+            )
+        }
+    }
+
+    private fun mediaIdsForClusters(db: GallerySqlDatabase, clusterIds: Collection<String>): List<String> {
+        if (clusterIds.isEmpty()) return emptyList()
+        val placeholders = clusterIds.joinToString(",") { "?" }
+        return db.rawQuery(
+            "SELECT DISTINCT media_id FROM face_instance WHERE cluster_id IN ($placeholders)",
+            clusterIds.toTypedArray(),
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+    }
+
+    private fun dropPendingPersonalJobs(db: GallerySqlDatabase, mediaIds: Collection<String>) {
+        mediaIds.distinct().chunked(SQLITE_ID_CHUNK).forEach { ids ->
+            if (ids.isEmpty()) return@forEach
+            val placeholders = ids.joinToString(",") { "?" }
+            db.delete(
+                "semantic_enrichment_job",
+                "representative_media_id IN ($placeholders) AND reason LIKE ? AND status<>?",
+                ids.toTypedArray() + arrayOf(
+                    "${PersonalSemanticMemoryPolicy.JOB_PREFIX}%",
+                    SemanticEnrichmentStatus.COMPLETE.name,
+                ),
+            )
+        }
+    }
+
+    private fun equivalentReviewedBindings(
+        source: List<PersonVerificationBinding>,
+        target: List<PersonVerificationBinding>,
+    ): Boolean {
+        if (source.isEmpty() || source.size != target.size) return false
+        val targetByLabel = target.associateBy(PersonVerificationBinding::stableLabel)
+        return source.all { first ->
+            val second = targetByLabel[first.stableLabel] ?: return@all false
+            first.clusterId == second.clusterId &&
+                listOf(
+                    kotlin.math.abs(first.left - second.left),
+                    kotlin.math.abs(first.top - second.top),
+                    kotlin.math.abs(first.right - second.right),
+                    kotlin.math.abs(first.bottom - second.bottom),
+                ).all { it <= 0.0001f }
+        }
+    }
+
+    fun replaceSemanticEnrichmentPlan(plan: SemanticEnrichmentPlan) {
+        writableDatabase.transaction { db ->
             db.delete("event_representative", null, null)
             db.delete("visual_group_member", null, null)
             db.delete("visual_group", null, null)
@@ -2484,7 +2738,9 @@ class GalleryDatabase(
             val where = if (userRequestedOnly) " AND user_requested=1" else ""
             selected = db.rawQuery(
                 "SELECT * FROM semantic_enrichment_job WHERE status=? AND next_attempt_at<=?$where " +
-                    "ORDER BY user_requested DESC,updated_at LIMIT 1",
+                    "ORDER BY user_requested DESC," +
+                    "CASE WHEN reason LIKE '${PersonalSemanticMemoryPolicy.JOB_PREFIX}%' THEN 0 ELSE 1 END," +
+                    "updated_at LIMIT 1",
                 arrayOf(SemanticEnrichmentStatus.PENDING.name, System.currentTimeMillis().toString()),
             ).use { cursor ->
                 if (!cursor.moveToFirst()) null else SemanticEnrichmentJobRecord(
@@ -2578,6 +2834,28 @@ class GalleryDatabase(
         val personVisualFactCount = db.rawQuery("SELECT COUNT(*) FROM person_attribute_fact", emptyArray()).use { cursor ->
             if (cursor.moveToFirst()) cursor.getInt(0) else 0
         }
+        val personalEligibleCount = personalSemanticMemoryEligibleMediaIds(db).size
+        val personalCounts = db.rawQuery(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN status='COMPLETE' THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN status IN ('PENDING','RUNNING') THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN status IN ('FAILED','AUTH_REQUIRED') THEN 1 ELSE 0 END),0)
+            FROM semantic_enrichment_job
+            WHERE reason LIKE ?
+            """.trimIndent(),
+            arrayOf("${PersonalSemanticMemoryPolicy.JOB_PREFIX}%"),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) IntArray(3) else IntArray(3) { cursor.getInt(it) }
+        }
+        val personalExactReuseCount = db.rawQuery(
+            "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption WHERE source_type='EXACT_DUPLICATE_REUSE'",
+            emptyArray(),
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        val personalStaleCount = db.rawQuery(
+            "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption WHERE applicability='STALE_PERSON_BINDING'",
+            emptyArray(),
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
         val latestError = db.rawQuery(
             "SELECT error FROM semantic_enrichment_job WHERE error IS NOT NULL AND error<>'' ORDER BY updated_at DESC LIMIT 1",
             emptyArray(),
@@ -2592,6 +2870,12 @@ class GalleryDatabase(
             factCount = factCount,
             captionCount = captionCount,
             personVisualFactCount = personVisualFactCount,
+            personalEligibleCount = personalEligibleCount,
+            personalCompletedCount = personalCounts[0],
+            personalPendingCount = personalCounts[1],
+            personalFailedCount = personalCounts[2],
+            personalExactReuseCount = personalExactReuseCount,
+            personalStaleCount = personalStaleCount,
             latestError = latestError,
         )
     }
@@ -2629,7 +2913,16 @@ class GalleryDatabase(
                     val id = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
                     db.insertWithOnConflict("semantic_fact", null, ContentValues().apply {
                         put("id", id)
-                        put("scope", if (subjectId == fact.evidenceMediaId) fact.scope.name else SemanticFactScope.MEDIA.name)
+                    put(
+                        "scope",
+                        if (fact.applicability == "SAFE_FOR_EXACT_DUPLICATES") {
+                            SemanticFactScope.MEDIA.name
+                        } else if (subjectId == fact.evidenceMediaId) {
+                            fact.scope.name
+                        } else {
+                            SemanticFactScope.MEDIA.name
+                        },
+                    )
                         put("subject_id", subjectId)
                         put("predicate", fact.predicate)
                         put("value", fact.value)
@@ -2653,9 +2946,17 @@ class GalleryDatabase(
                     put("text", caption.text.take(4_000))
                     put("confidence", caption.confidence.coerceIn(0f, 1f))
                     put("evidence_media_id", caption.evidenceMediaId)
+                    if (caption.representativeMediaId == null) {
+                        putNull("representative_media_id")
+                    } else {
+                        put("representative_media_id", caption.representativeMediaId)
+                    }
+                    put("source_type", caption.sourceType)
                     put("applicability", caption.applicability)
+                    put("body_region_version", caption.bodyRegionVersion)
                     put("model_version", caption.modelVersion)
                     put("prompt_version", caption.promptVersion)
+                    put("created_at", caption.createdAt.takeIf { it > 0L } ?: now)
                     put("updated_at", now)
                 }, SQLiteDatabase.CONFLICT_REPLACE)
                 db.delete("semantic_caption_person_ref", "caption_id=?", arrayOf(captionId))
@@ -2674,7 +2975,7 @@ class GalleryDatabase(
                 val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}"
                 db.insertWithOnConflict("person_attribute_fact", null, ContentValues().apply {
                     put("id", UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString())
-                    put("media_id", job.representativeMediaId)
+                    put("media_id", fact.mediaId)
                     put("cluster_id", fact.clusterId)
                     put("predicate", fact.relation.name.lowercase(Locale.ROOT))
                     put("value", fact.value.take(240))
@@ -2696,9 +2997,10 @@ class GalleryDatabase(
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
             val producer = result.caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
+            val completionPrefix = if (PersonalSemanticMemoryPolicy.isPersonalJob(job.reason)) "caption-v3" else "caption-v2"
             db.update("semantic_enrichment_job", ContentValues().apply {
                 put("status", SemanticEnrichmentStatus.COMPLETE.name)
-                put("model_version", producer?.let { "caption-v2:$it" } ?: "caption-v2:no-accepted-output")
+                put("model_version", producer?.let { "$completionPrefix:$it" } ?: "$completionPrefix:no-accepted-output")
                 putNull("error")
                 putNull("lease_owner")
                 putNull("lease_expires_at")
@@ -2846,7 +3148,7 @@ class GalleryDatabase(
     fun semanticCaptionsForMedia(mediaId: String): List<SemanticCaptionRecord> = readableDatabase.rawQuery(
         """
         SELECT DISTINCT c.* FROM semantic_caption c
-        LEFT JOIN visual_group_member gm ON c.scope='VISUAL_GROUP' AND c.subject_id=gm.group_id
+        LEFT JOIN visual_group_member gm ON c.scope IN ('VISUAL_GROUP','EXACT_DUPLICATE_GROUP') AND c.subject_id=gm.group_id
         LEFT JOIN event_media em ON c.scope='EVENT' AND c.subject_id=CAST(em.event_id AS TEXT)
         WHERE c.evidence_media_id=? OR c.subject_id=? OR gm.media_id=? OR em.media_id=?
         ORDER BY c.updated_at DESC
@@ -2904,8 +3206,8 @@ class GalleryDatabase(
             val matched = terms.count { it in haystack }
             if (matched == 0) return@flatMap emptyList()
             val expandedCandidates = when (caption.scope) {
-                SemanticFactScope.MEDIA -> emptyList()
-                SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
+                SemanticFactScope.MEDIA, SemanticFactScope.QUERY_VERIFICATION -> emptyList()
+                SemanticFactScope.EXACT_DUPLICATE_GROUP, SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
                     "SELECT media_id FROM visual_group_member WHERE group_id=?",
                     arrayOf(caption.subjectId),
                 ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
@@ -2913,7 +3215,8 @@ class GalleryDatabase(
             }
             val candidates = (listOf(caption.evidenceMediaId) + expandedCandidates).distinct()
             candidates.filter { it in allowedIds }.map { mediaId ->
-                val direct = mediaId == caption.evidenceMediaId
+                val direct = mediaId == caption.evidenceMediaId ||
+                    caption.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP
                 CaptionSearchHit(
                     mediaId = mediaId,
                     caption = caption,
@@ -2935,7 +3238,9 @@ class GalleryDatabase(
     ).use(android.database.Cursor::moveToFirst)
 
     private fun exactDuplicateMediaIds(db: GallerySqlDatabase, mediaId: String): Set<String> = db.rawQuery(
-        "SELECT sibling.media_id FROM visual_group_member source JOIN visual_group g ON g.id=source.group_id JOIN visual_group_member sibling ON sibling.group_id=g.id WHERE source.media_id=? AND g.kind='EXACT_DUPLICATE'",
+        "SELECT sibling.id FROM media_item source JOIN media_item sibling " +
+            "ON sibling.exact_content_digest=source.exact_content_digest " +
+            "WHERE source.id=? AND source.exact_content_digest IS NOT NULL",
         arrayOf(mediaId),
     ).use { cursor ->
         buildSet {
@@ -2953,9 +3258,13 @@ class GalleryDatabase(
             text = cursor.text("text"),
             confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
             evidenceMediaId = cursor.text("evidence_media_id"),
+            representativeMediaId = cursor.nullableText("representative_media_id"),
+            sourceType = cursor.text("source_type"),
             applicability = cursor.text("applicability"),
+            bodyRegionVersion = cursor.text("body_region_version"),
             modelVersion = cursor.text("model_version"),
             promptVersion = cursor.text("prompt_version"),
+            createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
             updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
             personRefs = captionPersonRefs(id),
         )

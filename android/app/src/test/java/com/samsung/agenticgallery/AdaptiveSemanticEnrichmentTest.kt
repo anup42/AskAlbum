@@ -8,8 +8,8 @@ class AdaptiveSemanticEnrichmentTest {
     @Test
     fun exactDuplicatesShareOneCanonicalRepresentativeAndEventsStayDiverse() {
         val items = listOf(
-            item("a", hash = 7L, time = 1_000L, quality = 0.9f, faces = 1),
-            item("b", hash = 7L, time = 2_000L, quality = 0.8f, faces = 1),
+            item("a", hash = 7L, time = 1_000L, quality = 0.9f, faces = 1, exactDigest = "same-pixels"),
+            item("b", hash = 7L, time = 2_000L, quality = 0.8f, faces = 1, exactDigest = "same-pixels"),
             item("c", hash = 99L, time = 90_000_000L, quality = 0.7f, faces = 3, ocr = "menu"),
             item("d", hash = 101L, time = 180_000_000L, quality = 0.6f, faces = 0),
         )
@@ -24,6 +24,30 @@ class AdaptiveSemanticEnrichmentTest {
         assertEquals(1, exact.representatives.size)
         assertTrue(plan.eventRepresentatives.map { it.mediaId }.distinct().size >= 2)
         assertTrue(plan.jobs.size < items.size * 4)
+    }
+
+    @Test
+    fun perceptualHashAloneNeverCreatesAnExactDuplicateGroup() {
+        val items = listOf(
+            item("burst-a", hash = 7L, time = 1_000L, quality = 0.9f, faces = 2),
+            item("burst-b", hash = 7L, time = 2_000L, quality = 0.8f, faces = 2),
+        )
+        val plan = AdaptiveRepresentativeSelector.buildPlan(
+            items = items,
+            eventMembership = emptyMap(),
+            embeddingReadyIds = items.mapTo(hashSetOf(), GalleryItem::id),
+        )
+
+        assertTrue(plan.groups.none { it.kind == "EXACT_DUPLICATE" })
+    }
+
+    @Test
+    fun familyRelationshipsDefaultToPersonalMemoryButFriendsDoNot() {
+        assertTrue(PersonalSemanticMemoryPolicy.defaultEnabled("Me"))
+        assertTrue(PersonalSemanticMemoryPolicy.defaultEnabled("wife"))
+        assertTrue(PersonalSemanticMemoryPolicy.defaultEnabled("grandmother"))
+        assertEquals(false, PersonalSemanticMemoryPolicy.defaultEnabled("friend"))
+        assertEquals(false, PersonalSemanticMemoryPolicy.defaultEnabled("photographer"))
     }
 
     @Test
@@ -84,8 +108,22 @@ class AdaptiveSemanticEnrichmentTest {
     fun jobBudgetReservesRecentEventsBeforeExactDuplicates() {
         val duplicateItems = (0 until 140).flatMap { group ->
             listOf(
-                item("duplicate-$group-a", hash = group.toLong(), time = group * 1_000L, quality = 0.8f, faces = 0),
-                item("duplicate-$group-b", hash = group.toLong(), time = group * 1_000L + 1L, quality = 0.7f, faces = 0),
+                item(
+                    "duplicate-$group-a",
+                    hash = group.toLong(),
+                    time = group * 1_000L,
+                    quality = 0.8f,
+                    faces = 0,
+                    exactDigest = "exact-$group",
+                ),
+                item(
+                    "duplicate-$group-b",
+                    hash = group.toLong(),
+                    time = group * 1_000L + 1L,
+                    quality = 0.7f,
+                    faces = 0,
+                    exactDigest = "exact-$group",
+                ),
             )
         }
         val eventItems = (0 until 60).map { event ->
@@ -116,6 +154,7 @@ class AdaptiveSemanticEnrichmentTest {
         quality: Float,
         faces: Int,
         ocr: String = "",
+        exactDigest: String? = null,
     ) = GalleryItem(
         id = id,
         filename = "$id.jpg",
@@ -133,6 +172,7 @@ class AdaptiveSemanticEnrichmentTest {
         ocrText = ocr,
         faceCount = faces,
         perceptualHash = hash,
+        exactContentDigest = exactDigest,
         qualityScore = quality,
     )
 }

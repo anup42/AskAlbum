@@ -37,11 +37,16 @@ class SemanticEnrichmentWorker(
         }
         val database = services.galleryDatabase
         if (database.semanticEnrichmentPlanNeedsRebuild()) {
-            SemanticEnrichmentCoordinator(database).rebuildPlan(userRequested = true)
+            SemanticEnrichmentCoordinator(database).rebuildPlan(
+                userRequested = true,
+                modelVersion = services.modelPackManager.status().packVersion,
+            )
         }
         var job = database.claimSemanticEnrichmentJob(owner = id.toString())
         if (job == null) {
-            SemanticEnrichmentCoordinator(database).rebuildPlan()
+            SemanticEnrichmentCoordinator(database).rebuildPlan(
+                modelVersion = services.modelPackManager.status().packVersion,
+            )
             job = database.claimSemanticEnrichmentJob(owner = id.toString()) ?: run {
                 Log.i(TAG, "Semantic enrichment queue is complete")
                 return Result.success()
@@ -88,6 +93,16 @@ class SemanticEnrichmentWorker(
                     database.videoKeyframes(item.id),
                 )
                 val bindings = database.reviewedFaceBindingsForMedia(item.id)
+                if (PersonalSemanticMemoryPolicy.isPersonalJob(currentJob.reason)) {
+                    val digest = PersonalSemanticMemoryPolicy.exactContentDigest(loaded.bytes, item.width, item.height)
+                    database.recordExactContentDigest(item.id, digest)
+                    if (database.reuseExactDuplicateSemanticEnrichment(currentJob, bindings, digest)) {
+                        Log.i(TAG, "Reused exact-duplicate personal caption for media=${item.id}")
+                        processed += 1
+                        job = database.claimSemanticEnrichmentJob(owner = id.toString())
+                        continue
+                    }
+                }
                 val modelImage = PersonVerificationImageComposer.compose(loaded.bytes, bindings)
                 val enricher = AdaptiveGemmaSemanticEnricher(
                     services.modelPackManager,

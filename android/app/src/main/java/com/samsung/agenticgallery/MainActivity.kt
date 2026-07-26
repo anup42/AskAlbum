@@ -60,6 +60,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -354,8 +355,14 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
                     onExcludeFace = viewModel::excludeFaceFromSelectedCluster,
                     onSetRepresentative = viewModel::setPersonClusterRepresentative,
                     onImproveCluster = viewModel::improveSelectedPersonCluster,
-                    onReviewCluster = { id, label, relationship, aliases ->
-                        viewModel.saveReviewedPersonCluster(id, label, relationship, aliases)
+                    onReviewCluster = { id, label, relationship, aliases, includeInPersonalSemanticMemory ->
+                        viewModel.saveReviewedPersonCluster(
+                            id,
+                            label,
+                            relationship,
+                            aliases,
+                            includeInPersonalSemanticMemory,
+                        )
                     },
                     onRemoveLabel = viewModel::removePersonLabel,
                     onSetHidden = viewModel::setPersonClusterHidden,
@@ -847,6 +854,28 @@ private fun IndexManagerScreen(
             enabled = modelPack.installed && modelPack.multimodal,
             onClick = onOpenSemanticMemory,
         )
+        if (semanticMemory.personalEligibleCount > 0) {
+            IndexMetric(
+                "Personal Gemma captions",
+                semanticMemory.personalCompletedCount,
+                semanticMemory.personalEligibleCount,
+                buildString {
+                    append("${semanticMemory.personalPendingCount} pending")
+                    if (semanticMemory.personalExactReuseCount > 0) {
+                        append(" | ${semanticMemory.personalExactReuseCount} exact duplicates reused")
+                    }
+                    if (semanticMemory.personalFailedCount > 0) {
+                        append(" | ${semanticMemory.personalFailedCount} unavailable")
+                    }
+                    if (semanticMemory.personalStaleCount > 0) {
+                        append(" | ${semanticMemory.personalStaleCount} stale")
+                    }
+                },
+                enabled = modelPack.installed && modelPack.multimodal,
+                inProgress = semanticMemory.personalPendingCount > 0,
+                onClick = onOpenSemanticMemory,
+            )
+        }
         IndexMetric(
             "OCR ready or skipped",
             index.ocrReady,
@@ -1062,23 +1091,27 @@ private fun IndexManagerScreen(
                 Spacer(Modifier.height(14.dp))
                 Text("Gemma semantic memory", fontWeight = FontWeight.Bold)
                 Text(
-                    "Uses the same active Gemma model on selected event and group representatives, ambiguous documents, and difficult candidates. It does not analyze every image.",
+                    "Uses the same active Gemma model for every non-duplicate photo containing reviewed Me or family, plus selected representatives and difficult candidates. Group captions remain contextual only.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp,
                 )
                 val semanticStatusText = when {
                     semanticMemoryPlanning ->
-                        "Selecting representative media. Existing gallery and people indexes remain available."
+                        "Selecting personal media and contextual representatives. Existing indexes remain available."
                     semanticMemory.runningJobs > 0 ->
-                        "Analyzing representative ${semanticMemory.processedJobs + 1} of ${semanticMemory.totalJobs} on device. ${semanticMemory.factCount} facts cached."
+                        "Analyzing ${semanticMemory.processedJobs + 1} of ${semanticMemory.totalJobs} on device. " +
+                            "${semanticMemory.personalCompletedCount}/${semanticMemory.personalEligibleCount} personal captions complete."
                     semanticMemory.pendingJobs > 0 && semanticMemory.latestError?.startsWith("thermal_status_") == true ->
-                        "Paused to let the device cool. ${semanticMemory.pendingJobs} representative analyses remain."
+                        "Paused to let the device cool. ${semanticMemory.pendingJobs} analyses remain."
                     semanticMemory.pendingJobs > 0 && semanticMemory.latestError != null ->
-                        "The previous pass paused before completion. ${semanticMemory.pendingJobs} representative analyses remain."
+                        "The previous pass paused before completion. ${semanticMemory.pendingJobs} analyses remain."
                     semanticMemory.pendingJobs > 0 ->
-                        "${semanticMemory.pendingJobs} representative analyses are queued. You can leave this screen while they run."
+                        "${semanticMemory.pendingJobs} analyses are queued, including ${semanticMemory.personalPendingCount} personal photos."
                     semanticMemory.totalJobs > 0 -> buildString {
-                        append("${semanticMemory.factCount} facts cached from ${semanticMemory.completedJobs} representatives.")
+                        append("${semanticMemory.factCount} facts and ${semanticMemory.captionCount} captions cached.")
+                        if (semanticMemory.personalEligibleCount > 0) {
+                            append(" ${semanticMemory.personalCompletedCount}/${semanticMemory.personalEligibleCount} personal photos complete.")
+                        }
                         val skipped = semanticMemory.failedJobs + semanticMemory.authenticationRequiredJobs
                         if (skipped > 0) append(" $skipped skipped or authentication-protected.")
                     }
@@ -1108,7 +1141,7 @@ private fun IndexManagerScreen(
                 ) {
                     Text(
                         when {
-                            semanticMemoryPlanning -> "Selecting representatives..."
+                            semanticMemoryPlanning -> "Selecting personal photos..."
                             semanticMemory.runningJobs > 0 -> "Building semantic memory..."
                             semanticMemory.pendingJobs > 0 && semanticMemory.latestError != null -> "Retry semantic memory"
                             semanticMemory.pendingJobs > 0 -> "Semantic memory queued"
@@ -1677,7 +1710,11 @@ private fun semanticCaptionStoredText(caption: SemanticCaptionRecord): String = 
     appendLine("subject_id=${caption.subjectId}")
     appendLine("confidence=${caption.confidence}")
     appendLine("evidence_media_id=${caption.evidenceMediaId}")
+    appendLine("representative_media_id=${caption.representativeMediaId ?: "null"}")
+    appendLine("source_type=${caption.sourceType}")
     appendLine("applicability=${caption.applicability}")
+    appendLine("body_region_version=${caption.bodyRegionVersion}")
+    appendLine("created_at=${caption.createdAt}")
     caption.personRefs.forEach { ref ->
         appendLine("${ref.personRef}=cluster:${ref.clusterId} label:${ref.resolvedLabel ?: "unlabelled"} association:${ref.associationStatus}")
     }
@@ -1984,7 +2021,7 @@ private fun PeopleScreen(
     onExcludeFace: (String) -> Unit,
     onSetRepresentative: (String) -> Unit,
     onImproveCluster: () -> Unit,
-    onReviewCluster: (String, String, String?, List<String>) -> Unit,
+    onReviewCluster: (String, String, String?, List<String>, Boolean) -> Unit,
     onRemoveLabel: (String) -> Unit,
     onSetHidden: (String, Boolean) -> Unit,
     onMerge: (String, String) -> Unit,
@@ -2112,6 +2149,12 @@ private fun PeopleScreen(
         var label by remember(cluster.id) { mutableStateOf(cluster.label.orEmpty()) }
         var relationship by remember(cluster.id) { mutableStateOf(cluster.relationship.orEmpty()) }
         var aliases by remember(cluster.id) { mutableStateOf(cluster.aliases.joinToString(", ")) }
+        var includeInPersonalSemanticMemory by remember(cluster.id) {
+            mutableStateOf(
+                cluster.includeInPersonalSemanticMemory ||
+                    PersonalSemanticMemoryPolicy.defaultEnabled(cluster.relationship),
+            )
+        }
         var mergeTarget by remember(cluster.id) { mutableStateOf("") }
         var existingPersonTargetId by remember(cluster.id) { mutableStateOf<String?>(null) }
         val existingPeople = named.filterNot { it.id == cluster.id }
@@ -2169,12 +2212,35 @@ private fun PeopleScreen(
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = relationship,
-                        onValueChange = { relationship = it },
+                        onValueChange = {
+                            relationship = it
+                            if (PersonalSemanticMemoryPolicy.defaultEnabled(it)) {
+                                includeInPersonalSemanticMemory = true
+                            }
+                        },
                         label = { Text("Relationship (optional)") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text("Me, mother, father, brother, sister, partner, child, friend, other/custom", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton(onClick = { relationship = "Me"; if (label.isBlank()) label = "Me" }) { Text("Mark as Me") }
+                    TextButton(onClick = {
+                        relationship = "Me"
+                        includeInPersonalSemanticMemory = true
+                        if (label.isBlank()) label = "Me"
+                    }) { Text("Mark as Me") }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = includeInPersonalSemanticMemory,
+                            onCheckedChange = { includeInPersonalSemanticMemory = it },
+                        )
+                        Column {
+                            Text("Include in personal semantic memory")
+                            Text(
+                                "Creates an individual on-device Gemma caption for photos containing this person.",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = aliases,
@@ -2182,7 +2248,16 @@ private fun PeopleScreen(
                         label = { Text("Aliases, comma separated") },
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { onReviewCluster(cluster.id, label, relationship.ifBlank { null }, parseAliases(aliases)) ; editingCluster = null }),
+                        keyboardActions = KeyboardActions(onDone = {
+                            onReviewCluster(
+                                cluster.id,
+                                label,
+                                relationship.ifBlank { null },
+                                parseAliases(aliases),
+                                includeInPersonalSemanticMemory,
+                            )
+                            editingCluster = null
+                        }),
                     )
                     if (cluster.reviewed) {
                         Spacer(Modifier.height(10.dp))
@@ -2229,7 +2304,13 @@ private fun PeopleScreen(
                 Button(
                     enabled = label.isNotBlank(),
                     onClick = {
-                        onReviewCluster(cluster.id, label, relationship.ifBlank { null }, parseAliases(aliases))
+                        onReviewCluster(
+                            cluster.id,
+                            label,
+                            relationship.ifBlank { null },
+                            parseAliases(aliases),
+                            includeInPersonalSemanticMemory,
+                        )
                         editingCluster = null
                     },
                 ) { Text("Save") }
@@ -2361,6 +2442,9 @@ private fun PersonClusterCard(
                     Text(cluster.label ?: "Unreviewed person", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text("${cluster.faceCount} faces • ${if (cluster.reviewed) "reviewed" else "to review"}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                     cluster.relationship?.let { Text(it, fontSize = 12.sp) }
+                    if (cluster.includeInPersonalSemanticMemory) {
+                        Text("Personal semantic memory", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                    }
                     if (cluster.aliases.isNotEmpty()) Text(cluster.aliases.joinToString(", "), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }

@@ -34,6 +34,7 @@ class GalleryRepository(context: Context) {
         }
         database.seedDemoIfEmpty()
         database.ensureStageRows()
+        queuePersonalSemanticMemory()
         services.ocrModelPackManager.current()?.let { database.requestOcrReindex(it.spec.producerVersion) }
         if (database.pendingItems(1).isNotEmpty()) {
             if (restartWorkersAfterUpdate) IndexScheduler.restart(appContext) else IndexScheduler.schedule(appContext)
@@ -183,8 +184,19 @@ class GalleryRepository(context: Context) {
         return changed
     }
 
-    fun saveReviewedPersonCluster(id: String, label: String, relationship: String?, aliases: List<String>): PeopleIndexStatus =
-        database.saveReviewedPersonCluster(id, label, relationship, aliases)
+    fun saveReviewedPersonCluster(
+        id: String,
+        label: String,
+        relationship: String?,
+        aliases: List<String>,
+        includeInPersonalSemanticMemory: Boolean? = null,
+    ): PeopleIndexStatus = database.saveReviewedPersonCluster(
+        id,
+        label,
+        relationship,
+        aliases,
+        includeInPersonalSemanticMemory,
+    ).also { queuePersonalSemanticMemory(userRequested = true) }
 
     fun personClustersPendingReview(): List<PersonClusterReviewItem> = database.personClustersPendingReview()
     fun personClusterSummaries(includeHidden: Boolean = true): List<PersonClusterReviewItem> =
@@ -194,11 +206,15 @@ class GalleryRepository(context: Context) {
     fun setPersonClusterRepresentative(id: String, faceId: String) =
         database.setPersonClusterRepresentative(id, faceId)
     fun excludeFaceFromCluster(faceId: String): String = database.excludeFaceFromCluster(faceId)
+        .also { queuePersonalSemanticMemory(userRequested = true) }
     fun removePersonLabel(id: String): PeopleIndexStatus = database.removePersonLabel(id)
+        .also { queuePersonalSemanticMemory() }
     fun setPersonClusterHidden(id: String, hidden: Boolean): PeopleIndexStatus = database.setPersonClusterHidden(id, hidden)
+        .also { if (!hidden) queuePersonalSemanticMemory(userRequested = true) }
     fun mergePersonClusters(targetId: String, sourceId: String): PeopleIndexStatus =
-        database.mergePersonClusters(targetId, sourceId)
-    fun moveFaceToCluster(faceId: String, targetId: String? = null): String = database.moveFaceToCluster(faceId, targetId)
+        database.mergePersonClusters(targetId, sourceId).also { queuePersonalSemanticMemory(userRequested = true) }
+    fun moveFaceToCluster(faceId: String, targetId: String? = null): String =
+        database.moveFaceToCluster(faceId, targetId).also { queuePersonalSemanticMemory(userRequested = true) }
 
     fun pendingItems(limit: Int): List<GalleryItem> = database.pendingItems(limit)
     fun pendingItemsForIds(mediaIds: Set<String>, limit: Int): List<GalleryItem> = database.pendingItemsForIds(mediaIds, limit)
@@ -208,8 +224,10 @@ class GalleryRepository(context: Context) {
     fun markFaces(mediaId: String) = database.markFaces(mediaId)
     fun completeFaces(mediaId: String, detections: List<FaceDetectionRecord>, producerVersion: String) =
         database.completeFaces(mediaId, detections, producerVersion)
-    fun completeEmbeddedFaces(mediaId: String, faces: List<FaceInstance>, clusterIds: List<String>, producerVersion: String) =
+    fun completeEmbeddedFaces(mediaId: String, faces: List<FaceInstance>, clusterIds: List<String>, producerVersion: String) {
         database.completeEmbeddedFaces(mediaId, faces, clusterIds, producerVersion)
+        queuePersonalSemanticMemory(mediaIds = setOf(mediaId))
+    }
     fun faceIdsForMedia(mediaId: String): List<String> = database.faceIdsForMedia(mediaId)
     fun allEmbeddedFaceIds(): Set<String> = database.allEmbeddedFaceIds()
     fun clusterIdForFace(faceId: String): String? = database.clusterIdForFace(faceId)
@@ -219,6 +237,7 @@ class GalleryRepository(context: Context) {
         database.faceClusterMemberships(clusterId)
     fun refineReviewedPersonCluster(clusterId: String, representativeFaceId: String, rejectedFaceIds: Set<String>): Int =
         database.refineReviewedPersonCluster(clusterId, representativeFaceId, rejectedFaceIds)
+            .also { if (it > 0) queuePersonalSemanticMemory(userRequested = true) }
     fun ensureAutomaticPersonCluster(id: String) = database.ensureAutomaticPersonCluster(id)
     fun failFaces(mediaId: String, message: String, permanent: Boolean) = database.failFaces(mediaId, message, permanent)
     fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> =
@@ -271,7 +290,10 @@ class GalleryRepository(context: Context) {
         SemanticEnrichmentScheduler.schedule(appContext)
     }
     fun requestSemanticEnrichment(): SemanticEnrichmentPlan =
-        SemanticEnrichmentCoordinator(database).rebuildPlan(userRequested = true).also {
+        SemanticEnrichmentCoordinator(database).rebuildPlan(
+            userRequested = true,
+            modelVersion = services.modelPackManager.status().packVersion,
+        ).also {
             SemanticEnrichmentScheduler.schedule(appContext, userRequested = true)
         }
     fun semanticMemoryProgress(): SemanticMemoryProgress {
@@ -280,6 +302,22 @@ class GalleryRepository(context: Context) {
             SemanticEnrichmentScheduler.schedule(appContext)
         }
         return database.semanticMemoryProgress()
+    }
+
+    private fun queuePersonalSemanticMemory(
+        userRequested: Boolean = false,
+        mediaIds: Set<String>? = null,
+    ): Int {
+        val model = services.modelPackManager.status()
+        if (!model.installed || !model.multimodal) return 0
+        val queued = database.queueEligiblePersonalSemanticMemoryJobs(model.packVersion, userRequested, mediaIds)
+        if (
+            indexingJobControlsStore.load().semanticMemoryEnabled &&
+            database.hasPendingSemanticEnrichmentJobs()
+        ) {
+            SemanticEnrichmentScheduler.schedule(appContext, userRequested)
+        }
+        return queued
     }
     fun semanticMemoryMedia(): List<SemanticMemoryMedia> {
         val accessibleItems = database.allItems().associateBy(GalleryItem::id)
@@ -624,6 +662,14 @@ class GalleryRepository(context: Context) {
             diverse
         }
         val cachedSemanticFacts = database.semanticFacts(deterministicFacts.map { it.item.id })
+            .filter {
+                it.scope == SemanticFactScope.MEDIA &&
+                    it.applicability !in setOf(
+                        "GROUP_CONTEXT_ONLY",
+                        "LEGACY_GROUP_CONTEXT_ONLY",
+                        "STALE_PERSON_BINDING",
+                    )
+            }
             .groupBy(SemanticFactRecord::subjectId)
         val enriched = deterministicFacts.map { hit ->
             val cached = cachedSemanticFacts[hit.item.id].orEmpty().map { fact ->

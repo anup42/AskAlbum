@@ -1,5 +1,22 @@
 # Agentic Gallery implementation status
 
+## 2026-07-27 - Per-image semantic memory for reviewed self and family
+
+Status: **IMPLEMENTED, FOCUSED TESTS PASS, BUILT; CONNECTED VALIDATION AND INSTALL NOT RUN.**
+
+- Room schema v17 non-destructively adds reviewed-person personal-memory eligibility, conservative exact-content identity, and explicit caption provenance.
+- Every accessible ready image containing reviewed `Me`, a recognized family relationship, or a person explicitly enabled in the editor receives an idempotent high-priority `MEDIA` caption job.
+- Perceptual hashes no longer establish exact duplicates. Exact reuse requires matching SHA-256 content identity and equivalent reviewed cluster-to-face bindings; otherwise each image receives independent Gemma analysis.
+- Visual-group and event captions remain contextual candidate evidence. Legacy perceptual-group claims are reclassified and cannot become direct individual-image semantic facts.
+- People tagging, merge, move, exclusion, hide/unhide, and incremental face indexing enqueue or invalidate only affected personal media; aliases and renames retain cluster-keyed visual evidence.
+- The People editor includes `Include in personal semantic memory`, defaulted on for `Me` and family relationships. Coverage reports personal eligible, complete, pending, failed, exact-reuse, and stale counts separately.
+- One shared Gemma call still produces the comprehensive caption, scene facts, and person-bound observations. Background processing remains durable, serialized, and off the UI thread.
+- `AdaptiveSemanticEnrichmentTest` and `ComprehensiveSemanticCaptionTest`: PASS.
+- Consumer and CI Android-test source compilation: PASS. `ConsumerDebug` assemble: PASS.
+- `GalleryMigration16To17Test` and `PersonalSemanticMemoryDatabaseTest`: NOT RUN because no ADB device was connected.
+- Replacement install and real-gallery swapped-person, cropped-footwear, exact-reuse, and UI responsiveness checks: NOT RUN because no ADB device was connected.
+- No uninstall, clear-data, index reset, People reset, or consumer instrumentation was performed.
+
 ## 2026-07-26 - Self-recovering indexing reliability
 
 - Added non-destructive v15 leases, delayed item retries, exhausted-item quarantine, and stale-only recovery.

@@ -15,7 +15,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Entity(
     tableName = "media_item",
-    indices = [Index(name = "media_item_state_idx", value = ["index_state"]), Index(name = "media_item_capture_idx", value = ["captured_at"])],
+    indices = [
+        Index(name = "media_item_state_idx", value = ["index_state"]),
+        Index(name = "media_item_capture_idx", value = ["captured_at"]),
+        Index(name = "media_item_exact_digest_idx", value = ["exact_content_digest"]),
+    ],
 )
 data class MediaItemEntity(
     @PrimaryKey val id: String,
@@ -51,6 +55,7 @@ data class MediaItemEntity(
     @ColumnInfo(name = "access_state", defaultValue = "'ACCESSIBLE'") val accessState: String,
     @ColumnInfo(name = "last_seen_at") val lastSeenAt: Long?,
     @ColumnInfo(name = "perceptual_hash") val perceptualHash: String?,
+    @ColumnInfo(name = "exact_content_digest") val exactContentDigest: String?,
     @ColumnInfo(name = "blur_score") val blurScore: Float?,
     @ColumnInfo(name = "exposure_score") val exposureScore: Float?,
     @ColumnInfo(name = "quality_score") val qualityScore: Float?,
@@ -219,6 +224,7 @@ data class PersonClusterEntity(
     @ColumnInfo(defaultValue = "''") val aliases: String = "",
     @ColumnInfo(defaultValue = "0") val reviewed: Boolean = false,
     @ColumnInfo(defaultValue = "0") val hidden: Boolean = false,
+    @ColumnInfo(name = "include_in_personal_memory", defaultValue = "0") val includeInPersonalMemory: Boolean = false,
     @ColumnInfo(name = "representative_face_id") val representativeFaceId: String? = null,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
@@ -455,9 +461,13 @@ data class SemanticCaptionEntity(
     val text: String,
     val confidence: Float,
     @ColumnInfo(name = "evidence_media_id") val evidenceMediaId: String,
+    @ColumnInfo(name = "representative_media_id") val representativeMediaId: String?,
+    @ColumnInfo(name = "source_type", defaultValue = "'GEMMA_DIRECT'") val sourceType: String,
     val applicability: String,
+    @ColumnInfo(name = "body_region_version", defaultValue = "'person-body-regions-v1'") val bodyRegionVersion: String,
     @ColumnInfo(name = "model_version") val modelVersion: String,
     @ColumnInfo(name = "prompt_version") val promptVersion: String,
+    @ColumnInfo(name = "created_at", defaultValue = "0") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
 )
 
@@ -541,7 +551,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticCaptionPersonRefEntity::class,
         SemanticEnrichmentJobEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -568,6 +578,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_13_14,
             MIGRATION_14_15,
             MIGRATION_15_16,
+            MIGRATION_16_17,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -805,6 +816,41 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                         "FOREIGN KEY(cluster_id) REFERENCES person_cluster(id) ON UPDATE NO ACTION ON DELETE CASCADE)",
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_person_cluster_idx ON semantic_caption_person_ref(cluster_id)")
+            }
+        }
+
+        internal val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE media_item ADD COLUMN exact_content_digest TEXT")
+                db.execSQL("CREATE INDEX IF NOT EXISTS media_item_exact_digest_idx ON media_item(exact_content_digest)")
+                db.execSQL("ALTER TABLE person_cluster ADD COLUMN include_in_personal_memory INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "UPDATE person_cluster SET include_in_personal_memory=1 WHERE reviewed=1 AND " +
+                        "lower(trim(COALESCE(relationship,''))) IN " +
+                        "('me','mother','mom','mum','father','dad','brother','sister','partner','spouse','wife','husband'," +
+                        "'child','son','daughter','grandparent','grandmother','grandfather','grandma','grandpa')",
+                )
+                db.execSQL("ALTER TABLE semantic_caption ADD COLUMN representative_media_id TEXT")
+                db.execSQL("ALTER TABLE semantic_caption ADD COLUMN source_type TEXT NOT NULL DEFAULT 'GEMMA_DIRECT'")
+                db.execSQL("ALTER TABLE semantic_caption ADD COLUMN body_region_version TEXT NOT NULL DEFAULT 'person-body-regions-v1'")
+                db.execSQL("ALTER TABLE semantic_caption ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE semantic_caption SET representative_media_id=evidence_media_id,created_at=updated_at")
+                db.execSQL(
+                    "UPDATE semantic_caption SET source_type=CASE scope " +
+                        "WHEN 'VISUAL_GROUP' THEN 'LEGACY_VISUAL_GROUP_REPRESENTATIVE' " +
+                        "WHEN 'EVENT' THEN 'LEGACY_EVENT_REPRESENTATIVE' ELSE 'LEGACY_MEDIA_DIRECT' END",
+                )
+                db.execSQL(
+                    "UPDATE semantic_caption SET applicability='GROUP_CONTEXT_ONLY' " +
+                        "WHERE scope IN ('VISUAL_GROUP','EVENT')",
+                )
+                db.execSQL(
+                    "UPDATE semantic_fact SET scope='VISUAL_GROUP',applicability='LEGACY_GROUP_CONTEXT_ONLY' " +
+                        "WHERE applicability='EXACT_DUPLICATE_SHARED'",
+                )
+                db.execSQL(
+                    "UPDATE visual_group SET kind='PERCEPTUAL_SIMILARITY_LEGACY' WHERE kind='EXACT_DUPLICATE'",
+                )
             }
         }
 
