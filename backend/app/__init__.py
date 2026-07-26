@@ -1,2 +1,0 @@
-"""AskPhotos server package."""
-

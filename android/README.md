@@ -1,6 +1,6 @@
 # Agentic Gallery Android
 
-Native, local-only Android implementation of the Agentic Gallery architecture. It is separate from the legacy GPU-server proof of concept in the repository root.
+Native, local-only Android implementation of Agentic Gallery. Retrieval, indexing, inference, and private data storage run on the device.
 
 ## Implemented
 
