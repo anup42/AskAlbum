@@ -315,6 +315,7 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
                     selectedClusterFaces = state.selectedPeopleClusterFaces,
                     selectedClusterFacesLoading = state.peopleClusterFacesLoading,
                     operationMessage = state.operationMessage,
+                    onEnablePeople = viewModel::enablePeopleIndexing,
                     onOpenCluster = viewModel::openPersonCluster,
                     onCloseCluster = viewModel::closePersonCluster,
                     onLoadMoreClusterFaces = viewModel::loadMorePersonClusterFaces,
@@ -1285,6 +1286,7 @@ private fun PeopleScreen(
     selectedClusterFaces: List<PersonFaceReviewItem>,
     selectedClusterFacesLoading: Boolean,
     operationMessage: String?,
+    onEnablePeople: () -> Unit,
     onOpenCluster: (String) -> Unit,
     onCloseCluster: () -> Unit,
     onLoadMoreClusterFaces: () -> Unit,
@@ -1332,7 +1334,14 @@ private fun PeopleScreen(
                     Text("${toReview.size} to review • ${named.size} named • ${hidden.size} hidden")
                     Spacer(Modifier.height(6.dp))
                     if (!peopleIndex.enabled) {
-                        Text("People indexing is currently off. Enable it in Privacy first.")
+                        Text("Face indexing is off. Enable it to create private, on-device people clusters.")
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = onEnablePeople,
+                            modifier = Modifier.fillMaxWidth().testTag("enable-people-index"),
+                        ) {
+                            Text("Enable face indexing")
+                        }
                     }
                 }
             }
@@ -1340,7 +1349,7 @@ private fun PeopleScreen(
         }
         if (!peopleIndex.enabled) {
             item(key = "people-disabled") {
-                Text("No review is possible while people indexing is disabled.")
+                Text("No review is possible until face indexing is enabled.")
             }
         } else if (clusters.isEmpty()) {
             item(key = "people-processing") {
