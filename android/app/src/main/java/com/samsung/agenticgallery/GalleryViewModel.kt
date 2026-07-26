@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class AppDestination { ONBOARDING, GALLERY, ALBUMS, ASK, RESULTS, MENU, INDEX_MANAGER, PRIVACY, PEOPLE }
+enum class AppDestination { ONBOARDING, GALLERY, ALBUMS, ASK, RESULTS, MENU, INDEX_MANAGER, SEMANTIC_MEMORY, PRIVACY, PEOPLE }
 
 enum class QueryExecutionStage { UNDERSTANDING, SEARCHING, INITIAL_RESULTS, VERIFYING, COMPOSING }
 
@@ -41,6 +41,9 @@ data class GalleryUiState(
     val operationMessage: String? = null,
     val semanticMemory: SemanticMemoryProgress = SemanticMemoryProgress(),
     val semanticMemoryPlanning: Boolean = false,
+    val semanticMemoryMedia: List<SemanticMemoryMedia> = emptyList(),
+    val semanticMemoryMediaLoading: Boolean = false,
+    val semanticMemoryMediaError: String? = null,
     val modelPack: ModelPackStatus = ModelPackStatus(installed = false),
     val modelDownload: GemmaDownloadProgress = GemmaDownloadProgress(),
     val retrievalPack: RetrievalPackStatus = RetrievalPackStatus(installed = false),
@@ -196,6 +199,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 AppDestination.PEOPLE,
                 AppDestination.PRIVACY,
                 AppDestination.INDEX_MANAGER,
+                AppDestination.SEMANTIC_MEMORY,
             )
 
     fun navigateBack() {
@@ -205,6 +209,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
         val previous = destinationHistory.removeLastOrNull() ?: when (state.destination) {
             AppDestination.RESULTS -> AppDestination.ASK
+            AppDestination.SEMANTIC_MEMORY -> AppDestination.INDEX_MANAGER
             AppDestination.PEOPLE, AppDestination.PRIVACY, AppDestination.INDEX_MANAGER -> AppDestination.MENU
             else -> null
         }
@@ -226,10 +231,35 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         if (destination == AppDestination.PEOPLE) {
             loadPeopleReviewClusters()
         }
-        if (destination == AppDestination.INDEX_MANAGER) {
+        if (destination == AppDestination.SEMANTIC_MEMORY) {
+            loadSemanticMemoryMedia()
+        }
+        if (destination == AppDestination.INDEX_MANAGER || destination == AppDestination.SEMANTIC_MEMORY) {
             monitorSemanticMemory()
         } else {
             semanticMemoryMonitorJob?.cancel()
+        }
+    }
+
+    private fun loadSemanticMemoryMedia() {
+        state = state.copy(
+            semanticMemoryMediaLoading = true,
+            semanticMemoryMediaError = null,
+        )
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { repository.semanticMemoryMedia() } }
+                .onSuccess { media ->
+                    state = state.copy(
+                        semanticMemoryMedia = media,
+                        semanticMemoryMediaLoading = false,
+                    )
+                }
+                .onFailure { error ->
+                    state = state.copy(
+                        semanticMemoryMediaLoading = false,
+                        semanticMemoryMediaError = error.message ?: "Could not load cached Gemma facts",
+                    )
+                }
         }
     }
 

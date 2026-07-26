@@ -51,6 +51,12 @@ data class SemanticMemoryProgress(
         get() = pendingJobs > 0 || runningJobs > 0
 }
 
+data class SemanticMemoryMedia(
+    val item: GalleryItem,
+    val facts: List<SemanticFactRecord>,
+    val protectedFactCount: Int = 0,
+)
+
 data class VisualGroupPlan(
     val id: String,
     val kind: String,

@@ -218,6 +218,27 @@ class GalleryRepository(context: Context) {
             SemanticEnrichmentScheduler.schedule(appContext, userRequested = true)
         }
     fun semanticMemoryProgress(): SemanticMemoryProgress = database.semanticMemoryProgress()
+    fun semanticMemoryMedia(): List<SemanticMemoryMedia> {
+        val accessibleItems = database.allItems().associateBy(GalleryItem::id)
+        return database.allSemanticFacts()
+            .groupBy(SemanticFactRecord::evidenceMediaId)
+            .mapNotNull { (mediaId, storedFacts) ->
+                val item = accessibleItems[mediaId] ?: return@mapNotNull null
+                val (protectedFacts, visibleFacts) = storedFacts.partition {
+                    SensitiveContentClassifier.isSensitive("${it.predicate} ${it.value}")
+                }
+                SemanticMemoryMedia(
+                    item = item,
+                    facts = visibleFacts,
+                    protectedFactCount = protectedFacts.size,
+                )
+            }
+            .sortedWith(
+                compareByDescending<SemanticMemoryMedia> {
+                    it.item.capturedAt ?: it.item.modifiedAt ?: 0L
+                }.thenBy { it.item.id },
+            )
+    }
     fun events(): List<EventRecord> = database.events()
     fun saveEventCorrection(
         operation: EventCorrectionOperation,

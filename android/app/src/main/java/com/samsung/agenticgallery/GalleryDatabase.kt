@@ -2424,6 +2424,32 @@ class GalleryDatabase(
         }
     }
 
+    fun allSemanticFacts(): List<SemanticFactRecord> = readableDatabase.rawQuery(
+        "SELECT * FROM semantic_fact ORDER BY updated_at DESC, predicate, value",
+        emptyArray(),
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(
+                    SemanticFactRecord(
+                        scope = SemanticFactScope.valueOf(cursor.text("scope")),
+                        subjectId = cursor.text("subject_id"),
+                        predicate = cursor.text("predicate"),
+                        value = cursor.text("value"),
+                        confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
+                        evidenceMediaId = cursor.text("evidence_media_id"),
+                        region = cursor.nullableText("region")?.let { encoded ->
+                            JSONArray(encoded).let { array -> List(array.length()) { array.getDouble(it).toFloat() } }
+                        },
+                        applicability = cursor.text("applicability"),
+                        modelVersion = cursor.text("model_version"),
+                        promptVersion = cursor.text("prompt_version"),
+                    ),
+                )
+            }
+        }
+    }
+
     fun semanticFactsForMedia(mediaId: String): List<SemanticFactRecord> = readableDatabase.rawQuery(
         "SELECT * FROM semantic_fact WHERE subject_id=? OR evidence_media_id=? ORDER BY predicate,value",
         arrayOf(mediaId, mediaId),

@@ -301,6 +301,7 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
                     indexingActive = state.indexingActive,
                     onRetry = viewModel::retryIndexing,
                     onBuildSemanticMemory = viewModel::requestSemanticEnrichment,
+                    onOpenSemanticMemory = { viewModel.navigate(AppDestination.SEMANTIC_MEMORY) },
                     onImportRetrievalModel = {
                         retrievalModelPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
                     },
@@ -315,6 +316,12 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
                     onImportFaceModel = {
                         faceModelPicker.launch(arrayOf("application/octet-stream", "*/*"))
                     },
+                )
+                state.destination == AppDestination.SEMANTIC_MEMORY -> SemanticMemoryScreen(
+                    media = state.semanticMemoryMedia,
+                    loading = state.semanticMemoryMediaLoading,
+                    error = state.semanticMemoryMediaError,
+                    onOpenMedia = viewModel::showEvidence,
                 )
                 state.destination == AppDestination.PEOPLE -> PeopleScreen(
                     peopleIndex = state.peopleIndex,
@@ -408,7 +415,7 @@ private fun AppNavigation(selected: AppDestination, onSelect: (AppDestination) -
             )
             GalleryNavigationItem(
                 selected = selected == AppDestination.MENU || selected == AppDestination.INDEX_MANAGER || selected == AppDestination.PRIVACY ||
-                    selected == AppDestination.PEOPLE,
+                    selected == AppDestination.PEOPLE || selected == AppDestination.SEMANTIC_MEMORY,
                 label = "Menu",
                 icon = R.drawable.ic_gallery_menu,
                 onClick = { onSelect(AppDestination.MENU) },
@@ -785,6 +792,7 @@ private fun IndexManagerScreen(
     indexingActive: Boolean,
     onRetry: () -> Unit,
     onBuildSemanticMemory: () -> Unit,
+    onOpenSemanticMemory: () -> Unit,
     onImportRetrievalModel: () -> Unit,
     onInstallEmbeddedRetrievalModel: () -> Unit,
     onDownloadOcrModel: () -> Unit,
@@ -813,6 +821,7 @@ private fun IndexManagerScreen(
             index.discovered,
             modelPack.packVersion ?: "No verified Gemma facts",
             enabled = modelPack.installed && modelPack.multimodal,
+            onClick = onOpenSemanticMemory,
         )
         IndexMetric(
             "OCR ready or skipped",
@@ -1162,10 +1171,14 @@ private fun IndexMetric(
     version: String,
     enabled: Boolean = true,
     inProgress: Boolean = false,
+    onClick: (() -> Unit)? = null,
 ) {
     val fraction = if (total <= 0) 0f else (value.toFloat() / total).coerceIn(0f, 1f)
+    val cardModifier = Modifier.fillMaxWidth().padding(bottom = 10.dp).let { base ->
+        if (onClick == null) base else base.clickable(onClick = onClick)
+    }
     Card(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+        modifier = cardModifier,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(18.dp),
     ) {
@@ -1183,6 +1196,180 @@ private fun IndexMetric(
                         Text("${(fraction * 100).toInt()}%", fontSize = 9.sp, fontWeight = FontWeight.Bold)
                     }
                     else -> Text("$value / $total", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            }
+            if (onClick != null) {
+                Spacer(Modifier.height(7.dp))
+                Text("Tap to inspect evidence media and stored facts", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SemanticMemoryScreen(
+    media: List<SemanticMemoryMedia>,
+    loading: Boolean,
+    error: String?,
+    onOpenMedia: (SearchHit) -> Unit,
+) {
+    var selectedMediaId by remember { mutableStateOf<String?>(null) }
+    val selected = media.firstOrNull { it.item.id == selectedMediaId }
+    BackHandler(selected != null) { selectedMediaId = null }
+    if (selected != null) {
+        SemanticMemoryDetail(selected, onOpenMedia)
+        return
+    }
+    LazyVerticalGrid(
+        modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+        columns = GridCells.Fixed(2),
+        contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 28.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Column(Modifier.padding(bottom = 8.dp)) {
+                Text("Gemma semantic memory", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "${media.size} evidence media with cached facts. Newest media is shown first.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Tap an item to inspect exactly what is cached. Sensitive values remain protected.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+        when {
+            loading -> item(span = { GridItemSpan(maxLineSpan) }) {
+                Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+            error != null -> item(span = { GridItemSpan(maxLineSpan) }) {
+                Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 24.dp))
+            }
+            media.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+                Text(
+                    "No cached Gemma facts yet. Build semantic memory from the On-device AI screen.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 24.dp),
+                )
+            }
+            else -> items(media, key = { it.item.id }, contentType = { "semantic-memory-media" }) { entry ->
+                Column {
+                    MediaThumbnail(
+                        item = entry.item,
+                        selected = false,
+                        onClick = { selectedMediaId = entry.item.id },
+                        onLongClick = { selectedMediaId = entry.item.id },
+                    )
+                    Text(
+                        "${entry.facts.size + entry.protectedFactCount} stored facts",
+                        modifier = Modifier.padding(top = 5.dp, start = 2.dp),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SemanticMemoryDetail(
+    entry: SemanticMemoryMedia,
+    onOpenMedia: (SearchHit) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+        contentPadding = PaddingValues(18.dp, 10.dp, 18.dp, 32.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Text("Stored Gemma facts", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(10.dp))
+            MediaThumbnail(
+                item = entry.item,
+                selected = false,
+                onClick = {
+                    onOpenMedia(
+                        SearchHit(
+                            entry.item,
+                            1.0,
+                            entry.facts.mapIndexed { index, fact ->
+                                EvidenceRecord(
+                                    id = "semantic-memory:${entry.item.id}:$index",
+                                    mediaId = entry.item.id,
+                                    sourceField = "semantic_fact",
+                                    text = "${fact.predicate}: ${fact.value}",
+                                    confidence = fact.confidence,
+                                    producerVersion = fact.modelVersion,
+                                    region = fact.region,
+                                )
+                            },
+                        ),
+                    )
+                },
+                onLongClick = {},
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "${entry.facts.size + entry.protectedFactCount} cached facts for this evidence item",
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "Tap the image to open the full viewer.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+            )
+        }
+        if (entry.protectedFactCount > 0) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("${entry.protectedFactCount} protected facts", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Sensitive values are hidden here. Open the image, then use Details to authenticate and inspect protected indexed metadata.",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+            }
+        }
+        items(entry.facts, key = { "${it.scope}:${it.subjectId}:${it.predicate}:${it.value}:${it.modelVersion}:${it.promptVersion}" }) { fact ->
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text(fact.predicate, fontWeight = FontWeight.Bold)
+                    Text(fact.value, fontSize = 17.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Scope ${fact.scope.name} | confidence ${(fact.confidence * 100).toInt()}% | ${fact.applicability}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                    )
+                    Text("Subject ${fact.subjectId}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    Text(
+                        "Model ${fact.modelVersion} | prompt ${fact.promptVersion}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                    )
+                    fact.region?.let { region ->
+                        Text(
+                            "Region ${region.joinToString(", ") { value -> "%.3f".format(value) }}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                        )
+                    }
                 }
             }
         }
