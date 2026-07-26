@@ -17,8 +17,10 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
     private val app = appContext as AgenticGalleryApplication
     private val repository = app.repository
     private val workAdmission = BackgroundWorkAdmissionPolicy(appContext)
+    private val jobControls = IndexingJobControlsStore(appContext)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        if (!jobControls.load().embeddingsEnabled) return@withContext Result.success()
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         repository.recoverInterruptedJobs()
         val batch = EmbeddingIndexBatchProcessor(
@@ -26,7 +28,13 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
             repository = repository,
             vectors = app.services.semanticVectorStore,
             engine = app.services.embeddingEngine,
-        ).processBatch(canContinue = { !isStopped && workAdmission.evaluate().allowed })
+        ).processBatch(
+            canContinue = {
+                !isStopped &&
+                    jobControls.load().embeddingsEnabled &&
+                    workAdmission.evaluate().allowed
+            },
+        )
         if (batch.hasMore) EmbeddingIndexScheduler.scheduleContinuation(applicationContext)
         if (batch.stopped || batch.retryableFailures > 0) Result.retry() else Result.success()
     }
@@ -44,10 +52,12 @@ object EmbeddingIndexScheduler {
     private const val UNIQUE_WORK = "gallery-image-embeddings"
 
     fun schedule(context: Context) {
+        if (!IndexingJobControlsStore(context).load().embeddingsEnabled) return
         WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.KEEP, request(context))
     }
 
     fun scheduleContinuation(context: Context) {
+        if (!IndexingJobControlsStore(context).load().embeddingsEnabled) return
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
@@ -58,7 +68,9 @@ object EmbeddingIndexScheduler {
     fun restart(context: Context) {
         val workManager = WorkManager.getInstance(context)
         workManager.cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
-        workManager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.REPLACE, request(context))
+        if (IndexingJobControlsStore(context).load().embeddingsEnabled) {
+            workManager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.REPLACE, request(context))
+        }
     }
 
     fun cancelAndWait(context: Context) {

@@ -13,17 +13,21 @@ object PeopleIndexScheduler {
     private const val UNIQUE_WORK = "gallery-people-index"
 
     fun schedule(context: Context) {
+        if (!IndexingJobControlsStore(context).load().peopleEnabled) return
         WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.KEEP, request(context))
     }
 
     fun scheduleContinuation(context: Context) {
+        if (!IndexingJobControlsStore(context).load().peopleEnabled) return
         WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, request(context))
     }
 
     fun restart(context: Context) {
         val workManager = WorkManager.getInstance(context)
         workManager.cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
-        workManager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.REPLACE, request(context))
+        if (IndexingJobControlsStore(context).load().peopleEnabled) {
+            workManager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.REPLACE, request(context))
+        }
     }
 
     fun cancelAndWait(context: Context) {

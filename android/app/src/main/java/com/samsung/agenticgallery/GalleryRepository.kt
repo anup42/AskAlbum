@@ -21,6 +21,7 @@ class GalleryRepository(context: Context) {
     private val groundedAnswerComposer = services.groundedAnswerComposer
     private val importer = MediaImporter(context.applicationContext)
     private val indexingRunCriteriaStore = IndexingRunCriteriaStore(appContext)
+    private val indexingJobControlsStore = IndexingJobControlsStore(appContext)
     private val planPatchResolver = ResultSetPlanPatchResolver()
     private val sessionPlans = ConcurrentHashMap<String, GalleryQueryPlan>()
 
@@ -45,6 +46,9 @@ class GalleryRepository(context: Context) {
     fun indexingAdmission(): BackgroundWorkAdmission = BackgroundWorkAdmissionPolicy(appContext).evaluate()
     fun saveIndexingRunCriteria(criteria: IndexingRunCriteria): IndexingRunCriteria =
         indexingRunCriteriaStore.save(criteria)
+    fun indexingJobControls(): IndexingJobControls = indexingJobControlsStore.load()
+    fun setIndexingJobEnabled(job: IndexingJob, enabled: Boolean): IndexingJobControls =
+        indexingJobControlsStore.setEnabled(job, enabled)
     fun indexCoverageForContentUris(contentUris: Collection<String>): ScopedIndexCoverage =
         database.indexCoverageForContentUris(contentUris)
 

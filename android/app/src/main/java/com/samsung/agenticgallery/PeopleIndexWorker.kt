@@ -18,9 +18,11 @@ class PeopleIndexWorker(
     private val imageLoader = GalleryImageLoader(appContext)
     private val workAdmission = BackgroundWorkAdmissionPolicy(appContext)
     private val services = (appContext as AgenticGalleryApplication).services
+    private val jobControls = IndexingJobControlsStore(appContext)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (!repository.peopleIndexStatus().enabled) return@withContext Result.success()
+        if (!jobControls.load().peopleEnabled) return@withContext Result.success()
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         val faceLease = services.faceEngines.acquireOrNull()
         val detector = if (faceLease == null) MlKitFaceDetectionEngine() else null
@@ -29,7 +31,9 @@ class PeopleIndexWorker(
         try {
             if (embedder != null) services.faceVectorStore.reconcile(repository.allEmbeddedFaceIds())
             repository.facePendingItems(BATCH_SIZE).forEach { item ->
-                if (isStopped || !repository.peopleIndexStatus().enabled) return@withContext Result.success()
+                if (isStopped || !repository.peopleIndexStatus().enabled || !jobControls.load().peopleEnabled) {
+                    return@withContext Result.success()
+                }
                 if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
                 repository.markFaces(item.id)
                 runCatching {

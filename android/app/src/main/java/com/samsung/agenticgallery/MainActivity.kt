@@ -303,8 +303,10 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
                     indexingActive = state.indexingActive,
                     indexingRunCriteria = state.indexingRunCriteria,
                     indexingAdmission = state.indexingAdmission,
+                    indexingJobControls = state.indexingJobControls,
                     onRetry = viewModel::retryIndexing,
                     onSaveIndexingRunCriteria = viewModel::saveIndexingRunCriteria,
+                    onSetIndexingJobEnabled = viewModel::setIndexingJobEnabled,
                     onBuildSemanticMemory = viewModel::requestSemanticEnrichment,
                     onOpenSemanticMemory = { viewModel.navigate(AppDestination.SEMANTIC_MEMORY) },
                     onImportRetrievalModel = {
@@ -797,8 +799,10 @@ private fun IndexManagerScreen(
     indexingActive: Boolean,
     indexingRunCriteria: IndexingRunCriteria,
     indexingAdmission: BackgroundWorkAdmission,
+    indexingJobControls: IndexingJobControls,
     onRetry: () -> Unit,
     onSaveIndexingRunCriteria: (IndexingRunCriteria) -> Unit,
+    onSetIndexingJobEnabled: (IndexingJob, Boolean) -> Unit,
     onBuildSemanticMemory: () -> Unit,
     onOpenSemanticMemory: () -> Unit,
     onImportRetrievalModel: () -> Unit,
@@ -836,9 +840,9 @@ private fun IndexManagerScreen(
             index.ocrReady,
             index.discovered,
             ocrModel.producerVersion ?: "mlkit-text-latin-v2 fallback",
-            inProgress = indexingActive && index.ocrReady < index.discovered,
+            inProgress = indexingActive && indexingJobControls.mediaAnalysisEnabled && index.ocrReady < index.discovered,
         )
-        IndexMetric("Visual labels ready", index.visualLabelsReady, index.discovered, "mlkit-image-label-v1 bundled", inProgress = indexingActive && index.visualLabelsReady < index.discovered)
+        IndexMetric("Visual labels ready", index.visualLabelsReady, index.discovered, "mlkit-image-label-v1 bundled", inProgress = indexingActive && indexingJobControls.mediaAnalysisEnabled && index.visualLabelsReady < index.discovered)
         IndexMetric("Video keyframes", index.videoKeyframesReady, index.videoKeyframesReady, VideoKeyframePolicy.PRODUCER_VERSION)
         IndexMetric(
             "Face indexing",
@@ -850,9 +854,17 @@ private fun IndexManagerScreen(
                 else -> "mlkit-face-detection-v1; SFace not installed"
             },
             enabled = peopleIndex.enabled,
-            inProgress = indexingActive && peopleIndex.pendingMediaCount > 0,
+            inProgress = indexingActive && indexingJobControls.peopleEnabled && peopleIndex.pendingMediaCount > 0,
         )
         IndexMetric("Events", index.events, index.events, "deterministic day grouping")
+        IndexingJobsCard(
+            controls = indexingJobControls,
+            peopleAvailable = peopleIndex.enabled,
+            embeddingsAvailable = retrievalPack.installed,
+            semanticMemoryAvailable = modelPack.installed && modelPack.multimodal,
+            onSetEnabled = onSetIndexingJobEnabled,
+        )
+        Spacer(Modifier.height(10.dp))
         IndexingRunCriteriaCard(
             criteria = indexingRunCriteria,
             admission = indexingAdmission,
@@ -875,6 +887,21 @@ private fun IndexManagerScreen(
                             Text("$pendingCount remaining", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                         }
                     }
+                }
+            } else if (
+                (index.pending > 0 && !indexingJobControls.mediaAnalysisEnabled) ||
+                (peopleIndex.pendingMediaCount > 0 && !indexingJobControls.peopleEnabled)
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                ) {
+                    Text(
+                        "$pendingCount pending items are preserved. Start the stopped indexing job above to continue.",
+                        Modifier.padding(14.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             } else {
                 Button(onClick = onRetry, modifier = Modifier.fillMaxWidth().testTag("resume-indexing")) { Text("Resume indexing") }
@@ -1173,6 +1200,98 @@ private fun SettingsCircularProgress(fraction: Float) {
         Box(Modifier.size(48.dp).testTag("settings-card-progress"), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(progress = { safeFraction }, modifier = Modifier.fillMaxSize(), strokeWidth = 4.dp)
             Text("${(safeFraction * 100).toInt()}%", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun IndexingJobsCard(
+    controls: IndexingJobControls,
+    peopleAvailable: Boolean,
+    embeddingsAvailable: Boolean,
+    semanticMemoryAvailable: Boolean,
+    onSetEnabled: (IndexingJob, Boolean) -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Text("Individual indexing jobs", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text(
+                "Stop or start each real worker independently. Completed indexes are retained.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+            )
+            Spacer(Modifier.height(10.dp))
+            IndexingJobControlRow(
+                title = "Media analysis",
+                description = "OCR, visual labels, thumbnails, video keyframes, and events",
+                enabled = controls.mediaAnalysisEnabled,
+                available = true,
+                unavailableReason = null,
+                onToggle = { onSetEnabled(IndexingJob.MEDIA_ANALYSIS, it) },
+            )
+            HorizontalDivider()
+            IndexingJobControlRow(
+                title = "Image embeddings",
+                description = "SigLIP2 vectors used for semantic retrieval",
+                enabled = controls.embeddingsEnabled,
+                available = embeddingsAvailable,
+                unavailableReason = "Retrieval model required",
+                onToggle = { onSetEnabled(IndexingJob.EMBEDDINGS, it) },
+            )
+            HorizontalDivider()
+            IndexingJobControlRow(
+                title = "People indexing",
+                description = "Opt-in face detection, embeddings, and local clusters",
+                enabled = controls.peopleEnabled,
+                available = peopleAvailable,
+                unavailableReason = "Enable face indexing in People first",
+                onToggle = { onSetEnabled(IndexingJob.PEOPLE, it) },
+            )
+            HorizontalDivider()
+            IndexingJobControlRow(
+                title = "Gemma semantic memory",
+                description = "Selected representative analysis and cached facts",
+                enabled = controls.semanticMemoryEnabled,
+                available = semanticMemoryAvailable,
+                unavailableReason = "Verified multimodal Gemma required",
+                onToggle = { onSetEnabled(IndexingJob.SEMANTIC_MEMORY, it) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun IndexingJobControlRow(
+    title: String,
+    description: String,
+    enabled: Boolean,
+    available: Boolean,
+    unavailableReason: String?,
+    onToggle: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+            if (!available) {
+                Text(requireNotNull(unavailableReason), color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+            } else {
+                Text(if (enabled) "Running when criteria allow" else "Stopped", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        OutlinedButton(
+            onClick = { onToggle(!enabled) },
+            enabled = available || enabled,
+        ) {
+            Text(if (enabled) "Stop" else "Start")
         }
     }
 }

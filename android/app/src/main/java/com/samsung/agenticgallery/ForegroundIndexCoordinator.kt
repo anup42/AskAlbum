@@ -51,6 +51,7 @@ internal class ForegroundIndexCoordinator(context: Context) {
     private val app = appContext as AgenticGalleryApplication
     private val repository = app.repository
     private val admissionPolicy = BackgroundWorkAdmissionPolicy(appContext)
+    private val jobControls = IndexingJobControlsStore(appContext)
 
     suspend fun run(
         allowedMediaIds: Set<String>? = null,
@@ -108,12 +109,24 @@ internal class ForegroundIndexCoordinator(context: Context) {
                 val canContinue = {
                     job?.isActive != false && admissionPolicy.evaluate().allowed
                 }
-                val galleryBatch = gallery.processBatch(
-                    allowedMediaIds = allowedMediaIds,
-                    rebuildEvents = false,
-                    canContinue = canContinue,
-                )
-                val embeddingBatch = embeddings.processBatch(allowedMediaIds, canContinue = canContinue)
+                val controls = jobControls.load()
+                val galleryBatch = if (controls.mediaAnalysisEnabled) {
+                    gallery.processBatch(
+                        allowedMediaIds = allowedMediaIds,
+                        rebuildEvents = false,
+                        canContinue = { canContinue() && jobControls.load().mediaAnalysisEnabled },
+                    )
+                } else {
+                    IndexBatchResult(processed = 0, hasMore = false)
+                }
+                val embeddingBatch = if (controls.embeddingsEnabled) {
+                    embeddings.processBatch(
+                        allowedMediaIds,
+                        canContinue = { canContinue() && jobControls.load().embeddingsEnabled },
+                    )
+                } else {
+                    IndexBatchResult(processed = 0, hasMore = false)
+                }
                 cycles++
                 galleryProcessed += galleryBatch.processed
                 embeddingsProcessed += embeddingBatch.processed

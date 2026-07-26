@@ -19,6 +19,8 @@ class SemanticEnrichmentWorker(
     override suspend fun doWork(): Result {
         val application = applicationContext as AgenticGalleryApplication
         val services = application.services
+        val jobControls = IndexingJobControlsStore(applicationContext)
+        if (!jobControls.load().semanticMemoryEnabled) return Result.success()
         val admission = BackgroundWorkAdmissionPolicy(applicationContext).evaluate()
         if (!admission.allowed) return Result.retry()
         if (!services.modelPackManager.status().let { it.installed && it.multimodal }) return Result.success()
@@ -58,13 +60,13 @@ class SemanticEnrichmentWorker(
             }
             try {
                 val currentAdmission = BackgroundWorkAdmissionPolicy(applicationContext).evaluate()
-                if (isStopped || !currentAdmission.allowed) {
+                if (isStopped || !jobControls.load().semanticMemoryEnabled || !currentAdmission.allowed) {
                     database.failSemanticEnrichment(
                         currentJob,
-                        currentAdmission.reason ?: "Background admission changed",
+                        currentAdmission.reason ?: "Semantic memory indexing stopped",
                         retryable = true,
                     )
-                    return Result.retry()
+                    return if (jobControls.load().semanticMemoryEnabled) Result.retry() else Result.success()
                 }
                 val hit = SearchHit(item, 0.0, emptyList())
                 val loaded = GalleryImageLoader(applicationContext).loadForVerification(
@@ -112,6 +114,7 @@ object SemanticEnrichmentScheduler {
     private const val CONTINUATION_COOLING_DELAY_SECONDS = 30L
 
     fun schedule(context: Context, userRequested: Boolean = false) {
+        if (!IndexingJobControlsStore(context).load().semanticMemoryEnabled) return
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             if (userRequested) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
@@ -120,11 +123,16 @@ object SemanticEnrichmentScheduler {
     }
 
     fun scheduleContinuation(context: Context) {
+        if (!IndexingJobControlsStore(context).load().semanticMemoryEnabled) return
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
             request(context, userRequested = true, initialDelaySeconds = CONTINUATION_COOLING_DELAY_SECONDS),
         )
+    }
+
+    fun cancelAndWait(context: Context) {
+        WorkManager.getInstance(context).cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
     }
 
     private fun request(
