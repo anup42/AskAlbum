@@ -22,6 +22,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -45,6 +48,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -77,7 +82,9 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -86,7 +93,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
@@ -101,6 +111,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -341,12 +352,18 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
         }
     }
     state.selectedEvidence?.let { hit ->
+        val viewerItems = remember(hit.item.kind, state.destination) {
+            val sameKind = state.items.filter { it.kind == hit.item.kind }
+            if (sameKind.any { it.id == hit.item.id }) sameKind else listOf(hit.item) + sameKind
+        }
         EvidenceDialog(
             hit = hit,
+            items = viewerItems,
             metadata = state.selectedEvidenceMetadata,
             metadataLoading = state.selectedEvidenceMetadataLoading,
             metadataError = state.selectedEvidenceMetadataError,
             onDismiss = viewModel::dismissEvidence,
+            onSelect = viewModel::showEvidence,
             onLoadMetadata = { viewModel.loadSelectedEvidenceMetadata() },
             onUnlockSensitiveMetadata = { metadataGate.open(hit, forceAuthentication = true) },
             onAsk = { item ->
@@ -2304,25 +2321,40 @@ private fun GalleryMenuScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun EvidenceDialog(
     hit: SearchHit,
+    items: List<GalleryItem> = listOf(hit.item),
     metadata: IndexedMediaMetadata? = null,
     metadataLoading: Boolean = false,
     metadataError: String? = null,
     onDismiss: () -> Unit,
+    onSelect: (SearchHit) -> Unit = {},
     onLoadMetadata: () -> Unit = {},
     onUnlockSensitiveMetadata: () -> Unit = {},
     onAsk: ((GalleryItem) -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    val playbackTimestamp = hit.evidence.mapNotNull { it.timestampMs }.minOrNull()
-    var playing by remember(hit.item.id, playbackTimestamp) { mutableStateOf(false) }
-    var detailsVisible by remember(hit.item.id) { mutableStateOf(false) }
-    var favorite by remember(hit.item.id) { mutableStateOf(false) }
+    val viewerItems = remember(items, hit.item.id) {
+        items.distinctBy { it.id }.ifEmpty { listOf(hit.item) }
+    }
+    val initialPage = remember(viewerItems, hit.item.id) {
+        viewerItems.indexOfFirst { it.id == hit.item.id }.coerceAtLeast(0)
+    }
+    val pagerState = rememberPagerState(initialPage = initialPage) { viewerItems.size }
+    val currentItem = viewerItems.getOrElse(pagerState.currentPage) { hit.item }
+    val currentHit = if (currentItem.id == hit.item.id) hit else currentItem.asMetadataHit()
+    val playbackTimestamp = currentHit.evidence.mapNotNull { it.timestampMs }.minOrNull()
+    var playing by remember(currentItem.id, playbackTimestamp) { mutableStateOf(false) }
+    var detailsVisible by remember(currentItem.id) { mutableStateOf(false) }
+    var controlsVisible by remember(currentItem.id) { mutableStateOf(true) }
     val toggleDetails = {
         detailsVisible = !detailsVisible
         if (detailsVisible) onLoadMetadata()
+    }
+    LaunchedEffect(currentItem.id) {
+        if (hit.item.id != currentItem.id) onSelect(currentItem.asMetadataHit())
     }
     BackHandler {
         when {
@@ -2334,7 +2366,7 @@ internal fun EvidenceDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             Box(Modifier.fillMaxSize()) {
-                if (playing && hit.item.kind == MediaKind.VIDEO && hit.item.contentUri != null) {
+                if (playing && currentItem.kind == MediaKind.VIDEO && currentItem.contentUri != null) {
                     AndroidView(
                         modifier = Modifier.fillMaxSize().testTag("video-playback"),
                         factory = { viewContext ->
@@ -2342,7 +2374,7 @@ internal fun EvidenceDialog(
                                 val controls = MediaController(viewContext)
                                 controls.setAnchorView(this)
                                 setMediaController(controls)
-                                setVideoURI(Uri.parse(hit.item.contentUri))
+                                setVideoURI(Uri.parse(currentItem.contentUri))
                                 setOnPreparedListener {
                                     seekTo((playbackTimestamp ?: 0L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt())
                                     start()
@@ -2352,35 +2384,65 @@ internal fun EvidenceDialog(
                         onRelease = VideoView::stopPlayback,
                     )
                 } else {
-                    AssetImage(
-                        hit.item,
-                        Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit,
-                        requestedEdgePx = 1536,
-                    )
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize(),
+                        beyondViewportPageCount = 1,
+                        userScrollEnabled = !detailsVisible,
+                    ) { page ->
+                        ZoomableViewerMedia(
+                            item = viewerItems[page],
+                            onToggleControls = {
+                                if (page == pagerState.currentPage) controlsVisible = !controlsVisible
+                            },
+                        )
+                    }
                 }
-                Row(
-                    Modifier.fillMaxWidth().safeDrawingPadding().padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Spacer(Modifier.weight(1f))
-                    Surface(shape = CircleShape, color = Color.Black.copy(alpha = .55f)) {
-                        IconButton(onClick = toggleDetails) {
-                            Icon(painterResource(R.drawable.ic_gallery_info), "Details and evidence", tint = Color.White)
+                if (controlsVisible && !detailsVisible) {
+                    Row(
+                        Modifier.fillMaxWidth().safeDrawingPadding().padding(horizontal = 18.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                currentItem.title,
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                "${pagerState.currentPage + 1} / ${viewerItems.size}  •  Swipe  •  Pinch to zoom",
+                                color = Color.White.copy(alpha = .72f),
+                                fontSize = 11.sp,
+                            )
+                        }
+                        Surface(shape = CircleShape, color = Color.Black.copy(alpha = .55f)) {
+                            IconButton(onClick = toggleDetails) {
+                                Icon(painterResource(R.drawable.ic_gallery_info), "Details and evidence", tint = Color.White)
+                            }
                         }
                     }
                 }
-                if (!detailsVisible) {
+                if (controlsVisible && !detailsVisible) {
                     Surface(
                         modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(14.dp),
                         shape = RoundedCornerShape(30.dp),
                         color = Color.Black.copy(alpha = .68f),
                     ) {
                         Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            ViewerAction(if (favorite) "Favorited" else "Favorite", R.drawable.ic_gallery_photos) { favorite = !favorite }
-                            onAsk?.let { ask -> ViewerAction("Ask", R.drawable.ic_gallery_ask) { ask(hit.item) } }
-                            ViewerAction("Share", R.drawable.ic_gallery_share) { shareItems(context, listOf(hit.item)) }
-                            if (hit.item.kind == MediaKind.VIDEO && hit.item.contentUri != null) {
+                            ViewerAction("Share", R.drawable.ic_gallery_share) { shareItems(context, listOf(currentItem)) }
+                            onAsk?.let { ask -> ViewerAction("Ask", R.drawable.ic_gallery_ask) { ask(currentItem) } }
+                            if (currentItem.contentUri != null) {
+                                ViewerAction("Open", R.drawable.ic_gallery_open) { openItemExternally(context, currentItem) }
+                            }
+                            if (currentItem.kind == MediaKind.IMAGE &&
+                                currentItem.source == MediaSource.MEDIA_STORE &&
+                                currentItem.contentUri != null
+                            ) {
+                                ViewerAction("Edit", R.drawable.ic_gallery_edit) { openItemExternally(context, currentItem, edit = true) }
+                            }
+                            if (currentItem.kind == MediaKind.VIDEO && currentItem.contentUri != null) {
                                 ViewerAction("Play", R.drawable.ic_gallery_video) { playing = true }
                             }
                             ViewerAction("Details", R.drawable.ic_gallery_info) {
@@ -2397,13 +2459,13 @@ internal fun EvidenceDialog(
                     ) {
                         Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp, 18.dp, 20.dp, 34.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(hit.item.title, modifier = Modifier.weight(1f), fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                                Text(currentItem.title, modifier = Modifier.weight(1f), fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
                                 TextButton(onClick = { detailsVisible = false }) { Text("Close") }
                             }
-                            Text(hit.item.location, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(currentItem.location, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(18.dp))
                             Text("Indexed metadata", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                            IndexedItemMetadata(hit.item)
+                            IndexedItemMetadata(currentItem)
                             when {
                                 metadataLoading -> {
                                     LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 18.dp))
@@ -2414,7 +2476,7 @@ internal fun EvidenceDialog(
                                     TextButton(onClick = onLoadMetadata) { Text("Retry") }
                                 }
                                 metadata != null -> IndexedMetadataRecords(
-                                    item = hit.item,
+                                    item = currentItem,
                                     metadata = metadata,
                                     onUnlockSensitiveMetadata = onUnlockSensitiveMetadata,
                                 )
@@ -2422,7 +2484,7 @@ internal fun EvidenceDialog(
                             }
                             MetadataSection(
                                 "Why this item matched",
-                                hit.evidence.map {
+                                currentHit.evidence.map {
                                     it.sourceField.replace('_', ' ') to
                                         "${it.text} (${(it.confidence * 100).toInt()}% confidence)"
                                 },
@@ -2432,6 +2494,61 @@ internal fun EvidenceDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ZoomableViewerMedia(item: GalleryItem, onToggleControls: () -> Unit) {
+    var scale by remember(item.id) { mutableFloatStateOf(1f) }
+    var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
+    var offsetY by remember(item.id) { mutableFloatStateOf(0f) }
+    var viewport by remember(item.id) { mutableStateOf(IntSize.Zero) }
+    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+        val nextScale = (scale * zoomChange).coerceIn(1f, 5f)
+        if (nextScale == 1f) {
+            offsetX = 0f
+            offsetY = 0f
+        } else {
+            val maxX = viewport.width * (nextScale - 1f) / 2f
+            val maxY = viewport.height * (nextScale - 1f) / 2f
+            offsetX = (offsetX + panChange.x).coerceIn(-maxX, maxX)
+            offsetY = (offsetY + panChange.y).coerceIn(-maxY, maxY)
+        }
+        scale = nextScale
+    }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onSizeChanged { viewport = it }
+            .transformable(
+                state = transformState,
+                canPan = { scale > 1f },
+            )
+            .pointerInput(item.id) {
+                detectTapGestures(
+                    onTap = { onToggleControls() },
+                    onDoubleTap = {
+                        scale = if (scale > 1f) 1f else 2.5f
+                        offsetX = 0f
+                        offsetY = 0f
+                    },
+                )
+            }
+            .semantics { contentDescription = "${item.title}; swipe for adjacent media; pinch or double-tap to zoom" },
+    ) {
+        AssetImage(
+            item,
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offsetX
+                    translationY = offsetY
+                },
+            contentScale = ContentScale.Fit,
+            requestedEdgePx = 2048,
+        )
     }
 }
 
@@ -2671,7 +2788,18 @@ private fun shareItems(context: android.content.Context, items: List<GalleryItem
             else putExtra(Intent.EXTRA_TEXT, items.first().sourceUrl.ifBlank { items.first().title })
         }
     }.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    runCatching { context.startActivity(Intent.createChooser(intent, "Share from Gallery")) }
+    runCatching { context.startActivity(Intent.createChooser(intent, "Share from Agentic Gallery")) }
+}
+
+private fun openItemExternally(context: android.content.Context, item: GalleryItem, edit: Boolean = false) {
+    val uri = item.contentUri?.let(Uri::parse) ?: return
+    val intent = Intent(if (edit) Intent.ACTION_EDIT else Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, item.mimeType)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (edit) addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+    }
+    val title = if (edit) "Edit image" else "Open with"
+    runCatching { context.startActivity(Intent.createChooser(intent, title)) }
 }
 
 private fun formatBytes(bytes: Long): String = when {
