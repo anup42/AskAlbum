@@ -249,6 +249,25 @@ class GalleryRepository(context: Context) {
             )
     }
     fun events(): List<EventRecord> = database.events()
+    fun eventInspections(): List<EventInspection> {
+        val accessibleItems = database.allItems().associateBy(GalleryItem::id)
+        val mediaIdsByEvent = database.eventMembership().entries.groupBy(
+            keySelector = { it.value },
+            valueTransform = { it.key },
+        )
+        return database.events().map { event ->
+            EventInspection(
+                event = event,
+                media = mediaIdsByEvent[event.id].orEmpty()
+                    .mapNotNull(accessibleItems::get)
+                    .sortedWith(
+                        compareByDescending<GalleryItem> {
+                            it.capturedAt ?: it.modifiedAt ?: 0L
+                        }.thenBy { it.id },
+                    ),
+            )
+        }
+    }
     fun saveEventCorrection(
         operation: EventCorrectionOperation,
         mediaIds: Set<String>,

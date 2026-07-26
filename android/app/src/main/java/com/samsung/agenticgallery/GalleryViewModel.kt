@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class AppDestination { ONBOARDING, GALLERY, ALBUMS, ASK, RESULTS, MENU, INDEX_MANAGER, SEMANTIC_MEMORY, PRIVACY, PEOPLE }
+enum class AppDestination { ONBOARDING, GALLERY, ALBUMS, ASK, RESULTS, MENU, INDEX_MANAGER, SEMANTIC_MEMORY, EVENTS_INDEX, PRIVACY, PEOPLE }
 
 enum class QueryExecutionStage { UNDERSTANDING, SEARCHING, INITIAL_RESULTS, VERIFYING, COMPOSING }
 
@@ -47,6 +47,9 @@ data class GalleryUiState(
     val semanticMemoryMedia: List<SemanticMemoryMedia> = emptyList(),
     val semanticMemoryMediaLoading: Boolean = false,
     val semanticMemoryMediaError: String? = null,
+    val eventInspections: List<EventInspection> = emptyList(),
+    val eventInspectionsLoading: Boolean = false,
+    val eventInspectionsError: String? = null,
     val modelPack: ModelPackStatus = ModelPackStatus(installed = false),
     val modelDownload: GemmaDownloadProgress = GemmaDownloadProgress(),
     val retrievalPack: RetrievalPackStatus = RetrievalPackStatus(installed = false),
@@ -212,6 +215,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 AppDestination.PRIVACY,
                 AppDestination.INDEX_MANAGER,
                 AppDestination.SEMANTIC_MEMORY,
+                AppDestination.EVENTS_INDEX,
             )
 
     fun navigateBack() {
@@ -222,6 +226,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val previous = destinationHistory.removeLastOrNull() ?: when (state.destination) {
             AppDestination.RESULTS -> AppDestination.ASK
             AppDestination.SEMANTIC_MEMORY -> AppDestination.INDEX_MANAGER
+            AppDestination.EVENTS_INDEX -> AppDestination.INDEX_MANAGER
             AppDestination.PEOPLE, AppDestination.PRIVACY, AppDestination.INDEX_MANAGER -> AppDestination.MENU
             else -> null
         }
@@ -245,6 +250,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
         if (destination == AppDestination.SEMANTIC_MEMORY) {
             loadSemanticMemoryMedia()
+        }
+        if (destination == AppDestination.EVENTS_INDEX) {
+            loadEventInspections()
         }
         if (destination == AppDestination.INDEX_MANAGER || destination == AppDestination.SEMANTIC_MEMORY) {
             monitorSemanticMemory()
@@ -270,6 +278,28 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     state = state.copy(
                         semanticMemoryMediaLoading = false,
                         semanticMemoryMediaError = error.message ?: "Could not load cached Gemma facts",
+                    )
+                }
+        }
+    }
+
+    private fun loadEventInspections() {
+        state = state.copy(
+            eventInspectionsLoading = true,
+            eventInspectionsError = null,
+        )
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { repository.eventInspections() } }
+                .onSuccess { events ->
+                    state = state.copy(
+                        eventInspections = events,
+                        eventInspectionsLoading = false,
+                    )
+                }
+                .onFailure { error ->
+                    state = state.copy(
+                        eventInspectionsLoading = false,
+                        eventInspectionsError = error.message ?: "Could not load stored events",
                     )
                 }
         }

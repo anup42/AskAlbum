@@ -53,6 +53,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -108,6 +109,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardActions
@@ -309,6 +311,7 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
                     onSetIndexingJobEnabled = viewModel::setIndexingJobEnabled,
                     onBuildSemanticMemory = viewModel::requestSemanticEnrichment,
                     onOpenSemanticMemory = { viewModel.navigate(AppDestination.SEMANTIC_MEMORY) },
+                    onOpenEvents = { viewModel.navigate(AppDestination.EVENTS_INDEX) },
                     onImportRetrievalModel = {
                         retrievalModelPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
                     },
@@ -328,6 +331,12 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
                     media = state.semanticMemoryMedia,
                     loading = state.semanticMemoryMediaLoading,
                     error = state.semanticMemoryMediaError,
+                    onOpenMedia = viewModel::showEvidence,
+                )
+                state.destination == AppDestination.EVENTS_INDEX -> EventsIndexScreen(
+                    events = state.eventInspections,
+                    loading = state.eventInspectionsLoading,
+                    error = state.eventInspectionsError,
                     onOpenMedia = viewModel::showEvidence,
                 )
                 state.destination == AppDestination.PEOPLE -> PeopleScreen(
@@ -422,7 +431,7 @@ private fun AppNavigation(selected: AppDestination, onSelect: (AppDestination) -
             )
             GalleryNavigationItem(
                 selected = selected == AppDestination.MENU || selected == AppDestination.INDEX_MANAGER || selected == AppDestination.PRIVACY ||
-                    selected == AppDestination.PEOPLE || selected == AppDestination.SEMANTIC_MEMORY,
+                    selected == AppDestination.PEOPLE || selected == AppDestination.SEMANTIC_MEMORY || selected == AppDestination.EVENTS_INDEX,
                 label = "Menu",
                 icon = R.drawable.ic_gallery_menu,
                 onClick = { onSelect(AppDestination.MENU) },
@@ -805,6 +814,7 @@ private fun IndexManagerScreen(
     onSetIndexingJobEnabled: (IndexingJob, Boolean) -> Unit,
     onBuildSemanticMemory: () -> Unit,
     onOpenSemanticMemory: () -> Unit,
+    onOpenEvents: () -> Unit,
     onImportRetrievalModel: () -> Unit,
     onInstallEmbeddedRetrievalModel: () -> Unit,
     onDownloadOcrModel: () -> Unit,
@@ -856,7 +866,13 @@ private fun IndexManagerScreen(
             enabled = peopleIndex.enabled,
             inProgress = indexingActive && indexingJobControls.peopleEnabled && peopleIndex.pendingMediaCount > 0,
         )
-        IndexMetric("Events", index.events, index.events, "deterministic day grouping")
+        IndexMetric(
+            "Events",
+            index.events,
+            index.events,
+            "deterministic day grouping",
+            onClick = onOpenEvents,
+        )
         IndexingJobsCard(
             controls = indexingJobControls,
             peopleAvailable = peopleIndex.enabled,
@@ -1571,32 +1587,193 @@ private fun SemanticMemoryDetail(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(16.dp),
             ) {
-                Column(Modifier.padding(14.dp)) {
-                    Text(fact.predicate, fontWeight = FontWeight.Bold)
-                    Text(fact.value, fontSize = 17.sp)
-                    Spacer(Modifier.height(8.dp))
+                SelectionContainer {
                     Text(
-                        "Scope ${fact.scope.name} | confidence ${(fact.confidence * 100).toInt()}% | ${fact.applicability}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
+                        semanticFactStoredText(fact),
+                        modifier = Modifier.padding(14.dp),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
                     )
-                    Text("Subject ${fact.subjectId}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-                    Text(
-                        "Model ${fact.modelVersion} | prompt ${fact.promptVersion}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                    )
-                    fact.region?.let { region ->
-                        Text(
-                            "Region ${region.joinToString(", ") { value -> "%.3f".format(value) }}",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp,
-                        )
+                }
+            }
+        }
+    }
+}
+
+private fun semanticFactStoredText(fact: SemanticFactRecord): String = buildString {
+    appendLine("scope=${fact.scope.name}")
+    appendLine("subject_id=${fact.subjectId}")
+    appendLine("predicate=${fact.predicate}")
+    appendLine("value=${fact.value}")
+    appendLine("confidence=${fact.confidence}")
+    appendLine("evidence_media_id=${fact.evidenceMediaId}")
+    appendLine("region=${fact.region?.joinToString(prefix = "[", postfix = "]") ?: "null"}")
+    appendLine("applicability=${fact.applicability}")
+    appendLine("model_version=${fact.modelVersion}")
+    append("prompt_version=${fact.promptVersion}")
+}
+
+@Composable
+private fun EventsIndexScreen(
+    events: List<EventInspection>,
+    loading: Boolean,
+    error: String?,
+    onOpenMedia: (SearchHit) -> Unit,
+) {
+    var selectedEventId by remember { mutableStateOf<Long?>(null) }
+    val selected = events.firstOrNull { it.event.id == selectedEventId }
+    BackHandler(selected != null) { selectedEventId = null }
+    if (selected != null) {
+        EventInspectionDetail(selected, onOpenMedia)
+        return
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+        contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 32.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Text("Stored events", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "${events.size} deterministic event records. Newest event is shown first.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+        when {
+            loading -> item {
+                Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+            error != null -> item {
+                Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 24.dp))
+            }
+            events.isEmpty() -> item {
+                Text(
+                    "No event records are stored yet.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 24.dp),
+                )
+            }
+            else -> lazyItems(events, key = { it.event.id }) { inspection ->
+                val representative = inspection.event.representativeMediaId?.let { representativeId ->
+                    inspection.media.firstOrNull { it.id == representativeId }
+                } ?: inspection.media.firstOrNull()
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable { selectedEventId = inspection.event.id },
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(18.dp),
+                ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (representative != null) {
+                            Box(Modifier.size(86.dp).clip(RoundedCornerShape(12.dp))) {
+                                AssetImage(representative, Modifier.fillMaxSize())
+                            }
+                            Spacer(Modifier.width(12.dp))
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(inspection.event.title, fontWeight = FontWeight.Bold)
+                            Text(
+                                "${inspection.media.size} media | ${inspection.event.eventType}",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                            )
+                            inspection.event.locationName?.let {
+                                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                            }
+                            Text("Tap to inspect the exact stored record", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun EventInspectionDetail(
+    inspection: EventInspection,
+    onOpenMedia: (SearchHit) -> Unit,
+) {
+    LazyVerticalGrid(
+        modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+        columns = GridCells.Fixed(2),
+        contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 32.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Column {
+                Text("Stored event record", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    SelectionContainer {
+                        Text(
+                            eventStoredText(inspection.event),
+                            modifier = Modifier.padding(14.dp),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Text("Stored event membership", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "${inspection.media.size} accessible media records",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+        items(inspection.media, key = { it.id }, contentType = { "event-media" }) { item ->
+            MediaThumbnail(
+                item = item,
+                selected = false,
+                onClick = {
+                    onOpenMedia(
+                        SearchHit(
+                            item,
+                            1.0,
+                            listOf(
+                                EvidenceRecord(
+                                    id = "event:${inspection.event.id}:${item.id}",
+                                    mediaId = item.id,
+                                    sourceField = "gallery_event",
+                                    text = inspection.event.searchText,
+                                    confidence = inspection.event.confidence,
+                                    producerVersion = inspection.event.producerVersion,
+                                ),
+                            ),
+                        ),
+                    )
+                },
+                onLongClick = {},
+            )
+        }
+    }
+}
+
+private fun eventStoredText(event: EventRecord): String = buildString {
+    appendLine("id=${event.id}")
+    appendLine("start_time=${event.startTime}")
+    appendLine("end_time=${event.endTime}")
+    appendLine("title=${event.title}")
+    appendLine("location_name=${event.locationName ?: "null"}")
+    appendLine("latitude=${event.latitude ?: "null"}")
+    appendLine("longitude=${event.longitude ?: "null"}")
+    appendLine("event_type=${event.eventType}")
+    appendLine("member_count=${event.memberCount}")
+    appendLine("confidence=${event.confidence}")
+    appendLine("search_text=${event.searchText}")
+    appendLine("representative_media_id=${event.representativeMediaId ?: "null"}")
+    appendLine("producer_version=${event.producerVersion}")
+    append("user_corrected=${event.userCorrected}")
 }
 
 @Composable

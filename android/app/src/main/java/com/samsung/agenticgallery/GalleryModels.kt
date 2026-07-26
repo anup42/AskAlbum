@@ -399,6 +399,11 @@ data class EventRecord(
     val userCorrected: Boolean,
 )
 
+data class EventInspection(
+    val event: EventRecord,
+    val media: List<GalleryItem>,
+)
+
 enum class EventCorrectionOperation { MERGE, SPLIT, RENAME, LOCATION }
 
 data class EventCorrectionRecord(
