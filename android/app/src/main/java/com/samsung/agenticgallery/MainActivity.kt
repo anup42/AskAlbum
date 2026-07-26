@@ -1193,12 +1193,15 @@ private fun IndexMetric(
                 Spacer(Modifier.width(12.dp))
                 when {
                     !enabled -> Text("Off", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
-                    inProgress -> Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxSize(), strokeWidth = 4.dp)
-                        Text("${(fraction * 100).toInt()}%", fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    }
                     else -> Text("$value / $total", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 }
+            }
+            if (enabled && inProgress) {
+                Spacer(Modifier.height(10.dp))
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(5.dp)),
+                )
             }
             if (onClick != null) {
                 Spacer(Modifier.height(7.dp))
