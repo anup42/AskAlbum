@@ -52,7 +52,9 @@ internal object SemanticFactCodec {
             throw SemanticEnrichmentOutputException("Enrichment must return one JSON object")
         }
         val root = try {
-            JSONObject(json)
+            JSONObject(Rules.MALFORMED_CONFIDENCE.replace(json) { match ->
+                """"confidence":${match.groupValues[1]}"""
+            })
         } catch (error: JSONException) {
             throw SemanticEnrichmentOutputException("Enrichment returned malformed JSON", error)
         }
@@ -142,6 +144,9 @@ internal object SemanticFactCodec {
         const val PROMPT_VERSION = "adaptive-semantic-facts-v1"
         const val MAX_FACTS = 12
         const val MAX_VALUE_LENGTH = 120
+        val MALFORMED_CONFIDENCE = Regex(
+            """"confidence\(\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*\)"""",
+        )
         val APPLICABILITY = setOf("EVIDENCE_MEDIA_ONLY", "SAFE_FOR_EXACT_DUPLICATES")
         val SENSITIVE = listOf(
             Regex("""(?i)\b(?:password|passcode|cvv)\b"""),

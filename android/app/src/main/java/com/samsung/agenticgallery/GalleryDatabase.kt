@@ -1685,16 +1685,30 @@ class GalleryDatabase(
     ).use { cursor -> buildMap { while (cursor.moveToNext()) put(cursor.getString(0), cursor.getLong(1)) } }
 
     fun summary(): IndexSummary {
-        val items = allItems()
+        val mediaCounts = readableDatabase.rawQuery(
+            """
+            SELECT
+                COUNT(*),
+                SUM(CASE WHEN source_kind='DEMO_ASSET' OR index_state='READY' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN tags IS NOT NULL AND TRIM(tags) NOT IN ('', '[]') THEN 1 ELSE 0 END),
+                SUM(CASE WHEN index_state IN ('PENDING', 'INDEXING') THEN 1 ELSE 0 END),
+                SUM(CASE WHEN index_state IN ('FAILED_PERMANENT', 'FAILED_RETRYABLE') THEN 1 ELSE 0 END),
+                SUM(CASE WHEN media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY' THEN 1 ELSE 0 END)
+            FROM media_item
+            """.trimIndent(),
+            null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) IntArray(6) else IntArray(6) { cursor.getInt(it) }
+        }
         return IndexSummary(
-            discovered = items.size,
-            metadataReady = items.size,
+            discovered = mediaCounts[0],
+            metadataReady = mediaCounts[0],
             semanticFactsReady = readableDatabase.rawQuery(
                 "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_fact",
                 null,
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
-            ocrReady = items.count { it.source == MediaSource.DEMO_ASSET || it.indexState == IndexState.READY },
-            visualLabelsReady = items.count { it.tags.isNotEmpty() },
+            ocrReady = mediaCounts[1],
+            visualLabelsReady = mediaCounts[2],
             videoKeyframesReady = readableDatabase.rawQuery(
                 "SELECT COUNT(*) FROM video_keyframe", null,
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
@@ -1704,13 +1718,10 @@ class GalleryDatabase(
                     "AND m.access_state='ACCESSIBLE' AND m.index_state='READY'",
                 null,
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
-            faceEligible = readableDatabase.rawQuery(
-                "SELECT COUNT(*) FROM media_item WHERE media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY'",
-                null,
-            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
-            pending = items.count { it.indexState == IndexState.PENDING || it.indexState == IndexState.INDEXING },
+            faceEligible = mediaCounts[5],
+            pending = mediaCounts[3],
             events = events().size,
-            failed = items.count { it.indexState == IndexState.FAILED_PERMANENT || it.indexState == IndexState.FAILED_RETRYABLE },
+            failed = mediaCounts[4],
             storageBytes = databaseBytes(),
         )
     }

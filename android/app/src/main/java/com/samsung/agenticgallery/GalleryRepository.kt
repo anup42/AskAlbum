@@ -26,17 +26,49 @@ class GalleryRepository(context: Context) {
     private val sessionPlans = ConcurrentHashMap<String, GalleryQueryPlan>()
 
     fun initialize(): IndexSummary {
+        val restartWorkersAfterUpdate = consumeWorkerUpdateRestart()
         database.recoverInterruptedJobs()
         database.seedDemoIfEmpty()
         database.ensureStageRows()
         services.ocrModelPackManager.current()?.let { database.requestOcrReindex(it.spec.producerVersion) }
-        if (database.pendingItems(1).isNotEmpty()) IndexScheduler.schedule(appContext)
-        if (services.retrievalModelPackManager.status().installed) EmbeddingIndexScheduler.schedule(appContext)
+        if (database.pendingItems(1).isNotEmpty()) {
+            if (restartWorkersAfterUpdate) IndexScheduler.restart(appContext) else IndexScheduler.schedule(appContext)
+        }
+        if (services.retrievalModelPackManager.status().installed) {
+            if (restartWorkersAfterUpdate) {
+                EmbeddingIndexScheduler.restart(appContext)
+            } else {
+                EmbeddingIndexScheduler.schedule(appContext)
+            }
+        }
         if (database.peopleIndexStatus().enabled) {
             services.faceEngines.activeDescriptor()?.let { database.requestFaceEmbeddingReindex(it.producerVersion) }
-            PeopleIndexScheduler.schedule(appContext)
+            if (restartWorkersAfterUpdate) PeopleIndexScheduler.restart(appContext) else PeopleIndexScheduler.schedule(appContext)
+        }
+        if (
+            indexingJobControlsStore.load().semanticMemoryEnabled &&
+            database.hasPendingSemanticEnrichmentJobs()
+        ) {
+            if (restartWorkersAfterUpdate) {
+                SemanticEnrichmentScheduler.restart(appContext, userRequested = true)
+            } else {
+                SemanticEnrichmentScheduler.schedule(appContext, userRequested = true)
+            }
         }
         return database.summary()
+    }
+
+    private fun consumeWorkerUpdateRestart(): Boolean {
+        val updateTime = appContext.packageManager
+            .getPackageInfo(appContext.packageName, 0)
+            .lastUpdateTime
+        val preferences = appContext.getSharedPreferences(
+            "indexing-worker-update-recovery-v1",
+            Context.MODE_PRIVATE,
+        )
+        if (preferences.getLong("last_update_time", -1L) == updateTime) return false
+        preferences.edit().putLong("last_update_time", updateTime).commit()
+        return true
     }
 
     fun allItems(): List<GalleryItem> = database.allItems()

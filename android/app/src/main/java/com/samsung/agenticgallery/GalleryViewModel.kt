@@ -1101,15 +1101,33 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private suspend fun reloadIndexStatus(message: String? = state.operationMessage) {
+        val refreshed = withContext(Dispatchers.IO) {
+            Triple(
+                repository.indexSummary(),
+                repository.peopleIndexStatus(),
+                repository.indexingAdmission(),
+            )
+        }
+        state = state.copy(
+            index = refreshed.first,
+            peopleIndex = refreshed.second,
+            indexingAdmission = refreshed.third,
+            operationMessage = message,
+        )
+    }
+
     private fun monitorIndexing() {
         indexMonitorJob?.cancel()
         state = state.copy(indexingActive = state.indexingAdmission.allowed)
         indexMonitorJob = viewModelScope.launch {
-            repeat(90) {
-                delay(1_000)
-                reload()
+            var pollCount = 0
+            while (true) {
+                delay(2_500)
+                reloadIndexStatus()
                 val hasPending = state.index.pending > 0 || state.peopleIndex.pendingMediaCount > 0
                 if (!hasPending) {
+                    reload()
                     state = state.copy(indexingActive = false)
                     return@launch
                 }
@@ -1128,11 +1146,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         operationMessage = "Indexing paused: ${state.indexingAdmission.reason}",
                     )
                 }
+                pollCount += 1
+                if (pollCount % 12 == 0) {
+                    val items = withContext(Dispatchers.IO) { repository.allItems() }
+                    state = state.copy(items = items)
+                }
             }
-            state = state.copy(
-                indexingActive = false,
-                operationMessage = "Indexing paused by battery, storage, or thermal conditions",
-            )
         }
     }
 

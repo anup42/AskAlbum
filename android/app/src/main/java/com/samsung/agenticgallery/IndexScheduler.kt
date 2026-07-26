@@ -40,7 +40,7 @@ object IndexScheduler {
 
     private fun request(context: Context) = OneTimeWorkRequestBuilder<GalleryIndexWorker>()
             .setConstraints(indexingWorkerConstraints(context))
-            .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.SECONDS)
             .addTag(UNIQUE_WORK)
             .build()
 }

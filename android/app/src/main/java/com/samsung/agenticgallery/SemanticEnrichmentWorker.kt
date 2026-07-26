@@ -1,6 +1,7 @@
 package com.samsung.agenticgallery
 
 import android.content.Context
+import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -17,13 +18,23 @@ class SemanticEnrichmentWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
+        Log.i(TAG, "Semantic enrichment worker started")
         val application = applicationContext as AgenticGalleryApplication
         val services = application.services
         val jobControls = IndexingJobControlsStore(applicationContext)
-        if (!jobControls.load().semanticMemoryEnabled) return Result.success()
+        if (!jobControls.load().semanticMemoryEnabled) {
+            Log.i(TAG, "Semantic enrichment worker stopped by user control")
+            return Result.success()
+        }
         val admission = BackgroundWorkAdmissionPolicy(applicationContext).evaluate()
-        if (!admission.allowed) return Result.retry()
-        if (!services.modelPackManager.status().let { it.installed && it.multimodal }) return Result.success()
+        if (!admission.allowed) {
+            Log.i(TAG, "Semantic enrichment deferred: ${admission.reason}")
+            return Result.retry()
+        }
+        if (!services.modelPackManager.status().let { it.installed && it.multimodal }) {
+            Log.w(TAG, "Semantic enrichment unavailable: no verified multimodal Gemma generation")
+            return Result.success()
+        }
         val database = services.galleryDatabase
         if (database.semanticEnrichmentPlanNeedsRebuild()) {
             SemanticEnrichmentCoordinator(database).rebuildPlan(userRequested = true)
@@ -31,7 +42,10 @@ class SemanticEnrichmentWorker(
         var job = database.claimSemanticEnrichmentJob()
         if (job == null) {
             SemanticEnrichmentCoordinator(database).rebuildPlan()
-            job = database.claimSemanticEnrichmentJob() ?: return Result.success()
+            job = database.claimSemanticEnrichmentJob() ?: run {
+                Log.i(TAG, "Semantic enrichment queue is complete")
+                return Result.success()
+            }
         }
         var processed = 0
         while (job != null && processed < MAX_JOBS_PER_RUN) {
@@ -78,8 +92,13 @@ class SemanticEnrichmentWorker(
                     services.gemmaSessions,
                 ).enrich(currentJob, loaded.bytes)
                 database.completeSemanticEnrichment(currentJob, facts)
+                Log.i(
+                    TAG,
+                    "Semantic enrichment completed job=${currentJob.id} media=${currentJob.representativeMediaId} facts=${facts.size}",
+                )
             } catch (cancelled: CancellationException) {
                 database.failSemanticEnrichment(currentJob, "Enrichment cancelled", retryable = true)
+                Log.i(TAG, "Semantic enrichment cancelled job=${currentJob.id}")
                 throw cancelled
             } catch (error: Throwable) {
                 val retryable = SemanticEnrichmentFailurePolicy.isRetryable(error)
@@ -88,19 +107,24 @@ class SemanticEnrichmentWorker(
                     error.message ?: error::class.java.simpleName,
                     retryable = retryable,
                 )
+                Log.e(TAG, "Semantic enrichment failed job=${currentJob.id} retryable=$retryable", error)
                 if (retryable) return Result.retry()
             }
             processed += 1
             job = database.claimSemanticEnrichmentJob()
         }
         if (database.hasPendingSemanticEnrichmentJobs()) {
+            Log.i(TAG, "Semantic enrichment scheduling continuation after $processed representatives")
             SemanticEnrichmentScheduler.scheduleContinuation(applicationContext)
+        } else {
+            Log.i(TAG, "Semantic enrichment queue completed")
         }
         return Result.success()
     }
 
     private companion object {
-        const val MAX_JOBS_PER_RUN = 2
+        const val TAG = "AgenticGallerySemantic"
+        const val MAX_JOBS_PER_RUN = 4
     }
 }
 
@@ -111,13 +135,13 @@ internal object SemanticEnrichmentFailurePolicy {
 object SemanticEnrichmentScheduler {
     private const val UNIQUE_WORK = "semantic-enrichment"
     private const val USER_REQUESTED_START_DELAY_SECONDS = 1L
-    private const val CONTINUATION_COOLING_DELAY_SECONDS = 30L
+    private const val CONTINUATION_COOLING_DELAY_SECONDS = 5L
 
     fun schedule(context: Context, userRequested: Boolean = false) {
         if (!IndexingJobControlsStore(context).load().semanticMemoryEnabled) return
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
-            if (userRequested) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
+            ExistingWorkPolicy.KEEP,
             request(context, userRequested, USER_REQUESTED_START_DELAY_SECONDS),
         )
     }
@@ -129,6 +153,18 @@ object SemanticEnrichmentScheduler {
             ExistingWorkPolicy.APPEND_OR_REPLACE,
             request(context, userRequested = true, initialDelaySeconds = CONTINUATION_COOLING_DELAY_SECONDS),
         )
+    }
+
+    fun restart(context: Context, userRequested: Boolean = false) {
+        val workManager = WorkManager.getInstance(context)
+        workManager.cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
+        if (IndexingJobControlsStore(context).load().semanticMemoryEnabled) {
+            workManager.enqueueUniqueWork(
+                UNIQUE_WORK,
+                ExistingWorkPolicy.REPLACE,
+                request(context, userRequested, USER_REQUESTED_START_DELAY_SECONDS),
+            )
+        }
     }
 
     fun cancelAndWait(context: Context) {
@@ -149,7 +185,7 @@ object SemanticEnrichmentScheduler {
         )
         .apply {
             if (initialDelaySeconds > 0L) setInitialDelay(initialDelaySeconds, TimeUnit.SECONDS)
-            if (userRequested) setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
+            if (userRequested) setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.SECONDS)
         }
         .addTag(UNIQUE_WORK)
         .build()

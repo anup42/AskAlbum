@@ -3358,3 +3358,24 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; REAL GEMMA FACT
 - A persisted duplicate-only active plan is detected once and rebuilt with the balanced event-first selector; existing cached facts remain intact.
 - Explicit retry backoff is limited to user-requested work; idle background requests no longer combine Android's incompatible device-idle and backoff JobScheduler flags.
 - Existing gallery, people, face, OCR, embedding, and model data are not reset or deleted.
+
+## 2026-07-26 - Indexing throughput and Gemma resume repair
+
+- Device diagnosis found 11,508 media rows with only 194 fully analysed, while the indexing monitor loaded and decoded all 11,508 database rows every second.
+- `GalleryDatabase.summary()` now computes media state totals directly in SQL instead of materializing the full gallery and parsing every tag list.
+- Index progress now polls lightweight database status every 2.5 seconds and refreshes the visible photo collection every 30 seconds or when indexing completes.
+- Pending semantic-memory jobs resume after app process or replacement-install restarts when the user has left semantic indexing enabled.
+- Repeated semantic Start/build requests keep an active WorkManager run instead of replacing and cancelling it.
+- A replacement install now records the package update timestamp and restarts stale media, embedding, People, and semantic unique-work chains once; ordinary process starts keep active work.
+- Primary media and user-requested semantic retries now resume after 30 seconds instead of remaining behind a 15-minute backoff after Android background restriction stop reason `11`.
+- Gemma processes up to four representatives per initialized session and continues after five seconds, with battery and thermal admission rechecked before every representative.
+- Added focused worker logs for start, admission, model availability, completion, failure, cancellation, continuation, and queue completion.
+- Live device evidence before the fix confirmed the verified E2B generation initialized with `backend=GPU`, `mtpSupported=true`, `mtpEnabled=true`, and `multimodal=true`.
+- Post-fix connected runtime verification advanced fully analysed media from 204 to 253, completed two more semantic jobs, and persisted a new Gemma fact while embeddings and People indexing continued.
+- A narrowly malformed Gemma field shaped as `"confidence(0.95)"` is normalized to the allowlisted numeric confidence field before strict JSON/fact validation; all existing sensitive-value and predicate guards remain active.
+- Existing gallery, people, face, OCR, embedding, semantic facts, and model generations remain intact.
+- `ConsumerDebug` source compilation, assemble, and replacement install: PASS on SM-S928B.
+- GPU/MTP semantic execution and persisted progress: PASS. The malformed-confidence repair was included in the final installed build but that exact model typo was not independently reproduced after installation.
+- Final control inspection found semantic memory explicitly stopped while media analysis remained enabled; semantic memory was re-enabled for this requested run without changing the separate stopped Embeddings or People controls.
+- Final connected run: Gemma initialized with GPU, MTP, and multimodal support, then completed two representatives; one stored eight validated facts and one safely stored no unsupported facts.
+- Installed APK SHA-256: `5C3211D92C2F72C5EF3429E6183D2FC6105B4F23CBD7E5A593E684AC54F1DC4B`.
