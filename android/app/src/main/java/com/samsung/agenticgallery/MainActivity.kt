@@ -191,9 +191,6 @@ private fun AgenticGalleryTheme(content: @Composable () -> Unit) {
 private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
     val state = viewModel.state
     val context = LocalContext.current
-    val evidenceGate = remember(context) {
-        SensitiveEvidenceGate(context as FragmentActivity, viewModel::showEvidence)
-    }
     val metadataGate = remember(context) {
         SensitiveEvidenceGate(context as FragmentActivity, viewModel::unlockSelectedEvidenceMetadata)
     }
@@ -256,15 +253,15 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
                 state.destination == AppDestination.ONBOARDING -> OnboardingScreen(
                     onContinue = { viewModel.navigate(AppDestination.GALLERY) },
                 )
-                state.destination == AppDestination.ASK -> AskScreen(state, viewModel, evidenceGate::open)
+                state.destination == AppDestination.ASK -> AskScreen(state, viewModel, viewModel::showEvidence)
                 state.destination == AppDestination.RESULTS -> ResultsScreen(
                     outcome = state.outcome,
-                    onEvidence = evidenceGate::open,
+                    onEvidence = viewModel::showEvidence,
                     onAsk = { viewModel.navigate(AppDestination.ASK) },
                 )
                 state.destination == AppDestination.GALLERY -> GalleryScreen(
                     items = state.items,
-                    onSelect = evidenceGate::open,
+                    onSelect = viewModel::showEvidence,
                     onPickMedia = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
                     onPickDocuments = { documentPicker.launch(arrayOf("image/*", "video/*", "application/pdf")) },
                     onFullGallery = requestFullGallery,
@@ -273,7 +270,7 @@ private fun AgenticGalleryApp(viewModel: GalleryViewModel) {
                 )
                 state.destination == AppDestination.ALBUMS -> AlbumsScreen(
                     items = state.items,
-                    onSelect = evidenceGate::open,
+                    onSelect = viewModel::showEvidence,
                     onPickMedia = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
                 )
                 state.destination == AppDestination.MENU -> GalleryMenuScreen(
@@ -2399,32 +2396,6 @@ internal fun EvidenceDialog(
                     }
                 }
                 if (controlsVisible && !detailsVisible) {
-                    Row(
-                        Modifier.fillMaxWidth().safeDrawingPadding().padding(horizontal = 18.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                currentItem.title,
-                                color = Color.White,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                "${pagerState.currentPage + 1} / ${viewerItems.size}  •  Swipe  •  Pinch to zoom",
-                                color = Color.White.copy(alpha = .72f),
-                                fontSize = 11.sp,
-                            )
-                        }
-                        Surface(shape = CircleShape, color = Color.Black.copy(alpha = .55f)) {
-                            IconButton(onClick = toggleDetails) {
-                                Icon(painterResource(R.drawable.ic_gallery_info), "Details and evidence", tint = Color.White)
-                            }
-                        }
-                    }
-                }
-                if (controlsVisible && !detailsVisible) {
                     Surface(
                         modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(14.dp),
                         shape = RoundedCornerShape(30.dp),
@@ -2435,12 +2406,6 @@ internal fun EvidenceDialog(
                             onAsk?.let { ask -> ViewerAction("Ask", R.drawable.ic_gallery_ask) { ask(currentItem) } }
                             if (currentItem.contentUri != null) {
                                 ViewerAction("Open", R.drawable.ic_gallery_open) { openItemExternally(context, currentItem) }
-                            }
-                            if (currentItem.kind == MediaKind.IMAGE &&
-                                currentItem.source == MediaSource.MEDIA_STORE &&
-                                currentItem.contentUri != null
-                            ) {
-                                ViewerAction("Edit", R.drawable.ic_gallery_edit) { openItemExternally(context, currentItem, edit = true) }
                             }
                             if (currentItem.kind == MediaKind.VIDEO && currentItem.contentUri != null) {
                                 ViewerAction("Play", R.drawable.ic_gallery_video) { playing = true }
@@ -2503,6 +2468,14 @@ private fun ZoomableViewerMedia(item: GalleryItem, onToggleControls: () -> Unit)
     var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
     var offsetY by remember(item.id) { mutableFloatStateOf(0f) }
     var viewport by remember(item.id) { mutableStateOf(IntSize.Zero) }
+    val nativeEdgePx = maxOf(item.width, item.height).coerceAtLeast(2_048)
+    val viewportEdgePx = maxOf(viewport.width, viewport.height).coerceAtLeast(2_048)
+    val resolutionMultiplier = when {
+        scale <= 1.01f -> 1
+        scale <= 2.5f -> 3
+        else -> 6
+    }
+    val requestedEdgePx = minOf(nativeEdgePx, viewportEdgePx * resolutionMultiplier)
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
         val nextScale = (scale * zoomChange).coerceIn(1f, 5f)
         if (nextScale == 1f) {
@@ -2545,9 +2518,9 @@ private fun ZoomableViewerMedia(item: GalleryItem, onToggleControls: () -> Unit)
                     scaleY = scale
                     translationX = offsetX
                     translationY = offsetY
-                },
+            },
             contentScale = ContentScale.Fit,
-            requestedEdgePx = 2048,
+            requestedEdgePx = requestedEdgePx,
         )
     }
 }
@@ -2791,15 +2764,13 @@ private fun shareItems(context: android.content.Context, items: List<GalleryItem
     runCatching { context.startActivity(Intent.createChooser(intent, "Share from Agentic Gallery")) }
 }
 
-private fun openItemExternally(context: android.content.Context, item: GalleryItem, edit: Boolean = false) {
+private fun openItemExternally(context: android.content.Context, item: GalleryItem) {
     val uri = item.contentUri?.let(Uri::parse) ?: return
-    val intent = Intent(if (edit) Intent.ACTION_EDIT else Intent.ACTION_VIEW).apply {
+    val intent = Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(uri, item.mimeType)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        if (edit) addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
     }
-    val title = if (edit) "Edit image" else "Open with"
-    runCatching { context.startActivity(Intent.createChooser(intent, title)) }
+    runCatching { context.startActivity(Intent.createChooser(intent, "Open with")) }
 }
 
 private fun formatBytes(bytes: Long): String = when {
