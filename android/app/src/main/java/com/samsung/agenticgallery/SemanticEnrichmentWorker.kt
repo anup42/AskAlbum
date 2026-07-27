@@ -114,7 +114,12 @@ class SemanticEnrichmentWorker(
                         enricher.enrich(currentJob, modelImage, bindings)
                     } catch (malformed: SemanticEnrichmentOutputException) {
                         Log.w(TAG, "Retrying malformed Gemma semantic output once for job=${currentJob.id}")
-                        enricher.enrich(currentJob, modelImage, bindings)
+                        enricher.enrich(
+                            currentJob,
+                            modelImage,
+                            bindings,
+                            repairReason = malformed.message ?: "invalid structured output",
+                        )
                     }
                 }
                 database.completeSemanticEnrichment(currentJob, result)
@@ -130,9 +135,14 @@ class SemanticEnrichmentWorker(
                 throw cancelled
             } catch (error: Throwable) {
                 val retryable = SemanticEnrichmentFailurePolicy.isRetryable(error)
+                val failureMessage = if (error is SemanticEnrichmentOutputException) {
+                    "Repair exhausted: ${error.message ?: "invalid structured output"}"
+                } else {
+                    error.message ?: error::class.java.simpleName
+                }
                 database.failSemanticEnrichment(
                     currentJob,
-                    error.message ?: error::class.java.simpleName,
+                    failureMessage,
                     retryable = retryable,
                 )
                 Log.e(TAG, "Semantic enrichment failed job=${currentJob.id} retryable=$retryable", error)

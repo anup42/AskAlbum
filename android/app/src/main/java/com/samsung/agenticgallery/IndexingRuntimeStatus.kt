@@ -41,6 +41,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
     ): Map<IndexingJob, IndexingPipelineSnapshot> {
         val media = workState("gallery-index")
         val embeddings = workState("gallery-image-embeddings")
+        val peopleWork = workState("gallery-people-index")
         val semanticWork = workState("semantic-enrichment")
         val mediaCompleted = (summary.discovered - summary.pending - summary.failed).coerceAtLeast(0)
         return mapOf(
@@ -71,7 +72,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 0,
                 (summary.discovered - people.pendingMediaCount).coerceAtLeast(0),
                 summary.discovered,
-                WorkState.EMPTY,
+                peopleWork,
                 admission,
             ),
             IndexingJob.SEMANTIC_MEMORY to snapshot(
@@ -180,7 +181,17 @@ internal object IndexingSupervisor {
             PeopleIndexScheduler.schedule(context)
         }
         if (controls.semanticMemoryEnabled && semantic.hasActiveWork) {
-            SemanticEnrichmentScheduler.schedule(context)
+            SemanticEnrichmentScheduler.schedule(
+                context,
+                userRequested = semantic.userRequestedPendingJobs > 0,
+            )
         }
     }
+}
+
+internal object IndexingProgressWording {
+    fun remainingBreakdown(mediaAnalysisPending: Int, peoplePending: Int): String = buildList {
+        if (mediaAnalysisPending > 0) add("$mediaAnalysisPending media analysis")
+        if (peoplePending > 0) add("$peoplePending face indexing")
+    }.joinToString(" | ").ifBlank { "No pending items" }
 }

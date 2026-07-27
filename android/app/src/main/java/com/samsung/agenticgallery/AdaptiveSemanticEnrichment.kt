@@ -54,8 +54,10 @@ data class SemanticMemoryProgress(
     val personalCompletedCount: Int = 0,
     val personalPendingCount: Int = 0,
     val personalFailedCount: Int = 0,
+    val personalAuthenticationRequiredCount: Int = 0,
     val personalExactReuseCount: Int = 0,
     val personalStaleCount: Int = 0,
+    val userRequestedPendingJobs: Int = 0,
     val latestError: String? = null,
 ) {
     val processedJobs: Int
@@ -118,6 +120,12 @@ internal object PersonalSemanticMemoryPolicy {
     }
 
     fun isPersonalJob(reason: String): Boolean = reason.startsWith(JOB_PREFIX)
+
+    fun isRecoverableStructuredOutputFailure(error: String?): Boolean = error in setOf(
+        "Enrichment omitted the facts array",
+        "Enrichment returned malformed JSON",
+        "Enrichment must return one JSON object",
+    )
 
     fun exactContentDigest(bytes: ByteArray, width: Int, height: Int): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)

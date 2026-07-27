@@ -105,6 +105,35 @@ class AdaptiveSemanticEnrichmentTest {
     }
 
     @Test
+    fun personalCaptionAcceptsAnEmptyOrOmittedFactsList() {
+        val job = SemanticEnrichmentJobRecord(
+            id = "personal",
+            scope = SemanticFactScope.MEDIA,
+            subjectId = "photo",
+            representativeMediaId = "photo",
+            reason = PersonalSemanticMemoryPolicy.jobReason("fixture"),
+            status = SemanticEnrichmentStatus.RUNNING,
+            attemptCount = 1,
+            userRequested = true,
+        )
+
+        val result = SemanticEnrichmentCodec.decode(
+            job,
+            """{"detailedCaption":"A person is standing outdoors beside a tree.","captionConfidence":0.9,"people":[]}""",
+            "fixture",
+            emptyList(),
+        )
+
+        assertTrue(result.facts.isEmpty())
+        assertEquals("A person is standing outdoors beside a tree.", result.caption?.text)
+        assertTrue(PersonalSemanticMemoryPolicy.isRecoverableStructuredOutputFailure("Enrichment omitted the facts array"))
+        assertEquals(
+            false,
+            PersonalSemanticMemoryPolicy.isRecoverableStructuredOutputFailure("Repair exhausted: invalid output"),
+        )
+    }
+
+    @Test
     fun jobBudgetReservesRecentEventsBeforeExactDuplicates() {
         val duplicateItems = (0 until 140).flatMap { group ->
             listOf(

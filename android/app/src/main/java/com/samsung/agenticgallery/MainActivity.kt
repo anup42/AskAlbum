@@ -865,7 +865,10 @@ private fun IndexManagerScreen(
                         append(" | ${semanticMemory.personalExactReuseCount} exact duplicates reused")
                     }
                     if (semanticMemory.personalFailedCount > 0) {
-                        append(" | ${semanticMemory.personalFailedCount} unavailable")
+                        append(" | ${semanticMemory.personalFailedCount} failed")
+                    }
+                    if (semanticMemory.personalAuthenticationRequiredCount > 0) {
+                        append(" | ${semanticMemory.personalAuthenticationRequiredCount} locked")
                     }
                     if (semanticMemory.personalStaleCount > 0) {
                         append(" | ${semanticMemory.personalStaleCount} stale")
@@ -966,7 +969,11 @@ private fun IndexManagerScreen(
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text("Indexing in progress", fontWeight = FontWeight.SemiBold)
-                            Text("$pendingCount remaining", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                            Text(
+                                IndexingProgressWording.remainingBreakdown(index.pending, peopleIndex.pendingMediaCount),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                            )
                         }
                     }
                 }

@@ -2570,7 +2570,27 @@ class GalleryDatabase(
     ): Int = writableDatabase.transaction { db ->
         val reason = PersonalSemanticMemoryPolicy.jobReason(modelVersion)
         val now = System.currentTimeMillis()
-        personalSemanticMemoryEligibleMediaIds(db, mediaIds).sumOf { mediaId ->
+        db.update(
+            "semantic_enrichment_job",
+            ContentValues().apply {
+                put("status", SemanticEnrichmentStatus.PENDING.name)
+                put("attempt_count", 0)
+                putNull("error")
+                putNull("lease_owner")
+                putNull("lease_expires_at")
+                put("next_attempt_at", 0L)
+                put("updated_at", now)
+            },
+            "reason=? AND status=? AND model_version IS NULL AND error IN (?,?,?)",
+            arrayOf(
+                reason,
+                SemanticEnrichmentStatus.FAILED.name,
+                "Enrichment omitted the facts array",
+                "Enrichment returned malformed JSON",
+                "Enrichment must return one JSON object",
+            ),
+        )
+        val queued = personalSemanticMemoryEligibleMediaIds(db, mediaIds).sumOf { mediaId ->
             val stable = "${SemanticFactScope.MEDIA}|$mediaId|$mediaId|$reason"
             val inserted = db.insertWithOnConflict("semantic_enrichment_job", null, ContentValues().apply {
                 put("id", UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString())
@@ -2600,6 +2620,38 @@ class GalleryDatabase(
             }
             if (inserted >= 0L) 1 else 0
         }
+        db.update(
+            "semantic_enrichment_job",
+            ContentValues().apply {
+                put("status", SemanticEnrichmentStatus.COMPLETE.name)
+                putNull("error")
+                putNull("lease_owner")
+                putNull("lease_expires_at")
+                put("next_attempt_at", 0L)
+                put("last_progress_at", now)
+                put("updated_at", now)
+            },
+            """
+            reason=? AND status=? AND model_version LIKE ? AND EXISTS (
+                SELECT 1 FROM semantic_caption c
+                WHERE c.evidence_media_id=semantic_enrichment_job.representative_media_id
+                  AND c.scope=?
+                  AND c.source_type IN (?,?)
+                  AND c.applicability<>'STALE_PERSON_BINDING'
+                  AND c.prompt_version=?
+            )
+            """.trimIndent(),
+            arrayOf(
+                reason,
+                SemanticEnrichmentStatus.PENDING.name,
+                "caption-v3:%",
+                SemanticFactScope.MEDIA.name,
+                "GEMMA_MEDIA_DIRECT",
+                "EXACT_DUPLICATE_REUSE",
+                SemanticEnrichmentCodec.PROMPT_VERSION,
+            ),
+        )
+        queued
     }
 
     fun recordExactContentDigest(mediaId: String, digest: String) {
@@ -2921,6 +2973,11 @@ class GalleryDatabase(
         arrayOf(SemanticEnrichmentStatus.PENDING.name),
     ).use(android.database.Cursor::moveToFirst)
 
+    fun hasUserRequestedPendingSemanticEnrichmentJobs(): Boolean = readableDatabase.rawQuery(
+        "SELECT 1 FROM semantic_enrichment_job WHERE status=? AND user_requested=1 LIMIT 1",
+        arrayOf(SemanticEnrichmentStatus.PENDING.name),
+    ).use(android.database.Cursor::moveToFirst)
+
     fun semanticEnrichmentPlanNeedsRebuild(): Boolean {
         val activeStatuses = setOf(
             SemanticEnrichmentStatus.PENDING.name,
@@ -2950,8 +3007,9 @@ class GalleryDatabase(
             counts[2] == 0
     }
 
-    fun semanticMemoryProgress(): SemanticMemoryProgress {
+    fun semanticMemoryProgress(activeModelVersion: String? = null): SemanticMemoryProgress {
         val db = readableDatabase
+        val personalReason = PersonalSemanticMemoryPolicy.jobReason(activeModelVersion)
         val counts = db.rawQuery(
             """
             SELECT COUNT(*),
@@ -2986,14 +3044,19 @@ class GalleryDatabase(
             SELECT
                 COALESCE(SUM(CASE WHEN status='COMPLETE' THEN 1 ELSE 0 END),0),
                 COALESCE(SUM(CASE WHEN status IN ('PENDING','RUNNING') THEN 1 ELSE 0 END),0),
-                COALESCE(SUM(CASE WHEN status IN ('FAILED','AUTH_REQUIRED') THEN 1 ELSE 0 END),0)
+                COALESCE(SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN status='AUTH_REQUIRED' THEN 1 ELSE 0 END),0)
             FROM semantic_enrichment_job
-            WHERE reason LIKE ?
+            WHERE reason=?
             """.trimIndent(),
-            arrayOf("${PersonalSemanticMemoryPolicy.JOB_PREFIX}%"),
+            arrayOf(personalReason),
         ).use { cursor ->
-            if (!cursor.moveToFirst()) IntArray(3) else IntArray(3) { cursor.getInt(it) }
+            if (!cursor.moveToFirst()) IntArray(4) else IntArray(4) { cursor.getInt(it) }
         }
+        val userRequestedPendingJobs = db.rawQuery(
+            "SELECT COUNT(*) FROM semantic_enrichment_job WHERE status IN ('PENDING','RUNNING') AND user_requested=1",
+            emptyArray(),
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
         val personalExactReuseCount = db.rawQuery(
             "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption WHERE source_type='EXACT_DUPLICATE_REUSE'",
             emptyArray(),
@@ -3025,8 +3088,10 @@ class GalleryDatabase(
             personalCompletedCount = personalCounts[0],
             personalPendingCount = personalCounts[1],
             personalFailedCount = personalCounts[2],
+            personalAuthenticationRequiredCount = personalCounts[3],
             personalExactReuseCount = personalExactReuseCount,
             personalStaleCount = personalStaleCount,
+            userRequestedPendingJobs = userRequestedPendingJobs,
             latestError = latestError,
         )
     }
@@ -3042,8 +3107,8 @@ class GalleryDatabase(
             put("next_attempt_at", 0L)
             put("updated_at", System.currentTimeMillis())
         },
-        "status=? AND (model_version IS NULL OR model_version NOT LIKE ?)",
-        arrayOf(SemanticEnrichmentStatus.COMPLETE.name, "caption-v2:%"),
+        "status=? AND (model_version IS NULL OR (model_version NOT LIKE ? AND model_version NOT LIKE ?))",
+        arrayOf(SemanticEnrichmentStatus.COMPLETE.name, "caption-v2:%", "caption-v3:%"),
     )
 
     fun completeSemanticEnrichment(job: SemanticEnrichmentJobRecord, facts: List<SemanticFactRecord>) =

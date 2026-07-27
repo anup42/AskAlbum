@@ -33,7 +33,10 @@ class GalleryRepository(context: Context) {
         database.recoverInterruptedJobs()
         val legacyCaptionJobs = database.queueLegacySemanticCaptionJobs()
         if (legacyCaptionJobs > 0 && indexingJobControlsStore.load().semanticMemoryEnabled) {
-            SemanticEnrichmentScheduler.schedule(appContext)
+            SemanticEnrichmentScheduler.schedule(
+                appContext,
+                userRequested = database.hasUserRequestedPendingSemanticEnrichmentJobs(),
+            )
         }
         database.seedDemoIfEmpty()
         database.ensureStageRows()
@@ -319,9 +322,12 @@ class GalleryRepository(context: Context) {
     fun semanticMemoryProgress(): SemanticMemoryProgress {
         val queued = database.queueLegacySemanticCaptionJobs()
         if (queued > 0 && indexingJobControlsStore.load().semanticMemoryEnabled) {
-            SemanticEnrichmentScheduler.schedule(appContext)
+            SemanticEnrichmentScheduler.schedule(
+                appContext,
+                userRequested = database.hasUserRequestedPendingSemanticEnrichmentJobs(),
+            )
         }
-        return database.semanticMemoryProgress()
+        return database.semanticMemoryProgress(services.modelPackManager.status().packVersion)
     }
 
     private fun queuePersonalSemanticMemory(
@@ -335,7 +341,10 @@ class GalleryRepository(context: Context) {
             indexingJobControlsStore.load().semanticMemoryEnabled &&
             database.hasPendingSemanticEnrichmentJobs()
         ) {
-            SemanticEnrichmentScheduler.schedule(appContext, userRequested)
+            SemanticEnrichmentScheduler.schedule(
+                appContext,
+                userRequested = userRequested || database.hasUserRequestedPendingSemanticEnrichmentJobs(),
+            )
         }
         return queued
     }
@@ -414,7 +423,10 @@ class GalleryRepository(context: Context) {
         IndexingResourceCoordinator.endInteractiveQuery()
         EmbeddingIndexScheduler.schedule(appContext)
         CaptionEmbeddingScheduler.schedule(appContext)
-        SemanticEnrichmentScheduler.schedule(appContext)
+        SemanticEnrichmentScheduler.schedule(
+            appContext,
+            userRequested = database.hasUserRequestedPendingSemanticEnrichmentJobs(),
+        )
     }
 
     suspend fun search(query: String, activeResultIds: Set<String>? = null): SearchOutcome =

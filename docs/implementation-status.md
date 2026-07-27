@@ -3499,3 +3499,14 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; FINAL QUERY COM
 - Caption chunk policy v2 removes model placeholder tokens such as `null` and deterministically backfills existing captions without another Gemma call.
 - Caption-embedding channel coverage reports distinct searched media rather than chunk counts; unrelated protected OCR cannot replace a visual-search answer unless protected evidence is actually used.
 - Sensitive evidence classification excludes plausible 13-digit epoch timestamps and requires Luhn-valid unlabelled payment-card candidates, avoiding false authentication gates on event evidence.
+
+## 2026-07-27 - Personal-caption progress and recovery
+
+- Fixed the legacy caption upgrader so completed `caption-v3` personal jobs are no longer reset to pending whenever progress refreshes.
+- Existing valid personal captions are recovered to `COMPLETE` from their stored media-scoped caption provenance without another Gemma call.
+- Known legacy structured-output failures are requeued once; omitted `facts` now means an empty allowlisted fact list when a safe detailed caption is present.
+- The second Gemma attempt now receives a corrective schema prompt. A second invalid response is labelled `Repair exhausted` and remains quarantined.
+- Authentication-protected personal images are reported separately as locked rather than unavailable.
+- User-requested personal work remains unconstrained after interactive-query preemption and indexing-supervisor polling.
+- People WorkManager state is now included in truthful pipeline status.
+- The aggregate `1062 remaining` message is replaced by per-pipeline wording such as `14 media analysis | 1048 face indexing`.

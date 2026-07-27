@@ -124,6 +124,9 @@ internal object SemanticEnrichmentCodec {
                     promptVersion = PROMPT_VERSION,
                 )
             }
+        if (PersonalSemanticMemoryPolicy.isPersonalJob(job.reason) && caption == null) {
+            throw SemanticEnrichmentOutputException("Personal enrichment omitted a safe detailedCaption")
+        }
         val people = root.optJSONArray("people") ?: JSONArray()
         val refs = mutableListOf<SemanticCaptionPersonRefRecord>()
         val personFacts = mutableListOf<PersonVisualFactRecord>()

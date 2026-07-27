@@ -2,6 +2,7 @@ package com.samsung.agenticgallery
 
 import java.io.File
 import java.util.Locale
+import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -13,6 +14,7 @@ class AdaptiveGemmaSemanticEnricher(
         job: SemanticEnrichmentJobRecord,
         imageBytes: ByteArray,
         bindings: List<PersonVerificationBinding> = emptyList(),
+        repairReason: String? = null,
     ): SemanticEnrichmentResult {
         val status = modelPacks.status()
         val path = status.path
@@ -22,13 +24,21 @@ class AdaptiveGemmaSemanticEnricher(
         require(status.deviceAssessment?.supported != false) { status.deviceAssessment?.reason ?: "Device unsupported" }
         require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
         val response = sessions.withEngine(path, multimodal = true) { lease ->
-            lease.engine.generateVision(imageBytes, prompt(job, bindings), seed = 31)
+            lease.engine.generateVision(imageBytes, prompt(job, bindings, repairReason), seed = 31)
         }
         return SemanticEnrichmentCodec.decode(job, response, "gemma-4-${status.packVersion ?: "unknown"}", bindings)
     }
 
-    private fun prompt(job: SemanticEnrichmentJobRecord, bindings: List<PersonVerificationBinding>): String = """
+    private fun prompt(
+        job: SemanticEnrichmentJobRecord,
+        bindings: List<PersonVerificationBinding>,
+        repairReason: String?,
+    ): String = """
         Analyze only the supplied local representative contact sheet. Return one JSON object and no markdown.
+        ${repairReason?.let {
+            "CORRECTIVE RETRY: the previous output failed validation because ${it.take(160)}. " +
+                "Return every required top-level key. facts must be [] when no safe atomic facts are visible."
+        }.orEmpty()}
         The top panel is the complete image. Lower panels are labelled conservative full-body and upper-body crops.
         Reviewed labels available: ${bindings.distinctBy(PersonVerificationBinding::clusterId).joinToString(",") { it.stableLabel }.ifBlank { "none" }}.
         Write a comprehensive detailedCaption covering every search-useful visible scene, setting, occasion cue, labelled person,
@@ -84,8 +94,7 @@ internal object SemanticFactCodec {
         } catch (error: JSONException) {
             throw SemanticEnrichmentOutputException("Enrichment returned malformed JSON", error)
         }
-        val facts = root.optJSONArray("facts")
-            ?: throw SemanticEnrichmentOutputException("Enrichment omitted the facts array")
+        val facts = root.optJSONArray("facts") ?: JSONArray()
         return buildList {
             for (index in 0 until minOf(facts.length(), MAX_FACTS)) {
                 val fact = facts.optJSONObject(index) ?: continue
