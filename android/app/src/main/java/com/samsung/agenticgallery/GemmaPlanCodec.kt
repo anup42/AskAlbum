@@ -37,7 +37,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
                 mustBePresent = item.optBoolean("mustBePresent", true),
                 hardness = item.optEnum("hardness", ConstraintStrength.HARD),
             )
-        }.orEmpty()
+        }.orEmpty().let(PeopleClauseSanitizer::sanitize)
         val ocr = json.optJSONObject("ocrClause")?.let { item ->
             item.requireOnly("query", "merchant", "requestedField")
             OcrClause(item.optNullableString("query"), item.optNullableString("merchant"), item.optNullableString("requestedField"))

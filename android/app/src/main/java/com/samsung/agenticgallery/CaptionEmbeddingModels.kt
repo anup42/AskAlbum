@@ -88,7 +88,7 @@ data class CaptionVectorSearchReport(
 )
 
 internal object SemanticCaptionChunker {
-    const val POLICY_VERSION = "caption-chunks-v1"
+    const val POLICY_VERSION = "caption-chunks-v2"
     const val MAX_CHUNKS_PER_CAPTION = 24
     private const val MAX_WORDS_PER_CHUNK = 40
     private const val MAX_CHARS_PER_CHUNK = 360
@@ -175,7 +175,11 @@ internal object SemanticCaptionChunker {
 
         val accepted = mutableListOf<Candidate>()
         candidates.forEach { candidate ->
-            val text = candidate.text.trim().replace(Regex("\\s+"), " ").take(MAX_CHARS_PER_CHUNK)
+            val text = candidate.text
+                .replace(Regex("\\b(?:null|undefined)\\b", RegexOption.IGNORE_CASE), " ")
+                .trim()
+                .replace(Regex("\\s+"), " ")
+                .take(MAX_CHARS_PER_CHUNK)
             if (text.isBlank() || SensitiveContentClassifier.isSensitive(text)) return@forEach
             val normalized = normalize(text)
             if (normalized.isBlank()) return@forEach

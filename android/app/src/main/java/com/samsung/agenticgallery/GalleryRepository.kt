@@ -4,10 +4,12 @@ import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.single
+import kotlinx.coroutines.withContext
 import kotlin.math.max
 import java.util.concurrent.ConcurrentHashMap
 
@@ -341,7 +343,9 @@ class GalleryRepository(context: Context) {
         val accessibleItems = database.allItems().associateBy(GalleryItem::id)
         val factsByMedia = database.allSemanticFacts().groupBy(SemanticFactRecord::evidenceMediaId)
         val captionsByMedia = database.allSemanticCaptions().groupBy(SemanticCaptionRecord::evidenceMediaId)
-        return (factsByMedia.keys + captionsByMedia.keys)
+        val chunksByMedia = database.allSemanticCaptionChunks().groupBy(SemanticCaptionChunkRecord::evidenceMediaId)
+        val personFactsByMedia = database.allPersonVisualFacts().groupBy(PersonVisualFactRecord::mediaId)
+        return (factsByMedia.keys + captionsByMedia.keys + chunksByMedia.keys + personFactsByMedia.keys)
             .mapNotNull { mediaId ->
                 val item = accessibleItems[mediaId] ?: return@mapNotNull null
                 val storedFacts = factsByMedia[mediaId].orEmpty()
@@ -353,9 +357,9 @@ class GalleryRepository(context: Context) {
                     facts = visibleFacts,
                     protectedFactCount = protectedFacts.size,
                     captions = captionsByMedia[mediaId].orEmpty().filterNot { SensitiveContentClassifier.isSensitive(it.text) },
-                    captionChunks = database.semanticCaptionChunksForMedia(mediaId)
+                    captionChunks = chunksByMedia[mediaId].orEmpty()
                         .filterNot { SensitiveContentClassifier.isSensitive(it.exactText) },
-                    personVisualFacts = database.personVisualFactsForMedia(mediaId),
+                    personVisualFacts = personFactsByMedia[mediaId].orEmpty(),
                 )
             }
             .sortedWith(
@@ -397,6 +401,22 @@ class GalleryRepository(context: Context) {
         if (services.retrievalModelPackManager.status().installed) EmbeddingIndexScheduler.schedule(appContext)
     }
 
+    suspend fun beginInteractiveQuery() {
+        IndexingResourceCoordinator.beginInteractiveQuery()
+        withContext(Dispatchers.IO) {
+            runCatching { SemanticEnrichmentScheduler.cancelAndWait(appContext) }
+            runCatching { CaptionEmbeddingScheduler.cancelAndWait(appContext) }
+            runCatching { EmbeddingIndexScheduler.cancelAndWait(appContext) }
+        }
+    }
+
+    fun endInteractiveQuery() {
+        IndexingResourceCoordinator.endInteractiveQuery()
+        EmbeddingIndexScheduler.schedule(appContext)
+        CaptionEmbeddingScheduler.schedule(appContext)
+        SemanticEnrichmentScheduler.schedule(appContext)
+    }
+
     suspend fun search(query: String, activeResultIds: Set<String>? = null): SearchOutcome =
         searchProgressive(query, activeResultIds).filterIsInstance<QueryProgress.Completed>().single().outcome
 
@@ -428,13 +448,16 @@ class GalleryRepository(context: Context) {
         } else {
             null to compiledPlan
         }
+        val sanitizedPatchedPlan = patchedPlan.copy(
+            peopleClauses = PeopleClauseSanitizer.sanitize(patchedPlan.peopleClauses),
+        )
         val resolvedPersonGroups = database.resolveReviewedPersonGroups(query)
         val plan = if (resolvedPersonGroups.isEmpty()) {
-            patchedPlan
+            sanitizedPatchedPlan
         } else {
-            patchedPlan.copy(
+            sanitizedPatchedPlan.copy(
                 peopleClauses = (
-                    patchedPlan.peopleClauses + resolvedPersonGroups.flatMap { group ->
+                    sanitizedPatchedPlan.peopleClauses + resolvedPersonGroups.flatMap { group ->
                         group.personIds.map { personId ->
                             PersonClause(personId = personId, alternativeGroup = group.alternativeGroup)
                         }
@@ -568,11 +591,20 @@ class GalleryRepository(context: Context) {
         val semanticById = semanticRanked.associateBy { it.mediaId }
         val itemById = allItems.associateBy { it.id }
         val resolvedSemanticBySourceId = resolvedSemanticHits.associateBy(ResolvedSemanticHit::sourceVectorId)
-        val semanticChannelReport = semanticVectorReport.mapHits { vectorHit ->
-            val resolved = resolvedSemanticBySourceId[vectorHit.mediaId] ?: return@mapHits null
-            val item = itemById[resolved.hit.mediaId] ?: return@mapHits null
-            SearchHit(item, resolved.hit.score.toDouble(), emptyList())
-        }
+        val semanticChannelReport = RetrievalChannelReport<SearchHit>(
+            channel = semanticVectorReport.channel,
+            status = semanticVectorReport.status,
+            eligibleCount = semanticVectorReport.eligibleCount,
+            indexedCount = semanticVectorReport.indexedCount,
+            searchedCount = semanticVectorReport.searchedCount,
+            hits = semanticVectorReport.hits.mapNotNull { vectorHit ->
+                val resolved = resolvedSemanticBySourceId[vectorHit.mediaId] ?: return@mapNotNull null
+                val item = itemById[resolved.hit.mediaId] ?: return@mapNotNull null
+                SearchHit(item, resolved.hit.score.toDouble(), emptyList())
+            },
+            modelVersion = semanticVectorReport.modelVersion,
+            errorCode = semanticVectorReport.errorCode,
+        )
         val readyEligibleCount = allItems.count { it.indexState == IndexState.READY }
         val lexicalChannelReport = RetrievalChannelReport(
             RetrievalChannel.LEXICAL,
@@ -605,12 +637,20 @@ class GalleryRepository(context: Context) {
             modelVersion = captionRanked.firstOrNull()?.caption?.modelVersion,
             errorCode = if (captionCoverage == 0) "NO_CACHED_CAPTIONS" else null,
         )
+        val captionEmbeddingSearchedMediaCount = eligibleCaptionChunks.asSequence()
+            .filter {
+                it.embeddingState == CaptionEmbeddingState.COMPLETE &&
+                    it.embeddingModelVersion == captionVectorSearch.modelVersion
+            }
+            .map(SemanticCaptionChunkRecord::mediaId)
+            .distinct()
+            .count()
         val captionEmbeddingChannelReport = RetrievalChannelReport(
             RetrievalChannel.CAPTION_EMBEDDING,
             captionVectorSearch.status,
             allItems.size,
-            eligibleCaptionChunks.map(SemanticCaptionChunkRecord::mediaId).distinct().size,
-            captionVectorSearch.searchedChunkCount,
+            captionEmbeddingSearchedMediaCount,
+            captionEmbeddingSearchedMediaCount,
             captionEmbeddingRanked.mapNotNull { match ->
                 itemById[match.mediaId]?.let { SearchHit(it, match.score, emptyList()) }
             },

@@ -27,3 +27,14 @@ internal object PeopleClauseResolver {
         return PeopleMediaScope(required, excluded)
     }
 }
+
+internal object PeopleClauseSanitizer {
+    private val nullLikeIds = setOf("null", "undefined", "none", "unknown")
+
+    fun sanitize(clauses: List<PersonClause>): List<PersonClause> = clauses
+        .map { clause -> clause.copy(personId = clause.personId.trim()) }
+        .filterNot { clause ->
+            clause.personId.isBlank() || clause.personId.lowercase(java.util.Locale.ROOT) in nullLikeIds
+        }
+        .distinctBy { Triple(it.personId, it.mustBePresent, it.alternativeGroup) }
+}

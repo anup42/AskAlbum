@@ -987,7 +987,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             error = null,
         )
         queryJob = viewModelScope.launch {
+            var interactiveQueryStarted = false
             try {
+                repository.beginInteractiveQuery()
+                interactiveQueryStarted = true
                 repository.searchProgressive(query, sessionId = GalleryDatabase.PRIMARY_QUERY_SESSION)
                     .flowOn(Dispatchers.Default)
                     .collect { progress ->
@@ -1015,6 +1018,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
             } finally {
+                if (interactiveQueryStarted) repository.endInteractiveQuery()
                 if (generation == queryGeneration) queryJob = null
             }
         }
@@ -1233,7 +1237,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private fun monitorSemanticMemory() {
         semanticMemoryMonitorJob?.cancel()
         semanticMemoryMonitorJob = viewModelScope.launch {
-            while (state.destination == AppDestination.INDEX_MANAGER) {
+            while (state.destination == AppDestination.INDEX_MANAGER ||
+                state.destination == AppDestination.SEMANTIC_MEMORY
+            ) {
                 val progress = withContext(Dispatchers.IO) { repository.semanticMemoryProgress() }
                 state = state.copy(semanticMemory = progress)
                 if (!progress.hasActiveWork) return@launch

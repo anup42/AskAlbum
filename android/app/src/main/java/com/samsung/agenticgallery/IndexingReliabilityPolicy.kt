@@ -37,9 +37,25 @@ internal object IndexingWorkerResultPolicy {
 
 internal object IndexingResourceCoordinator {
     private val backgroundInference = Mutex()
+    private val interactiveQueries = java.util.concurrent.atomic.AtomicInteger()
+
+    fun beginInteractiveQuery() {
+        interactiveQueries.incrementAndGet()
+    }
+
+    fun endInteractiveQuery() {
+        interactiveQueries.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+    }
 
     suspend fun <T> withBackgroundPermit(block: suspend () -> T): T =
-        backgroundInference.withLock { block() }
+        backgroundInference.withLock {
+            while (interactiveQueries.get() > 0) {
+                kotlinx.coroutines.delay(INTERACTIVE_POLL_MS)
+            }
+            block()
+        }
+
+    private const val INTERACTIVE_POLL_MS = 100L
 }
 
 internal object ForegroundIndexRuntime {

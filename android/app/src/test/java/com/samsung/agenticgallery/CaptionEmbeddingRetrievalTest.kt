@@ -52,7 +52,7 @@ class CaptionEmbeddingRetrievalTest {
                     relation = PersonVisualRelation.WEARING,
                     category = WornItemCategory.CLOTHING,
                     itemType = "dress",
-                    value = "white dress",
+                    value = "white null dress",
                     attributes = mapOf("colors" to listOf("white")),
                     bodyRegion = BodyRegion.FULL_BODY,
                     confidence = 0.96f,
@@ -66,6 +66,7 @@ class CaptionEmbeddingRetrievalTest {
         val personChunk = chunks.single { it.chunkType == CaptionChunkType.PERSON_APPEARANCE }
         assertEquals("wife-cluster", personChunk.clusterId)
         assertFalse(personChunk.exactText.contains("wife", ignoreCase = true))
+        assertFalse(personChunk.exactText.contains("null", ignoreCase = true))
         assertTrue(personChunk.exactText.contains("white dress", ignoreCase = true))
     }
 

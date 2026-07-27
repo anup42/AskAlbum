@@ -3494,3 +3494,8 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; FINAL QUERY COM
 - Caption lexical and caption-vector channels search original, canonical, and positive-clause variants after hard eligibility filtering, then join the existing weighted reciprocal-rank fusion.
 - Person chunks retain reviewed cluster IDs. Group and event chunks are contextual candidate evidence and cannot confirm person-conditioned predicates.
 - Semantic-memory and image metadata views expose exact chunk text, provenance, scope, model versions, and embedding status without exposing vectors.
+- Interactive queries stop active WorkManager inference jobs, gate new background inference permits, and resume enabled queues afterward so semantic-memory generation cannot hold Gemma ahead of planning.
+- Semantic-memory inspection bulk-loads chunks and person observations instead of issuing per-media queries, and continues progress monitoring while the inspector is open.
+- Caption chunk policy v2 removes model placeholder tokens such as `null` and deterministically backfills existing captions without another Gemma call.
+- Caption-embedding channel coverage reports distinct searched media rather than chunk counts; unrelated protected OCR cannot replace a visual-search answer unless protected evidence is actually used.
+- Sensitive evidence classification excludes plausible 13-digit epoch timestamps and requires Luhn-valid unlabelled payment-card candidates, avoiding false authentication gates on event evidence.

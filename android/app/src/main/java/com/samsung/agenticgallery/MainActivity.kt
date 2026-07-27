@@ -1550,7 +1550,11 @@ private fun SemanticMemoryScreen(
             Column(Modifier.padding(bottom = 8.dp)) {
                 Text("Gemma semantic memory", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "${media.size} evidence media with cached facts. Newest media is shown first.",
+                    if (loading) {
+                        "Loading cached evidence media..."
+                    } else {
+                        "${media.size} evidence media with cached facts. Newest media is shown first."
+                    },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(6.dp))

@@ -3327,6 +3327,11 @@ class GalleryDatabase(
         arrayOf(mediaId, mediaId, mediaId, mediaId),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
 
+    fun allSemanticCaptionChunks(): List<SemanticCaptionChunkRecord> = readableDatabase.rawQuery(
+        "SELECT * FROM semantic_caption_chunk ORDER BY updated_at DESC,chunk_type,id",
+        emptyArray(),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
+
     fun captionEmbeddingProgress(): CaptionEmbeddingProgress {
         val db = readableDatabase
         val captioned = db.rawQuery("SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption", emptyArray())
@@ -3583,37 +3588,13 @@ class GalleryDatabase(
         "SELECT f.*,p.label,p.relationship FROM person_attribute_fact f " +
             "LEFT JOIN person_cluster p ON p.id=f.cluster_id WHERE f.media_id=? ORDER BY f.cluster_id,f.relation,f.value",
         arrayOf(mediaId),
-    ).use { cursor ->
-        buildList {
-            while (cursor.moveToNext()) {
-                val region = decodeRegion(cursor.text("region"))
-                add(
-                    PersonVisualFactRecord(
-                        id = cursor.text("id"),
-                        mediaId = cursor.text("media_id"),
-                        clusterId = cursor.text("cluster_id"),
-                        resolvedLabel = cursor.nullableText("label") ?: cursor.nullableText("relationship"),
-                        personRef = cursor.text("person_ref"),
-                        relation = enumOrDefault(cursor.text("relation"), PersonVisualRelation.ACTION),
-                        category = enumOrNull<WornItemCategory>(cursor.text("category")),
-                        itemType = cursor.nullableText("item_type"),
-                        value = cursor.text("value"),
-                        attributes = decodeAttributes(cursor.text("attributes")),
-                        bodyRegion = enumOrDefault(cursor.text("body_region"), BodyRegion.UNKNOWN),
-                        confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
-                        faceRegion = cursor.nullableText("face_region")?.let(::decodeRegion) ?: region,
-                        evidenceRegion = region,
-                        associationStatus = enumOrDefault(cursor.text("association_status"), PersonAssociationStatus.CONFIDENT),
-                        verdict = enumOrDefault(cursor.text("verdict"), PersonVisualVerdict.VERIFIED_TRUE),
-                        targetClusterId = cursor.nullableText("target_cluster_id"),
-                        modelVersion = cursor.text("model_version"),
-                        promptVersion = cursor.text("prompt_version"),
-                        updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
-                    ),
-                )
-            }
-        }
-    }
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(readPersonVisualFact(cursor)) } }
+
+    fun allPersonVisualFacts(): List<PersonVisualFactRecord> = readableDatabase.rawQuery(
+        "SELECT f.*,p.label,p.relationship FROM person_attribute_fact f " +
+            "LEFT JOIN person_cluster p ON p.id=f.cluster_id ORDER BY f.media_id,f.cluster_id,f.relation,f.value",
+        emptyArray(),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(readPersonVisualFact(cursor)) } }
 
     fun searchSemanticCaptions(
         queries: Collection<String>,
@@ -3781,6 +3762,32 @@ class GalleryDatabase(
         createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
         updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
     )
+
+    private fun readPersonVisualFact(cursor: android.database.Cursor): PersonVisualFactRecord {
+        val region = decodeRegion(cursor.text("region"))
+        return PersonVisualFactRecord(
+            id = cursor.text("id"),
+            mediaId = cursor.text("media_id"),
+            clusterId = cursor.text("cluster_id"),
+            resolvedLabel = cursor.nullableText("label") ?: cursor.nullableText("relationship"),
+            personRef = cursor.text("person_ref"),
+            relation = enumOrDefault(cursor.text("relation"), PersonVisualRelation.ACTION),
+            category = enumOrNull<WornItemCategory>(cursor.text("category")),
+            itemType = cursor.nullableText("item_type"),
+            value = cursor.text("value"),
+            attributes = decodeAttributes(cursor.text("attributes")),
+            bodyRegion = enumOrDefault(cursor.text("body_region"), BodyRegion.UNKNOWN),
+            confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
+            faceRegion = cursor.nullableText("face_region")?.let(::decodeRegion) ?: region,
+            evidenceRegion = region,
+            associationStatus = enumOrDefault(cursor.text("association_status"), PersonAssociationStatus.CONFIDENT),
+            verdict = enumOrDefault(cursor.text("verdict"), PersonVisualVerdict.VERIFIED_TRUE),
+            targetClusterId = cursor.nullableText("target_cluster_id"),
+            modelVersion = cursor.text("model_version"),
+            promptVersion = cursor.text("prompt_version"),
+            updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+        )
+    }
 
     private fun replaceCaptionChunks(
         db: GallerySqlDatabase,
