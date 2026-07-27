@@ -469,6 +469,8 @@ data class SemanticCaptionEntity(
     @ColumnInfo(name = "prompt_version") val promptVersion: String,
     @ColumnInfo(name = "created_at", defaultValue = "0") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "chunk_policy_version") val chunkPolicyVersion: String?,
+    @ColumnInfo(name = "chunked_at") val chunkedAt: Long?,
 )
 
 @Entity(
@@ -487,6 +489,56 @@ data class SemanticCaptionPersonRefEntity(
     @ColumnInfo(name = "face_region") val faceRegion: String,
     @ColumnInfo(name = "body_region") val bodyRegion: String?,
     @ColumnInfo(name = "association_status") val associationStatus: String,
+)
+
+@Entity(
+    tableName = "semantic_caption_chunk",
+    indices = [
+        Index(name = "semantic_caption_chunk_caption_idx", value = ["caption_id"]),
+        Index(name = "semantic_caption_chunk_media_idx", value = ["media_id"]),
+        Index(name = "semantic_caption_chunk_evidence_idx", value = ["evidence_media_id"]),
+        Index(name = "semantic_caption_chunk_cluster_idx", value = ["cluster_id"]),
+        Index(name = "semantic_caption_chunk_queue_idx", value = ["embedding_state", "next_attempt_at"]),
+    ],
+    foreignKeys = [
+        ForeignKey(entity = SemanticCaptionEntity::class, parentColumns = ["id"], childColumns = ["caption_id"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["media_id"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["evidence_media_id"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = PersonClusterEntity::class, parentColumns = ["id"], childColumns = ["cluster_id"], onDelete = ForeignKey.CASCADE),
+    ],
+)
+data class SemanticCaptionChunkEntity(
+    @PrimaryKey val id: String,
+    @ColumnInfo(name = "caption_id") val captionId: String,
+    @ColumnInfo(name = "media_id") val mediaId: String,
+    val scope: String,
+    @ColumnInfo(name = "scope_id") val scopeId: String,
+    @ColumnInfo(name = "evidence_media_id") val evidenceMediaId: String,
+    @ColumnInfo(name = "cluster_id") val clusterId: String?,
+    @ColumnInfo(name = "chunk_type") val chunkType: String,
+    @ColumnInfo(name = "exact_text") val exactText: String,
+    val confidence: Float,
+    val applicability: String,
+    @ColumnInfo(name = "caption_model_version") val captionModelVersion: String,
+    @ColumnInfo(name = "caption_prompt_version") val captionPromptVersion: String,
+    @ColumnInfo(name = "chunk_policy_version") val chunkPolicyVersion: String,
+    @ColumnInfo(name = "embedding_model_version") val embeddingModelVersion: String?,
+    @ColumnInfo(name = "embedding_state", defaultValue = "'PENDING'") val embeddingState: String,
+    @ColumnInfo(name = "attempt_count", defaultValue = "0") val attemptCount: Int,
+    val error: String?,
+    @ColumnInfo(name = "lease_owner") val leaseOwner: String?,
+    @ColumnInfo(name = "lease_expires_at") val leaseExpiresAt: Long?,
+    @ColumnInfo(name = "next_attempt_at", defaultValue = "0") val nextAttemptAt: Long,
+    @ColumnInfo(name = "last_progress_at") val lastProgressAt: Long?,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+)
+
+@Fts4
+@Entity(tableName = "semantic_caption_chunk_fts")
+data class SemanticCaptionChunkFtsEntity(
+    @ColumnInfo(name = "chunk_id") val chunkId: String,
+    @ColumnInfo(name = "exact_text") val exactText: String,
 )
 
 @Entity(
@@ -549,9 +601,11 @@ data class SemanticEnrichmentJobEntity(
         SemanticFactEntity::class,
         SemanticCaptionEntity::class,
         SemanticCaptionPersonRefEntity::class,
+        SemanticCaptionChunkEntity::class,
+        SemanticCaptionChunkFtsEntity::class,
         SemanticEnrichmentJobEntity::class,
     ],
-    version = 17,
+    version = 18,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -579,6 +633,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_14_15,
             MIGRATION_15_16,
             MIGRATION_16_17,
+            MIGRATION_17_18,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -851,6 +906,54 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL(
                     "UPDATE visual_group SET kind='PERCEPTUAL_SIMILARITY_LEGACY' WHERE kind='EXACT_DUPLICATE'",
                 )
+            }
+        }
+
+        internal val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE semantic_caption ADD COLUMN chunk_policy_version TEXT")
+                db.execSQL("ALTER TABLE semantic_caption ADD COLUMN chunked_at INTEGER")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS semantic_caption_chunk (
+                        id TEXT NOT NULL,
+                        caption_id TEXT NOT NULL,
+                        media_id TEXT NOT NULL,
+                        scope TEXT NOT NULL,
+                        scope_id TEXT NOT NULL,
+                        evidence_media_id TEXT NOT NULL,
+                        cluster_id TEXT,
+                        chunk_type TEXT NOT NULL,
+                        exact_text TEXT NOT NULL,
+                        confidence REAL NOT NULL,
+                        applicability TEXT NOT NULL,
+                        caption_model_version TEXT NOT NULL,
+                        caption_prompt_version TEXT NOT NULL,
+                        chunk_policy_version TEXT NOT NULL,
+                        embedding_model_version TEXT,
+                        embedding_state TEXT NOT NULL DEFAULT 'PENDING',
+                        attempt_count INTEGER NOT NULL DEFAULT 0,
+                        error TEXT,
+                        lease_owner TEXT,
+                        lease_expires_at INTEGER,
+                        next_attempt_at INTEGER NOT NULL DEFAULT 0,
+                        last_progress_at INTEGER,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY(id),
+                        FOREIGN KEY(caption_id) REFERENCES semantic_caption(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(evidence_media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(cluster_id) REFERENCES person_cluster(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_caption_idx ON semantic_caption_chunk(caption_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_media_idx ON semantic_caption_chunk(media_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_evidence_idx ON semantic_caption_chunk(evidence_media_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_cluster_idx ON semantic_caption_chunk(cluster_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_queue_idx ON semantic_caption_chunk(embedding_state,next_attempt_at)")
+                db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS semantic_caption_chunk_fts USING FTS4(chunk_id,exact_text)")
             }
         }
 

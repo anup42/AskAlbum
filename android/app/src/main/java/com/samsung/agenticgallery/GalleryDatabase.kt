@@ -646,6 +646,18 @@ class GalleryDatabase(
                 WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=$now
                 """.trimIndent(),
             )
+            db.execSQL(
+                """
+                UPDATE semantic_caption_chunk
+                SET embedding_state='PENDING',
+                    attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
+                    updated_at=$now,
+                    error='lease_expired',
+                    lease_owner=NULL,
+                    lease_expires_at=NULL
+                WHERE embedding_state='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=$now
+                """.trimIndent(),
+            )
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -2719,6 +2731,15 @@ class GalleryDatabase(
             if (ids.isEmpty()) return@forEach
             val placeholders = ids.joinToString(",") { "?" }
             val args = ids.toTypedArray()
+            val personChunkIds = db.rawQuery(
+                "SELECT id FROM semantic_caption_chunk WHERE media_id IN ($placeholders) AND cluster_id IS NOT NULL",
+                args,
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+            personChunkIds.chunked(SQLITE_ID_CHUNK).forEach { chunkIds ->
+                val chunkPlaceholders = chunkIds.joinToString(",") { "?" }
+                db.delete("semantic_caption_chunk_fts", "chunk_id IN ($chunkPlaceholders)", chunkIds.toTypedArray())
+                db.delete("semantic_caption_chunk", "id IN ($chunkPlaceholders)", chunkIds.toTypedArray())
+            }
             db.delete("person_attribute_fact", "media_id IN ($placeholders)", args)
             db.delete(
                 "semantic_caption_person_ref",
@@ -2955,6 +2976,7 @@ class GalleryDatabase(
         val captionCount = db.rawQuery("SELECT COUNT(*) FROM semantic_caption", emptyArray()).use { cursor ->
             if (cursor.moveToFirst()) cursor.getInt(0) else 0
         }
+        val captionEmbedding = captionEmbeddingProgress()
         val personVisualFactCount = db.rawQuery("SELECT COUNT(*) FROM person_attribute_fact", emptyArray()).use { cursor ->
             if (cursor.moveToFirst()) cursor.getInt(0) else 0
         }
@@ -2993,6 +3015,11 @@ class GalleryDatabase(
             authenticationRequiredJobs = counts[5],
             factCount = factCount,
             captionCount = captionCount,
+            captionChunkCount = captionEmbedding.totalChunkCount,
+            embeddedCaptionChunkCount = captionEmbedding.embeddedChunkCount,
+            pendingCaptionChunkCount = captionEmbedding.pendingChunkCount + captionEmbedding.delayedRetryCount,
+            runningCaptionChunkCount = captionEmbedding.runningChunkCount,
+            failedCaptionChunkCount = captionEmbedding.failedChunkCount,
             personVisualFactCount = personVisualFactCount,
             personalEligibleCount = personalEligibleCount,
             personalCompletedCount = personalCounts[0],
@@ -3026,6 +3053,7 @@ class GalleryDatabase(
         writableDatabase.transaction { db ->
             val now = System.currentTimeMillis()
             val facts = result.facts
+            var storedCaption: SemanticCaptionRecord? = null
             facts.forEach { fact ->
                 val targets = if (fact.applicability == "SAFE_FOR_EXACT_DUPLICATES") {
                     exactDuplicateMediaIds(db, fact.evidenceMediaId)
@@ -3082,6 +3110,8 @@ class GalleryDatabase(
                     put("prompt_version", caption.promptVersion)
                     put("created_at", caption.createdAt.takeIf { it > 0L } ?: now)
                     put("updated_at", now)
+                    putNull("chunk_policy_version")
+                    putNull("chunked_at")
                 }, SQLiteDatabase.CONFLICT_REPLACE)
                 db.delete("semantic_caption_person_ref", "caption_id=?", arrayOf(captionId))
                 caption.personRefs.forEach { ref ->
@@ -3094,6 +3124,11 @@ class GalleryDatabase(
                         put("association_status", ref.associationStatus.name)
                     }, SQLiteDatabase.CONFLICT_REPLACE)
                 }
+                storedCaption = caption.copy(
+                    id = captionId,
+                    createdAt = caption.createdAt.takeIf { it > 0L } ?: now,
+                    updatedAt = now,
+                )
             }
             result.personFacts.forEach { fact ->
                 val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}"
@@ -3120,6 +3155,7 @@ class GalleryDatabase(
                     put("updated_at", now)
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
+            storedCaption?.let { replaceCaptionChunks(db, it, facts, result.personFacts) }
             val producer = result.caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
             val completionPrefix = if (PersonalSemanticMemoryPolicy.isPersonalJob(job.reason)) "caption-v3" else "caption-v2"
             db.update("semantic_enrichment_job", ContentValues().apply {
@@ -3280,6 +3316,269 @@ class GalleryDatabase(
         arrayOf(mediaId, mediaId, mediaId, mediaId),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(readSemanticCaption(cursor)) } }
 
+    fun semanticCaptionChunksForMedia(mediaId: String): List<SemanticCaptionChunkRecord> = readableDatabase.rawQuery(
+        """
+        SELECT DISTINCT c.* FROM semantic_caption_chunk c
+        LEFT JOIN visual_group_member gm ON c.scope IN ('VISUAL_GROUP','EXACT_DUPLICATE_GROUP') AND c.scope_id=gm.group_id
+        LEFT JOIN event_media em ON c.scope='EVENT' AND c.scope_id=CAST(em.event_id AS TEXT)
+        WHERE c.media_id=? OR c.evidence_media_id=? OR gm.media_id=? OR em.media_id=?
+        ORDER BY c.updated_at DESC,c.chunk_type,c.id
+        """.trimIndent(),
+        arrayOf(mediaId, mediaId, mediaId, mediaId),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
+
+    fun captionEmbeddingProgress(): CaptionEmbeddingProgress {
+        val db = readableDatabase
+        val captioned = db.rawQuery("SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption", emptyArray())
+            .use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        val chunked = db.rawQuery(
+            "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption WHERE chunk_policy_version=?",
+            arrayOf(SemanticCaptionChunker.POLICY_VERSION),
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        val now = System.currentTimeMillis()
+        val counts = db.rawQuery(
+            """
+            SELECT COUNT(*),
+              COALESCE(SUM(CASE WHEN embedding_state='COMPLETE' THEN 1 ELSE 0 END),0),
+              COALESCE(SUM(CASE WHEN embedding_state IN ('PENDING','FAILED_RETRYABLE') AND next_attempt_at<=? THEN 1 ELSE 0 END),0),
+              COALESCE(SUM(CASE WHEN embedding_state='RUNNING' THEN 1 ELSE 0 END),0),
+              COALESCE(SUM(CASE WHEN embedding_state='FAILED_RETRYABLE' AND next_attempt_at>? THEN 1 ELSE 0 END),0),
+              COALESCE(SUM(CASE WHEN embedding_state IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') THEN 1 ELSE 0 END),0),
+              COALESCE(SUM(CASE WHEN applicability='STALE_PERSON_BINDING' THEN 1 ELSE 0 END),0)
+            FROM semantic_caption_chunk
+            """.trimIndent(),
+            arrayOf(now.toString(), now.toString()),
+        ).use { cursor -> if (!cursor.moveToFirst()) IntArray(7) else IntArray(7) { cursor.getInt(it) } }
+        return CaptionEmbeddingProgress(
+            captionedMediaCount = captioned,
+            chunkedMediaCount = chunked,
+            totalChunkCount = counts[0],
+            embeddedChunkCount = counts[1],
+            pendingChunkCount = counts[2],
+            runningChunkCount = counts[3],
+            delayedRetryCount = counts[4],
+            failedChunkCount = counts[5],
+            staleChunkCount = counts[6],
+        )
+    }
+
+    fun materializeCaptionChunkBackfill(limit: Int): Int = writableDatabase.transaction { db ->
+        val captions = db.rawQuery(
+            """
+            SELECT * FROM semantic_caption
+            WHERE COALESCE(chunk_policy_version,'')<>? AND applicability<>'STALE_PERSON_BINDING'
+            ORDER BY updated_at DESC LIMIT ?
+            """.trimIndent(),
+            arrayOf(SemanticCaptionChunker.POLICY_VERSION, limit.coerceIn(1, 32).toString()),
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(readSemanticCaption(cursor)) } }
+        captions.forEach { caption ->
+            replaceCaptionChunks(
+                db,
+                caption,
+                semanticFactsForMedia(caption.evidenceMediaId),
+                personVisualFactsForMedia(caption.evidenceMediaId),
+            )
+        }
+        captions.size
+    }
+
+    fun prepareCaptionEmbeddingVersion(producerVersion: String) {
+        writableDatabase.execSQL(
+            """
+            UPDATE semantic_caption_chunk
+            SET embedding_state='PENDING',embedding_model_version=NULL,attempt_count=0,error=NULL,
+                lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=0,updated_at=?
+            WHERE embedding_state='COMPLETE' AND COALESCE(embedding_model_version,'')<>?
+            """.trimIndent(),
+            arrayOf(System.currentTimeMillis(), producerVersion),
+        )
+    }
+
+    fun recoverCaptionEmbeddingClaims() {
+        val now = System.currentTimeMillis()
+        writableDatabase.execSQL(
+            """
+            UPDATE semantic_caption_chunk SET embedding_state='PENDING',lease_owner=NULL,lease_expires_at=NULL,
+                error='lease_expired',updated_at=?
+            WHERE embedding_state='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?
+            """.trimIndent(),
+            arrayOf(now, now),
+        )
+    }
+
+    fun claimCaptionEmbeddingChunks(owner: String, producerVersion: String, limit: Int): List<SemanticCaptionChunkRecord> =
+        writableDatabase.transaction { db ->
+            val now = System.currentTimeMillis()
+            val ids = db.rawQuery(
+                """
+                SELECT id FROM semantic_caption_chunk
+                WHERE embedding_state IN ('PENDING','FAILED_RETRYABLE') AND next_attempt_at<=?
+                  AND attempt_count<? AND chunk_policy_version=?
+                ORDER BY CASE WHEN cluster_id IS NOT NULL THEN 0 ELSE 1 END,updated_at,id LIMIT ?
+                """.trimIndent(),
+                arrayOf(
+                    now.toString(),
+                    IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
+                    SemanticCaptionChunker.POLICY_VERSION,
+                    limit.coerceIn(1, 64).toString(),
+                ),
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+            if (ids.isEmpty()) return@transaction emptyList()
+            val placeholders = ids.joinToString(",") { "?" }
+            db.execSQL(
+                """
+                UPDATE semantic_caption_chunk SET embedding_state='RUNNING',embedding_model_version=?,
+                    attempt_count=attempt_count+1,lease_owner=?,lease_expires_at=?,last_progress_at=?,updated_at=?,error=NULL
+                WHERE id IN ($placeholders)
+                """.trimIndent(),
+                arrayOf<Any?>(producerVersion, owner, now + CAPTION_EMBEDDING_LEASE_MS, now, now, *ids.toTypedArray()),
+            )
+            db.rawQuery(
+                "SELECT * FROM semantic_caption_chunk WHERE id IN ($placeholders) ORDER BY updated_at,id",
+                ids.toTypedArray(),
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
+        }
+
+    fun completeCaptionEmbedding(chunkId: String, producerVersion: String) {
+        writableDatabase.update("semantic_caption_chunk", ContentValues().apply {
+            put("embedding_state", CaptionEmbeddingState.COMPLETE.name)
+            put("embedding_model_version", producerVersion)
+            putNull("error")
+            putNull("lease_owner")
+            putNull("lease_expires_at")
+            put("next_attempt_at", 0L)
+            put("last_progress_at", System.currentTimeMillis())
+            put("updated_at", System.currentTimeMillis())
+        }, "id=?", arrayOf(chunkId))
+    }
+
+    fun failCaptionEmbedding(chunkId: String, error: String, retryable: Boolean) {
+        val db = writableDatabase
+        val attempt = db.rawQuery("SELECT attempt_count FROM semantic_caption_chunk WHERE id=?", arrayOf(chunkId))
+            .use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else IndexingRetryPolicy.MAX_ITEM_ATTEMPTS }
+        val state = when {
+            !retryable -> CaptionEmbeddingState.FAILED_PERMANENT
+            attempt >= IndexingRetryPolicy.MAX_ITEM_ATTEMPTS -> CaptionEmbeddingState.FAILED_EXHAUSTED
+            else -> CaptionEmbeddingState.FAILED_RETRYABLE
+        }
+        db.update("semantic_caption_chunk", ContentValues().apply {
+            put("embedding_state", state.name)
+            put("error", error.take(240))
+            putNull("lease_owner")
+            putNull("lease_expires_at")
+            put(
+                "next_attempt_at",
+                if (state == CaptionEmbeddingState.FAILED_RETRYABLE) {
+                    IndexingRetryPolicy.nextAttemptAt(System.currentTimeMillis(), attempt)
+                } else {
+                    0L
+                },
+            )
+            put("last_progress_at", System.currentTimeMillis())
+            put("updated_at", System.currentTimeMillis())
+        }, "id=?", arrayOf(chunkId))
+    }
+
+    fun releaseCaptionEmbeddingClaims(owner: String, reason: String) {
+        writableDatabase.update("semantic_caption_chunk", ContentValues().apply {
+            put("embedding_state", CaptionEmbeddingState.PENDING.name)
+            put("error", reason.take(240))
+            putNull("lease_owner")
+            putNull("lease_expires_at")
+            put("updated_at", System.currentTimeMillis())
+        }, "embedding_state='RUNNING' AND lease_owner=?", arrayOf(owner))
+    }
+
+    fun hasCaptionEmbeddingWork(producerVersion: String): Boolean =
+        readableDatabase.rawQuery(
+            """
+            SELECT 1 WHERE EXISTS(
+                SELECT 1 FROM semantic_caption WHERE COALESCE(chunk_policy_version,'')<>? AND applicability<>'STALE_PERSON_BINDING'
+            ) OR EXISTS(
+                SELECT 1 FROM semantic_caption_chunk
+                WHERE chunk_policy_version=? AND (
+                    embedding_state IN ('PENDING','RUNNING','FAILED_RETRYABLE')
+                    OR embedding_state='COMPLETE' AND COALESCE(embedding_model_version,'')<>?
+                )
+            ) LIMIT 1
+            """.trimIndent(),
+            arrayOf(SemanticCaptionChunker.POLICY_VERSION, SemanticCaptionChunker.POLICY_VERSION, producerVersion),
+        ).use(android.database.Cursor::moveToFirst)
+
+    fun currentCaptionEmbeddingChunkIds(producerVersion: String): Set<String> = readableDatabase.rawQuery(
+        "SELECT id FROM semantic_caption_chunk WHERE embedding_state='COMPLETE' AND embedding_model_version=?",
+        arrayOf(producerVersion),
+    ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    fun eligibleCaptionChunksForSearch(
+        allowedMediaIds: Set<String>,
+        requiredPersonClusterIds: Set<String>,
+        producerVersion: String,
+    ): List<SemanticCaptionChunkRecord> {
+        if (allowedMediaIds.isEmpty()) return emptyList()
+        val direct = allowedMediaIds.chunked(SQLITE_ID_CHUNK).flatMap { ids ->
+            val placeholders = ids.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                """
+                SELECT * FROM semantic_caption_chunk
+                WHERE media_id IN ($placeholders) AND embedding_state='COMPLETE' AND embedding_model_version=?
+                """.trimIndent(),
+                arrayOf(*ids.toTypedArray(), producerVersion),
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
+        }
+        val contextual = readableDatabase.rawQuery(
+            """
+            SELECT * FROM semantic_caption_chunk
+            WHERE scope IN ('VISUAL_GROUP','EVENT') AND embedding_state='COMPLETE' AND embedding_model_version=?
+            """.trimIndent(),
+            arrayOf(producerVersion),
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
+            .filter { chunkTargets(it).any { target -> target in allowedMediaIds } }
+        return (direct + contextual).asSequence()
+            .filter {
+                it.applicability != "STALE_PERSON_BINDING" &&
+                    (it.clusterId == null || requiredPersonClusterIds.isEmpty() || it.clusterId in requiredPersonClusterIds)
+            }
+            .distinctBy(SemanticCaptionChunkRecord::id)
+            .toList()
+    }
+
+    fun resolveCaptionVectorHits(
+        hits: List<CaptionVectorHit>,
+        allowedMediaIds: Set<String>,
+        requiredPersonClusterIds: Set<String>,
+    ): List<CaptionSearchHit> {
+        if (hits.isEmpty()) return emptyList()
+        val ids = hits.map(CaptionVectorHit::chunkId)
+        val chunks = ids.chunked(SQLITE_ID_CHUNK).flatMap { chunkIds ->
+            val placeholders = chunkIds.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT * FROM semantic_caption_chunk WHERE id IN ($placeholders)",
+                chunkIds.toTypedArray(),
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
+        }.associateBy(SemanticCaptionChunkRecord::id)
+        val captions = chunks.values.map(SemanticCaptionChunkRecord::captionId).distinct()
+            .associateWith(::semanticCaptionById)
+        return hits.flatMap { hit ->
+            val chunk = chunks[hit.chunkId] ?: return@flatMap emptyList()
+            if (chunk.clusterId != null && requiredPersonClusterIds.isNotEmpty() && chunk.clusterId !in requiredPersonClusterIds) {
+                return@flatMap emptyList()
+            }
+            val caption = captions[chunk.captionId] ?: return@flatMap emptyList()
+            chunkTargets(chunk).filter { it in allowedMediaIds }.map { mediaId ->
+                val direct = chunk.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP || mediaId == chunk.evidenceMediaId
+                CaptionSearchHit(
+                    mediaId = mediaId,
+                    caption = caption,
+                    score = hit.score * if (direct) 1.0 else 0.72,
+                    directEvidence = direct,
+                    chunk = chunk,
+                    queryVariant = hit.queryVariant,
+                )
+            }
+        }.sortedByDescending(CaptionSearchHit::score).distinctBy(CaptionSearchHit::mediaId)
+    }
+
     fun personVisualFactsForMedia(mediaId: String): List<PersonVisualFactRecord> = readableDatabase.rawQuery(
         "SELECT f.*,p.label,p.relationship FROM person_attribute_fact f " +
             "LEFT JOIN person_cluster p ON p.id=f.cluster_id WHERE f.media_id=? ORDER BY f.cluster_id,f.relation,f.value",
@@ -3319,36 +3618,93 @@ class GalleryDatabase(
     fun searchSemanticCaptions(
         queries: Collection<String>,
         allowedIds: Set<String>,
+        requiredPersonClusterIds: Set<String> = emptySet(),
         limit: Int = 500,
     ): List<CaptionSearchHit> {
-        val terms = queries.flatMap {
-            Regex("[\\p{L}\\p{M}\\p{N}]+").findAll(it.lowercase(Locale.ROOT)).map(MatchResult::value).toList()
-        }.filter { it.length > 2 && it !in CAPTION_STOP_WORDS }.distinct().take(32)
-        if (terms.isEmpty() || allowedIds.isEmpty()) return emptyList()
-        return allSemanticCaptions().flatMap { caption ->
-            val haystack = caption.text.lowercase(Locale.ROOT)
-            val matched = terms.count { it in haystack }
-            if (matched == 0) return@flatMap emptyList()
-            val expandedCandidates = when (caption.scope) {
-                SemanticFactScope.MEDIA, SemanticFactScope.QUERY_VERIFICATION -> emptyList()
-                SemanticFactScope.EXACT_DUPLICATE_GROUP, SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
-                    "SELECT media_id FROM visual_group_member WHERE group_id=?",
-                    arrayOf(caption.subjectId),
-                ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
-                SemanticFactScope.EVENT -> eventMembers(caption.subjectId.toLongOrNull() ?: Long.MIN_VALUE)
-            }
-            val candidates = (listOf(caption.evidenceMediaId) + expandedCandidates).distinct()
-            candidates.filter { it in allowedIds }.map { mediaId ->
-                val direct = mediaId == caption.evidenceMediaId ||
-                    caption.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP
-                CaptionSearchHit(
-                    mediaId = mediaId,
-                    caption = caption,
-                    score = matched.toDouble() / terms.size * if (direct) 1.0 else 0.72,
-                    directEvidence = direct,
-                )
-            }
-        }.sortedByDescending(CaptionSearchHit::score).distinctBy(CaptionSearchHit::mediaId).take(limit)
+        if (allowedIds.isEmpty()) return emptyList()
+        val variants = CaptionLexicalQueryBuilder.variants(queries)
+        val perVariant = variants.mapNotNull { query ->
+            val expression = CaptionLexicalQueryBuilder.ftsExpression(query) ?: return@mapNotNull null
+            val matches = runCatching {
+                readableDatabase.rawQuery(
+                    """
+                    SELECT c.*,matchinfo(semantic_caption_chunk_fts,'pcnalx') AS fts_info
+                    FROM semantic_caption_chunk_fts
+                    JOIN semantic_caption_chunk c ON c.id=semantic_caption_chunk_fts.chunk_id
+                    WHERE semantic_caption_chunk_fts MATCH ? AND c.chunk_policy_version=?
+                    """.trimIndent(),
+                    arrayOf(expression, SemanticCaptionChunker.POLICY_VERSION),
+                ).use { cursor ->
+                    buildList {
+                        while (cursor.moveToNext()) {
+                            val chunk = readCaptionChunk(cursor)
+                            if (
+                                chunk.applicability == "STALE_PERSON_BINDING" ||
+                                chunk.clusterId != null &&
+                                requiredPersonClusterIds.isNotEmpty() &&
+                                chunk.clusterId !in requiredPersonClusterIds
+                            ) {
+                                continue
+                            }
+                            val caption = semanticCaptionById(chunk.captionId) ?: continue
+                            val baseScore = CaptionFtsRanker.bm25(cursor.getBlob(cursor.getColumnIndexOrThrow("fts_info")))
+                            chunkTargets(chunk).filter { it in allowedIds }.forEach { mediaId ->
+                                val direct = chunk.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP ||
+                                    mediaId == chunk.evidenceMediaId
+                                add(
+                                    CaptionSearchHit(
+                                        mediaId,
+                                        caption,
+                                        baseScore * if (direct) 1.0 else 0.72,
+                                        direct,
+                                        chunk,
+                                        query,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                }
+            }.getOrDefault(emptyList()).sortedByDescending(CaptionSearchHit::score).distinctBy(CaptionSearchHit::mediaId)
+            query to matches
+        }
+        if (perVariant.any { it.second.isNotEmpty() }) {
+            val fused = HybridRankFusion.fuse(perVariant.map { RankedChannel(1.0, it.second.map(CaptionSearchHit::mediaId)) })
+            val best = perVariant.flatMap { it.second }.groupBy(CaptionSearchHit::mediaId)
+                .mapValues { (_, hits) -> hits.maxBy(CaptionSearchHit::score) }
+            return fused.mapNotNull { (mediaId, score) -> best[mediaId]?.copy(score = score) }.take(limit)
+        }
+        return legacyCaptionSearch(variants, allowedIds, limit)
+    }
+
+    private fun legacyCaptionSearch(
+        variants: List<String>,
+        allowedIds: Set<String>,
+        limit: Int,
+    ): List<CaptionSearchHit> {
+        val perVariant = variants.map { query ->
+            val terms = Regex("[\\p{L}\\p{M}\\p{N}]+").findAll(query.lowercase(Locale.ROOT))
+                .map(MatchResult::value).filter { it.length > 2 && it !in CAPTION_STOP_WORDS }.distinct().take(16).toList()
+            val hits = if (terms.isEmpty()) emptyList() else allSemanticCaptions().flatMap { caption ->
+                val matched = terms.count { it in caption.text.lowercase(Locale.ROOT) }
+                if (matched == 0) return@flatMap emptyList()
+                captionTargets(caption).filter { it in allowedIds }.map { mediaId ->
+                    val direct = mediaId == caption.evidenceMediaId || caption.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP
+                    CaptionSearchHit(
+                        mediaId,
+                        caption,
+                        matched.toDouble() / terms.size * if (direct) 1.0 else 0.72,
+                        direct,
+                        queryVariant = query,
+                    )
+                }
+            }.sortedByDescending(CaptionSearchHit::score).distinctBy(CaptionSearchHit::mediaId)
+            query to hits
+        }
+        val fused = HybridRankFusion.fuse(perVariant.map { RankedChannel(1.0, it.second.map(CaptionSearchHit::mediaId)) })
+        val best = perVariant.flatMap { it.second }.groupBy(CaptionSearchHit::mediaId)
+            .mapValues { (_, hits) -> hits.maxBy(CaptionSearchHit::score) }
+        return fused.mapNotNull { (id, score) -> best[id]?.copy(score = score) }.take(limit)
     }
 
     fun semanticCaptionEvidenceCount(): Int = readableDatabase.rawQuery(
@@ -3394,6 +3750,108 @@ class GalleryDatabase(
         )
     }
 
+    private fun semanticCaptionById(id: String): SemanticCaptionRecord? = readableDatabase.rawQuery(
+        "SELECT * FROM semantic_caption WHERE id=? LIMIT 1",
+        arrayOf(id),
+    ).use { cursor -> if (cursor.moveToFirst()) readSemanticCaption(cursor) else null }
+
+    private fun readCaptionChunk(cursor: android.database.Cursor) = SemanticCaptionChunkRecord(
+        id = cursor.text("id"),
+        captionId = cursor.text("caption_id"),
+        mediaId = cursor.text("media_id"),
+        scope = SemanticFactScope.valueOf(cursor.text("scope")),
+        scopeId = cursor.text("scope_id"),
+        evidenceMediaId = cursor.text("evidence_media_id"),
+        clusterId = cursor.nullableText("cluster_id"),
+        chunkType = enumOrDefault(cursor.text("chunk_type"), CaptionChunkType.OTHER),
+        exactText = cursor.text("exact_text"),
+        confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
+        applicability = cursor.text("applicability"),
+        captionModelVersion = cursor.text("caption_model_version"),
+        captionPromptVersion = cursor.text("caption_prompt_version"),
+        chunkPolicyVersion = cursor.text("chunk_policy_version"),
+        embeddingModelVersion = cursor.nullableText("embedding_model_version"),
+        embeddingState = enumOrDefault(cursor.text("embedding_state"), CaptionEmbeddingState.PENDING),
+        attemptCount = cursor.getInt(cursor.getColumnIndexOrThrow("attempt_count")),
+        error = cursor.nullableText("error"),
+        leaseOwner = cursor.nullableText("lease_owner"),
+        leaseExpiresAt = cursor.getColumnIndex("lease_expires_at").let { if (it < 0 || cursor.isNull(it)) null else cursor.getLong(it) },
+        nextAttemptAt = cursor.getLong(cursor.getColumnIndexOrThrow("next_attempt_at")),
+        lastProgressAt = cursor.getColumnIndex("last_progress_at").let { if (it < 0 || cursor.isNull(it)) null else cursor.getLong(it) },
+        createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+        updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+    )
+
+    private fun replaceCaptionChunks(
+        db: GallerySqlDatabase,
+        caption: SemanticCaptionRecord,
+        facts: List<SemanticFactRecord>,
+        personFacts: List<PersonVisualFactRecord>,
+    ) {
+        val oldIds = db.rawQuery("SELECT id FROM semantic_caption_chunk WHERE caption_id=?", arrayOf(caption.id))
+            .use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+        oldIds.chunked(SQLITE_ID_CHUNK).forEach { ids ->
+            if (ids.isEmpty()) return@forEach
+            val placeholders = ids.joinToString(",") { "?" }
+            db.delete("semantic_caption_chunk_fts", "chunk_id IN ($placeholders)", ids.toTypedArray())
+        }
+        db.delete("semantic_caption_chunk", "caption_id=?", arrayOf(caption.id))
+        SemanticCaptionChunker.generate(caption, facts, personFacts).forEach { chunk ->
+            db.insertWithOnConflict("semantic_caption_chunk", null, ContentValues().apply {
+                put("id", chunk.id)
+                put("caption_id", chunk.captionId)
+                put("media_id", chunk.mediaId)
+                put("scope", chunk.scope.name)
+                put("scope_id", chunk.scopeId)
+                put("evidence_media_id", chunk.evidenceMediaId)
+                if (chunk.clusterId == null) putNull("cluster_id") else put("cluster_id", chunk.clusterId)
+                put("chunk_type", chunk.chunkType.name)
+                put("exact_text", chunk.exactText)
+                put("confidence", chunk.confidence)
+                put("applicability", chunk.applicability)
+                put("caption_model_version", chunk.captionModelVersion)
+                put("caption_prompt_version", chunk.captionPromptVersion)
+                put("chunk_policy_version", chunk.chunkPolicyVersion)
+                putNull("embedding_model_version")
+                put("embedding_state", CaptionEmbeddingState.PENDING.name)
+                put("attempt_count", 0)
+                putNull("error")
+                putNull("lease_owner")
+                putNull("lease_expires_at")
+                put("next_attempt_at", 0L)
+                putNull("last_progress_at")
+                put("created_at", chunk.createdAt)
+                put("updated_at", chunk.updatedAt)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+            db.insertWithOnConflict("semantic_caption_chunk_fts", null, ContentValues().apply {
+                put("chunk_id", chunk.id)
+                put("exact_text", chunk.exactText)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+        db.update("semantic_caption", ContentValues().apply {
+            put("chunk_policy_version", SemanticCaptionChunker.POLICY_VERSION)
+            put("chunked_at", System.currentTimeMillis())
+        }, "id=?", arrayOf(caption.id))
+    }
+
+    private fun captionTargets(caption: SemanticCaptionRecord): List<String> = when (caption.scope) {
+        SemanticFactScope.MEDIA, SemanticFactScope.QUERY_VERIFICATION -> listOf(caption.evidenceMediaId)
+        SemanticFactScope.EXACT_DUPLICATE_GROUP, SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
+            "SELECT media_id FROM visual_group_member WHERE group_id=?",
+            arrayOf(caption.subjectId),
+        ).use { cursor -> buildList { add(caption.evidenceMediaId); while (cursor.moveToNext()) add(cursor.getString(0)) } }
+        SemanticFactScope.EVENT -> listOf(caption.evidenceMediaId) + eventMembers(caption.subjectId.toLongOrNull() ?: Long.MIN_VALUE)
+    }.distinct()
+
+    private fun chunkTargets(chunk: SemanticCaptionChunkRecord): List<String> = when (chunk.scope) {
+        SemanticFactScope.MEDIA, SemanticFactScope.QUERY_VERIFICATION -> listOf(chunk.evidenceMediaId)
+        SemanticFactScope.EXACT_DUPLICATE_GROUP, SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
+            "SELECT media_id FROM visual_group_member WHERE group_id=?",
+            arrayOf(chunk.scopeId),
+        ).use { cursor -> buildList { add(chunk.evidenceMediaId); while (cursor.moveToNext()) add(cursor.getString(0)) } }
+        SemanticFactScope.EVENT -> listOf(chunk.evidenceMediaId) + eventMembers(chunk.scopeId.toLongOrNull() ?: Long.MIN_VALUE)
+    }.distinct()
+
     private fun captionPersonRefs(captionId: String): List<SemanticCaptionPersonRefRecord> = readableDatabase.rawQuery(
         "SELECT r.*,p.label,p.relationship FROM semantic_caption_person_ref r " +
             "LEFT JOIN person_cluster p ON p.id=r.cluster_id WHERE r.caption_id=? ORDER BY r.person_ref",
@@ -3436,6 +3894,7 @@ class GalleryDatabase(
         enumOrNull<T>(raw) ?: fallback
 
     companion object {
+        private const val CAPTION_EMBEDDING_LEASE_MS = 10 * 60_000L
         private val CAPTION_STOP_WORDS = setOf(
             "show", "photos", "photo", "pictures", "picture", "images", "image", "with", "where",
             "that", "this", "from", "have", "wearing", "please", "some", "में", "वाली", "दिखाओ",

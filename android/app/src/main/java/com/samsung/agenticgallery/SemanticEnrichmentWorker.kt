@@ -97,6 +97,7 @@ class SemanticEnrichmentWorker(
                     val digest = PersonalSemanticMemoryPolicy.exactContentDigest(loaded.bytes, item.width, item.height)
                     database.recordExactContentDigest(item.id, digest)
                     if (database.reuseExactDuplicateSemanticEnrichment(currentJob, bindings, digest)) {
+                        CaptionEmbeddingScheduler.schedule(applicationContext)
                         Log.i(TAG, "Reused exact-duplicate personal caption for media=${item.id}")
                         processed += 1
                         job = database.claimSemanticEnrichmentJob(owner = id.toString())
@@ -117,6 +118,7 @@ class SemanticEnrichmentWorker(
                     }
                 }
                 database.completeSemanticEnrichment(currentJob, result)
+                CaptionEmbeddingScheduler.schedule(applicationContext)
                 Log.i(
                     TAG,
                     "Semantic enrichment completed job=${currentJob.id} media=${currentJob.representativeMediaId} " +

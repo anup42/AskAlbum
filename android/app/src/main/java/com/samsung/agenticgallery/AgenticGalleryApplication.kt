@@ -33,6 +33,9 @@ class AppServices(private val application: AgenticGalleryApplication) {
     val semanticVectorStore by lazy {
         SemanticVectorStore(application, retrievalModelPackManager, embeddingEngine)
     }
+    val captionVectorStore by lazy {
+        CaptionVectorStore(application, retrievalModelPackManager, embeddingEngine)
+    }
     val visualVerifier: CandidateVerifier by lazy {
         LiteRtGemmaVisualVerifier(application, modelPackManager, gemmaSessions, galleryDatabase)
     }

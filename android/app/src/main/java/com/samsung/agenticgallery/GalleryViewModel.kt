@@ -424,7 +424,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         }
                         IndexingJob.EMBEDDINGS -> {
                             if (enabled) InitialImportService.startIndexing(getApplication())
-                            else EmbeddingIndexScheduler.cancelAndWait(getApplication())
+                            else {
+                                EmbeddingIndexScheduler.cancelAndWait(getApplication())
+                                CaptionEmbeddingScheduler.cancelAndWait(getApplication())
+                            }
                         }
                         IndexingJob.PEOPLE -> {
                             if (enabled) PeopleIndexScheduler.schedule(getApplication())
@@ -557,6 +560,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             runCatching { retrievalPacks.import(uri) }
                 .onSuccess { status ->
                     EmbeddingIndexScheduler.schedule(getApplication())
+                    CaptionEmbeddingScheduler.schedule(getApplication())
                     state = state.copy(
                         retrievalPack = status,
                         operationMessage = "${status.packId} ${status.packVersion} is ready",

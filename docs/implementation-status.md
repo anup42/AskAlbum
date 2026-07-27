@@ -3487,3 +3487,10 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; FINAL QUERY COM
 - Connected People UI: PASS. Existing Pooja, Me, Avyaan, and duplicate-Pooja choices rendered; selection exposed the confirmation action without committing it.
 - Connected red-dress retrieval reached 339 Pooja-eligible images and displayed the exact cached caption with caption-expansion evidence. Final answer completion was INTERRUPTED after thermal admission paused verification and a different query was entered on the device.
 - Target-process crash, ANR, OOM, Room, and SQLite exception check: PASS for the observed window.
+## Hybrid caption embedding retrieval
+
+- Database v18 adds evidence-scoped caption chunks, FTS4 indexing, and durable caption-embedding job state.
+- Existing captions are chunked deterministically and embedded with the installed SigLIP2 text encoder; Gemma captions and image vectors are not regenerated.
+- Caption lexical and caption-vector channels search original, canonical, and positive-clause variants after hard eligibility filtering, then join the existing weighted reciprocal-rank fusion.
+- Person chunks retain reviewed cluster IDs. Group and event chunks are contextual candidate evidence and cannot confirm person-conditioned predicates.
+- Semantic-memory and image metadata views expose exact chunk text, provenance, scope, model versions, and embedding status without exposing vectors.

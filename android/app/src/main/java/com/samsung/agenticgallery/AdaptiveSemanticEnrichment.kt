@@ -44,6 +44,11 @@ data class SemanticMemoryProgress(
     val authenticationRequiredJobs: Int = 0,
     val factCount: Int = 0,
     val captionCount: Int = 0,
+    val captionChunkCount: Int = 0,
+    val embeddedCaptionChunkCount: Int = 0,
+    val pendingCaptionChunkCount: Int = 0,
+    val runningCaptionChunkCount: Int = 0,
+    val failedCaptionChunkCount: Int = 0,
     val personVisualFactCount: Int = 0,
     val personalEligibleCount: Int = 0,
     val personalCompletedCount: Int = 0,
@@ -65,6 +70,7 @@ data class SemanticMemoryMedia(
     val facts: List<SemanticFactRecord>,
     val protectedFactCount: Int = 0,
     val captions: List<SemanticCaptionRecord> = emptyList(),
+    val captionChunks: List<SemanticCaptionChunkRecord> = emptyList(),
     val personVisualFacts: List<PersonVisualFactRecord> = emptyList(),
 )
 

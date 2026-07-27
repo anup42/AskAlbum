@@ -23,7 +23,7 @@ enum class Polarity { POSITIVE, NEGATIVE }
 enum class ConstraintStrength { HARD, SOFT }
 enum class SemanticSubject { WHOLE_MEDIA, PERSON, EVENT, DOCUMENT }
 enum class ResultExactness { EXACT, COMPLETE_MODEL_SCAN, ESTIMATED_FROM_RETRIEVAL, PARTIAL_INDEX }
-enum class RetrievalChannel { LEXICAL, SEMANTIC, CAPTION, EVENT, OCR, PEOPLE, VISUAL_VERIFICATION }
+enum class RetrievalChannel { LEXICAL, SEMANTIC, CAPTION, CAPTION_EMBEDDING, EVENT, OCR, PEOPLE, VISUAL_VERIFICATION }
 enum class ChannelStatus { SUCCESS, UNAVAILABLE, FAILED, PARTIAL, NOT_REQUIRED }
 enum class MediaSource { DEMO_ASSET, MEDIA_STORE, PHOTO_PICKER, SAF_DOCUMENT }
 enum class MediaKind { IMAGE, VIDEO, PDF }
@@ -482,6 +482,7 @@ data class IndexedMediaMetadata(
     val sensitiveContentLocked: Boolean,
     val protectedValueCount: Int,
     val semanticCaptions: List<SemanticCaptionRecord> = emptyList(),
+    val semanticCaptionChunks: List<SemanticCaptionChunkRecord> = emptyList(),
     val personVisualFacts: List<PersonVisualFactRecord> = emptyList(),
 )
 

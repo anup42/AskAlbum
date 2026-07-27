@@ -45,21 +45,25 @@ class LiteRtImageTextEmbeddingEngine(
             }
         }
 
-    override suspend fun embedText(text: String): FloatArray =
+    override suspend fun embedText(text: String): FloatArray = embedTexts(listOf(text)).single()
+
+    internal suspend fun embedTexts(texts: List<String>): List<FloatArray> =
         resources.withModel(ModelCapability.TEXT_EMBEDDING) {
             withContext(Dispatchers.Default) {
                 val pack = modelPacks.current() ?: error("No verified retrieval model pack is installed")
                 val tokenizer = tokenizerFor(pack)
-                val tokenIds = tokenizer.encode(text, pack.manifest)
-                when (pack.manifest.runtime) {
-                    RETRIEVAL_RUNTIME_LITERT -> runLiteRtTextModel(
-                        modelFile = pack.artifact(ROLE_TEXT_ENCODER),
-                        tokenIds = tokenIds,
-                        inputType = pack.manifest.textInputType,
-                        dimension = pack.manifest.embeddingDimension,
-                    )
-                    RETRIEVAL_RUNTIME_ONNX -> runOnnxTextModel(pack.artifact(ROLE_TEXT_ENCODER), tokenIds, pack.manifest)
-                    else -> error("Unsupported retrieval runtime")
+                texts.map { text ->
+                    val tokenIds = tokenizer.encode(text, pack.manifest)
+                    when (pack.manifest.runtime) {
+                        RETRIEVAL_RUNTIME_LITERT -> runLiteRtTextModel(
+                            modelFile = pack.artifact(ROLE_TEXT_ENCODER),
+                            tokenIds = tokenIds,
+                            inputType = pack.manifest.textInputType,
+                            dimension = pack.manifest.embeddingDimension,
+                        )
+                        RETRIEVAL_RUNTIME_ONNX -> runOnnxTextModel(pack.artifact(ROLE_TEXT_ENCODER), tokenIds, pack.manifest)
+                        else -> error("Unsupported retrieval runtime")
+                    }
                 }
             }
         }

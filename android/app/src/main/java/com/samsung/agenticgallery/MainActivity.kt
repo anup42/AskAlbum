@@ -876,6 +876,26 @@ private fun IndexManagerScreen(
                 onClick = onOpenSemanticMemory,
             )
         }
+        if (semanticMemory.captionChunkCount > 0 || semanticMemory.pendingCaptionChunkCount > 0) {
+            IndexMetric(
+                "Caption search vectors",
+                semanticMemory.embeddedCaptionChunkCount,
+                semanticMemory.captionChunkCount,
+                buildString {
+                    append("${semanticMemory.pendingCaptionChunkCount} pending")
+                    if (semanticMemory.runningCaptionChunkCount > 0) {
+                        append(" | ${semanticMemory.runningCaptionChunkCount} running")
+                    }
+                    if (semanticMemory.failedCaptionChunkCount > 0) {
+                        append(" | ${semanticMemory.failedCaptionChunkCount} quarantined")
+                    }
+                },
+                enabled = retrievalPack.installed,
+                inProgress = semanticMemory.pendingCaptionChunkCount > 0 ||
+                    semanticMemory.runningCaptionChunkCount > 0,
+                onClick = onOpenSemanticMemory,
+            )
+        }
         IndexMetric(
             "OCR ready or skipped",
             index.ocrReady,
@@ -1566,7 +1586,8 @@ private fun SemanticMemoryScreen(
                         onLongClick = { selectedMediaId = entry.item.id },
                     )
                     Text(
-                        "${entry.captions.size} caption(s), ${entry.facts.size + entry.protectedFactCount} facts",
+                        "${entry.captions.size} caption(s), ${entry.captionChunks.size} search chunks, " +
+                            "${entry.facts.size + entry.protectedFactCount} facts",
                         modifier = Modifier.padding(top = 5.dp, start = 2.dp),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -1617,7 +1638,7 @@ private fun SemanticMemoryDetail(
             Spacer(Modifier.height(8.dp))
             Text(
                 "${entry.captions.size} comprehensive caption(s), ${entry.facts.size + entry.protectedFactCount} facts, " +
-                    "${entry.personVisualFacts.size} person observations",
+                    "${entry.personVisualFacts.size} person observations, ${entry.captionChunks.size} search chunks",
                 fontWeight = FontWeight.Bold,
             )
             Text(
@@ -1651,6 +1672,29 @@ private fun SemanticMemoryDetail(
                 SelectionContainer {
                     Text(
                         semanticCaptionStoredText(caption),
+                        modifier = Modifier.padding(14.dp),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        }
+        lazyItems(entry.captionChunks, key = { it.id }) { chunk ->
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (chunk.scope == SemanticFactScope.MEDIA ||
+                        chunk.scope == SemanticFactScope.QUERY_VERIFICATION
+                    ) {
+                        MaterialTheme.colorScheme.surface
+                    } else {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    },
+                ),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                SelectionContainer {
+                    Text(
+                        semanticCaptionChunkStoredText(chunk),
                         modifier = Modifier.padding(14.dp),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
@@ -1720,6 +1764,34 @@ private fun semanticCaptionStoredText(caption: SemanticCaptionRecord): String = 
     }
     appendLine("model_version=${caption.modelVersion}")
     append("prompt_version=${caption.promptVersion}")
+}
+
+private fun semanticCaptionChunkStoredText(chunk: SemanticCaptionChunkRecord): String = buildString {
+    appendLine("caption_search_chunk=${chunk.exactText}")
+    appendLine("chunk_type=${chunk.chunkType.name}")
+    appendLine("caption_id=${chunk.captionId}")
+    appendLine("media_id=${chunk.mediaId}")
+    appendLine("scope=${chunk.scope.name}")
+    appendLine("scope_id=${chunk.scopeId}")
+    appendLine("evidence_media_id=${chunk.evidenceMediaId}")
+    appendLine("cluster_id=${chunk.clusterId ?: "none"}")
+    appendLine("applicability=${chunk.applicability}")
+    appendLine(
+        "evidence_kind=" + if (
+            chunk.scope == SemanticFactScope.MEDIA ||
+            chunk.scope == SemanticFactScope.QUERY_VERIFICATION
+        ) {
+            "direct"
+        } else {
+            "contextual_candidate_only"
+        },
+    )
+    appendLine("confidence=${chunk.confidence}")
+    appendLine("caption_model_version=${chunk.captionModelVersion}")
+    appendLine("caption_prompt_version=${chunk.captionPromptVersion}")
+    appendLine("chunk_policy_version=${chunk.chunkPolicyVersion}")
+    appendLine("embedding_model_version=${chunk.embeddingModelVersion ?: "not embedded"}")
+    append("embedding_status=${chunk.embeddingState.name}")
 }
 
 private fun personVisualFactStoredText(fact: PersonVisualFactRecord): String = buildString {
@@ -3486,6 +3558,13 @@ private fun IndexedMetadataRecords(
         "Gemma comprehensive captions",
         metadata.semanticCaptions.mapIndexed { index, caption ->
             "Caption ${index + 1}" to semanticCaptionStoredText(caption)
+        },
+    )
+    MetadataSection(
+        "Caption search chunks",
+        metadata.semanticCaptionChunks.mapIndexed { index, chunk ->
+            "${chunk.chunkType.name.lowercase().replace('_', ' ')} ${index + 1}" to
+                semanticCaptionChunkStoredText(chunk)
         },
     )
     MetadataSection(

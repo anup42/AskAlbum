@@ -72,6 +72,8 @@ data class CaptionSearchHit(
     val caption: SemanticCaptionRecord,
     val score: Double,
     val directEvidence: Boolean,
+    val chunk: SemanticCaptionChunkRecord? = null,
+    val queryVariant: String? = null,
 )
 
 internal object SemanticEnrichmentCodec {
