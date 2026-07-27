@@ -25,15 +25,18 @@ class CaptionEmbeddingRetrievalTest {
             caption = caption,
             facts = listOf(
                 semanticFact("scene.setting", "decorated living room"),
-                semanticFact("scene.occasion", "birthday celebration"),
+                semanticFact("scene_summary", "A family is gathering around a cake in a decorated living room"),
+                semanticFact("possible_occasion", "birthday celebration"),
+                semanticFact("occasion_indicator", "decorated cake and balloons"),
                 semanticFact("object", "birthday cake on a table"),
             ),
             personFacts = emptyList(),
         )
 
         assertTrue(chunks.size > 1)
-        assertTrue(chunks.any { it.chunkType == CaptionChunkType.SCENE })
+        assertTrue(chunks.any { it.chunkType == CaptionChunkType.SCENE_ACTIVITY })
         assertTrue(chunks.any { it.chunkType == CaptionChunkType.OCCASION })
+        assertTrue(chunks.any { it.chunkType == CaptionChunkType.OCCASION_INDICATOR })
         assertTrue(chunks.any { it.exactText.contains("toy automobile", ignoreCase = true) })
         assertTrue(chunks.all { it.exactText.length <= 360 })
     }

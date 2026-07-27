@@ -8,7 +8,9 @@ import kotlin.math.ln
 
 enum class CaptionChunkType {
     SCENE,
+    SCENE_ACTIVITY,
     OCCASION,
+    OCCASION_INDICATOR,
     PLACE_CONTEXT,
     PERSON_APPEARANCE,
     PERSON_ACTION,
@@ -88,7 +90,7 @@ data class CaptionVectorSearchReport(
 )
 
 internal object SemanticCaptionChunker {
-    const val POLICY_VERSION = "caption-chunks-v2"
+    const val POLICY_VERSION = "caption-chunks-v3"
     const val MAX_CHUNKS_PER_CAPTION = 24
     private const val MAX_WORDS_PER_CHUNK = 40
     private const val MAX_CHARS_PER_CHUNK = 360
@@ -159,7 +161,7 @@ internal object SemanticCaptionChunker {
                 it.evidenceMediaId == caption.evidenceMediaId &&
                     it.applicability !in setOf("STALE_PERSON_BINDING", "LEGACY_GROUP_CONTEXT_ONLY")
             }
-            .groupBy { classify("${it.predicate} ${it.value}") }
+            .groupBy(::classifyFact)
             .forEach { (type, grouped) ->
                 candidates += Candidate(
                     type,
@@ -250,6 +252,13 @@ internal object SemanticCaptionChunker {
                 CaptionChunkType.SCENE
             else -> CaptionChunkType.OTHER
         }
+    }
+
+    private fun classifyFact(fact: SemanticFactRecord): CaptionChunkType = when (fact.predicate) {
+        "scene_summary", "primary_activity", "activity", "activity_indicator" -> CaptionChunkType.SCENE_ACTIVITY
+        "possible_occasion", "occasion" -> CaptionChunkType.OCCASION
+        "occasion_indicator" -> CaptionChunkType.OCCASION_INDICATOR
+        else -> classify("${fact.predicate} ${fact.value}")
     }
 
     private fun normalize(text: String): String = words.findAll(text.lowercase(Locale.ROOT))

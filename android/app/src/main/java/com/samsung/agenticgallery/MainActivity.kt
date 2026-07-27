@@ -1614,6 +1614,26 @@ private fun SemanticMemoryDetail(
     entry: SemanticMemoryMedia,
     onOpenMedia: (SearchHit) -> Unit,
 ) {
+    val sceneAndActivity = entry.facts.filter {
+        it.predicate in setOf("scene_summary", "primary_activity", "activity_indicator")
+    }
+    val possibleOccasions = entry.facts.filter { it.predicate == "possible_occasion" }
+    val occasionIndicators = entry.facts.filter { it.predicate == "occasion_indicator" }
+    val observedActions = entry.personVisualFacts.filter {
+        it.relation in setOf(
+            PersonVisualRelation.ACTION,
+            PersonVisualRelation.HOLDING,
+            PersonVisualRelation.CARRYING,
+            PersonVisualRelation.USING,
+        )
+    }
+    val observedInteractions = entry.personVisualFacts.filter {
+        it.relation in setOf(
+            PersonVisualRelation.STANDING_BESIDE,
+            PersonVisualRelation.SITTING_BESIDE,
+            PersonVisualRelation.INTERACTING_WITH,
+        )
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize().safeDrawingPadding(),
         contentPadding = PaddingValues(18.dp, 10.dp, 18.dp, 32.dp),
@@ -1673,6 +1693,39 @@ private fun SemanticMemoryDetail(
                         )
                     }
                 }
+            }
+        }
+        if (sceneAndActivity.isNotEmpty()) {
+            item {
+                SemanticMemoryEvidenceGroup(
+                    "Observed scene and activity",
+                    sceneAndActivity.map(::semanticFactStoredText),
+                )
+            }
+        }
+        if (observedActions.isNotEmpty()) {
+            item {
+                SemanticMemoryEvidenceGroup(
+                    "Observed person actions",
+                    observedActions.map(::personVisualFactStoredText),
+                )
+            }
+        }
+        if (observedInteractions.isNotEmpty()) {
+            item {
+                SemanticMemoryEvidenceGroup(
+                    "Observed interactions",
+                    observedInteractions.map(::personVisualFactStoredText),
+                )
+            }
+        }
+        if (possibleOccasions.isNotEmpty() || occasionIndicators.isNotEmpty()) {
+            item {
+                SemanticMemoryEvidenceGroup(
+                    "Possible occasion - not confirmed",
+                    (possibleOccasions + occasionIndicators).map(::semanticFactStoredText),
+                    possible = true,
+                )
             }
         }
         lazyItems(entry.captions, key = { it.id }) { caption ->
@@ -1740,6 +1793,33 @@ private fun SemanticMemoryDetail(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SemanticMemoryEvidenceGroup(
+    title: String,
+    values: List<String>,
+    possible: Boolean = false,
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (possible) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, fontWeight = FontWeight.Bold)
+            values.forEach { value ->
+                SelectionContainer {
+                    Text(value, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
                 }
             }
         }
@@ -3547,6 +3627,22 @@ private fun IndexedMetadataRecords(
                 append(" | ").append((block.confidence * 100).toInt()).append("%")
                 append(" | bounds ").append(formatBounds(block.left, block.top, block.right, block.bottom))
             }
+        },
+    )
+    MetadataSection(
+        "Observed scene and activity",
+        metadata.semanticFacts.filter {
+            it.predicate in setOf("scene_summary", "primary_activity", "activity_indicator")
+        }.mapIndexed { index, fact ->
+            "${fact.predicate.replace('_', ' ')} ${index + 1}" to semanticFactStoredText(fact)
+        },
+    )
+    MetadataSection(
+        "Possible occasion - not confirmed",
+        metadata.semanticFacts.filter {
+            it.predicate in setOf("possible_occasion", "occasion_indicator")
+        }.mapIndexed { index, fact ->
+            "${fact.predicate.replace('_', ' ')} ${index + 1}" to semanticFactStoredText(fact)
         },
     )
     MetadataSection(

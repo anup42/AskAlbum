@@ -101,7 +101,7 @@ internal object PersonalSemanticMemoryPolicy {
     const val JOB_PREFIX = "personal_media:"
     const val CAPTION_POLICY_VERSION = "personal-caption-policy-v1"
     const val BODY_REGION_VERSION = "person-body-regions-v1"
-    const val PROMPT_VERSION = "adaptive-comprehensive-caption-v3"
+    const val PROMPT_VERSION = "adaptive-comprehensive-caption-v4"
 
     private val familyRelationships = setOf(
         "me", "mother", "mom", "mum", "father", "dad", "brother", "sister",

@@ -3510,3 +3510,13 @@ Status: **IMPLEMENTED, TESTED, BUILT, AND REPLACEMENT-INSTALLED; FINAL QUERY COM
 - User-requested personal work remains unconstrained after interactive-query preemption and indexing-supervisor polling.
 - People WorkManager state is now included in truthful pipeline status.
 - The aggregate `1062 remaining` message is replaced by per-pipeline wording such as `14 media analysis | 1048 face indexing`.
+
+## 2026-07-27 - Activity-aware grounded captions
+
+- Comprehensive caption prompt v4 requires a scene-and-activity opening, person-bound actions and interactions, visible occasion indicators, and explicitly uncertain possible occasions in the existing single Gemma vision call.
+- Structured output is persisted through existing media-scoped semantic facts and reviewed-cluster-bound person facts; no schema migration or destructive rewrite is required.
+- Caption text is deterministically prefixed with the safe scene summary when Gemma does not repeat it verbatim, and missing summaries enter the existing one-shot corrective retry path.
+- Caption chunk policy v3 adds scene-activity and occasion-indicator chunks while retaining person-action and person-relation cluster binding.
+- Existing captions remain available. Eligible personal media receive new prompt-v4 jobs, while only previously selected non-personal representatives are requeued for activity-aware regeneration.
+- Unfinished older personal-caption jobs are retained as superseded checkpoints rather than remaining claimable, preventing duplicate Gemma work during the prompt-v4 upgrade.
+- Semantic-memory and image metadata inspection now distinguish observed activity and interactions from possible, unconfirmed occasions.

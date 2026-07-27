@@ -2573,6 +2573,24 @@ class GalleryDatabase(
         db.update(
             "semantic_enrichment_job",
             ContentValues().apply {
+                put("status", SemanticEnrichmentStatus.COMPLETE.name)
+                put("model_version", "superseded:${PersonalSemanticMemoryPolicy.PROMPT_VERSION}")
+                putNull("lease_owner")
+                putNull("lease_expires_at")
+                put("next_attempt_at", 0L)
+                put("last_progress_at", now)
+                put("updated_at", now)
+            },
+            "reason LIKE ? AND reason<>? AND status<>?",
+            arrayOf(
+                "${PersonalSemanticMemoryPolicy.JOB_PREFIX}%",
+                reason,
+                SemanticEnrichmentStatus.COMPLETE.name,
+            ),
+        )
+        db.update(
+            "semantic_enrichment_job",
+            ContentValues().apply {
                 put("status", SemanticEnrichmentStatus.PENDING.name)
                 put("attempt_count", 0)
                 putNull("error")
@@ -2624,6 +2642,7 @@ class GalleryDatabase(
             "semantic_enrichment_job",
             ContentValues().apply {
                 put("status", SemanticEnrichmentStatus.COMPLETE.name)
+                put("model_version", "caption-v4:recovered-existing-caption")
                 putNull("error")
                 putNull("lease_owner")
                 putNull("lease_expires_at")
@@ -2632,7 +2651,7 @@ class GalleryDatabase(
                 put("updated_at", now)
             },
             """
-            reason=? AND status=? AND model_version LIKE ? AND EXISTS (
+            reason=? AND status=? AND EXISTS (
                 SELECT 1 FROM semantic_caption c
                 WHERE c.evidence_media_id=semantic_enrichment_job.representative_media_id
                   AND c.scope=?
@@ -2644,7 +2663,6 @@ class GalleryDatabase(
             arrayOf(
                 reason,
                 SemanticEnrichmentStatus.PENDING.name,
-                "caption-v3:%",
                 SemanticFactScope.MEDIA.name,
                 "GEMMA_MEDIA_DIRECT",
                 "EXACT_DUPLICATE_REUSE",
@@ -3107,8 +3125,12 @@ class GalleryDatabase(
             put("next_attempt_at", 0L)
             put("updated_at", System.currentTimeMillis())
         },
-        "status=? AND (model_version IS NULL OR (model_version NOT LIKE ? AND model_version NOT LIKE ?))",
-        arrayOf(SemanticEnrichmentStatus.COMPLETE.name, "caption-v2:%", "caption-v3:%"),
+        "status=? AND reason NOT LIKE ? AND (model_version IS NULL OR model_version NOT LIKE ?)",
+        arrayOf(
+            SemanticEnrichmentStatus.COMPLETE.name,
+            "${PersonalSemanticMemoryPolicy.JOB_PREFIX}%",
+            "caption-v4:%",
+        ),
     )
 
     fun completeSemanticEnrichment(job: SemanticEnrichmentJobRecord, facts: List<SemanticFactRecord>) =
@@ -3222,7 +3244,7 @@ class GalleryDatabase(
             }
             storedCaption?.let { replaceCaptionChunks(db, it, facts, result.personFacts) }
             val producer = result.caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
-            val completionPrefix = if (PersonalSemanticMemoryPolicy.isPersonalJob(job.reason)) "caption-v3" else "caption-v2"
+            val completionPrefix = "caption-v4"
             db.update("semantic_enrichment_job", ContentValues().apply {
                 put("status", SemanticEnrichmentStatus.COMPLETE.name)
                 put("model_version", producer?.let { "$completionPrefix:$it" } ?: "$completionPrefix:no-accepted-output")

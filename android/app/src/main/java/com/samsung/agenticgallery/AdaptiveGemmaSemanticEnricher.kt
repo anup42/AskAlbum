@@ -41,6 +41,11 @@ class AdaptiveGemmaSemanticEnricher(
         }.orEmpty()}
         The top panel is the complete image. Lower panels are labelled conservative full-body and upper-body crops.
         Reviewed labels available: ${bindings.distinctBy(PersonVerificationBinding::clusterId).joinToString(",") { it.stableLabel }.ifBlank { "none" }}.
+        First determine the overall visible scene and primary activity. Explain what is happening, what each labelled person is
+        doing, how people are interacting, and which visible objects participate in the activity. If visible decorations, food,
+        clothing, signs, or other evidence suggest an occasion, report it only as a possibleOccasion with confidence and list
+        the supporting occasionIndicators. Do not present an inferred occasion as confirmed. Begin detailedCaption with a natural
+        scene-and-activity summary, then continue with all other grounded search-useful details.
         Write a comprehensive detailedCaption covering every search-useful visible scene, setting, occasion cue, labelled person,
         clothing, footwear, headwear, accessory, jewelry, eyewear, bag, carried or held object, action, pose, interaction,
         foreground and background object, animal, food, vehicle, furniture, decoration, color, pattern, material, style,
@@ -49,7 +54,15 @@ class AdaptiveGemmaSemanticEnricher(
         Use P labels only. Never infer identities, relationships, occupations, private traits, sensitive attributes, exact location,
         or an event without visible cues. Never output sensitive OCR values, paths, filenames, URIs, tools, passwords, payment data,
         phone numbers, emails, account data, or identity numbers.
-        Shape: {"detailedCaption":"...","captionConfidence":0.93,
+        Shape: {"sceneSummary":"Two people are posing beside and cutting a decorated cake in a living room.",
+        "primaryActivity":{"label":"posing beside and cutting a cake","confidence":0.95,
+        "evidence":["P1 is holding a knife near the cake","P2 is standing beside P1"]},
+        "actions":[{"subjectRef":"P1","action":"cutting","objectRef":"decorated cake","confidence":0.96,
+        "region":[0.1,0.2,0.7,0.9]}],
+        "interactions":[{"subjectRef":"P1","predicate":"standing beside","targetRef":"P2","confidence":0.94}],
+        "occasionIndicators":[{"indicator":"decorated cake","confidence":0.98},{"indicator":"balloons","confidence":0.92}],
+        "possibleOccasion":{"label":"birthday celebration","confidence":0.84,"isDirectlyConfirmed":false},
+        "detailedCaption":"Two people are posing beside and cutting a decorated cake in a living room...","captionConfidence":0.93,
         "people":[{"personRef":"P1","visibility":"FULL_BODY","associationStatus":"CONFIDENT",
         "bodyRegion":[0.1,0.1,0.4,0.95],"wornItems":[{"category":"CLOTHING","itemType":"dress","colors":["red"],
         "pattern":"floral","material":null,"style":"long","length":"long","sleeves":null,"bodyRegion":"FULL_BODY",
@@ -62,7 +75,12 @@ class AdaptiveGemmaSemanticEnricher(
         bodyRegion: HEAD, NECK, UPPER_BODY, LOWER_BODY, FULL_BODY, FEET, HAND, or UNKNOWN.
         Include every visible worn item, not only shirts: dresses, sarees, suits, trousers, shoes, sandals, hats, glasses,
         jewelry, bags, and uncommon items using OTHER_WORN_ITEM with a safe itemType.
-        predicate must be one of: scene, activity, object, setting, occasion, clothing, document_type.
+        sceneSummary must describe the visible scene and main activity, not only list objects or clothing.
+        primaryActivity, actions, interactions, occasionIndicators, and possibleOccasion may be null or empty when unsupported.
+        Every action or interaction personRef must use a supplied P label. possibleOccasion is always an uncertain visual
+        interpretation in this call: isDirectlyConfirmed must be false. Never infer whose occasion it is.
+        predicate must be one of: scene, scene_summary, activity, primary_activity, activity_indicator, object, setting,
+        occasion, possible_occasion, occasion_indicator, clothing, document_type.
         value must be concise visible evidence, never a caption, identity guess, private value, password, payment data, phone, email, order ID, path, URI, or tool.
         applicability must be EVIDENCE_MEDIA_ONLY or SAFE_FOR_EXACT_DUPLICATES.
         Group/event representatives do not make a fact true for every member. Use EVIDENCE_MEDIA_ONLY unless pixels are exact duplicates.
@@ -161,10 +179,15 @@ internal object SemanticFactCodec {
         raw?.trim()?.lowercase(Locale.ROOT)?.replace('-', '_')?.replace(' ', '_')
     ) {
         "scene", "scene_type" -> "scene"
+        "scene_summary", "summary" -> "scene_summary"
         "activity", "activities" -> "activity"
+        "primary_activity", "main_activity" -> "primary_activity"
+        "activity_indicator", "activity_evidence" -> "activity_indicator"
         "object", "objects" -> "object"
         "setting", "place", "location", "environment" -> "setting"
         "occasion", "event", "celebration" -> "occasion"
+        "possible_occasion", "suggested_occasion" -> "possible_occasion"
+        "occasion_indicator", "occasion_evidence" -> "occasion_indicator"
         "clothing", "attire", "outfit" -> "clothing"
         "document_type", "document" -> "document_type"
         else -> null
@@ -176,8 +199,8 @@ internal object SemanticFactCodec {
             ?: "EVIDENCE_MEDIA_ONLY"
 
     private object Rules {
-        const val PROMPT_VERSION = "adaptive-semantic-facts-v1"
-        const val MAX_FACTS = 12
+        const val PROMPT_VERSION = "adaptive-semantic-facts-v2"
+        const val MAX_FACTS = 20
         const val MAX_VALUE_LENGTH = 120
         val MALFORMED_CONFIDENCE = Regex(
             """"confidence\(\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*\)"""",

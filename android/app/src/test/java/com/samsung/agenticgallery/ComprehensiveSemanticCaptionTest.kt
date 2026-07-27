@@ -24,7 +24,13 @@ class ComprehensiveSemanticCaptionTest {
     @Test
     fun oneResponseProducesCaptionFactsAndGeneralPersonAppearance() {
         val raw = """
-            {"detailedCaption":"P1 wears a long red floral dress and black sandals beside P2 in white shoes.",
+            {"sceneSummary":"P1 and P2 are posing together in a decorated living room.",
+             "primaryActivity":{"label":"posing together","confidence":0.95,"evidence":["P1 is standing beside P2"]},
+             "actions":[{"subjectRef":"P1","action":"holding","objectRef":"a flower","confidence":0.93}],
+             "interactions":[{"subjectRef":"P1","predicate":"standing beside","targetRef":"P2","confidence":0.94}],
+             "occasionIndicators":[{"indicator":"party decorations","confidence":0.88}],
+             "possibleOccasion":{"label":"celebration","confidence":0.72,"isDirectlyConfirmed":false},
+             "detailedCaption":"P1 wears a long red floral dress and black sandals beside P2 in white shoes.",
              "captionConfidence":0.95,
              "people":[
                {"personRef":"P1","visibility":"FULL_BODY","associationStatus":"CONFIDENT","bodyRegion":[0.05,0.05,0.45,0.98],
@@ -41,16 +47,35 @@ class ComprehensiveSemanticCaptionTest {
         val result = SemanticEnrichmentCodec.decode(job, raw, "fixture", bindings)
 
         assertTrue(requireNotNull(result.caption).text.contains("black sandals"))
-        assertEquals(1, result.facts.size)
-        assertEquals(setOf("dress", "sandals", "shoes"), result.personFacts.mapNotNull(PersonVisualFactRecord::itemType).toSet())
+        assertEquals("decorated living room", result.facts.single { it.predicate == "setting" }.value)
+        assertEquals(
+            setOf("dress", "sandals", "shoes"),
+            result.personFacts.filter { it.relation == PersonVisualRelation.WEARING }
+                .mapNotNull(PersonVisualFactRecord::itemType).toSet(),
+        )
         assertEquals(BodyRegion.FEET, result.personFacts.single { it.itemType == "shoes" }.bodyRegion)
         assertEquals("person_wife", result.personFacts.single { it.itemType == "shoes" }.clusterId)
+        assertTrue(requireNotNull(result.caption).text.startsWith("P1 and P2 are posing together"))
+        assertEquals("posing together", result.facts.single { it.predicate == "primary_activity" }.value)
+        assertEquals(
+            "POSSIBLE_INFERENCE",
+            result.facts.single { it.predicate == "possible_occasion" }.applicability,
+        )
+        assertEquals(
+            "person_wife",
+            result.personFacts.single { it.relation == PersonVisualRelation.STANDING_BESIDE }.targetClusterId,
+        )
+        assertEquals(
+            "person_me",
+            result.personFacts.single { it.relation == PersonVisualRelation.HOLDING }.clusterId,
+        )
     }
 
     @Test
     fun ambiguousBindingDoesNotCreatePersonFacts() {
         val raw = """
-            {"detailedCaption":"Two overlapping people stand indoors.","captionConfidence":0.8,
+            {"sceneSummary":"Two overlapping people are standing indoors.",
+             "detailedCaption":"Two overlapping people stand indoors.","captionConfidence":0.8,
              "people":[{"personRef":"P1","visibility":"PARTIAL","associationStatus":"AMBIGUOUS",
                "wornItems":[{"category":"CLOTHING","itemType":"dress","colors":["white"],"bodyRegion":"FULL_BODY","confidence":0.9}],
                "carriedItems":[],"actions":[]}],
@@ -64,11 +89,38 @@ class ComprehensiveSemanticCaptionTest {
     @Test
     fun sensitiveCaptionIsDroppedWithoutDroppingSafeFacts() {
         val raw = """
-            {"detailedCaption":"A screen displays password hunter2.","captionConfidence":0.9,"people":[],
+            {"sceneSummary":"A computer screen is visible.",
+             "detailedCaption":"A screen displays password hunter2.","captionConfidence":0.9,"people":[],
              "facts":[{"predicate":"scene","value":"computer screen","confidence":0.8,"applicability":"EVIDENCE_MEDIA_ONLY"}]}
         """.trimIndent()
         val result = SemanticEnrichmentCodec.decode(job, raw, "fixture", emptyList())
         assertNull(result.caption)
-        assertEquals("computer screen", result.facts.single().value)
+        assertEquals("computer screen", result.facts.single { it.predicate == "scene" }.value)
+    }
+
+    @Test
+    fun cakeDoesNotForceAnOccasionWithoutModelEvidence() {
+        val raw = """
+            {"sceneSummary":"A person is placing a plain cake on a kitchen counter.",
+             "primaryActivity":{"label":"placing a cake on a counter","confidence":0.91,"evidence":[]},
+             "actions":[],"interactions":[],"occasionIndicators":[],"possibleOccasion":null,
+             "detailedCaption":"A person is placing a plain cake on a kitchen counter.",
+             "captionConfidence":0.91,"people":[],"facts":[]}
+        """.trimIndent()
+
+        val result = SemanticEnrichmentCodec.decode(job, raw, "fixture", emptyList())
+
+        assertTrue(result.facts.none { it.predicate == "possible_occasion" })
+        assertEquals("placing a cake on a counter", result.facts.single { it.predicate == "primary_activity" }.value)
+    }
+
+    @Test(expected = SemanticEnrichmentOutputException::class)
+    fun captionWithoutSceneSummaryIsRejectedForCorrectiveRetry() {
+        SemanticEnrichmentCodec.decode(
+            job,
+            """{"detailedCaption":"P1 wears red.","captionConfidence":0.9,"people":[],"facts":[]}""",
+            "fixture",
+            emptyList(),
+        )
     }
 }

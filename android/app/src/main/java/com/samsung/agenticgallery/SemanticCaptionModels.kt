@@ -80,7 +80,7 @@ internal object SemanticEnrichmentCodec {
     private const val MAX_CAPTION_LENGTH = 4_000
     private const val MAX_PEOPLE = 12
     private const val MAX_ITEMS_PER_PERSON = 24
-    internal const val PROMPT_VERSION = "adaptive-comprehensive-caption-v3"
+    internal const val PROMPT_VERSION = "adaptive-comprehensive-caption-v4"
 
     fun decode(
         job: SemanticEnrichmentJobRecord,
@@ -88,15 +88,24 @@ internal object SemanticEnrichmentCodec {
         modelVersion: String,
         bindings: List<PersonVerificationBinding>,
     ): SemanticEnrichmentResult {
-        val facts = SemanticFactCodec.decode(job, raw, modelVersion)
         val root = JSONObject(
             extractFirstJsonObject(raw)
                 ?: throw SemanticEnrichmentOutputException("Enrichment must return one JSON object"),
         )
+        val baseFacts = SemanticFactCodec.decode(job, raw, modelVersion)
         val bindingByLabel = bindings.distinctBy(PersonVerificationBinding::clusterId)
             .associateBy(PersonVerificationBinding::stableLabel)
-        val captionText = root.optString("detailedCaption").trim()
+        val sceneSummary = root.safeText("sceneSummary", 600)
+        val detailedCaption = root.safeText("detailedCaption", MAX_CAPTION_LENGTH)
+        if (detailedCaption.isNotBlank() && sceneSummary.isBlank()) {
+            throw SemanticEnrichmentOutputException("Enrichment omitted a safe sceneSummary")
+        }
+        val captionText = activityAwareCaption(sceneSummary, detailedCaption)
         val captionConfidence = root.opt("captionConfidence").asConfidence()
+        val activityFacts = decodeSceneActivityFacts(job, root, modelVersion, captionConfidence)
+        val facts = (baseFacts + activityFacts).distinctBy {
+            "${it.scope}|${it.subjectId}|${it.predicate}|${it.value}|${it.applicability}"
+        }
         val caption = captionText
             .takeIf { it.isNotBlank() && it.length <= MAX_CAPTION_LENGTH && !SensitiveContentClassifier.isSensitive(it) }
             ?.let {
@@ -130,6 +139,7 @@ internal object SemanticEnrichmentCodec {
         val people = root.optJSONArray("people") ?: JSONArray()
         val refs = mutableListOf<SemanticCaptionPersonRefRecord>()
         val personFacts = mutableListOf<PersonVisualFactRecord>()
+        val confidentlyAssociatedLabels = mutableSetOf<String>()
         for (index in 0 until minOf(people.length(), MAX_PEOPLE)) {
             val person = people.optJSONObject(index) ?: continue
             val personRef = person.optString("personRef").trim()
@@ -146,6 +156,7 @@ internal object SemanticEnrichmentCodec {
                 associationStatus = association,
             )
             if (association != PersonAssociationStatus.CONFIDENT) continue
+            confidentlyAssociatedLabels += personRef
             val worn = person.optJSONArray("wornItems") ?: JSONArray()
             for (itemIndex in 0 until minOf(worn.length(), MAX_ITEMS_PER_PERSON)) {
                 decodeVisibleItem(
@@ -191,6 +202,22 @@ internal object SemanticEnrichmentCodec {
                 )
             }
         }
+        personFacts += decodeTopLevelActions(
+            job = job,
+            actions = root.optJSONArray("actions") ?: JSONArray(),
+            bindingByLabel = bindingByLabel,
+            confidentlyAssociatedLabels = confidentlyAssociatedLabels,
+            modelVersion = modelVersion,
+            defaultConfidence = captionConfidence,
+        )
+        personFacts += decodeInteractions(
+            job = job,
+            interactions = root.optJSONArray("interactions") ?: JSONArray(),
+            bindingByLabel = bindingByLabel,
+            confidentlyAssociatedLabels = confidentlyAssociatedLabels,
+            modelVersion = modelVersion,
+            defaultConfidence = captionConfidence,
+        )
         return SemanticEnrichmentResult(
             facts = facts,
             caption = caption?.copy(personRefs = refs.distinctBy(SemanticCaptionPersonRefRecord::clusterId)),
@@ -198,6 +225,158 @@ internal object SemanticEnrichmentCodec {
                 "${it.clusterId}|${it.relation}|${it.category}|${it.itemType}|${it.value}|${it.bodyRegion}"
             },
         )
+    }
+
+    private fun decodeSceneActivityFacts(
+        job: SemanticEnrichmentJobRecord,
+        root: JSONObject,
+        modelVersion: String,
+        defaultConfidence: Float?,
+    ): List<SemanticFactRecord> = buildList {
+        fun addFact(
+            predicate: String,
+            value: String,
+            confidence: Float?,
+            applicability: String = "EVIDENCE_MEDIA_ONLY",
+        ) {
+            val safe = value.trim().take(600)
+            if (safe.isBlank() || SensitiveContentClassifier.isSensitive(safe)) return
+            add(
+                SemanticFactRecord(
+                    scope = job.scope,
+                    subjectId = job.subjectId,
+                    predicate = predicate,
+                    value = safe,
+                    confidence = (confidence ?: defaultConfidence ?: 0.6f).coerceIn(0f, 1f),
+                    evidenceMediaId = job.representativeMediaId,
+                    applicability = applicability,
+                    modelVersion = modelVersion,
+                    promptVersion = PROMPT_VERSION,
+                ),
+            )
+        }
+
+        root.safeText("sceneSummary", 600).takeIf(String::isNotBlank)?.let {
+            addFact("scene_summary", it, defaultConfidence)
+        }
+        root.optJSONObject("primaryActivity")?.let { activity ->
+            addFact("primary_activity", activity.safeText("label", 240), activity.opt("confidence").asConfidence())
+            activity.optJSONArray("evidence")?.strings()?.forEach {
+                addFact("activity_indicator", it, activity.opt("confidence").asConfidence())
+            }
+        }
+        val indicators = root.optJSONArray("occasionIndicators") ?: JSONArray()
+        for (index in 0 until minOf(indicators.length(), 16)) {
+            val indicator = indicators.optJSONObject(index) ?: continue
+            addFact(
+                "occasion_indicator",
+                indicator.safeText("indicator", 240),
+                indicator.opt("confidence").asConfidence(),
+            )
+        }
+        root.optJSONObject("possibleOccasion")?.let { occasion ->
+            addFact(
+                "possible_occasion",
+                occasion.safeText("label", 240),
+                occasion.opt("confidence").asConfidence(),
+                applicability = "POSSIBLE_INFERENCE",
+            )
+        }
+    }
+
+    private fun decodeTopLevelActions(
+        job: SemanticEnrichmentJobRecord,
+        actions: JSONArray,
+        bindingByLabel: Map<String, PersonVerificationBinding>,
+        confidentlyAssociatedLabels: Set<String>,
+        modelVersion: String,
+        defaultConfidence: Float?,
+    ): List<PersonVisualFactRecord> = buildList {
+        for (index in 0 until minOf(actions.length(), 24)) {
+            val actionObject = actions.optJSONObject(index) ?: continue
+            val personRef = actionObject.safeText("subjectRef", 20)
+            val binding = bindingByLabel[personRef] ?: continue
+            if (personRef !in confidentlyAssociatedLabels) continue
+            val action = actionObject.safeText("action", 120)
+            val objectRef = actionObject.safeText("objectRef", 120)
+            val value = listOf(action, objectRef).filter(String::isNotBlank).joinToString(" ").take(240)
+            if (value.isBlank() || SensitiveContentClassifier.isSensitive(value)) continue
+            val relation = when {
+                action.startsWith("hold", ignoreCase = true) -> PersonVisualRelation.HOLDING
+                action.startsWith("carry", ignoreCase = true) -> PersonVisualRelation.CARRYING
+                action.startsWith("us", ignoreCase = true) -> PersonVisualRelation.USING
+                else -> PersonVisualRelation.ACTION
+            }
+            add(
+                PersonVisualFactRecord(
+                    mediaId = job.representativeMediaId,
+                    clusterId = binding.clusterId,
+                    personRef = personRef,
+                    relation = relation,
+                    itemType = objectRef.takeIf(String::isNotBlank),
+                    value = value,
+                    bodyRegion = BodyRegion.FULL_BODY,
+                    confidence = actionObject.opt("confidence").asConfidence() ?: defaultConfidence ?: 0.6f,
+                    faceRegion = binding.faceRegion(),
+                    evidenceRegion = actionObject.optJSONArray("region")?.normalizedRegion(),
+                    modelVersion = modelVersion,
+                    promptVersion = PROMPT_VERSION,
+                ),
+            )
+        }
+    }
+
+    private fun decodeInteractions(
+        job: SemanticEnrichmentJobRecord,
+        interactions: JSONArray,
+        bindingByLabel: Map<String, PersonVerificationBinding>,
+        confidentlyAssociatedLabels: Set<String>,
+        modelVersion: String,
+        defaultConfidence: Float?,
+    ): List<PersonVisualFactRecord> = buildList {
+        for (index in 0 until minOf(interactions.length(), 24)) {
+            val interaction = interactions.optJSONObject(index) ?: continue
+            val subjectRef = interaction.safeText("subjectRef", 20)
+            val targetRef = interaction.safeText("targetRef", 20)
+            val subject = bindingByLabel[subjectRef] ?: continue
+            val target = bindingByLabel[targetRef] ?: continue
+            if (subjectRef !in confidentlyAssociatedLabels || targetRef !in confidentlyAssociatedLabels) continue
+            val predicate = interaction.safeText("predicate", 120)
+            if (predicate.isBlank() || SensitiveContentClassifier.isSensitive(predicate)) continue
+            val relation = when {
+                predicate.contains("standing beside", ignoreCase = true) -> PersonVisualRelation.STANDING_BESIDE
+                predicate.contains("sitting beside", ignoreCase = true) -> PersonVisualRelation.SITTING_BESIDE
+                else -> PersonVisualRelation.INTERACTING_WITH
+            }
+            add(
+                PersonVisualFactRecord(
+                    mediaId = job.representativeMediaId,
+                    clusterId = subject.clusterId,
+                    personRef = subjectRef,
+                    relation = relation,
+                    value = predicate,
+                    bodyRegion = BodyRegion.FULL_BODY,
+                    confidence = interaction.opt("confidence").asConfidence() ?: defaultConfidence ?: 0.6f,
+                    faceRegion = subject.faceRegion(),
+                    associationStatus = PersonAssociationStatus.CONFIDENT,
+                    targetClusterId = target.clusterId,
+                    modelVersion = modelVersion,
+                    promptVersion = PROMPT_VERSION,
+                ),
+            )
+        }
+    }
+
+    private fun activityAwareCaption(sceneSummary: String, detailedCaption: String): String {
+        if (detailedCaption.isBlank()) return ""
+        val normalizedSummary = sceneSummary.trim().trimEnd('.', '!', '?')
+        if (normalizedSummary.isBlank()) return detailedCaption
+        val normalizedCaption = detailedCaption.trim()
+        return if (normalizedCaption.startsWith(normalizedSummary, ignoreCase = true)) {
+            normalizedCaption
+        } else {
+            "$normalizedSummary. $normalizedCaption".take(MAX_CAPTION_LENGTH)
+        }
     }
 
     private fun decodeVisibleItem(
@@ -269,6 +448,9 @@ internal object SemanticEnrichmentCodec {
             optString(index).trim().takeIf { it.isNotBlank() && it.length <= 120 }?.let(::add)
         }
     }
+
+    private fun JSONObject.safeText(key: String, maxLength: Int): String =
+        optString(key).trim().take(maxLength).takeUnless(SensitiveContentClassifier::isSensitive).orEmpty()
 
     private fun Any?.asConfidence(): Float? = when (this) {
         is Number -> toFloat()
