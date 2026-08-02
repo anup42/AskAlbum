@@ -21,7 +21,7 @@ from fixture_metadata import save_raster_with_metadata
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = Path(__file__).with_name("manifest.yaml")
-USER_AGENT = "AgenticGalleryFixtureBuilder/0.1 (local reproducible test corpus)"
+USER_AGENT = "AskAlbumFixtureBuilder/0.1 (local reproducible test corpus)"
 
 
 def sha256_file(path: Path) -> str:
@@ -179,12 +179,12 @@ def build_core(output: Path, config: dict[str, object]) -> None:
     (output / "gallery-manifest.json").write_text(json.dumps(gallery_manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
     licenses = []
-    attribution_lines = ["# Agentic Gallery sample attribution", "", "Synthetic fixtures are marked CC0 and contain fictitious data.", ""]
+    attribution_lines = ["# AskAlbum sample attribution", "", "Synthetic fixtures are marked CC0 and contain fictitious data.", ""]
     for source in source_records:
         entry = source["entry"]
         licenses.append({key: entry.get(key) for key in ("id", "source_page", "license", "license_url", "author", "sha256")})
         attribution_lines.append(f"- **{entry['id']}** — {entry.get('author') or 'author not listed'}; {entry['license']}; {entry['source_page']}")
-    licenses.append({"id": "synthetic_fixtures", "license": config["synthetic_license"], "author": "Agentic Gallery fixture generator"})
+    licenses.append({"id": "synthetic_fixtures", "license": config["synthetic_license"], "author": "AskAlbum fixture generator"})
     (output.parent / "LICENSES.json").write_text(json.dumps(licenses, indent=2, ensure_ascii=False), encoding="utf-8")
     (output.parent / "ATTRIBUTION.md").write_text("\n".join(attribution_lines) + "\n", encoding="utf-8")
     checksum_lines = [f"{sha256_file(path)}  {path.relative_to(output.parent).as_posix()}" for path in sorted(media.iterdir())]

@@ -37,7 +37,7 @@ def wait_for_cleanup(serial: str, package: str, run_id: str, operation_id: str, 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--serial")
-    parser.add_argument("--package", default="com.askphotos.android")
+    parser.add_argument("--package", default="io.github.anup42.askalbum")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts/device-runs"))
     args = parser.parse_args()
@@ -46,7 +46,7 @@ def main() -> None:
     operation_id = uuid.uuid4().hex
     adb(
         serial, "shell", "am", "start-foreground-service", "-n", f"{args.package}/.TestGallerySeederService",
-        "-a", "com.askphotos.android.test.CLEANUP_GALLERY_FOREGROUND", "--es", "run_id", run_id,
+        "-a", "io.github.anup42.askalbum.test.CLEANUP_GALLERY_FOREGROUND", "--es", "run_id", run_id,
         "--es", "operation_id", operation_id,
     )
     result = wait_for_cleanup(serial, args.package, run_id, operation_id, timeout_seconds=900)

@@ -1,4 +1,4 @@
-# AskPhotos demo library
+# AskAlbum demo library
 
 This directory is a separately scoped, removable demo library. Every image is
 CC0 1.0 and is listed in `manifest.json` with its source page, original download

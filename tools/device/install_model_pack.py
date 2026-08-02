@@ -57,7 +57,7 @@ def request_status(serial: str, package: str, tier: str, action: str, timeout_se
     else:
         adb(
             serial, "shell", "am", "broadcast", "-n", f"{package}/.TestGemmaModelReceiver",
-            "-a", f"com.askphotos.android.test.{action}_GEMMA", "--es", "tier", tier,
+            "-a", f"io.github.anup42.askalbum.test.{action}_GEMMA", "--es", "tier", tier,
             "--es", "operation_id", operation_id,
         )
     relative = f"files/test-models/gemma-{tier.lower()}-status.json"
@@ -93,7 +93,7 @@ def wait_for_terminal(serial: str, package: str, tier: str, timeout_seconds: flo
 def main() -> None:
     parser = argparse.ArgumentParser(description="Drive the app's pinned, checksum-verified Gemma model downloader")
     parser.add_argument("--serial")
-    parser.add_argument("--package", default="com.askphotos.android")
+    parser.add_argument("--package", default="io.github.anup42.askalbum")
     parser.add_argument("--tier", choices=sorted(VALID_TIERS), default="E2B")
     parser.add_argument("--action", choices=("download", "status", "cancel"), default="download")
     parser.add_argument("--timeout-seconds", type=int, default=7200)

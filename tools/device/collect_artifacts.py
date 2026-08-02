@@ -15,7 +15,7 @@ def package_logcat_args(pid: str) -> tuple[str, ...]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--serial")
-    parser.add_argument("--package", default="com.askphotos.android")
+    parser.add_argument("--package", default="io.github.anup42.askalbum")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     serial = resolve_serial(args.serial)

@@ -40,7 +40,7 @@ def start_seed_service(serial: str, package: str, run_id: str) -> None:
         "-n",
         f"{package}/.TestGallerySeederService",
         "-a",
-        "com.askphotos.android.test.SEED_GALLERY_FOREGROUND",
+        "io.github.anup42.askalbum.test.SEED_GALLERY_FOREGROUND",
         "--es",
         "run_id",
         run_id,
@@ -120,7 +120,7 @@ def sha256_file(path: Path) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--serial")
-    parser.add_argument("--package", default="com.askphotos.android")
+    parser.add_argument("--package", default="io.github.anup42.askalbum")
     parser.add_argument("--gallery", type=Path, required=True)
     parser.add_argument("--run-id")
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts/device-runs"))

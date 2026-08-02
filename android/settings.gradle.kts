@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AgenticGalleryAndroid"
+rootProject.name = "AskAlbumAndroid"
 include(":app")
 include(":benchmark")
 include(":core:ocr-paddle")

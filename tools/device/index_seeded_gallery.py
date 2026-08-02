@@ -112,7 +112,7 @@ def read_complete_status(serial: str, package: str, run_id: str, filename: str) 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Import, resume, or report one run-scoped seeded gallery index")
     parser.add_argument("--serial")
-    parser.add_argument("--package", default="com.askphotos.android")
+    parser.add_argument("--package", default="io.github.anup42.askalbum")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--action", choices=("import", "resume", "status", "foreground"), required=True)
     parser.add_argument("--timeout-seconds", type=int, default=900)
@@ -128,7 +128,7 @@ def main() -> None:
         operation_id = uuid.uuid4().hex
         adb(
             serial, "shell", "am", "start-foreground-service", "-n", f"{args.package}/.TestGallerySeederService",
-            "-a", "com.askphotos.android.test.IMPORT_SEEDED_FOREGROUND", "--es", "run_id", run_id,
+            "-a", "io.github.anup42.askalbum.test.IMPORT_SEEDED_FOREGROUND", "--es", "run_id", run_id,
             "--es", "operation_id", operation_id,
         )
         result = wait_for_import(serial, args.package, run_id, operation_id, args.timeout_seconds)
@@ -138,7 +138,7 @@ def main() -> None:
         operation_id = uuid.uuid4().hex
         adb(
             serial, "shell", "am", "start-foreground-service", "-n", f"{args.package}/.TestGallerySeederService",
-            "-a", "com.askphotos.android.test.INDEX_SEEDED_FOREGROUND", "--es", "run_id", run_id,
+            "-a", "io.github.anup42.askalbum.test.INDEX_SEEDED_FOREGROUND", "--es", "run_id", run_id,
             "--es", "operation_id", operation_id, "--ei", "max_cycles", str(max_cycles),
         )
         result = wait_for_operation(
@@ -149,7 +149,7 @@ def main() -> None:
         operation_id = uuid.uuid4().hex
         adb(
             serial, "shell", "am", "broadcast", "-n", f"{args.package}/.TestGallerySeederReceiver",
-            "-a", "com.askphotos.android.test.RESUME_INDEXING", "--es", "run_id", run_id,
+            "-a", "io.github.anup42.askalbum.test.RESUME_INDEXING", "--es", "run_id", run_id,
             "--es", "operation_id", operation_id,
         )
         result = wait_for_operation(
@@ -158,7 +158,7 @@ def main() -> None:
         filename = "index-resume-result.json"
     else:
         action = (
-            "com.askphotos.android.test.REPORT_INDEX_COVERAGE"
+            "io.github.anup42.askalbum.test.REPORT_INDEX_COVERAGE"
         )
         adb(
             serial, "shell", "am", "broadcast", "-n", f"{args.package}/.TestGallerySeederReceiver",

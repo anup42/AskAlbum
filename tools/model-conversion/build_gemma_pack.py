@@ -87,7 +87,7 @@ def main() -> int:
     }
     manifest_bytes = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="agentic-gallery-gemma-") as temp_name:
+    with tempfile.TemporaryDirectory(prefix="askalbum-gemma-") as temp_name:
         temp = Path(temp_name)
         manifest_path, signature_path = temp / "manifest.json", temp / "manifest.sig"
         manifest_path.write_bytes(manifest_bytes)

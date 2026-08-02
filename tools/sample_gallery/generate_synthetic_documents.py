@@ -103,7 +103,7 @@ def generate(output: Path) -> list[dict[str, object]]:
     render_people_fixture(people_path)
     records.append({"id": "synthetic_people_relation", "filename": people_path.name, "kind": "IMAGE", "labels": ["synthetic", "people", "fixture_person_a", "fixture_person_b", "yellow_hat", "blue_suit"]})
     pdf_pages = [output / "synthetic_pdf_page_1.png", output / "synthetic_pdf_page_2.png"]
-    render_document(pdf_pages[0], ["SYNTHETIC TWO-PAGE PDF", "Page 1", "Project: Agentic Gallery", "Reference: PDF-TEST-204"])
+    render_document(pdf_pages[0], ["SYNTHETIC TWO-PAGE PDF", "Page 1", "Project: AskAlbum", "Reference: PDF-TEST-204"])
     render_document(pdf_pages[1], ["SYNTHETIC TWO-PAGE PDF", "Page 2", "Known fact: evidence stays on device", "Date: 21 JUL 2026"])
     images = [Image.open(page).convert("RGB") for page in pdf_pages]
     pdf_path = output / "synthetic_two_page_document.pdf"

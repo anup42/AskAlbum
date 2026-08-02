@@ -1,0 +1,36 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Run fixture unit tests and build
+        working-directory: android
+        run: ./gradlew :app:testCiDebugUnitTest :app:assembleCiDebug --no-daemon
+      - name: Verify offline manifest
+        shell: bash
+        run: |
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          for APK in android/app/build/outputs/apk/ci/debug/app-ci-debug.apk android/app/build/outputs/apk/offlineDemo/debug/app-offlineDemo-debug.apk; do
+            if "$AAPT" dump permissions "$APK" | grep -q "android.permission.INTERNET"; then
+              echo "Internet permission found in $APK"
+              exit 1
+            fi
+          done

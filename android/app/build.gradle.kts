@@ -54,15 +54,15 @@ kapt {
 }
 
 android {
-    namespace = "com.samsung.agenticgallery"
+    namespace = "io.github.anup42.askalbum"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.samsung.agenticgallery"
+        applicationId = "io.github.anup42.askalbum"
         minSdk = 29
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.0.6"
+        versionCode = 7
+        versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

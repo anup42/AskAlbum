@@ -11,7 +11,7 @@ from common import adb, require_run_id, resolve_serial
 
 ROOT = Path(__file__).resolve().parents[2]
 GRADLE_ROOT = ROOT / "android"
-TEST_CLASS = "com.askphotos.android.StoredStressVectorRetrievalAcceptanceTest"
+TEST_CLASS = "io.github.anup42.askalbum.StoredStressVectorRetrievalAcceptanceTest"
 EXPECTED_COUNT = 5_000
 
 
@@ -56,7 +56,7 @@ def run_build(task_variant: str, output: Path, env: dict[str, str]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run retained, fully indexed 5k stored-vector acceptance")
     parser.add_argument("--serial")
-    parser.add_argument("--package", default="com.askphotos.android")
+    parser.add_argument("--package", default="io.github.anup42.askalbum")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--variant", choices=("consumerDebug", "offlineDemoDebug"), default="consumerDebug")
     parser.add_argument("--expected-count", type=int, default=EXPECTED_COUNT)

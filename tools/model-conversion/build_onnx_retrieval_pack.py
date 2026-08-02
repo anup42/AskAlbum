@@ -95,7 +95,7 @@ def main() -> int:
     inspect_encoder(args.image_model, "pixel_values", "tensor(float)")
     inspect_encoder(args.text_model, "input_ids", "tensor(int64)")
 
-    with tempfile.TemporaryDirectory(prefix="agentic-gallery-onnx-pack-") as temp_name:
+    with tempfile.TemporaryDirectory(prefix="askalbum-onnx-pack-") as temp_name:
         temp = Path(temp_name)
         vocab = temp / "tokenizer.vocab"
         export_vocab(args.tokenizer_model, vocab)

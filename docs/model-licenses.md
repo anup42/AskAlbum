@@ -39,3 +39,30 @@ The embedded Android SDK source is pinned to PaddleOCR commit `2661c7c0ef5c613e8
 The Paddle Android adapter has no OpenCV dependency. Bitmap resize/crop, DB-map connected-component extraction, tensor normalization, and reading-order sorting are implemented in Kotlin/Android APIs; ONNX Runtime performs only model inference.
 
 References: [official PaddleOCR Android deployment guide](https://www.paddleocr.ai/latest/en/version3.x/inference_deployment/cross_platform/android_deployment.html), [PP-OCRv5 multilingual documentation](https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/algorithm/PP-OCRv5/PP-OCRv5_multi_languages.en.md), and [PaddleOCR repository](https://github.com/PaddlePaddle/PaddleOCR).
+
+## SigLIP2 retrieval pack
+
+The retrieval encoder is based on Google's
+[`google/siglip2-base-patch16-224`](https://huggingface.co/google/siglip2-base-patch16-224)
+model family. The upstream source model is Apache-2.0. AskAlbum uses a
+converted, quantized, checksum-pinned pack; the pack's own manifest and license
+files remain authoritative for redistribution.
+
+The source and conversion revisions used by the build tooling are recorded in
+the pack catalog and tests. We do not commit the converted weights to Git.
+
+## Gemma local language models
+
+The optional Gemma 4 E2B and E4B LiteRT-LM packs are downloaded only after an
+explicit user action, verified before activation, and stored in app-private
+storage. They are governed by the
+[Gemma Terms of Use](https://ai.google.dev/gemma/terms), not by the Apache-2.0
+license for AskAlbum source code. AskAlbum does not redistribute Gemma weights.
+
+## Redistribution rule
+
+Source code and optional model packs are separate distributions. Do not add
+model binaries, signed packs, private model credentials, generated gallery
+databases, or personal media to source archives or pull requests. When a pack is
+redistributed by a downstream project, preserve its upstream license, notices,
+checksums, and usage terms.

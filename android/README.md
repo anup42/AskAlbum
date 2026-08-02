@@ -1,6 +1,8 @@
-# Agentic Gallery Android
+# AskAlbum: AI Photo Search Android
 
-Native, local-only Android implementation of Agentic Gallery. Retrieval, indexing, inference, and private data storage run on the device.
+> Ask your photos anything — privately and offline.
+
+Native, local-only Android implementation of AskAlbum. Retrieval, indexing, inference, and private data storage run on the device.
 
 ## Implemented
 
@@ -23,6 +25,13 @@ The app reports installed capabilities rather than pretending interfaces are mod
 See [the requirements audit](../docs/ANDROID_REQUIREMENTS_AUDIT.md) for the exact implementation matrix.
 
 ## Build and test
+
+The public, model-independent CI path is the `ciDebug` variant. It uses fixture
+engines and does not require private model artifacts:
+
+```powershell
+.\gradlew.bat :app:testCiDebugUnitTest :app:assembleCiDebug --no-daemon
+```
 
 Place the pinned `siglip2-base-p16-224-q8-core05.agretrieval` archive at `../build/` relative to this Android directory. Gradle embeds that local, ignored model artifact into every APK; model weights are not committed to Git.
 

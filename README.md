@@ -1,6 +1,8 @@
-# Agentic Gallery
+# AskAlbum: AI Photo Search
 
-Agentic Gallery is a native Android application for private, fully on-device
+> Ask your photos anything — privately and offline.
+
+AskAlbum is a native Android application for private, fully on-device
 photo, video, screenshot, PDF, OCR, people, place, event, and metadata search.
 It combines deterministic Kotlin execution with local SigLIP2 retrieval and
 optional Gemma inference. There is no application server and no cloud inference
@@ -18,7 +20,7 @@ The simplest mental model is:
 
 ## Overall architecture
 
-![Agentic Gallery overall on-device architecture](docs/architecture/agentic-gallery-overall-architecture.png)
+![AskAlbum overall on-device architecture](docs/architecture/askalbum-overall-architecture.png)
 
 *Everything inside the dashed boundary runs on the Android device. The consumer
 variant can perform an explicit, user-started model download, but the downloaded
@@ -42,7 +44,7 @@ semantic-memory queues.
 
 ## How media becomes searchable
 
-![Agentic Gallery indexing and semantic-memory pipeline](docs/architecture/agentic-gallery-indexing-pipeline.png)
+![AskAlbum indexing and semantic-memory pipeline](docs/architecture/askalbum-indexing-pipeline.png)
 
 *Indexing uses short checkpointed batches, durable claims and leases, bounded
 retries, and independent controls. Model-dependent and privacy-sensitive
@@ -93,7 +95,7 @@ workers yield; `endInteractiveQuery` re-enqueues enabled unfinished queues.
 
 ## How a question becomes an answer
 
-![Agentic Gallery progressive grounded-query pipeline](docs/architecture/agentic-gallery-query-pipeline.png)
+![AskAlbum progressive grounded-query pipeline](docs/architecture/askalbum-query-pipeline.png)
 
 *Initial result cards can appear before optional visual verification and answer
 composition finish. Every channel reports whether it succeeded, was partial,
@@ -144,7 +146,7 @@ rules, or arbitrary execution.
 
 ## Privacy and verified model lifecycle
 
-![Agentic Gallery privacy and verified model lifecycle](docs/architecture/agentic-gallery-privacy-model-lifecycle.png)
+![AskAlbum privacy and verified model lifecycle](docs/architecture/askalbum-privacy-model-lifecycle.png)
 
 *Internet permission, when present in the consumer variant, supports explicit
 model download—not inference. Runtime media analysis remains on device.*
@@ -176,21 +178,21 @@ model download—not inference. Runtime media analysis remains on device.*
 
 | Area | Primary source | Responsibility |
 |---|---|---|
-| Compose shell and destinations | [`MainActivity.kt`](android/app/src/main/java/com/samsung/agenticgallery/MainActivity.kt) | Library, Ask, People, Settings, indexing, result, viewer, and evidence UI |
-| UI state and operations | [`GalleryViewModel.kt`](android/app/src/main/java/com/samsung/agenticgallery/GalleryViewModel.kt) | Navigation, imports, indexing controls, people review, model state, and progressive query state |
-| Dependency graph | [`AgenticGalleryApplication.kt`](android/app/src/main/java/com/samsung/agenticgallery/AgenticGalleryApplication.kt) | Application-scoped database, model managers, engines, vector stores, and shared sessions |
-| Search orchestration | [`GalleryRepository.kt`](android/app/src/main/java/com/samsung/agenticgallery/GalleryRepository.kt) | Scope resolution, parallel retrieval, fusion, verification, answers, evidence, and result-set persistence |
-| Contracts and plans | [`GalleryModels.kt`](android/app/src/main/java/com/samsung/agenticgallery/GalleryModels.kt) | Typed query, filter, evidence, channel-report, result, and indexing contracts |
-| Structured storage | [`GalleryDatabase.kt`](android/app/src/main/java/com/samsung/agenticgallery/GalleryDatabase.kt) and [`GalleryRoomDatabase.kt`](android/app/src/main/java/com/samsung/agenticgallery/GalleryRoomDatabase.kt) | Room v18/SQLite/FTS data, migrations, durable claims, captions, chunks, people observations, events, OCR, facts, and conversations |
-| Base indexing | [`GalleryIndexWorker.kt`](android/app/src/main/java/com/samsung/agenticgallery/GalleryIndexWorker.kt) | Resumable media analysis batches and event rebuild scheduling |
-| Semantic vectors | [`EmbeddingIndexWorker.kt`](android/app/src/main/java/com/samsung/agenticgallery/EmbeddingIndexWorker.kt) | SigLIP2 media/keyframe embedding and vector-store reconciliation |
-| Caption retrieval | [`SemanticCaptionModels.kt`](android/app/src/main/java/com/samsung/agenticgallery/SemanticCaptionModels.kt), [`CaptionEmbeddingWorker.kt`](android/app/src/main/java/com/samsung/agenticgallery/CaptionEmbeddingWorker.kt), and [`CaptionVectorStore.kt`](android/app/src/main/java/com/samsung/agenticgallery/CaptionVectorStore.kt) | Evidence-scoped caption chunks, FTS4 text, SigLIP2 text embeddings, and memory-mapped FP16 caption-vector search |
-| People index | [`PeopleIndexWorker.kt`](android/app/src/main/java/com/samsung/agenticgallery/PeopleIndexWorker.kt) | Opt-in face detection, embeddings, conservative clustering, and checkpoints |
-| Reviewed identities | [`ReviewedPersonMatchSelector.kt`](android/app/src/main/java/com/samsung/agenticgallery/ReviewedPersonMatchSelector.kt) and [`ReviewedIdentityExpansionWorker.kt`](android/app/src/main/java/com/samsung/agenticgallery/ReviewedIdentityExpansionWorker.kt) | Same-identity OR matching, different-identity AND matching, and conservative unreviewed-face expansion |
-| Semantic memory | [`SemanticEnrichmentWorker.kt`](android/app/src/main/java/com/samsung/agenticgallery/SemanticEnrichmentWorker.kt) | Comprehensive grounded captions, atomic facts, reviewed-person observations, provenance, and protected-OCR exclusion |
-| Index controls and recovery | [`ForegroundIndexCoordinator.kt`](android/app/src/main/java/com/samsung/agenticgallery/ForegroundIndexCoordinator.kt), [`IndexingJobControls.kt`](android/app/src/main/java/com/samsung/agenticgallery/IndexingJobControls.kt), [`IndexingReliabilityPolicy.kt`](android/app/src/main/java/com/samsung/agenticgallery/IndexingReliabilityPolicy.kt), and [`IndexingRuntimeStatus.kt`](android/app/src/main/java/com/samsung/agenticgallery/IndexingRuntimeStatus.kt) | Independent Start/Resume controls, foreground execution, durable claims and leases, bounded retries, recovery, and runtime progress |
-| Shared Gemma runtime | [`GemmaSessionManager.kt`](android/app/src/main/java/com/samsung/agenticgallery/GemmaSessionManager.kt) | Serialized LiteRT-LM GPU/CPU initialization, reuse, cancellation, and eviction |
-| Model boundaries | [`ModelPackManager.kt`](android/app/src/main/java/com/samsung/agenticgallery/ModelPackManager.kt), [`RetrievalModelPack.kt`](android/app/src/main/java/com/samsung/agenticgallery/RetrievalModelPack.kt), [`OcrModelPack.kt`](android/app/src/main/java/com/samsung/agenticgallery/OcrModelPack.kt), and [`FaceModelPack.kt`](android/app/src/main/java/com/samsung/agenticgallery/FaceModelPack.kt) | Verified download/import, app-private generations, activation, capability reporting, and rollback |
+| Compose shell and destinations | [`MainActivity.kt`](android/app/src/main/java/io/github/anup42/askalbum/MainActivity.kt) | Library, Ask, People, Settings, indexing, result, viewer, and evidence UI |
+| UI state and operations | [`GalleryViewModel.kt`](android/app/src/main/java/io/github/anup42/askalbum/GalleryViewModel.kt) | Navigation, imports, indexing controls, people review, model state, and progressive query state |
+| Dependency graph | [`AskAlbumApplication.kt`](android/app/src/main/java/io/github/anup42/askalbum/AskAlbumApplication.kt) | Application-scoped database, model managers, engines, vector stores, and shared sessions |
+| Search orchestration | [`GalleryRepository.kt`](android/app/src/main/java/io/github/anup42/askalbum/GalleryRepository.kt) | Scope resolution, parallel retrieval, fusion, verification, answers, evidence, and result-set persistence |
+| Contracts and plans | [`GalleryModels.kt`](android/app/src/main/java/io/github/anup42/askalbum/GalleryModels.kt) | Typed query, filter, evidence, channel-report, result, and indexing contracts |
+| Structured storage | [`GalleryDatabase.kt`](android/app/src/main/java/io/github/anup42/askalbum/GalleryDatabase.kt) and [`GalleryRoomDatabase.kt`](android/app/src/main/java/io/github/anup42/askalbum/GalleryRoomDatabase.kt) | Room v18/SQLite/FTS data, migrations, durable claims, captions, chunks, people observations, events, OCR, facts, and conversations |
+| Base indexing | [`GalleryIndexWorker.kt`](android/app/src/main/java/io/github/anup42/askalbum/GalleryIndexWorker.kt) | Resumable media analysis batches and event rebuild scheduling |
+| Semantic vectors | [`EmbeddingIndexWorker.kt`](android/app/src/main/java/io/github/anup42/askalbum/EmbeddingIndexWorker.kt) | SigLIP2 media/keyframe embedding and vector-store reconciliation |
+| Caption retrieval | [`SemanticCaptionModels.kt`](android/app/src/main/java/io/github/anup42/askalbum/SemanticCaptionModels.kt), [`CaptionEmbeddingWorker.kt`](android/app/src/main/java/io/github/anup42/askalbum/CaptionEmbeddingWorker.kt), and [`CaptionVectorStore.kt`](android/app/src/main/java/io/github/anup42/askalbum/CaptionVectorStore.kt) | Evidence-scoped caption chunks, FTS4 text, SigLIP2 text embeddings, and memory-mapped FP16 caption-vector search |
+| People index | [`PeopleIndexWorker.kt`](android/app/src/main/java/io/github/anup42/askalbum/PeopleIndexWorker.kt) | Opt-in face detection, embeddings, conservative clustering, and checkpoints |
+| Reviewed identities | [`ReviewedPersonMatchSelector.kt`](android/app/src/main/java/io/github/anup42/askalbum/ReviewedPersonMatchSelector.kt) and [`ReviewedIdentityExpansionWorker.kt`](android/app/src/main/java/io/github/anup42/askalbum/ReviewedIdentityExpansionWorker.kt) | Same-identity OR matching, different-identity AND matching, and conservative unreviewed-face expansion |
+| Semantic memory | [`SemanticEnrichmentWorker.kt`](android/app/src/main/java/io/github/anup42/askalbum/SemanticEnrichmentWorker.kt) | Comprehensive grounded captions, atomic facts, reviewed-person observations, provenance, and protected-OCR exclusion |
+| Index controls and recovery | [`ForegroundIndexCoordinator.kt`](android/app/src/main/java/io/github/anup42/askalbum/ForegroundIndexCoordinator.kt), [`IndexingJobControls.kt`](android/app/src/main/java/io/github/anup42/askalbum/IndexingJobControls.kt), [`IndexingReliabilityPolicy.kt`](android/app/src/main/java/io/github/anup42/askalbum/IndexingReliabilityPolicy.kt), and [`IndexingRuntimeStatus.kt`](android/app/src/main/java/io/github/anup42/askalbum/IndexingRuntimeStatus.kt) | Independent Start/Resume controls, foreground execution, durable claims and leases, bounded retries, recovery, and runtime progress |
+| Shared Gemma runtime | [`GemmaSessionManager.kt`](android/app/src/main/java/io/github/anup42/askalbum/GemmaSessionManager.kt) | Serialized LiteRT-LM GPU/CPU initialization, reuse, cancellation, and eviction |
+| Model boundaries | [`ModelPackManager.kt`](android/app/src/main/java/io/github/anup42/askalbum/ModelPackManager.kt), [`RetrievalModelPack.kt`](android/app/src/main/java/io/github/anup42/askalbum/RetrievalModelPack.kt), [`OcrModelPack.kt`](android/app/src/main/java/io/github/anup42/askalbum/OcrModelPack.kt), and [`FaceModelPack.kt`](android/app/src/main/java/io/github/anup42/askalbum/FaceModelPack.kt) | Verified download/import, app-private generations, activation, capability reporting, and rollback |
 
 ## Repository layout
 
@@ -203,8 +205,7 @@ model download—not inference. Runtime media analysis remains on device.*
 - `tools/sample_gallery/`: synthetic and stress-gallery generation.
 - `scripts/verify_demo_library.py`: demo-media verification.
 - `docs/`: implementation evidence, requirements, testing, licensing,
-  architecture images, and versioning.
-- `s-Gallery/`: Samsung Gallery and Agentic Gallery visual references.
+  versioning, and public architecture diagrams for the on-device flows.
 
 ## Android variants
 
@@ -212,6 +213,20 @@ model download—not inference. Runtime media analysis remains on device.*
 - `offlineDemoDebug`: embedded retrieval/face assets and no Internet permission.
 - `consumerDebug`: user-started model downloads with all inference remaining
   on device.
+
+## Open-source boundary
+
+The source release is licensed under Apache-2.0. Optional model packs are not
+bundled and remain subject to their own upstream terms; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and
+[docs/model-licenses.md](docs/model-licenses.md). User gallery media, indexes,
+People data, generated databases, device logs, APKs, and model binaries are
+intentionally excluded from the repository.
+
+AskAlbum is an independent open-source project and is not affiliated with
+Samsung, Google, OpenAI, or the upstream model authors. See
+[PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md), and
+[CONTRIBUTING.md](CONTRIBUTING.md) before contributing.
 
 ## Build and test
 

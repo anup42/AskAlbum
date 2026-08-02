@@ -15,9 +15,9 @@ from preflight import collect as collect_preflight
 ROOT = Path(__file__).resolve().parents[2]
 GRADLE_ROOT = ROOT / "android"
 DEFAULT_TEST_CLASSES = (
-    "com.askphotos.android.SeededGalleryTest",
-    "com.askphotos.android.IndexRecoveryTest",
-    "com.askphotos.android.SeededGalleryDisplayTest",
+    "io.github.anup42.askalbum.SeededGalleryTest",
+    "io.github.anup42.askalbum.IndexRecoveryTest",
+    "io.github.anup42.askalbum.SeededGalleryDisplayTest",
 )
 
 
@@ -53,7 +53,7 @@ def run(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the safe core connected-device acceptance flow")
     parser.add_argument("--serial")
-    parser.add_argument("--package", default="com.askphotos.android")
+    parser.add_argument("--package", default="io.github.anup42.askalbum")
     parser.add_argument("--run-id")
     parser.add_argument("--variant", choices=("consumerDebug", "offlineDemoDebug"), default="consumerDebug")
     parser.add_argument("--test-class", action="append", dest="test_classes")

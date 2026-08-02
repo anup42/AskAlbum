@@ -1,8 +1,8 @@
-# AskPhotos implementation plan
+# AskAlbum implementation plan
 
 ## Product boundary
 
-AskPhotos is one private GPU server with an authenticated browser client.
+AskAlbum is one private GPU server with an authenticated browser client.
 Originals, derivatives, metadata, embeddings, prompts and search traces remain
 on that server. All runtime inference uses configured local model directories;
 no hosted inference fallback exists.

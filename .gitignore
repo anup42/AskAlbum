@@ -31,3 +31,11 @@ android/**/build/
 *.tflite
 *.keystore
 *.jks
+*.zip
+*.db
+*.sqlite
+*.sqlite3
+*.dex
+*.log
+*.hprof
+android/gradle-home/

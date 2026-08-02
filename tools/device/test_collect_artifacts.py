@@ -12,7 +12,7 @@ class PrivacySafeArtifactCollectionTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             package_logcat_args("10833 10834")
         with self.assertRaises(RuntimeError):
-            package_logcat_args("com.askphotos.android")
+            package_logcat_args("io.github.anup42.askalbum")
 
 
 if __name__ == "__main__":

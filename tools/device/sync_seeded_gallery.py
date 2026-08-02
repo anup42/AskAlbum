@@ -8,15 +8,15 @@ from common import adb, mask_serial, require_run_id, resolve_serial, wait_for_js
 
 
 ACTIONS = {
-    "import": ("com.askphotos.android.test.IMPORT_SEEDED", "import-status.json"),
-    "remove": ("com.askphotos.android.test.REMOVE_IMPORTED", "db-cleanup-status.json"),
+    "import": ("io.github.anup42.askalbum.test.IMPORT_SEEDED", "import-status.json"),
+    "remove": ("io.github.anup42.askalbum.test.REMOVE_IMPORTED", "db-cleanup-status.json"),
 }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Import or remove one run-scoped seeded gallery in the app database")
     parser.add_argument("--serial")
-    parser.add_argument("--package", default="com.askphotos.android")
+    parser.add_argument("--package", default="io.github.anup42.askalbum")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--action", choices=sorted(ACTIONS), required=True)
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts/device-runs"))

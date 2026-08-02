@@ -41,7 +41,7 @@ def main() -> None:
         return
 
     partial = output.with_suffix(output.suffix + ".part")
-    request = urllib.request.Request(URL, headers={"User-Agent": "AgenticGallery-model-fetch/0.0.6"})
+    request = urllib.request.Request(URL, headers={"User-Agent": "AskAlbum-model-fetch/0.0.6"})
     try:
         with urllib.request.urlopen(request) as response, partial.open("wb") as target:
             while block := response.read(1024 * 1024):

@@ -39,7 +39,7 @@ def _number(value: str) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Profile one installed Android instrumentation class")
     parser.add_argument("--serial")
-    parser.add_argument("--package", default="com.askphotos.android")
+    parser.add_argument("--package", default="io.github.anup42.askalbum")
     parser.add_argument("--test-class", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--interval-ms", type=int, default=500)

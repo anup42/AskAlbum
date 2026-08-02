@@ -39,21 +39,21 @@ class ExistingSeedResultTest(unittest.TestCase):
     def test_streaming_sha256_does_not_load_the_archive_contract_into_memory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             archive = Path(temporary) / "archive.zip"
-            archive.write_bytes(b"agentic-gallery-stress")
+            archive.write_bytes(b"askalbum-stress")
             self.assertEqual("66552056b52576f7c98899c56a0366b3c5add5f1fc724844c80bd715b6bd872b", sha256_file(archive))
 
     def test_external_transport_accepts_only_the_canonical_provider_path(self) -> None:
-        response = "Result: Bundle[{path=/storage/emulated/0/Android/data/com.askphotos.android/files/test-seed-transfer/stress_run.zip, state=READY}]"
+        response = "Result: Bundle[{path=/storage/emulated/0/Android/data/io.github.anup42.askalbum/files/test-seed-transfer/stress_run.zip, state=READY}]"
         self.assertEqual(
-            "/storage/emulated/0/Android/data/com.askphotos.android/files/test-seed-transfer/stress_run.zip",
-            parse_external_path(response, "com.askphotos.android", "stress_run"),
+            "/storage/emulated/0/Android/data/io.github.anup42.askalbum/files/test-seed-transfer/stress_run.zip",
+            parse_external_path(response, "io.github.anup42.askalbum", "stress_run"),
         )
 
     def test_external_path_parser_rejects_other_packages_and_traversal(self) -> None:
         with self.assertRaises(RuntimeError):
-            parse_external_path("path=/storage/emulated/0/Android/data/other/files/test-seed-transfer/stress_run.zip", "com.askphotos.android", "stress_run")
+            parse_external_path("path=/storage/emulated/0/Android/data/other/files/test-seed-transfer/stress_run.zip", "io.github.anup42.askalbum", "stress_run")
         with self.assertRaises(RuntimeError):
-            parse_external_path("path=/storage/emulated/0/Android/data/com.askphotos.android/files/../test-seed-transfer/stress_run.zip", "com.askphotos.android", "stress_run")
+            parse_external_path("path=/storage/emulated/0/Android/data/io.github.anup42.askalbum/files/../test-seed-transfer/stress_run.zip", "io.github.anup42.askalbum", "stress_run")
 
     def test_external_file_route_supports_staging_and_foreground_seeding(self) -> None:
         validate_transport_mode("chunked", False)

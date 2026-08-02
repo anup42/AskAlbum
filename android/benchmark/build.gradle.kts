@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.samsung.agenticgallery.benchmark"
+    namespace = "io.github.anup42.askalbum.benchmark"
     compileSdk = 36
 
     defaultConfig {
