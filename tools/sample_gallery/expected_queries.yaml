@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "queries": [
+    {"id":"Q01","query":"Show photos from my Singapore trip.","intent":"FIND_MEDIA","required_filters":{"event":"Singapore 2024"},"expected_ids_prefix":["singapore_marina_bay_01"],"evidence_types":["metadata","event"],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q02","query":"Only Marina Bay.","intent":"FIND_MEDIA","follow_up_to":"Q01","required_filters":{"semantic":"marina_bay"},"expected_ids_prefix":["singapore_marina_bay_01"],"evidence_types":["metadata","semantic"],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q03","query":"What about last year?","intent":"FIND_MEDIA","follow_up_to":"Q02","required_filters":{"year":2025},"expected_ids":[],"evidence_types":[],"exactness":"EXACT"},
+    {"id":"Q04","query":"What was the total on my latest Swiggy receipt?","intent":"ANSWER_FACT","expected_answer":"INR 1,248","expected_ids":["synthetic_swiggy_receipt"],"evidence_types":["ocr","document_total"],"exactness":"EXACT"},
+    {"id":"Q05","query":"How many photos did I take in 2024?","intent":"COUNT","expected_from_manifest":true,"evidence_types":["metadata"],"exactness":"EXACT"},
+    {"id":"Q06","query":"Show beach sunsets.","intent":"FIND_MEDIA","required_filters":{"semantic":["beach","sunset"]},"acceptable_top_k_prefix":["goa_beach_01","legacy-demo-beach"],"evidence_types":["semantic"],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q07","query":"Show photos containing both fixture Person A and fixture Person B.","intent":"FIND_MEDIA","required_people":["fixture_person_a","fixture_person_b"],"expected_ids":["synthetic_people_relation"],"evidence_types":["people"],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q08","query":"Show the image where Person A has a yellow hat and Person B has a blue suit.","intent":"FIND_MEDIA","required_people":["fixture_person_a","fixture_person_b"],"required_hard_conditions":["fixture_person_a wears yellow hat","fixture_person_b wears blue suit"],"expected_ids":["synthetic_people_relation"],"evidence_types":["people","visual_verification"],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q09","query":"Pichle saal Goa wali photos dikhao.","intent":"FIND_MEDIA","required_filters":{"year":2025,"event":"Goa 2025"},"expected_ids_prefix":["goa_beach_01"],"evidence_types":["metadata","event"],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q10","query":"Show a receipt from a merchant that does not exist.","intent":"DOCUMENT_QA","expected_ids":[],"expected_no_match":true,"evidence_types":[],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q11","query":"Find the yellow bicycle in my video.","intent":"FIND_MEDIA","required_filters":{"media_scope":"VIDEOS"},"expected_ids":["synthetic_video_timeline"],"evidence_types":["video_keyframe"],"required_timestamp_range_ms":[5000,13000],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q12","query":"Show photos of my dog.","intent":"FIND_MEDIA","required_filters":{"semantic":["dog","pet"]},"expected_ids_prefix":["domesticated_dog_01"],"evidence_types":["semantic"],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q13","query":"Show children playing football outdoors.","intent":"FIND_MEDIA","required_filters":{"semantic":["children","football","outdoors"]},"expected_ids_prefix":["children_football_01"],"evidence_types":["semantic"],"exactness":"COMPLETE_MODEL_SCAN"},
+    {"id":"Q14","query":"What known fact is written on page 2 of my PDF?","intent":"DOCUMENT_QA","expected_answer":"evidence stays on device","expected_ids":["synthetic_two_page_document"],"evidence_types":["ocr"],"required_page_index":1,"exactness":"EXACT"}
+  ]
+}

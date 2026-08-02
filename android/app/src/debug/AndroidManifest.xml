@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <provider
+            android:name=".TestSeedContentProvider"
+            android:authorities="${applicationId}.testseed"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+        <service
+            android:name=".TestGallerySeederService"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
+        <receiver
+            android:name=".TestGallerySeederReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="io.github.anup42.askalbum.test.SEED_GALLERY" />
+                <action android:name="io.github.anup42.askalbum.test.CLEANUP_GALLERY" />
+                <action android:name="io.github.anup42.askalbum.test.IMPORT_SEEDED" />
+                <action android:name="io.github.anup42.askalbum.test.REMOVE_IMPORTED" />
+                <action android:name="io.github.anup42.askalbum.test.PREPARE_INDEX_INTERRUPTION" />
+                <action android:name="io.github.anup42.askalbum.test.VERIFY_INDEX_RECOVERY" />
+                <action android:name="io.github.anup42.askalbum.test.REPORT_INDEX_COVERAGE" />
+                <action android:name="io.github.anup42.askalbum.test.RESUME_INDEXING" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".TestGemmaModelReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="io.github.anup42.askalbum.test.DOWNLOAD_GEMMA" />
+                <action android:name="io.github.anup42.askalbum.test.REPORT_GEMMA" />
+                <action android:name="io.github.anup42.askalbum.test.CANCEL_GEMMA" />
+            </intent-filter>
+        </receiver>
+        <activity
+            android:name=".TestGemmaDownloadActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:finishOnTaskLaunch="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    </application>
+</manifest>
