@@ -1,6 +1,6 @@
 [versions]
 room = "2.8.4"
-litert = "2.1.0"
+litert = "2.1.6"
 onnxruntime = "1.23.2"
 coroutines = "1.9.0"
 
