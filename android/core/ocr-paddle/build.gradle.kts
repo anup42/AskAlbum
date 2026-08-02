@@ -27,5 +27,5 @@ kotlin {
 dependencies {
     implementation(libs.microsoft.onnxruntime.android)
     implementation(libs.kotlinx.coroutines.android)
-    implementation("androidx.core:core-ktx:1.16.0")
+    implementation("androidx.core:core-ktx:1.19.0")
 }
