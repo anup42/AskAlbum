@@ -1,34 +1,45 @@
-name: Android
+name: Android CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: Fixture tests and offline build
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-      - name: Run fixture unit tests and build
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Restore Gradle wrapper executable bit
+        run: chmod +x android/gradlew
+      - name: Run fixture tests and build offline variants
         working-directory: android
-        run: ./gradlew :app:testCiDebugUnitTest :app:assembleCiDebug --no-daemon
-      - name: Verify offline manifest
+        run: ./gradlew :app:testCiDebugUnitTest :app:assembleCiDebug :app:assembleOfflineDemoDebug --no-daemon
+      - name: Verify offline manifests
         shell: bash
         run: |
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          test -x "$AAPT"
           for APK in android/app/build/outputs/apk/ci/debug/app-ci-debug.apk android/app/build/outputs/apk/offlineDemo/debug/app-offlineDemo-debug.apk; do
+            test -f "$APK"
             if "$AAPT" dump permissions "$APK" | grep -q "android.permission.INTERNET"; then
               echo "Internet permission found in $APK"
               exit 1
