@@ -29,7 +29,9 @@ multimodal retrieval, privacy, accessibility, testing, and documentation.
 
 ## Local development
 
-Use JDK 17 and the Gradle wrapper from `android/`.
+Use JDK 21 and the Gradle wrapper from `android/`. The Android modules continue
+to target Java 17 bytecode, while LiteRT-LM 0.14.0 requires a Java 21 build
+runtime.
 
 ```bash
 cd android
@@ -79,4 +81,3 @@ coherent problem rather than combine unrelated cleanup and features.
 Do not disclose suspected vulnerabilities or private media in an issue or
 discussion. Follow [`SECURITY.md`](SECURITY.md) and use the repository's
 [private vulnerability report](https://github.com/anup42/AskAlbum/security/advisories/new).
-

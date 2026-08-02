@@ -72,7 +72,7 @@ pass is reported as an estimate, never as a complete gallery scan.
 ### Requirements
 
 - Android Studio or the Android SDK command-line tools
-- JDK 17
+- JDK 21 (LiteRT-LM 0.14.0 publishes Java 21 class files)
 - Git
 
 ### Build the fixture variant
@@ -217,4 +217,3 @@ AskAlbum is an independent open-source project and is not affiliated with
 Samsung, Google, OpenAI, or upstream model authors.
 
 Current release: [AskAlbum 0.1.0](https://github.com/anup42/AskAlbum/releases/tag/v0.1.0)
-
