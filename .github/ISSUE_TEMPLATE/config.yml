@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+contact_links:
+  - name: AskAlbum Discussions
+    url: https://github.com/anup42/AskAlbum/discussions
+    about: Ask questions, share ideas, and discuss designs before opening an issue.
+  - name: Private security report
+    url: https://github.com/anup42/AskAlbum/security/advisories/new
+    about: Report vulnerabilities privately. Do not include personal media or credentials.
+
