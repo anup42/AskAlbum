@@ -124,7 +124,10 @@ class AdaptiveSemanticEnrichmentTest {
             emptyList(),
         )
 
-        assertEquals(listOf("scene_summary"), result.facts.map(SemanticFactRecord::predicate))
+        assertEquals(
+            setOf("scene_summary", "activity_state"),
+            result.facts.map(SemanticFactRecord::predicate).toSet(),
+        )
         assertEquals("A person is standing outdoors beside a tree.", result.caption?.text)
         assertTrue(PersonalSemanticMemoryPolicy.isRecoverableStructuredOutputFailure("Enrichment omitted the facts array"))
         assertEquals(
