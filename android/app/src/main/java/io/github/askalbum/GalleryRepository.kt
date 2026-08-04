@@ -647,7 +647,7 @@ class GalleryRepository(context: Context) {
                 itemById[match.mediaId]?.let { SearchHit(it, match.score, emptyList()) }
             },
             modelVersion = captionRanked.firstOrNull()?.caption?.modelVersion,
-            errorCode = if (captionCoverage == 0) "NO_CACHED_CAPTIONS" else null,
+            errorCode = if (eligibleIds.isNotEmpty() && captionCoverage == 0) "NO_CACHED_CAPTIONS" else null,
         )
         val captionEmbeddingSearchedMediaCount = eligibleCaptionChunks.asSequence()
             .filter {
