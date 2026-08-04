@@ -1,0 +1,32 @@
+package io.github.anup42.askalbum
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class RetrievalExactnessPolicyTest {
+    @Test
+    fun completePredicateScanIsTheOnlySemanticPathThatCanBeComplete() {
+        val success = RetrievalChannelReport<Any>(
+            channel = RetrievalChannel.SEMANTIC,
+            status = ChannelStatus.SUCCESS,
+            eligibleCount = 10,
+            indexedCount = 10,
+            searchedCount = 10,
+            hits = emptyList(),
+        )
+        val partial = success.copy(status = ChannelStatus.PARTIAL, searchedCount = 4)
+
+        assertEquals(
+            ResultExactness.COMPLETE_MODEL_SCAN,
+            RetrievalExactnessPolicy.resolve(true, false, success, false, completePredicateScan = true),
+        )
+        assertEquals(
+            ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+            RetrievalExactnessPolicy.resolve(true, false, success, false, completePredicateScan = false),
+        )
+        assertEquals(
+            ResultExactness.PARTIAL_INDEX,
+            RetrievalExactnessPolicy.resolve(true, false, partial, false, completePredicateScan = true),
+        )
+    }
+}

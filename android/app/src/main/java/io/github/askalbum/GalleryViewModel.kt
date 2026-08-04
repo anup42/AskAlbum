@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
 
 enum class AppDestination { ONBOARDING, GALLERY, ALBUMS, ASK, RESULTS, MENU, INDEX_MANAGER, SEMANTIC_MEMORY, EVENTS_INDEX, PRIVACY, PEOPLE }
 
-enum class QueryExecutionStage { UNDERSTANDING, SEARCHING, INITIAL_RESULTS, VERIFYING, COMPOSING }
+enum class QueryExecutionStage { UNDERSTANDING, SEARCHING, SCANNING, INITIAL_RESULTS, VERIFYING, COMPOSING }
 
 data class GalleryUiState(
     val loading: Boolean = true,
@@ -1476,6 +1476,10 @@ internal object QueryProgressUiReducer {
             executionStage = QueryExecutionStage.INITIAL_RESULTS,
             progressivePlan = progress.plan,
             progressiveHits = progress.hits,
+        )
+        is QueryProgress.SemanticScan -> state.copy(
+            executionStatus = "Checking every eligible item (${progress.searchedCount} / ${progress.eligibleCount})…",
+            executionStage = QueryExecutionStage.SCANNING,
         )
         is QueryProgress.Verifying -> state.copy(
             executionStatus = "Checking ${progress.candidateCount} likely ${if (progress.candidateCount == 1) "match" else "matches"} with Gemma…",

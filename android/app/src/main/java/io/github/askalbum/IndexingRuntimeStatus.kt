@@ -186,6 +186,7 @@ internal object IndexingSupervisor {
                 userRequested = semantic.userRequestedPendingJobs > 0,
             )
         }
+        SemanticPredicateScanScheduler.reconcile(context)
     }
 }
 

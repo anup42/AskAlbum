@@ -326,6 +326,24 @@ class GalleryDatabase(
         return mediaIds + keyframes
     }
 
+    fun mediaIdsWithVectorCoverage(mediaIds: Set<String>, vectorIds: Set<String>): Set<String> {
+        if (mediaIds.isEmpty() || vectorIds.isEmpty()) return emptySet()
+        val covered = mediaIds.filterTo(mutableSetOf()) { it in vectorIds }
+        for (ids in mediaIds.chunked(SQLITE_ID_CHUNK)) {
+            val placeholders = ids.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT id,media_id FROM video_keyframe WHERE media_id IN ($placeholders)",
+                ids.toTypedArray(),
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val keyframeId = cursor.text("id")
+                    if (keyframeId in vectorIds) covered += cursor.text("media_id")
+                }
+            }
+        }
+        return covered
+    }
+
     fun keyframeEmbeddingPendingItems(producerVersion: String, limit: Int): List<VideoKeyframeRecord> = readableDatabase.rawQuery(
         "SELECT v.* FROM video_keyframe v JOIN media_item m ON m.id=v.media_id WHERE m.access_state='ACCESSIBLE' AND (v.embedding_version IS NULL OR v.embedding_version!=?) ORDER BY COALESCE(m.captured_at,0) DESC,v.timestamp_ms LIMIT ?",
         arrayOf(producerVersion, limit.toString()),
@@ -3980,6 +3998,258 @@ class GalleryDatabase(
     private fun decodeRegion(encoded: String): List<Float> = JSONArray(encoded).let { array ->
         List(array.length()) { array.getDouble(it).toFloat() }
     }
+
+    fun createOrResumeSemanticPredicateScan(
+        query: String,
+        modelVersion: String,
+        eligibleMediaIds: Set<String>,
+        indexedMediaCount: Int,
+    ): String {
+        require(query.isNotBlank())
+        require(modelVersion.isNotBlank())
+        val orderedMediaIds = eligibleMediaIds.toList().sorted()
+        val scopeHash = SemanticPredicateScanPolicy.scopeHash(eligibleMediaIds)
+        val queryKey = SemanticPredicateScanPolicy.queryKey(query, modelVersion, scopeHash)
+        val scanId = SemanticPredicateScanPolicy.scanId(queryKey)
+        val now = System.currentTimeMillis()
+        writableDatabase.transaction { db ->
+            val existing = readSemanticPredicateScan(db, scanId)
+            if (existing == null) {
+                db.insertOrThrow("semantic_predicate_scan", null, ContentValues().apply {
+                    put("id", scanId)
+                    put("query_key", queryKey)
+                    put("query_text", query)
+                    put("model_version", modelVersion)
+                    put("scope_hash", scopeHash)
+                    put("eligible_count", orderedMediaIds.size)
+                    put("indexed_count", indexedMediaCount.coerceIn(0, orderedMediaIds.size))
+                    put("searched_count", 0)
+                    put("next_ordinal", 0)
+                    put("hit_count", 0)
+                    put("status", if (orderedMediaIds.isEmpty()) SemanticPredicateScanStatus.COMPLETE.name else SemanticPredicateScanStatus.PENDING.name)
+                    put("attempt_count", 0)
+                    putNull("error")
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("next_attempt_at", 0L)
+                    putNull("last_progress_at")
+                    put("created_at", now)
+                    put("updated_at", now)
+                })
+                orderedMediaIds.forEachIndexed { ordinal, mediaId ->
+                    db.insertOrThrow("semantic_predicate_scan_scope", null, ContentValues().apply {
+                        put("scan_id", scanId)
+                        put("media_id", mediaId)
+                        put("ordinal", ordinal)
+                    })
+                }
+            } else {
+                val coverageImproved = indexedMediaCount > existing.indexedCount
+                val mustRestart = existing.status == SemanticPredicateScanStatus.COMPLETE &&
+                    existing.indexedCount < existing.eligibleCount && coverageImproved
+                db.update("semantic_predicate_scan", ContentValues().apply {
+                    put("indexed_count", indexedMediaCount.coerceIn(0, orderedMediaIds.size))
+                    if (existing.status == SemanticPredicateScanStatus.FAILED) {
+                        put("status", SemanticPredicateScanStatus.PENDING.name)
+                        put("next_attempt_at", 0L)
+                        putNull("error")
+                    }
+                    if (mustRestart) {
+                        put("status", SemanticPredicateScanStatus.PENDING.name)
+                        put("searched_count", 0)
+                        put("next_ordinal", 0)
+                        put("hit_count", 0)
+                        put("next_attempt_at", 0L)
+                        putNull("error")
+                        db.delete("semantic_predicate_scan_hit", "scan_id=?", arrayOf(scanId))
+                    }
+                    put("updated_at", now)
+                }, "id=?", arrayOf(scanId))
+            }
+        }
+        return scanId
+    }
+
+    fun semanticPredicateScan(scanId: String): SemanticPredicateScanRecord? =
+        readableDatabase.rawQuery(
+            "SELECT * FROM semantic_predicate_scan WHERE id=? LIMIT 1",
+            arrayOf(scanId),
+        ).use { cursor -> if (cursor.moveToFirst()) readSemanticPredicateScan(cursor) else null }
+
+    fun claimSemanticPredicateScan(scanId: String, owner: String): SemanticPredicateScanRecord? {
+        val now = System.currentTimeMillis()
+        return writableDatabase.transaction { db ->
+            val current = readSemanticPredicateScan(db, scanId) ?: return@transaction null
+            if (current.status == SemanticPredicateScanStatus.COMPLETE) return@transaction current
+            if (current.status == SemanticPredicateScanStatus.FAILED) return@transaction null
+            if (current.nextAttemptAt > now) return@transaction null
+            if (current.leaseOwner != null && current.leaseOwner != owner && (current.leaseExpiresAt ?: 0L) > now) {
+                return@transaction null
+            }
+            db.update("semantic_predicate_scan", ContentValues().apply {
+                put("status", SemanticPredicateScanStatus.RUNNING.name)
+                put("lease_owner", owner)
+                put("lease_expires_at", now + SemanticPredicateScanPolicy.LEASE_MS)
+                put("updated_at", now)
+            }, "id=?", arrayOf(scanId))
+            readSemanticPredicateScan(db, scanId)
+        }
+    }
+
+    fun nextSemanticPredicateScanBatch(scanId: String, owner: String, limit: Int): SemanticPredicateScanBatch? {
+        require(limit in 1..256)
+        return writableDatabase.transaction { db ->
+            val current = readSemanticPredicateScan(db, scanId) ?: return@transaction null
+            if (current.status != SemanticPredicateScanStatus.RUNNING || current.leaseOwner != owner) {
+                return@transaction null
+            }
+            if (current.nextOrdinal >= current.eligibleCount) {
+                db.update("semantic_predicate_scan", ContentValues().apply {
+                    put("status", SemanticPredicateScanStatus.COMPLETE.name)
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("updated_at", System.currentTimeMillis())
+                }, "id=?", arrayOf(scanId))
+                return@transaction null
+            }
+            val mediaIds = db.rawQuery(
+                "SELECT media_id FROM semantic_predicate_scan_scope WHERE scan_id=? AND ordinal>=? ORDER BY ordinal LIMIT ?",
+                arrayOf(scanId, current.nextOrdinal.toString(), limit.toString()),
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.text("media_id")) } }
+            if (mediaIds.isEmpty()) {
+                db.update("semantic_predicate_scan", ContentValues().apply {
+                    put("status", SemanticPredicateScanStatus.FAILED.name)
+                    put("error", "SCAN_SCOPE_MISSING")
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("updated_at", System.currentTimeMillis())
+                }, "id=?", arrayOf(scanId))
+                null
+            } else {
+                SemanticPredicateScanBatch(scanId, current.queryText, current.nextOrdinal, mediaIds)
+            }
+        }
+    }
+
+    fun commitSemanticPredicateScanBatch(
+        scanId: String,
+        owner: String,
+        batch: SemanticPredicateScanBatch,
+        hits: List<VectorHit>,
+    ): SemanticPredicateScanRecord? {
+        return writableDatabase.transaction { db ->
+            val current = readSemanticPredicateScan(db, scanId) ?: return@transaction null
+            if (current.status != SemanticPredicateScanStatus.RUNNING || current.leaseOwner != owner) {
+                return@transaction null
+            }
+            hits.distinctBy(VectorHit::mediaId).forEach { hit ->
+                db.insertWithOnConflict("semantic_predicate_scan_hit", null, ContentValues().apply {
+                    put("scan_id", scanId)
+                    put("media_id", hit.mediaId)
+                    put("score", hit.score)
+                }, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            val nextOrdinal = (batch.ordinal + batch.mediaIds.size).coerceAtMost(current.eligibleCount)
+            val complete = nextOrdinal >= current.eligibleCount
+            val now = System.currentTimeMillis()
+            val hitCount = db.rawQuery(
+                "SELECT COUNT(*) FROM semantic_predicate_scan_hit WHERE scan_id=?",
+                arrayOf(scanId),
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+            db.update("semantic_predicate_scan", ContentValues().apply {
+                put("searched_count", nextOrdinal)
+                put("next_ordinal", nextOrdinal)
+                put("hit_count", hitCount)
+                put("status", if (complete) SemanticPredicateScanStatus.COMPLETE.name else SemanticPredicateScanStatus.RUNNING.name)
+                putNull("error")
+                put("last_progress_at", now)
+                put("updated_at", now)
+                if (complete) {
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                } else {
+                    put("lease_expires_at", now + SemanticPredicateScanPolicy.LEASE_MS)
+                }
+            }, "id=? AND lease_owner=?", arrayOf(scanId, owner))
+            readSemanticPredicateScan(db, scanId)
+        }
+    }
+
+    fun releaseSemanticPredicateScan(scanId: String, owner: String) {
+        writableDatabase.update("semantic_predicate_scan", ContentValues().apply {
+            put("status", SemanticPredicateScanStatus.PENDING.name)
+            putNull("lease_owner")
+            putNull("lease_expires_at")
+            put("next_attempt_at", 0L)
+            put("updated_at", System.currentTimeMillis())
+        }, "id=? AND lease_owner=? AND status=?", arrayOf(scanId, owner, SemanticPredicateScanStatus.RUNNING.name))
+    }
+
+    fun failSemanticPredicateScan(scanId: String, owner: String, error: String, retryable: Boolean) {
+        writableDatabase.transaction { db ->
+            val current = readSemanticPredicateScan(db, scanId) ?: return@transaction
+            if (current.leaseOwner != owner) return@transaction
+            val attempts = current.attemptCount + 1
+            val canRetry = retryable && attempts < IndexingRetryPolicy.MAX_ITEM_ATTEMPTS
+            val now = System.currentTimeMillis()
+            db.update("semantic_predicate_scan", ContentValues().apply {
+                put("status", if (canRetry) SemanticPredicateScanStatus.PENDING.name else SemanticPredicateScanStatus.FAILED.name)
+                put("attempt_count", attempts)
+                put("error", error.take(500))
+                putNull("lease_owner")
+                putNull("lease_expires_at")
+                put("next_attempt_at", if (canRetry) now + (30_000L * (1L shl (attempts - 1))) else 0L)
+                put("updated_at", now)
+            }, "id=? AND lease_owner=?", arrayOf(scanId, owner))
+        }
+    }
+
+    fun semanticPredicateScanHits(scanId: String): List<VectorHit> = readableDatabase.rawQuery(
+        "SELECT media_id,score FROM semantic_predicate_scan_hit WHERE scan_id=? ORDER BY score DESC,media_id",
+        arrayOf(scanId),
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(VectorHit(cursor.text("media_id"), cursor.getFloat(cursor.getColumnIndexOrThrow("score"))))
+        }
+    }
+
+    fun runnableSemanticPredicateScanIds(limit: Int = 8): List<String> = readableDatabase.rawQuery(
+        "SELECT id FROM semantic_predicate_scan WHERE (status=? AND next_attempt_at<=?) OR (status=? AND (lease_expires_at IS NULL OR lease_expires_at<=?)) ORDER BY updated_at LIMIT ?",
+        arrayOf(
+            SemanticPredicateScanStatus.PENDING.name,
+            System.currentTimeMillis().toString(),
+            SemanticPredicateScanStatus.RUNNING.name,
+            System.currentTimeMillis().toString(),
+            limit.coerceIn(1, 32).toString(),
+        ),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.text("id")) } }
+
+    private fun readSemanticPredicateScan(db: GallerySqlDatabase, id: String): SemanticPredicateScanRecord? = db.rawQuery(
+        "SELECT * FROM semantic_predicate_scan WHERE id=? LIMIT 1",
+        arrayOf(id),
+    ).use { cursor -> if (cursor.moveToFirst()) readSemanticPredicateScan(cursor) else null }
+
+    private fun readSemanticPredicateScan(cursor: android.database.Cursor): SemanticPredicateScanRecord = SemanticPredicateScanRecord(
+        id = cursor.text("id"),
+        queryKey = cursor.text("query_key"),
+        queryText = cursor.text("query_text"),
+        modelVersion = cursor.text("model_version"),
+        scopeHash = cursor.text("scope_hash"),
+        eligibleCount = cursor.getInt(cursor.getColumnIndexOrThrow("eligible_count")),
+        indexedCount = cursor.getInt(cursor.getColumnIndexOrThrow("indexed_count")),
+        searchedCount = cursor.getInt(cursor.getColumnIndexOrThrow("searched_count")),
+        nextOrdinal = cursor.getInt(cursor.getColumnIndexOrThrow("next_ordinal")),
+        hitCount = cursor.getInt(cursor.getColumnIndexOrThrow("hit_count")),
+        status = enumOrDefault(cursor.text("status"), SemanticPredicateScanStatus.FAILED),
+        attemptCount = cursor.getInt(cursor.getColumnIndexOrThrow("attempt_count")),
+        error = cursor.nullableText("error"),
+        leaseOwner = cursor.nullableText("lease_owner"),
+        leaseExpiresAt = cursor.getColumnIndexOrThrow("lease_expires_at").let { if (cursor.isNull(it)) null else cursor.getLong(it) },
+        nextAttemptAt = cursor.getLong(cursor.getColumnIndexOrThrow("next_attempt_at")),
+        lastProgressAt = cursor.getColumnIndexOrThrow("last_progress_at").let { if (cursor.isNull(it)) null else cursor.getLong(it) },
+        createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+        updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+    )
 
     private inline fun <reified T : Enum<T>> enumOrNull(raw: String): T? =
         enumValues<T>().firstOrNull { it.name == raw }

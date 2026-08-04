@@ -1,6 +1,6 @@
 # Public implementation status
 
-Last reviewed: 2026-08-03
+Last reviewed: 2026-08-05
 
 AskAlbum is an early open-source Android implementation of private, on-device
 photo search. The public source snapshot contains the Android application,
@@ -10,7 +10,7 @@ model binaries, APKs, device logs, or private credentials.
 
 ## Build status
 
-- `ciDebug`: intended model-independent fixture build for CI and contributors.
+- `ciDebug` and `fixtureCiDebug`: model-independent fixture builds for CI and contributors.
 - `offlineDemoDebug`: local-only demo variant with no Internet permission.
 - `consumerDebug`: production-style variant with explicit verified model-pack
   download support; model packs are deliberately external.
@@ -25,6 +25,21 @@ Media analysis, OCR, face indexing, embeddings, retrieval, Gemma planning,
 verification, and grounded answer composition are designed to run on device.
 Face indexing remains explicit opt-in. Sensitive OCR values remain protected.
 See `PRIVACY.md` and `THIRD_PARTY_NOTICES.md`.
+
+## Retrieval exactness
+
+- Bounded semantic retrieval is reported as estimated or partial and never as
+  an exhaustive count.
+- An explicitly requested exact semantic count is stored in Room version 19 as
+  a durable scan scope, cursor, lease, and deduplicated media-hit set. Small
+  vector batches checkpoint transactionally and resume through the recovery
+  worker after process death or cancellation.
+- The exact path is exhaustive over available indexed vectors. If any eligible
+  media lacks vector coverage, the result remains partial and is not promoted
+  to `COMPLETE_MODEL_SCAN`.
+- Full per-item Gemma verification is intentionally not run for every image;
+  targeted verification remains the confirmation path for person-conditioned
+  visual predicates.
 
 ## Known limitations
 

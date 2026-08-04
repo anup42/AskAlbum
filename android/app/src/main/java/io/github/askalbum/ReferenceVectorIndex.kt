@@ -33,6 +33,15 @@ class ReferenceVectorIndex(private val dimension: Int) : VectorIndex {
             .toList()
     }
 
+    override suspend fun scan(query: FloatArray, allowedIds: Set<String>?): List<VectorHit> = mutex.withLock {
+        val normalizedQuery = normalizeVector(query, dimension)
+        vectors.asSequence()
+            .filter { (id) -> allowedIds == null || id in allowedIds }
+            .map { (id, vector) -> VectorHit(id, dotProduct(vector, normalizedQuery)) }
+            .sortedWith(HIT_ORDER)
+            .toList()
+    }
+
     suspend fun size(): Int = mutex.withLock { vectors.size }
 
     private fun requireValidId(mediaId: String) {

@@ -28,6 +28,14 @@ class SemanticVectorStore(
             .filter { it.score >= current.pack.manifest.minimumSimilarity }
     }
 
+    suspend fun scanTextBatch(query: String, allowedIds: Set<String>): List<VectorHit> {
+        if (query.isBlank() || allowedIds.isEmpty() || packs.current() == null) return emptyList()
+        val current = currentIndex()
+        val vector = embeddings.embedText(query)
+        return current.index.scan(vector, allowedIds)
+            .filter { it.score >= current.pack.manifest.minimumSimilarity }
+    }
+
     suspend fun searchTextReport(
         query: String,
         topK: Int,

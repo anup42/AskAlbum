@@ -604,8 +604,11 @@ data class SemanticEnrichmentJobEntity(
         SemanticCaptionChunkEntity::class,
         SemanticCaptionChunkFtsEntity::class,
         SemanticEnrichmentJobEntity::class,
+        SemanticPredicateScanEntity::class,
+        SemanticPredicateScanScopeEntity::class,
+        SemanticPredicateScanHitEntity::class,
     ],
-    version = 18,
+    version = 19,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -634,6 +637,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_15_16,
             MIGRATION_16_17,
             MIGRATION_17_18,
+            MIGRATION_18_19,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -954,6 +958,65 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_cluster_idx ON semantic_caption_chunk(cluster_id)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_queue_idx ON semantic_caption_chunk(embedding_state,next_attempt_at)")
                 db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS semantic_caption_chunk_fts USING FTS4(chunk_id,exact_text)")
+            }
+        }
+
+        internal val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS semantic_predicate_scan (
+                        id TEXT NOT NULL,
+                        query_key TEXT NOT NULL,
+                        query_text TEXT NOT NULL,
+                        model_version TEXT NOT NULL,
+                        scope_hash TEXT NOT NULL,
+                        eligible_count INTEGER NOT NULL,
+                        indexed_count INTEGER NOT NULL DEFAULT 0,
+                        searched_count INTEGER NOT NULL DEFAULT 0,
+                        next_ordinal INTEGER NOT NULL DEFAULT 0,
+                        hit_count INTEGER NOT NULL DEFAULT 0,
+                        status TEXT NOT NULL,
+                        attempt_count INTEGER NOT NULL DEFAULT 0,
+                        error TEXT,
+                        lease_owner TEXT,
+                        lease_expires_at INTEGER,
+                        next_attempt_at INTEGER NOT NULL DEFAULT 0,
+                        last_progress_at INTEGER,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS semantic_predicate_scan_key_idx ON semantic_predicate_scan(query_key)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_predicate_scan_queue_idx ON semantic_predicate_scan(status,next_attempt_at)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS semantic_predicate_scan_scope (
+                        scan_id TEXT NOT NULL,
+                        media_id TEXT NOT NULL,
+                        ordinal INTEGER NOT NULL,
+                        PRIMARY KEY(scan_id,media_id),
+                        FOREIGN KEY(scan_id) REFERENCES semantic_predicate_scan(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS semantic_predicate_scan_scope_ordinal_idx ON semantic_predicate_scan_scope(scan_id,ordinal)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS semantic_predicate_scan_hit (
+                        scan_id TEXT NOT NULL,
+                        media_id TEXT NOT NULL,
+                        score REAL NOT NULL,
+                        PRIMARY KEY(scan_id,media_id),
+                        FOREIGN KEY(scan_id) REFERENCES semantic_predicate_scan(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_predicate_scan_hit_score_idx ON semantic_predicate_scan_hit(scan_id,score)")
             }
         }
 

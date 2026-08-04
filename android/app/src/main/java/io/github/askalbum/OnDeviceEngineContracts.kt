@@ -29,6 +29,7 @@ interface VectorIndex {
     suspend fun upsert(mediaId: String, vector: FloatArray)
     suspend fun delete(mediaId: String)
     suspend fun search(query: FloatArray, topK: Int, allowedIds: Set<String>? = null): List<VectorHit>
+    suspend fun scan(query: FloatArray, allowedIds: Set<String>? = null): List<VectorHit>
 }
 
 interface QueryPlanner {

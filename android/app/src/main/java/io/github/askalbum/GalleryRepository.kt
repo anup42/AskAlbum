@@ -17,7 +17,7 @@ class GalleryRepository(context: Context) {
     private val appContext = context.applicationContext
     private val services = (context.applicationContext as AskAlbumApplication).services
     private val database = services.galleryDatabase
-    private val planner = LiteRtLmQueryPlanner(services.modelPackManager, services.gemmaSessions)
+    private val planner = services.queryPlanCompiler
     private val semanticVectors = services.semanticVectorStore
     private val captionVectors = services.captionVectorStore
     private val visualVerifier = services.visualVerifier
@@ -68,6 +68,7 @@ class GalleryRepository(context: Context) {
                 SemanticEnrichmentScheduler.schedule(appContext, userRequested = true)
             }
         }
+        SemanticPredicateScanScheduler.reconcile(appContext)
         return database.summary()
     }
 
@@ -577,7 +578,48 @@ class GalleryRepository(context: Context) {
             requiredPersonChunkClusters,
         )
         val eligibleVectorIds = database.vectorIdsForMedia(eligibleIds)
-        val semanticVectorReport = SemanticChannelReportFusion.fuse(
+        val exactPredicateScan = if (
+            SemanticPredicateScanPolicy.requested(plan) &&
+            semanticQueries.isNotEmpty() &&
+            eligibleIds.isNotEmpty()
+        ) {
+            semanticVectors.producerVersion()?.let { modelVersion ->
+                val indexedMediaCount = database.mediaIdsWithVectorCoverage(
+                    eligibleIds,
+                    semanticVectors.indexedIds(),
+                ).size
+                val scanId = database.createOrResumeSemanticPredicateScan(
+                    query = SemanticPredicateScanPolicy.queryText(plan),
+                    modelVersion = modelVersion,
+                    eligibleMediaIds = eligibleIds,
+                    indexedMediaCount = indexedMediaCount,
+                )
+                val record = SemanticPredicateScanRunner(database, semanticVectors).run(scanId) { progress ->
+                    emit(QueryProgress.SemanticScan(progress.searchedCount, progress.eligibleCount))
+                }
+                record?.also {
+                    if (!it.completeCoverage) SemanticPredicateScanScheduler.schedule(appContext, it.id)
+                }
+            }
+        } else {
+            null
+        }
+        val semanticVectorReport = exactPredicateScan?.let { scan ->
+            RetrievalChannelReport(
+                channel = RetrievalChannel.SEMANTIC,
+                status = when {
+                    scan.status == SemanticPredicateScanStatus.FAILED -> ChannelStatus.FAILED
+                    scan.status == SemanticPredicateScanStatus.COMPLETE && scan.indexedCount >= scan.eligibleCount -> ChannelStatus.SUCCESS
+                    else -> ChannelStatus.PARTIAL
+                },
+                eligibleCount = scan.eligibleCount,
+                indexedCount = scan.indexedCount,
+                searchedCount = scan.searchedCount,
+                hits = database.semanticPredicateScanHits(scan.id),
+                modelVersion = scan.modelVersion,
+                errorCode = scan.error,
+            )
+        } ?: SemanticChannelReportFusion.fuse(
             semanticQueries.map { semanticQuery ->
                 semanticVectors.searchTextReport(
                     query = semanticQuery,
@@ -857,8 +899,20 @@ class GalleryRepository(context: Context) {
             visualChannelReport,
         )
 
-        val matchCount = if (verification.applied) verified.size else ranked.size
-        val deterministicAnswer = buildAnswer(plan, hits, allItems, matchCount, verification, channelReports)
+        val matchCount = if (verification.applied) verified.size else if (exactPredicateScan?.completeCoverage == true) {
+            semanticVectorReport.hits.map(VectorHit::mediaId).distinct().size
+        } else {
+            ranked.size
+        }
+        val deterministicAnswer = buildAnswer(
+            plan,
+            hits,
+            allItems,
+            matchCount,
+            verification,
+            channelReports,
+            completePredicateScan = exactPredicateScan?.completeCoverage == true,
+        )
         val requiresAuthentication = hits.any(SensitiveEvidencePolicy::requiresAuthentication)
         val answer = if (requiresAuthentication) {
             SensitiveEvidencePolicy.lock(deterministicAnswer)
@@ -985,6 +1039,7 @@ class GalleryRepository(context: Context) {
         matchCount: Int,
         verification: VerificationResult,
         channelReports: List<RetrievalChannelReport<SearchHit>>,
+        completePredicateScan: Boolean = false,
     ): SearchAnswer {
         val totalItems = allItems.size
         val readyItems = allItems.count { it.indexState == IndexState.READY }
@@ -999,6 +1054,7 @@ class GalleryRepository(context: Context) {
             deterministicOperation = deterministicAggregation || deterministicResultSetFilter,
             semanticReport = semanticReport,
             verificationApplied = verification.applied,
+            completePredicateScan = completePredicateScan,
         )
         val warnings = buildList {
             if (verification.failures.isNotEmpty()) {
@@ -1019,6 +1075,9 @@ class GalleryRepository(context: Context) {
                 headline = "No supported matches found",
                 detail = if (verification.applied) {
                     "No bounded candidate was proven to satisfy every required visual condition. Failed or unverified candidates are never returned as matches."
+                } else if (completePredicateScan) {
+                    "An exhaustive semantic scan evaluated ${semanticReport.searchedCount} of " +
+                        "${semanticReport.eligibleCount} eligible local items and found no supported matches."
                 } else if (usedSemanticRetrieval) {
                     "The semantic channel was ${semanticReport.status.name.lowercase()} and searched " +
                         "${semanticReport.searchedCount} of ${semanticReport.eligibleCount} eligible local items. " +
