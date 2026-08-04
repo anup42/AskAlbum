@@ -2882,12 +2882,16 @@ class GalleryDatabase(
         val sourceIds = readableDatabase.rawQuery(
             """
             SELECT DISTINCT m.id
-            FROM media_item m
+            FROM media_item target
+            JOIN media_item m ON m.exact_content_digest=target.exact_content_digest
             JOIN semantic_enrichment_job j ON j.representative_media_id=m.id
-            WHERE m.exact_content_digest=? AND m.id<>? AND j.reason=? AND j.status='COMPLETE'
+            WHERE target.id=? AND target.exact_content_digest=? AND m.id<>target.id AND j.reason=? AND j.status='COMPLETE'
+              AND target.width>0 AND target.height>0 AND m.width>0 AND m.height>0
+              AND ((m.width=target.width AND m.height=target.height) OR
+                   (m.width=target.height AND m.height=target.width))
             ORDER BY j.updated_at DESC
             """.trimIndent(),
-            arrayOf(digest, job.representativeMediaId, job.reason),
+            arrayOf(job.representativeMediaId, digest, job.reason),
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
         for (sourceId in sourceIds) {
             val sourceBindings = reviewedFaceBindingsForMedia(sourceId)
