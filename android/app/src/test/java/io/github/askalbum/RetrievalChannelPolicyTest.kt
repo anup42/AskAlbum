@@ -60,6 +60,18 @@ class RetrievalChannelPolicyTest {
     }
 
     @Test
+    fun emptyVectorCoverageCannotReportSuccessfulSemanticSearch() = runBlocking {
+        val report = SemanticChannelReporter.execute(
+            "dog", "siglip@test", 3, emptySet(), 100,
+            indexedIds = { emptySet() },
+            search = { _, _, _ -> emptyList() },
+        )
+
+        assertEquals(ChannelStatus.PARTIAL, report.status)
+        assertEquals("VECTOR_COVERAGE_PARTIAL", report.errorCode)
+    }
+
+    @Test
     fun hardFilterIsAppliedBeforeTopK() = runBlocking {
         val index = ReferenceVectorIndex(2)
         repeat(101) { index.upsert("global-$it", floatArrayOf(1f, 0f)) }

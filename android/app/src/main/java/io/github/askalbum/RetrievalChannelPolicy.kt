@@ -66,13 +66,13 @@ internal object SemanticChannelReporter {
             val hits = search(query, topK, eligibleVectorIds)
             RetrievalChannelReport(
                 channel = RetrievalChannel.SEMANTIC,
-                status = if (indexedEligibleIds.size < eligibleVectorIds.size) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
+                status = if (indexedEligibleIds.size < eligibleCount) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
                 eligibleCount = eligibleCount,
                 indexedCount = indexedEligibleIds.size,
                 searchedCount = indexedEligibleIds.size,
                 hits = hits,
                 modelVersion = modelVersion,
-                errorCode = if (indexedEligibleIds.size < eligibleVectorIds.size) "VECTOR_COVERAGE_PARTIAL" else null,
+                errorCode = if (indexedEligibleIds.size < eligibleCount) "VECTOR_COVERAGE_PARTIAL" else null,
             )
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled

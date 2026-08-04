@@ -1,6 +1,6 @@
 # Public implementation status
 
-Last reviewed: 2026-08-03
+Last reviewed: 2026-08-04
 
 AskAlbum is an early open-source Android implementation of private, on-device
 photo search. The public source snapshot contains the Android application,
@@ -18,6 +18,15 @@ model binaries, APKs, device logs, or private credentials.
 The repository workflow is the authoritative build check. Device acceptance
 requires a configured Android device and locally available model packs, so it is
 not represented as a GitHub Actions pass.
+
+## Verification log
+
+- Phase 0: `offlineDemoDebug` assembly PASS; wrapper executable bit PASS.
+- Phase 0: full combined fixture test and `ciDebug` assemble NOT RUN; the local
+  Gradle command exceeded the time limit before reporting a result.
+- Phase 1: semantic zero-vector coverage regression test PASS.
+- Phase 1: semantic retrieval now reports PARTIAL when eligible media have no
+  indexed vectors; no model, media, or index data was changed.
 
 ## Privacy boundary
 
