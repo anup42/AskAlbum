@@ -123,6 +123,14 @@ android {
             buildConfigField("boolean", "MODEL_INDEPENDENT", "true")
             buildConfigField("String", "DISTRIBUTION", "\"ci\"")
         }
+        create("fixtureCi") {
+            dimension = "distribution"
+            applicationIdSuffix = ".fixture"
+            versionNameSuffix = "-fixture"
+            buildConfigField("boolean", "ALLOW_MODEL_DOWNLOAD", "false")
+            buildConfigField("boolean", "MODEL_INDEPENDENT", "true")
+            buildConfigField("String", "DISTRIBUTION", "\"fixtureCi\"")
+        }
     }
 
     compileOptions {

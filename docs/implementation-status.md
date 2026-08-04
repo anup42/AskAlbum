@@ -72,6 +72,10 @@ not represented as a GitHub Actions pass.
 - Person verification composites now include separate stable-label panels for
   full body, upper body/hands, lower body, and feet in one Gemma call. The
   prompt explicitly forbids transferring attributes across panels or people.
+- Phase 0 model-free build gate: added `fixtureCi`, which disables model
+  downloads/assets and injects a deterministic fixture image/text embedding
+  engine only when `MODEL_INDEPENDENT` is true. Production model-bearing
+  variants still use the verified LiteRT/ONNX engine and signed packs.
 
 ## Privacy boundary
 

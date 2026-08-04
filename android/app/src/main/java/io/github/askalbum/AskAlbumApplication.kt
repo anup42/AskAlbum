@@ -28,7 +28,11 @@ class AppServices(private val application: AskAlbumApplication) {
     val inferenceResources: InferenceResourceManager by lazy { SerializedInferenceResourceManager() }
     val gemmaSessions by lazy { GemmaSessionManager(inferenceResources) }
     val embeddingEngine: ImageTextEmbeddingEngine by lazy {
-        LiteRtImageTextEmbeddingEngine(retrievalModelPackManager, inferenceResources)
+        if (BuildConfig.MODEL_INDEPENDENT) {
+            FixtureImageTextEmbeddingEngine()
+        } else {
+            LiteRtImageTextEmbeddingEngine(retrievalModelPackManager, inferenceResources)
+        }
     }
     val semanticVectorStore by lazy {
         SemanticVectorStore(application, retrievalModelPackManager, embeddingEngine)
