@@ -6,12 +6,47 @@ object SensitiveContentClassifier {
         Regex("(?i)\\b(aadhaar|passport|social security|ssn)\\b"),
     )
     private val paymentCardCandidate = Regex("(?<!\\d)(?:\\d[ -]?){13,19}(?!\\d)")
+    private val emailCandidate = Regex("(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b")
+    private val labeledContactCandidate = Regex("(?i)\\b(email|e-mail|phone|mobile|tel)\\b\\s*[:=]?\\s*[^\\r\\n,;]+")
+    private val credentialValueCandidate = Regex(
+        "(?i)\\b(password|passcode|pin|cvv|account number|aadhaar|passport|social security|ssn)\\b" +
+            "\\s*[:=]?\\s*[^\\r\\n,;]+",
+    )
 
     fun isSensitive(text: String): Boolean =
         text.isNotBlank() && (
             keywordPatterns.any { it.containsMatchIn(text) } ||
-                paymentCardCandidate.findAll(text).any { looksLikePaymentCard(it.value) }
+                paymentCardCandidate.findAll(text).any { looksLikePaymentCard(it.value) } ||
+                emailCandidate.containsMatchIn(text) ||
+                labeledContactCandidate.containsMatchIn(text)
             )
+
+    /** Keeps searchable labels while ensuring raw credentials/contact values never enter FTS. */
+    fun redactForSearch(text: String): String {
+        if (text.isBlank()) return text
+        var changed = false
+        var redacted = text.replace(credentialValueCandidate) { match ->
+            changed = true
+            "${match.groupValues[1]}: [REDACTED]"
+        }
+        redacted = redacted.replace(labeledContactCandidate) { match ->
+            changed = true
+            "${match.groupValues[1]}: [REDACTED]"
+        }
+        redacted = redacted.replace(emailCandidate) {
+            changed = true
+            "[REDACTED_EMAIL]"
+        }
+        redacted = redacted.replace(paymentCardCandidate) { match ->
+            if (looksLikePaymentCard(match.value)) {
+                changed = true
+                "[REDACTED_CARD]"
+            } else {
+                match.value
+            }
+        }
+        return if (!changed && isSensitive(text)) "[REDACTED_SENSITIVE_OCR]" else redacted
+    }
 
     private fun looksLikePaymentCard(candidate: String): Boolean {
         val digits = candidate.filter(Char::isDigit)

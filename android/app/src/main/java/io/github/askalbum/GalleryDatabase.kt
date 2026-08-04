@@ -43,6 +43,8 @@ class GalleryDatabase(
             migrateSensitiveColumn(db, "query_session", "session_id", "last_query")
             migrateSensitiveColumn(db, "result_set", "id", "query")
             migrateSensitiveColumn(db, "semantic_predicate_scan", "id", "query_text")
+            val mediaOcrChanged = migrateSensitiveColumn(db, "media_item", "id", "ocr_text")
+            if (mediaOcrChanged > 0) rebuildRedactedFts(db)
             db.insertWithOnConflict(
                 "sensitive_data_migration",
                 null,
@@ -64,8 +66,8 @@ class GalleryDatabase(
         table: String,
         idColumn: String,
         valueColumn: String,
-    ) {
-        db.query(
+    ): Int {
+        val pending = db.query(
             table,
             arrayOf(idColumn, valueColumn),
             "$valueColumn IS NOT NULL AND $valueColumn<>''",
@@ -74,19 +76,37 @@ class GalleryDatabase(
             null,
             null,
         ).use { cursor ->
-            while (cursor.moveToNext()) {
-                val raw = cursor.getString(cursor.getColumnIndexOrThrow(valueColumn))
-                val protected = sensitiveDataAtRest.protect(raw)
-                if (protected == raw) continue
-                val idIndex = cursor.getColumnIndexOrThrow(idColumn)
-                db.update(
-                    table,
-                    ContentValues().apply { put(valueColumn, protected) },
-                    "$idColumn=?",
-                    arrayOf(cursor.getString(idIndex)),
-                )
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        cursor.getString(cursor.getColumnIndexOrThrow(idColumn)) to
+                            cursor.getString(cursor.getColumnIndexOrThrow(valueColumn)),
+                    )
+                }
             }
         }
+        var changed = 0
+        pending.forEach { (id, raw) ->
+            val protected = sensitiveDataAtRest.protect(raw)
+            if (protected == raw) return@forEach
+            db.update(
+                table,
+                ContentValues().apply { put(valueColumn, protected) },
+                "$idColumn=?",
+                arrayOf(id),
+            )
+            changed++
+        }
+        return changed
+    }
+
+    private fun rebuildRedactedFts(db: GallerySqlDatabase) {
+        val ids = db.query("media_item", arrayOf("id"), null, null, null, null, null).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getString(0))
+            }
+        }
+        ids.forEach { id -> itemById(db, id)?.let { refreshFts(db, it) } }
     }
 
     fun seedDemoIfEmpty(): Int {
@@ -581,7 +601,7 @@ class GalleryDatabase(
             db.update("media_item", ContentValues().apply {
                 put("tags", labels.joinToString(TAG_SEPARATOR))
                 put("description", description)
-                put("ocr_text", ocrText)
+                put("ocr_text", sensitiveDataAtRest.protect(ocrText))
                 put("face_count", faceCount)
                 put("preview_path", previewPath)
                 put("index_state", IndexState.READY.name)
@@ -2410,7 +2430,7 @@ class GalleryDatabase(
             put("location", item.location)
             put("tags", item.tags.joinToString(" "))
             put("description", item.description)
-            put("ocr_text", item.ocrText)
+            put("ocr_text", sensitiveDataAtRest.protect(item.ocrText))
         })
     }
 
@@ -2439,7 +2459,7 @@ class GalleryDatabase(
         put("width", item.width)
         put("height", item.height)
         put("size_bytes", item.sizeBytes)
-        put("ocr_text", item.ocrText)
+            put("ocr_text", SensitiveContentClassifier.redactForSearch(item.ocrText))
         put("face_count", item.faceCount)
         put("index_state", item.indexState.name)
         put("index_error", item.indexError)
@@ -2509,7 +2529,7 @@ class GalleryDatabase(
             width = cursor.getInt(cursor.getColumnIndexOrThrow("width")),
             height = cursor.getInt(cursor.getColumnIndexOrThrow("height")),
             sizeBytes = cursor.getLong(cursor.getColumnIndexOrThrow("size_bytes")),
-            ocrText = text("ocr_text"),
+            ocrText = sensitiveDataAtRest.reveal(text("ocr_text")),
             faceCount = cursor.getInt(cursor.getColumnIndexOrThrow("face_count")),
             indexState = runCatching { IndexState.valueOf(text("index_state")) }.getOrDefault(IndexState.PENDING),
             indexError = nullableText("index_error"),

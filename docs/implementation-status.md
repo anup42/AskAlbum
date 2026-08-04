@@ -97,3 +97,11 @@ media, databases, or logs.
 - Aggregation evidence remains media-bound and currency checks remain deterministic; ordinary visual retrieval and semantic counts remain bounded/estimated unless fully scanned.
 - Added regression coverage for a valid fact below ranked top-K and for distinct MIN/MAX operations.
 - Consumer, offlineDemo, fixtureCi, unit tests, lint, and connected launch gates passed after the change.
+
+### Encrypted OCR aggregate checkpoint (2026-08-05)
+
+- Encrypted `media_item.ocr_text` and all new aggregate writes with the existing Keystore envelope; reads remain compatible through the database boundary.
+- Rebuilt the media FTS projection from a deterministic redacted view that retains searchable labels but never stores raw passwords, contact values, or payment-card candidates.
+- Added email/phone/contact detection and cached the Keystore key for bounded migration cost.
+- Existing device database startup after replacement install reached MainActivity in 12 seconds without SQLite, Keystore, fatal-exception, or ANR evidence; device Keystore test and all build/lint gates passed.
+- Remaining privacy scope: historical People-derived identity fields and some non-OCR semantic identity records still need a separate encrypted-index design.

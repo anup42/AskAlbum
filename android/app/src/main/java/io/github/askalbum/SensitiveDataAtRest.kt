@@ -38,30 +38,40 @@ internal class SensitiveDataAtRest {
     }
 
     private fun key(): SecretKey {
-        val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (store.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE).apply {
-            init(
-                KeyGenParameterSpec.Builder(
-                    KEY_ALIAS,
-                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+        cachedKey?.let { return it }
+        return synchronized(this) {
+            cachedKey?.let { return@synchronized it }
+            val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            val loaded = (store.getKey(KEY_ALIAS, null) as? SecretKey) ?: KeyGenerator.getInstance(
+                KeyProperties.KEY_ALGORITHM_AES,
+                ANDROID_KEYSTORE,
+            ).apply {
+                init(
+                    KeyGenParameterSpec.Builder(
+                        KEY_ALIAS,
+                        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+                    )
+                        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                        .setRandomizedEncryptionRequired(true)
+                        .build(),
                 )
-                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                    .setRandomizedEncryptionRequired(true)
-                    .build(),
-            )
-        }.generateKey()
+            }.generateKey()
+            cachedKey = loaded
+            loaded
+        }
     }
 
     companion object {
-        const val MIGRATION_VERSION = 2
+        const val MIGRATION_VERSION = 3
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "askalbum_sensitive_ocr_v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val PREFIX = "askalbum:v1:"
         private const val GCM_TAG_BITS = 128
         private const val GCM_IV_BYTES = 12
+        @Volatile
+        private var cachedKey: SecretKey? = null
     }
 }
 
