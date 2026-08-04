@@ -548,6 +548,34 @@ class GalleryRepository(context: Context) {
                 item.matchesRequiredMerchant(plan.ocrClause?.merchant)
         }
         val eligibleIds = allItems.mapTo(mutableSetOf(), GalleryItem::id)
+        val deterministicAggregationHits = if (
+            plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX) &&
+            plan.semanticClauses.isEmpty()
+        ) {
+            val field = OcrFactAllowlist.resolve(plan.aggregation?.field) ?: OcrFactAllowlist.fields.first()
+            val entities = database.ocrEntitiesForMediaIds(eligibleIds, field.type)
+            allItems.mapNotNull { item ->
+                entities[item.id]?.let { entity ->
+                    SearchHit(
+                        item = item,
+                        score = 0.0,
+                        evidence = listOf(
+                            EvidenceRecord(
+                                id = "${item.id}:${field.sourceField}:${StableDerivedId.sha256(entity.normalizedValue)}",
+                                mediaId = item.id,
+                                sourceField = field.sourceField,
+                                text = entity.rawText,
+                                confidence = entity.confidence,
+                                producerVersion = entity.producerVersion,
+                                region = listOf(entity.left, entity.top, entity.right, entity.bottom),
+                            ),
+                        ),
+                    )
+                }
+            }
+        } else {
+            emptyList()
+        }
         val fullTextIds = database.fullTextMatches(terms)
         val lexicalRanked = allItems
             .asSequence()
@@ -921,6 +949,7 @@ class GalleryRepository(context: Context) {
             matchCount,
             verification,
             channelReports,
+            deterministicAggregationHits,
             completePredicateScan = exactPredicateScan?.completeCoverage == true,
         )
         val requiresAuthentication = hits.any(SensitiveEvidencePolicy::requiresAuthentication)
@@ -1050,6 +1079,7 @@ class GalleryRepository(context: Context) {
         matchCount: Int,
         verification: VerificationResult,
         channelReports: List<RetrievalChannelReport<SearchHit>>,
+        deterministicAggregationHits: List<SearchHit>,
         completePredicateScan: Boolean = false,
     ): SearchAnswer {
         val totalItems = eligibleIds.size
@@ -1117,6 +1147,7 @@ class GalleryRepository(context: Context) {
                 warnings = warnings,
                 channelReports = channelReports,
                 eventsByMedia = database.eventsForMedia(hits.map { it.item.id }),
+                deterministicHits = deterministicAggregationHits,
             ),
         )
 

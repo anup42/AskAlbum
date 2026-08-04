@@ -43,6 +43,28 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun aggregationUsesCompleteDeterministicEvidenceInsteadOfRankedTopK() {
+        val complete = hit("three", "Trip C", "INR 30.00", 1_720_000_000_000)
+        val context = context(QueryIntent.SUM).copy(deterministicHits = context(QueryIntent.SUM).hits + complete)
+
+        assertEquals("INR 60", CapabilityAnswerExecutor.execute(context).headline)
+    }
+
+    @Test
+    fun minAndMaxRespectTheRequestedOperation() {
+        val base = context(QueryIntent.MIN_MAX)
+        val minimum = CapabilityAnswerExecutor.execute(
+            base.copy(plan = base.plan.copy(aggregation = AggregationSpec(AggregationOperation.MIN, "total"))),
+        )
+        val maximum = CapabilityAnswerExecutor.execute(
+            base.copy(plan = base.plan.copy(aggregation = AggregationSpec(AggregationOperation.MAX, "total"))),
+        )
+
+        assertEquals("INR 10", minimum.headline)
+        assertEquals("INR 20", maximum.headline)
+    }
+
+    @Test
     fun passwordEvidenceAlwaysRequiresAuthentication() {
         val password = hit("secret", "Wi-Fi", "INR 10.00", 1_700_000_000_000).copy(
             evidence = listOf(EvidenceRecord("secret:password", "secret", "document_password", "mango-tree-2048", .95f)),

@@ -2013,24 +2013,43 @@ class GalleryDatabase(
         "confidence DESC, id",
     ).use { cursor ->
         buildList {
-            while (cursor.moveToNext()) {
-                val entityType = OcrEntityType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow("entity_type")))
-                add(
-                    OcrEntityRecord(
-                    type = entityType,
-                    rawText = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("raw_text"))),
-                    normalizedValue = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("normalized_value"))),
-                    label = cursor.getColumnIndexOrThrow("label").let { if (cursor.isNull(it)) null else cursor.getString(it) },
-                    confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
-                    left = cursor.getFloat(cursor.getColumnIndexOrThrow("left_pos")),
-                    top = cursor.getFloat(cursor.getColumnIndexOrThrow("top_pos")),
-                    right = cursor.getFloat(cursor.getColumnIndexOrThrow("right_pos")),
-                    bottom = cursor.getFloat(cursor.getColumnIndexOrThrow("bottom_pos")),
-                    producerVersion = cursor.getString(cursor.getColumnIndexOrThrow("producer_version")),
-                    ),
-                )
+            while (cursor.moveToNext()) add(cursorOcrEntity(cursor))
+        }
+    }
+
+    /** Returns the highest-confidence entity of the requested type for each eligible media item. */
+    fun ocrEntitiesForMediaIds(mediaIds: Set<String>, type: OcrEntityType): Map<String, OcrEntityRecord> {
+        if (mediaIds.isEmpty()) return emptyMap()
+        val result = LinkedHashMap<String, OcrEntityRecord>()
+        mediaIds.toList().chunked(SQLITE_ID_CHUNK).forEach { ids ->
+            val placeholders = ids.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT * FROM ocr_entity WHERE media_id IN ($placeholders) AND entity_type=? ORDER BY confidence DESC,id",
+                (ids + type.name).toTypedArray(),
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val mediaId = cursor.getString(cursor.getColumnIndexOrThrow("media_id"))
+                    if (mediaId !in result) result[mediaId] = cursorOcrEntity(cursor)
+                }
             }
         }
+        return result
+    }
+
+    private fun cursorOcrEntity(cursor: android.database.Cursor): OcrEntityRecord {
+        val entityType = OcrEntityType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow("entity_type")))
+        return OcrEntityRecord(
+            type = entityType,
+            rawText = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("raw_text"))),
+            normalizedValue = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("normalized_value"))),
+            label = cursor.getColumnIndexOrThrow("label").let { if (cursor.isNull(it)) null else cursor.getString(it) },
+            confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
+            left = cursor.getFloat(cursor.getColumnIndexOrThrow("left_pos")),
+            top = cursor.getFloat(cursor.getColumnIndexOrThrow("top_pos")),
+            right = cursor.getFloat(cursor.getColumnIndexOrThrow("right_pos")),
+            bottom = cursor.getFloat(cursor.getColumnIndexOrThrow("bottom_pos")),
+            producerVersion = cursor.getString(cursor.getColumnIndexOrThrow("producer_version")),
+        )
     }
 
     fun fullTextMatches(terms: List<String>, limit: Int = 500): Set<String> {

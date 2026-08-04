@@ -76,6 +76,7 @@ data class CapabilityAnswerContext(
     val warnings: List<String>,
     val channelReports: List<RetrievalChannelReport<SearchHit>>,
     val eventsByMedia: Map<String, EventRecord> = emptyMap(),
+    val deterministicHits: List<SearchHit> = emptyList(),
 )
 
 object CapabilityAnswerExecutor {
@@ -129,6 +130,7 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
         val values = when (context.plan.grouping) {
             Grouping.PLACE -> context.hits.map { it.item.location }.filter(String::isNotBlank)
             Grouping.EVENT -> context.hits.mapNotNull { context.eventsByMedia[it.item.id]?.title }
@@ -136,7 +138,7 @@ object CapabilityAnswerExecutor {
             else -> {
                 val requested = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField)
                 if (requested == null) context.hits.map { it.item.title }
-                else context.hits.flatMap(SearchHit::evidence).filter { it.sourceField == requested.sourceField }.map(EvidenceRecord::text)
+                else sourceHits.flatMap(SearchHit::evidence).filter { it.sourceField == requested.sourceField }.map(EvidenceRecord::text)
             }
         }.map(String::trim).filter(String::isNotBlank).distinct()
         val ids = context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24)
@@ -176,7 +178,7 @@ object CapabilityAnswerExecutor {
     ): SearchAnswer {
         val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field) ?: OcrFactAllowlist.fields.first()
         if (!field.numeric) return base("Cannot sum ${field.key}", "Only allowlisted numeric document facts can be summed.", emptyList())
-        val values = numericFacts(context.hits, field)
+        val values = numericFacts(context.deterministicHits.ifEmpty { context.hits }, field)
         if (values.isEmpty()) return base("No compatible numeric facts", "No reliable ${field.key} values were available.", emptyList())
         val currencies = values.map(ParsedFact::currency).distinct()
         if (currencies.size > 1) {
@@ -199,13 +201,30 @@ object CapabilityAnswerExecutor {
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
         val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field) ?: OcrFactAllowlist.fields.first()
-        val values = numericFacts(context.hits, field)
+        val values = numericFacts(context.deterministicHits.ifEmpty { context.hits }, field)
         if (values.isEmpty()) return base("No compatible numeric facts", "No reliable ${field.key} values were available.", emptyList())
         if (values.map(ParsedFact::currency).distinct().size > 1) {
             return base("Mixed currencies cannot be compared", "Filter to one currency before requesting a minimum or maximum.", values.map { it.evidence.id })
         }
         val minimum = values.minBy(ParsedFact::value)
         val maximum = values.maxBy(ParsedFact::value)
+        val operation = context.plan.aggregation?.operation ?: AggregationOperation.MIN_MAX
+        val selected = when (operation) {
+            AggregationOperation.MIN -> minimum
+            AggregationOperation.MAX -> maximum
+            else -> null
+        }
+        if (selected != null) {
+            return base(
+                "${selected.currency} ${selected.value.stripTrailingZeros().toPlainString()}",
+                if (operation == AggregationOperation.MIN) {
+                    "Minimum: ${selected.hit.item.title}."
+                } else {
+                    "Maximum: ${selected.hit.item.title}."
+                },
+                listOf(selected.evidence.id),
+            )
+        }
         return base(
             "Min ${minimum.currency} ${minimum.value.stripTrailingZeros().toPlainString()}; max ${maximum.currency} ${maximum.value.stripTrailingZeros().toPlainString()}",
             "Minimum: ${minimum.hit.item.title}. Maximum: ${maximum.hit.item.title}.",

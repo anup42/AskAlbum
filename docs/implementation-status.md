@@ -90,3 +90,10 @@ media, databases, or logs.
 - Existing media rows, vectors, People data, semantic facts, captions, events, and model packs are preserved; no uninstall or data reset was used.
 - Unit tests, the v19-to-v20 migration test, Keystore instrumentation, replacement install, and consumer launch passed on SM-F966B.
 - Remaining privacy scope: media aggregate OCR/FTS fields and historical People-derived identity fields still require a separate compatibility-safe encrypted-index design.
+
+### Deterministic aggregation checkpoint (2026-08-05)
+
+- SUM, MIN, MAX, and MIN_MAX now consume bulk OCR facts from the complete hard-filtered eligible media set instead of bounded ranked hits.
+- Aggregation evidence remains media-bound and currency checks remain deterministic; ordinary visual retrieval and semantic counts remain bounded/estimated unless fully scanned.
+- Added regression coverage for a valid fact below ranked top-K and for distinct MIN/MAX operations.
+- Consumer, offlineDemo, fixtureCi, unit tests, lint, and connected launch gates passed after the change.
