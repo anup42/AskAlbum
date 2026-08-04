@@ -49,7 +49,7 @@ class QueryCompiler(
             "\\b(amount paid|grand total|receipt total|total (?:on|of|for|from) .{0,40}\\b(?:receipt|invoice)|(?:receipt|invoice).{0,40}\\btotal)\\b",
         ).containsMatchIn(normalized)
         val asksAllowlistedDocumentFact = Regex(
-            "\\b(flight number|flight time|departure time|boarding time|order id|booking id|email address|phone number|mobile number|date|url|website)\\b",
+            "\\b(amount|value|price|cost|flight number|flight time|departure time|boarding time|order id|booking id|email address|phone number|mobile number|date|url|website)\\b",
         ).containsMatchIn(normalized) || Regex("\\b(what|which)\\s+(?:was\\s+)?(?:the\\s+)?merchant\\b").containsMatchIn(normalized)
         val intent = when {
             Regex("\\b(how many|count|number of|kitne|kitni)\\b").containsMatchIn(normalized) || "कितने" in normalized || "कितनी" in normalized -> QueryIntent.COUNT
@@ -87,6 +87,7 @@ class QueryCompiler(
             .firstOrNull { candidate -> candidate in terms }
         val requestedField = when {
             asksReceiptTotal -> "total"
+            Regex("\\b(amount|value|price|cost)\\b").containsMatchIn(normalized) -> "amount"
             Regex("\\b(wifi password|wi fi password)\\b").containsMatchIn(normalized) -> "password"
             Regex("\\b(flight time|departure time|boarding time)\\b").containsMatchIn(normalized) -> "flight_time"
             Regex("\\bflight number\\b").containsMatchIn(normalized) -> "flight_number"

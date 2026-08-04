@@ -19,9 +19,17 @@ class CapabilityRegistryTest {
     @Test
     fun documentAllowlistContainsEveryRequiredField() {
         assertEquals(
-            setOf("total", "password", "flight_number", "flight_time", "order_id", "email", "phone", "date", "url", "merchant"),
+            setOf("total", "amount", "password", "flight_number", "flight_time", "order_id", "email", "phone", "date", "url", "merchant"),
             OcrFactAllowlist.fields.mapTo(mutableSetOf()) { it.key },
         )
+    }
+
+    @Test
+    fun genericAmountResolvesToAmountEntityInsteadOfReceiptTotal() {
+        val field = requireNotNull(OcrFactAllowlist.resolve("amount"))
+        assertEquals(OcrEntityType.AMOUNT, field.type)
+        assertEquals("document_amount", field.sourceField)
+        assertTrue(field.numeric)
     }
 
     @Test
@@ -67,6 +75,13 @@ class CapabilityRegistryTest {
         assertEquals(QueryIntent.COMPARE, QueryCompiler().compile("Compare Goa versus Singapore").intent)
         assertEquals(QueryIntent.TIMELINE, QueryCompiler().compile("Timeline of Singapore photos").intent)
         assertEquals(QueryIntent.LIST, QueryCompiler().compile("List places in recent photos").intent)
+    }
+
+    @Test
+    fun amountQuestionUsesTheAmountFactExecutor() {
+        val plan = QueryCompiler().compile("What is the amount on my latest invoice?")
+        assertEquals(QueryIntent.ANSWER_FACT, plan.intent)
+        assertEquals("amount", plan.ocrClause?.requestedField)
     }
 
     private fun context(intent: QueryIntent): CapabilityAnswerContext {

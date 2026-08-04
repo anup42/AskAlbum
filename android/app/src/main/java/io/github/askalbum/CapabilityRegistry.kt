@@ -45,7 +45,8 @@ data class OcrFactField(
 
 object OcrFactAllowlist {
     val fields = listOf(
-        OcrFactField("total", OcrEntityType.RECEIPT_TOTAL, "document_total", setOf("total", "receipt_total", "amount", "amount_paid"), numeric = true),
+        OcrFactField("total", OcrEntityType.RECEIPT_TOTAL, "document_total", setOf("total", "receipt_total", "amount_paid"), numeric = true),
+        OcrFactField("amount", OcrEntityType.AMOUNT, "document_amount", setOf("amount", "value", "price", "cost"), numeric = true),
         OcrFactField("password", OcrEntityType.PASSWORD, "document_password", setOf("password", "wifi_password", "passcode"), sensitive = true),
         OcrFactField("flight_number", OcrEntityType.FLIGHT_NUMBER, "document_flight_number", setOf("flight", "flight_number")),
         OcrFactField("flight_time", OcrEntityType.FLIGHT_TIME, "document_flight_time", setOf("flight_time", "departure_time", "boarding_time")),
