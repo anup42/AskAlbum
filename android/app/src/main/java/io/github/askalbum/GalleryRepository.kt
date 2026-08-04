@@ -639,10 +639,19 @@ class GalleryRepository(context: Context) {
             resolved.keyframe?.let { it.mediaId to it }
         }.toMap()
         val eventRanked = database.searchEvents(terms, eligibleIds)
-        val eventMediaRank = eventRanked.flatMap { it.mediaIds }.distinct()
+        val rawEventMediaRank = eventRanked.flatMap { it.mediaIds }.distinct()
         val eventByMedia = eventRanked.flatMap { hit -> hit.mediaIds.map { it to hit.event } }.toMap()
         val lexicalById = lexicalRanked.associateBy { it.item.id }
         val semanticById = semanticRanked.associateBy { it.mediaId }
+        val itemPredicateIds = (lexicalById.keys + semanticById.keys + captionById.keys + captionEmbeddingById.keys).toSet()
+        val eventMediaRank = if (
+            plan.intent == QueryIntent.EVENT_SUMMARY || plan.grouping == Grouping.EVENT ||
+            (terms.isEmpty() && semanticQueries.isEmpty())
+        ) {
+            rawEventMediaRank
+        } else {
+            rawEventMediaRank.filter(itemPredicateIds::contains)
+        }
         val itemById = allItems.associateBy { it.id }
         val resolvedSemanticBySourceId = resolvedSemanticHits.associateBy(ResolvedSemanticHit::sourceVectorId)
         val semanticChannelReport = RetrievalChannelReport<SearchHit>(
@@ -659,37 +668,37 @@ class GalleryRepository(context: Context) {
             modelVersion = semanticVectorReport.modelVersion,
             errorCode = semanticVectorReport.errorCode,
         )
-        val readyEligibleCount = allItems.count { it.indexState == IndexState.READY }
+        val readyEligibleCount = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
         val lexicalChannelReport = RetrievalChannelReport(
             RetrievalChannel.LEXICAL,
             ChannelStatus.SUCCESS,
-            allItems.size,
+            eligibleIds.size,
             readyEligibleCount,
-            allItems.size,
+            eligibleIds.size,
             lexicalRanked,
             modelVersion = "sqlite-fts+metadata-v1",
         )
         val eventChannelReport = RetrievalChannelReport(
             RetrievalChannel.EVENT,
             if (terms.isEmpty() && plan.intent != QueryIntent.EVENT_SUMMARY) ChannelStatus.NOT_REQUIRED else ChannelStatus.SUCCESS,
-            allItems.size,
-            database.events().size,
+            eligibleIds.size,
+            eventMediaRank.size,
             eventRanked.size,
             eventMediaRank.mapNotNull { id -> itemById[id]?.let { SearchHit(it, 1.0, emptyList()) } },
             modelVersion = EventCompiler.PRODUCER_VERSION,
         )
-        val captionCoverage = database.semanticCaptionEvidenceCount()
+        val captionCoverage = database.semanticCaptionEvidenceCount(eligibleIds)
         val captionChannelReport = RetrievalChannelReport(
             RetrievalChannel.CAPTION,
-            if (captionCoverage == 0) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
-            allItems.size,
+            if (captionCoverage < eligibleIds.size) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
+            eligibleIds.size,
             captionCoverage,
             captionRanked.size,
             captionRanked.mapNotNull { match ->
                 itemById[match.mediaId]?.let { SearchHit(it, match.score, emptyList()) }
             },
             modelVersion = captionRanked.firstOrNull()?.caption?.modelVersion,
-            errorCode = if (captionCoverage == 0) "NO_CACHED_CAPTIONS" else null,
+            errorCode = if (captionCoverage < eligibleIds.size) "CAPTION_COVERAGE_PARTIAL" else null,
         )
         val captionEmbeddingSearchedMediaCount = eligibleCaptionChunks.asSequence()
             .filter {
@@ -702,7 +711,7 @@ class GalleryRepository(context: Context) {
         val captionEmbeddingChannelReport = RetrievalChannelReport(
             RetrievalChannel.CAPTION_EMBEDDING,
             captionVectorSearch.status,
-            allItems.size,
+            eligibleIds.size,
             captionEmbeddingSearchedMediaCount,
             captionEmbeddingSearchedMediaCount,
             captionEmbeddingRanked.mapNotNull { match ->
@@ -714,18 +723,18 @@ class GalleryRepository(context: Context) {
         val peopleChannelReport = RetrievalChannelReport<SearchHit>(
             RetrievalChannel.PEOPLE,
             if (plan.peopleClauses.isEmpty()) ChannelStatus.NOT_REQUIRED else ChannelStatus.SUCCESS,
-            databaseItems.count { it.kind == MediaKind.IMAGE },
+            allItems.count { it.id in eligibleIds && it.kind == MediaKind.IMAGE },
             peopleStatus.identityReadyFaceCount,
-            if (plan.peopleClauses.isEmpty()) 0 else allItems.size,
+            if (plan.peopleClauses.isEmpty()) 0 else eligibleIds.size,
             emptyList(),
             modelVersion = services.faceEngines.activeDescriptor()?.producerVersion,
         )
         val ocrChannelReport = RetrievalChannelReport<SearchHit>(
             RetrievalChannel.OCR,
-            if (plan.ocrClause == null) ChannelStatus.NOT_REQUIRED else if (readyEligibleCount < allItems.size) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
-            allItems.size,
+            if (plan.ocrClause == null) ChannelStatus.NOT_REQUIRED else if (readyEligibleCount < eligibleIds.size) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
+            eligibleIds.size,
             readyEligibleCount,
-            if (plan.ocrClause == null) 0 else allItems.size,
+            if (plan.ocrClause == null) 0 else eligibleIds.size,
             emptyList(),
             modelVersion = services.ocrEngines.activeDescriptor()?.producerVersion,
         )
@@ -908,6 +917,7 @@ class GalleryRepository(context: Context) {
             plan,
             hits,
             allItems,
+            eligibleIds,
             matchCount,
             verification,
             channelReports,
@@ -1036,13 +1046,14 @@ class GalleryRepository(context: Context) {
         plan: GalleryQueryPlan,
         hits: List<SearchHit>,
         allItems: List<GalleryItem>,
+        eligibleIds: Set<String>,
         matchCount: Int,
         verification: VerificationResult,
         channelReports: List<RetrievalChannelReport<SearchHit>>,
         completePredicateScan: Boolean = false,
     ): SearchAnswer {
-        val totalItems = allItems.size
-        val readyItems = allItems.count { it.indexState == IndexState.READY }
+        val totalItems = eligibleIds.size
+        val readyItems = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
         val semanticReport = channelReports.first { it.channel == RetrievalChannel.SEMANTIC }
         val usedSemanticRetrieval = semanticReport.status != ChannelStatus.NOT_REQUIRED
         val deterministicResultSetFilter = plan.baseResultIds != null && plan.terms.isEmpty() &&

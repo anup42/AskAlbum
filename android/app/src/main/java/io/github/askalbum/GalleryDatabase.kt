@@ -3793,10 +3793,23 @@ class GalleryDatabase(
         return fused.mapNotNull { (id, score) -> best[id]?.copy(score = score) }.take(limit)
     }
 
-    fun semanticCaptionEvidenceCount(): Int = readableDatabase.rawQuery(
-        "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption",
-        emptyArray(),
-    ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+    fun semanticCaptionEvidenceCount(mediaIds: Set<String>? = null): Int {
+        if (mediaIds != null && mediaIds.isEmpty()) return 0
+        return if (mediaIds == null) {
+            readableDatabase.rawQuery(
+                "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption",
+                emptyArray(),
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        } else {
+            mediaIds.chunked(SQLITE_ID_CHUNK).sumOf { ids ->
+                val placeholders = ids.joinToString(",") { "?" }
+                readableDatabase.rawQuery(
+                    "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption WHERE evidence_media_id IN ($placeholders)",
+                    ids.toTypedArray(),
+                ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+            }
+        }
+    }
 
     fun hasAuthenticationProtectedOcr(mediaId: String): Boolean = readableDatabase.rawQuery(
         "SELECT 1 FROM ocr_entity WHERE media_id=? AND entity_type IN ('PASSWORD','EMAIL','PHONE','ORDER_ID') LIMIT 1",

@@ -140,7 +140,7 @@ internal object RetrievalExactnessPolicy {
         semanticReport.status != ChannelStatus.NOT_REQUIRED || verificationApplied ->
             ResultExactness.ESTIMATED_FROM_RETRIEVAL
         deterministicOperation -> ResultExactness.EXACT
-        else -> ResultExactness.COMPLETE_MODEL_SCAN
+        else -> ResultExactness.ESTIMATED_FROM_RETRIEVAL
     }
 }
 
