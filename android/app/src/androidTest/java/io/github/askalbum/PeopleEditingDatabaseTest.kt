@@ -107,6 +107,16 @@ class PeopleEditingDatabaseTest {
                 .thenBy { it.modifiedAt ?: 0L },
         )
         assertEquals(expectedNewest.id, firstPage.single().mediaId)
+        val peopleSummary = store.personClusterSummaries(true).firstOrNull { it.id == "person_me" }
+        assertTrue(
+            "People summary missing; available=${store.personClusterSummaries(true).map { it.id }}",
+            peopleSummary != null,
+        )
+        assertEquals(
+            "The People list summary must expose the newest photo first",
+            expectedNewest.id,
+            requireNotNull(peopleSummary).supportingFaces.firstOrNull()?.mediaId,
+        )
         store.setPersonClusterRepresentative("person_me", secondPage.single().id)
         assertEquals(secondPage.single().id, store.personClusterSummaries(true).single { it.id == "person_me" }.representativeFaceId)
         assertEquals(
@@ -121,7 +131,10 @@ class PeopleEditingDatabaseTest {
         assertTrue(store.resolveReviewedPersonIds("Anup Kumar").contains("person_me"))
 
         store.removePersonLabel("person_brother")
-        assertFalse(store.personClusterSummaries(true).single { it.id == "person_brother" }.reviewed)
+        assertTrue(
+            "Small unreviewed clusters must stay out of the People list",
+            store.personClusterSummaries(true).none { it.id == "person_brother" },
+        )
         val reset = store.resetPeopleIndex()
         assertEquals(0, reset.faceInstanceCount)
         assertEquals(0, reset.personClusterCount)

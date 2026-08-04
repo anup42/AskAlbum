@@ -1413,7 +1413,10 @@ class GalleryDatabase(
     fun personClusterSummaries(includeHidden: Boolean = false): List<PersonClusterReviewItem> {
         val summaries = readableDatabase.rawQuery(
             "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(f.id) AS face_count, " +
-                "COUNT(DISTINCT f.media_id) AS media_count, MAX(f.media_id) AS sample_media_id " +
+                "COUNT(DISTINCT f.media_id) AS media_count, " +
+                "(SELECT f2.media_id FROM face_instance f2 JOIN media_item m2 ON m2.id=f2.media_id " +
+                "WHERE f2.cluster_id=c.id ORDER BY COALESCE(m2.captured_at,m2.modified_at,0) DESC, " +
+                "COALESCE(m2.modified_at,0) DESC, f2.created_at DESC, f2.id LIMIT 1) AS sample_media_id " +
                 ", c.reviewed, c.hidden, c.representative_face_id, c.include_in_personal_memory " +
                 "FROM person_cluster c LEFT JOIN face_instance f ON c.id = f.cluster_id " +
                 (if (includeHidden) "" else "WHERE c.hidden = 0 ") +
@@ -1580,8 +1583,11 @@ class GalleryDatabase(
             val placeholders = clusterChunk.joinToString(",") { "?" }
             readableDatabase.rawQuery(
                 "SELECT f.id,f.media_id,f.cluster_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,f.quality,f.user_corrected " +
-                    "FROM face_instance f JOIN person_cluster c ON c.id=f.cluster_id WHERE f.cluster_id IN ($placeholders) " +
-                    "ORDER BY f.cluster_id,CASE WHEN f.id=c.representative_face_id THEN 0 ELSE 1 END,f.quality DESC,f.created_at DESC",
+                    "FROM face_instance f JOIN person_cluster c ON c.id=f.cluster_id JOIN media_item m ON m.id=f.media_id " +
+                    "WHERE f.cluster_id IN ($placeholders) " +
+                    "ORDER BY f.cluster_id,CASE WHEN f.id=c.representative_face_id THEN 0 ELSE 1 END, " +
+                    "COALESCE(m.captured_at,m.modified_at,0) DESC, COALESCE(m.modified_at,0) DESC, " +
+                    "f.quality DESC,f.created_at DESC,f.id",
                 clusterChunk.toTypedArray(),
             ).use { cursor ->
                 while (cursor.moveToNext()) {
