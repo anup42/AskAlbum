@@ -41,6 +41,22 @@ See `PRIVACY.md` and `THIRD_PARTY_NOTICES.md`.
   targeted verification remains the confirmation path for person-conditioned
   visual predicates.
 
+## 2026-08-05 validation checkpoint
+
+- Added the model-independent `fixtureCi` variant and wired its deterministic
+  planner, verifier, answer, OCR, face, and embedding fixtures without changing
+  consumer/release model-backed providers.
+- Eligible-scope coverage now drives channel reports and deterministic exactness;
+  non-semantic retrieval is never labeled a complete model scan, and event
+  membership cannot promote unsupported member media for predicate queries.
+- Verified `consumerDebug`, `offlineDemoDebug`, `fixtureCiDebug`, consumer lint,
+  focused unit tests, Room v18-to-v19 migration on a connected Android 16
+  device, and replacement launches for consumer and fixture APKs.
+- Debug test components use an app-owned signature permission; nonessential
+  provider, service, and download-activity entry points are not exported.
+- Current checkpoint was replacement-installed only; no app data, People data,
+  indexes, media, or model packs were cleared or reset.
+
 ## Known limitations
 
 - Optional model packs are large external artifacts and are not reproducible
