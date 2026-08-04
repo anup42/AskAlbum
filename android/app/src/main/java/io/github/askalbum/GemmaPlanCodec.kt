@@ -150,11 +150,26 @@ object FollowUpLanguage {
         Regex("""^(?:अब|वही|हटाओ|निकालो)\b"""),
     )
 
+    private val naturalRefinements = listOf(
+        Regex("""\b(?:make|keep|turn)\s+(?:them|these|those)\b"""),
+        Regex("""\b(?:same\s+(?:event|trip)|from\s+those|among\s+them)\b"""),
+        Regex("""\b(?:show|give)\s+(?:me\s+)?(?:the\s+)?same\b"""),
+    )
+    private val mediaScopeRefinement = Regex(
+        """\b(?:same\s+(?:event|trip)|from\s+those|among\s+them)\b.*\b(?:photos?|pictures?|images?|videos?)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+
     fun isFollowUp(query: String, activeResultAvailable: Boolean = false): Boolean {
         val normalized = query.trim().lowercase(Locale.ROOT)
         if (prefixes.any(normalized::startsWith)) return true
-        return activeResultAvailable && contextualForms.any { it.containsMatchIn(normalized) }
+        return activeResultAvailable && (
+            contextualForms.any { it.containsMatchIn(normalized) } ||
+                naturalRefinements.any { it.containsMatchIn(normalized) }
+        )
     }
+
+    fun permitsMediaScopeRefinement(query: String): Boolean = mediaScopeRefinement.containsMatchIn(query)
 }
 
 private fun JSONObject.requireOnly(vararg allowed: String): JSONObject {

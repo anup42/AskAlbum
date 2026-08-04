@@ -42,9 +42,10 @@ class QueryCompiler(
         val hasStandaloneSubject = Regex(
             "\\b(photo|photos|picture|pictures|image|images|video|videos|receipt|receipts|invoice|invoices|document|documents|trip|trips)\\b",
         ).containsMatchIn(normalized)
-        val isFollowUp = FollowUpLanguage.isFollowUp(query, !activeResultIds.isNullOrEmpty()) && !hasStandaloneSubject
+        val isFollowUp = FollowUpLanguage.isFollowUp(query, !activeResultIds.isNullOrEmpty()) &&
+            (!hasStandaloneSubject || FollowUpLanguage.permitsMediaScopeRefinement(query))
         require(!isFollowUp || !activeResultIds.isNullOrEmpty()) { "Follow-up requires an active result set" }
-        val qualityFollowUp = isFollowUp && Regex("\\b(best|best one|which is the best|which one is best)\\b").containsMatchIn(normalized)
+        val qualityFollowUp = isFollowUp && Regex("\\b(best|best one|which is the best|which one is best|close[- ]?ups?)\\b").containsMatchIn(normalized)
         val asksReceiptTotal = Regex(
             "\\b(amount paid|grand total|receipt total|total (?:on|of|for|from) .{0,40}\\b(?:receipt|invoice)|(?:receipt|invoice).{0,40}\\btotal)\\b",
         ).containsMatchIn(normalized)
@@ -64,9 +65,11 @@ class QueryCompiler(
             Regex("\\b(when|where|kab|kahan)\\b").containsMatchIn(normalized) || "कब" in normalized || "कहाँ" in normalized -> QueryIntent.EVENT_SUMMARY
             else -> QueryIntent.FIND_MEDIA
         }
+        val followUpNoise = setOf("make", "keep", "turn", "them", "these", "those", "same", "event", "trip", "but", "close", "ups", "closeups")
         val candidateTerms = normalized.split(' ')
             .filter { it.length > 1 && it !in stopWords }
             .filterNot { qualityFollowUp && it in setOf("best", "one", "which") }
+            .filterNot { isFollowUp && it in followUpNoise }
             .distinct()
         val previousYear = Regex("\\b(last year|previous year|pichle saal)\\b").containsMatchIn(normalized) || "पिछले साल" in normalized
         val explicitYear = Regex("\\b(?:19|20)\\d{2}\\b").find(normalized)?.value?.toInt()
@@ -148,6 +151,6 @@ class QueryCompiler(
     }
 
     private companion object {
-        val TEMPORAL_FOLLOW_UP_WORDS = setOf("about", "last", "previous", "year", "what", "pichle", "saal")
+        val TEMPORAL_FOLLOW_UP_WORDS = setOf("about", "last", "previous", "year", "what", "now", "pichle", "saal")
     }
 }
