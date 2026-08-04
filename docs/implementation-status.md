@@ -50,6 +50,8 @@ not represented as a GitHub Actions pass.
   `COMPLETE_MODEL_SCAN`; only an explicit full predicate evaluator may report
   `COMPLETE_PREDICATE_SCAN`, while bounded or non-deterministic paths remain
   estimated.
+- COUNT wording now follows the answer exactness state rather than merely
+  checking whether a semantic channel was present.
 
 ## Privacy boundary
 

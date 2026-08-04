@@ -104,7 +104,7 @@ object CapabilityAnswerExecutor {
             QueryIntent.COUNT -> base(
                 RetrievalAnswerWording.countHeadline(
                     context.matchCount,
-                    context.channelReports.any { it.channel == RetrievalChannel.SEMANTIC && it.status != ChannelStatus.NOT_REQUIRED },
+                    context.exactness,
                 ),
                 if (context.exactness in setOf(ResultExactness.EXACT, ResultExactness.COMPLETE_PREDICATE_SCAN)) {
                     "This is a deterministic count over complete eligible coverage."

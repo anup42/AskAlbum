@@ -33,6 +33,18 @@ class RetrievalExactnessPolicyTest {
         )
     }
 
+    @Test
+    fun estimatedCountUsesBoundedRetrievalWordingEvenWithoutSemanticChannel() {
+        assertEquals(
+            "3 matches in the current retrieval pass",
+            RetrievalAnswerWording.countHeadline(3, ResultExactness.ESTIMATED_FROM_RETRIEVAL),
+        )
+        assertEquals(
+            "3 matching items",
+            RetrievalAnswerWording.countHeadline(3, ResultExactness.EXACT),
+        )
+    }
+
     private fun report(status: ChannelStatus) = RetrievalChannelReport<VectorHit>(
         channel = RetrievalChannel.SEMANTIC,
         status = status,

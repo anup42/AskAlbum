@@ -158,6 +158,11 @@ internal object RetrievalAnswerWording {
     } else {
         "$count matching ${if (count == 1) "item" else "items"}"
     }
+
+    fun countHeadline(count: Int, exactness: ResultExactness): String = countHeadline(
+        count,
+        exactness !in setOf(ResultExactness.EXACT, ResultExactness.COMPLETE_PREDICATE_SCAN),
+    )
 }
 
 internal fun <T, R> RetrievalChannelReport<T>.mapHits(transform: (T) -> R?): RetrievalChannelReport<R> =
