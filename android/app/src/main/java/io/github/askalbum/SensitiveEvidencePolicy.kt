@@ -1,6 +1,8 @@
 package io.github.anup42.askalbum
 
 object SensitiveContentClassifier {
+    const val REDACTED_MARKER = "[REDACTED]"
+
     private val keywordPatterns = listOf(
         Regex("(?i)\\b(password|passcode|pin|cvv|account number|medical record|diagnosis)\\b"),
         Regex("(?i)\\b(aadhaar|passport|social security|ssn)\\b"),
@@ -9,6 +11,7 @@ object SensitiveContentClassifier {
 
     fun isSensitive(text: String): Boolean =
         text.isNotBlank() && (
+            text.contains(REDACTED_MARKER) ||
             keywordPatterns.any { it.containsMatchIn(text) } ||
                 paymentCardCandidate.findAll(text).any { looksLikePaymentCard(it.value) }
             )

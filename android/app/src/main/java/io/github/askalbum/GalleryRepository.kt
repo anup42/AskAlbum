@@ -127,8 +127,8 @@ class GalleryRepository(context: Context) {
     fun videoKeyframes(mediaId: String): List<VideoKeyframeRecord> = database.videoKeyframes(mediaId)
     fun indexedMetadata(mediaId: String, includeSensitiveContent: Boolean = false): IndexedMediaMetadata {
         val item = requireNotNull(database.itemById(mediaId)) { "Media item is no longer available" }
-        val blocks = database.ocrBlocks(mediaId)
-        val entities = database.ocrEntities(mediaId)
+        val blocks = database.ocrBlocks(mediaId, includeSensitiveContent)
+        val entities = database.ocrEntities(mediaId, includeSensitiveContent = includeSensitiveContent)
         val keyframes = database.videoKeyframes(mediaId)
         val facts = database.semanticFactsForMedia(mediaId)
         val captions = database.semanticCaptionsForMedia(mediaId)

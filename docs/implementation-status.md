@@ -41,6 +41,11 @@ not represented as a GitHub Actions pass.
   remain available without cross-generation structured-fact backfill.
 - Phase 7 hardening: debug-only seed/model components are same-app-only
   (`exported=false`) and retain the `DUMP` permission defense in depth.
+- Phase 7 privacy hardening: high-risk OCR entities and sensitive OCR blocks
+  are AES-GCM encrypted with an app-private Android Keystore key at write and
+  lazy per-media migration time. Searchable OCR text is redacted before
+  persistence; ordinary metadata reads return `[REDACTED]`, while the explicit
+  authenticated metadata path requests decrypted values.
 
 ## Privacy boundary
 

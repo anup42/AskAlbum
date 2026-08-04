@@ -17,6 +17,106 @@ class GalleryDatabase(
     private val readableDatabase get() = GallerySqlDatabase(room.openHelper.readableDatabase)
     private val writableDatabase get() = GallerySqlDatabase(room.openHelper.writableDatabase)
 
+    private fun migrateSensitiveOcrRows(mediaId: String) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.query(
+                "ocr_entity",
+                arrayOf("id", "entity_type", "raw_text", "normalized_value"),
+                "media_id=?",
+                arrayOf(mediaId),
+                null,
+                null,
+                null,
+            ).use { cursor ->
+                val idIndex = cursor.getColumnIndexOrThrow("id")
+                val typeIndex = cursor.getColumnIndexOrThrow("entity_type")
+                val rawIndex = cursor.getColumnIndexOrThrow("raw_text")
+                val normalizedIndex = cursor.getColumnIndexOrThrow("normalized_value")
+                while (cursor.moveToNext()) {
+                    val typeName = cursor.getString(typeIndex).orEmpty()
+                    val rawText = cursor.getString(rawIndex).orEmpty()
+                    val normalizedValue = cursor.getString(normalizedIndex).orEmpty()
+                    if (!SensitiveOcrStorage.shouldProtectEntity(typeName, rawText, normalizedValue)) continue
+                    db.update(
+                        "ocr_entity",
+                        ContentValues().apply {
+                            put("raw_text", SensitiveOcrStorage.protectIfNeeded(rawText, true))
+                            put("normalized_value", SensitiveOcrStorage.protectIfNeeded(normalizedValue, true))
+                        },
+                        "id=?",
+                        arrayOf(cursor.getLong(idIndex).toString()),
+                    )
+                }
+            }
+            db.query(
+                "ocr_block",
+                arrayOf("id", "text", "normalized_text"),
+                "media_id=?",
+                arrayOf(mediaId),
+                null,
+                null,
+                null,
+            ).use { cursor ->
+                val idIndex = cursor.getColumnIndexOrThrow("id")
+                val textIndex = cursor.getColumnIndexOrThrow("text")
+                val normalizedIndex = cursor.getColumnIndexOrThrow("normalized_text")
+                while (cursor.moveToNext()) {
+                    val text = cursor.getString(textIndex).orEmpty()
+                    val normalizedText = cursor.getString(normalizedIndex).orEmpty()
+                    val shouldProtect = SensitiveContentClassifier.isSensitive(text) ||
+                        SensitiveContentClassifier.isSensitive(normalizedText) ||
+                        SensitiveOcrStorage.isEncrypted(text) || SensitiveOcrStorage.isEncrypted(normalizedText)
+                    if (!shouldProtect) continue
+                    db.update(
+                        "ocr_block",
+                        ContentValues().apply {
+                            put("text", SensitiveOcrStorage.protectIfNeeded(text, true))
+                            put("normalized_text", SensitiveOcrStorage.protectIfNeeded(normalizedText, true))
+                        },
+                        "id=?",
+                        arrayOf(cursor.getLong(idIndex).toString()),
+                    )
+                }
+            }
+            db.query("media_item", arrayOf("ocr_text"), "id=?", arrayOf(mediaId), null, null, null).use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                    val original = cursor.getString(0)
+                    val redacted = SensitiveOcrStorage.redact(original)
+                    if (redacted != original) {
+                        db.update(
+                            "media_item",
+                            ContentValues().apply { put("ocr_text", redacted) },
+                            "id=?",
+                            arrayOf(mediaId),
+                        )
+                    }
+                }
+            }
+            db.query("video_keyframe", arrayOf("id", "ocr_text"), "media_id=?", arrayOf(mediaId), null, null, null).use { cursor ->
+                val idIndex = cursor.getColumnIndexOrThrow("id")
+                val textIndex = cursor.getColumnIndexOrThrow("ocr_text")
+                while (cursor.moveToNext()) {
+                    if (cursor.isNull(textIndex)) continue
+                    val original = cursor.getString(textIndex)
+                    val redacted = SensitiveOcrStorage.redact(original)
+                    if (redacted != original) {
+                        db.update(
+                            "video_keyframe",
+                            ContentValues().apply { put("ocr_text", redacted) },
+                            "id=?",
+                            arrayOf(cursor.getString(idIndex)),
+                        )
+                    }
+                }
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun seedDemoIfEmpty(): Int {
         readableDatabase.rawQuery("SELECT COUNT(*) FROM media_item WHERE source_kind='DEMO_ASSET'", null).use { cursor ->
             if (cursor.moveToFirst() && cursor.getInt(0) > 0) return cursor.getInt(0)
@@ -501,7 +601,7 @@ class GalleryDatabase(
             db.update("media_item", ContentValues().apply {
                 put("tags", labels.joinToString(TAG_SEPARATOR))
                 put("description", description)
-                put("ocr_text", ocrText)
+                put("ocr_text", SensitiveOcrStorage.redact(ocrText))
                 put("face_count", faceCount)
                 put("preview_path", previewPath)
                 put("index_state", IndexState.READY.name)
@@ -517,10 +617,12 @@ class GalleryDatabase(
             db.delete("ocr_entity", "media_id=?", arrayOf(id))
             db.delete("video_keyframe", "media_id=?", arrayOf(id))
             blocks.forEach { block ->
+                val protectBlock = SensitiveContentClassifier.isSensitive(block.text) ||
+                    SensitiveContentClassifier.isSensitive(block.normalizedText)
                 db.insert("ocr_block", null, ContentValues().apply {
                     put("media_id", id)
-                    put("text", block.text)
-                    put("normalized_text", block.normalizedText)
+                    put("text", SensitiveOcrStorage.protectIfNeeded(block.text, protectBlock))
+                    put("normalized_text", SensitiveOcrStorage.protectIfNeeded(block.normalizedText, protectBlock))
                     if (block.language == null) putNull("language") else put("language", block.language)
                     put("page_index", block.pageIndex)
                     if (block.timestampMs == null) putNull("timestamp_ms") else put("timestamp_ms", block.timestampMs)
@@ -532,11 +634,16 @@ class GalleryDatabase(
                 })
             }
             entities.forEach { entity ->
+                val protectEntity = SensitiveOcrStorage.shouldProtectEntity(
+                    entity.type.name,
+                    entity.rawText,
+                    entity.normalizedValue,
+                )
                 db.insert("ocr_entity", null, ContentValues().apply {
                     put("media_id", id)
                     put("entity_type", entity.type.name)
-                    put("raw_text", entity.rawText)
-                    put("normalized_value", entity.normalizedValue)
+                    put("raw_text", SensitiveOcrStorage.protectIfNeeded(entity.rawText, protectEntity))
+                    put("normalized_value", SensitiveOcrStorage.protectIfNeeded(entity.normalizedValue, protectEntity))
                     if (entity.label == null) putNull("label") else put("label", entity.label)
                     put("confidence", entity.confidence)
                     put("left_pos", entity.left)
@@ -1909,14 +2016,22 @@ class GalleryDatabase(
 
     fun itemById(id: String): GalleryItem? = itemById(readableDatabase, id)
 
-    fun ocrBlocks(mediaId: String): List<OcrBlockRecord> = readableDatabase.query(
+    fun ocrBlocks(mediaId: String, includeSensitiveContent: Boolean = false): List<OcrBlockRecord> {
+        migrateSensitiveOcrRows(mediaId)
+        return readableDatabase.query(
         "ocr_block", null, "media_id=?", arrayOf(mediaId), null, null, "id",
     ).use { cursor ->
         buildList {
-            while (cursor.moveToNext()) add(
-                OcrBlockRecord(
-                    text = cursor.getString(cursor.getColumnIndexOrThrow("text")),
-                    normalizedText = cursor.getString(cursor.getColumnIndexOrThrow("normalized_text")),
+            while (cursor.moveToNext()) {
+                val storedText = cursor.getString(cursor.getColumnIndexOrThrow("text"))
+                val storedNormalizedText = cursor.getString(cursor.getColumnIndexOrThrow("normalized_text"))
+                val protected = SensitiveOcrStorage.isEncrypted(storedText) ||
+                    SensitiveOcrStorage.isEncrypted(storedNormalizedText) ||
+                    SensitiveContentClassifier.isSensitive(storedText) ||
+                    SensitiveContentClassifier.isSensitive(storedNormalizedText)
+                add(OcrBlockRecord(
+                    text = SensitiveOcrStorage.read(storedText, includeSensitiveContent, protected),
+                    normalizedText = SensitiveOcrStorage.read(storedNormalizedText, includeSensitiveContent, protected),
                     language = cursor.getColumnIndexOrThrow("language").let { if (cursor.isNull(it)) null else cursor.getString(it) },
                     pageIndex = cursor.getInt(cursor.getColumnIndexOrThrow("page_index")),
                     timestampMs = cursor.getColumnIndexOrThrow("timestamp_ms").let { if (cursor.isNull(it)) null else cursor.getLong(it) },
@@ -1925,12 +2040,19 @@ class GalleryDatabase(
                     top = cursor.getFloat(cursor.getColumnIndexOrThrow("top_pos")),
                     right = cursor.getFloat(cursor.getColumnIndexOrThrow("right_pos")),
                     bottom = cursor.getFloat(cursor.getColumnIndexOrThrow("bottom_pos")),
-                ),
-            )
+                ))
+            }
         }
     }
+    }
 
-    fun ocrEntities(mediaId: String, type: OcrEntityType? = null): List<OcrEntityRecord> = readableDatabase.query(
+    fun ocrEntities(
+        mediaId: String,
+        type: OcrEntityType? = null,
+        includeSensitiveContent: Boolean = false,
+    ): List<OcrEntityRecord> {
+        migrateSensitiveOcrRows(mediaId)
+        return readableDatabase.query(
         "ocr_entity",
         null,
         if (type == null) "media_id=?" else "media_id=? AND entity_type=?",
@@ -1940,11 +2062,17 @@ class GalleryDatabase(
         "confidence DESC, id",
     ).use { cursor ->
         buildList {
-            while (cursor.moveToNext()) add(
-                OcrEntityRecord(
-                    type = OcrEntityType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow("entity_type"))),
-                    rawText = cursor.getString(cursor.getColumnIndexOrThrow("raw_text")),
-                    normalizedValue = cursor.getString(cursor.getColumnIndexOrThrow("normalized_value")),
+            while (cursor.moveToNext()) {
+                val typeName = cursor.getString(cursor.getColumnIndexOrThrow("entity_type"))
+                val storedRawText = cursor.getString(cursor.getColumnIndexOrThrow("raw_text"))
+                val storedNormalizedValue = cursor.getString(cursor.getColumnIndexOrThrow("normalized_value"))
+                val protected = SensitiveOcrStorage.isEncrypted(storedRawText) ||
+                    SensitiveOcrStorage.isEncrypted(storedNormalizedValue) ||
+                    SensitiveOcrStorage.shouldProtectEntity(typeName, storedRawText, storedNormalizedValue)
+                add(OcrEntityRecord(
+                    type = OcrEntityType.valueOf(typeName),
+                    rawText = SensitiveOcrStorage.read(storedRawText, includeSensitiveContent, protected),
+                    normalizedValue = SensitiveOcrStorage.read(storedNormalizedValue, includeSensitiveContent, protected),
                     label = cursor.getColumnIndexOrThrow("label").let { if (cursor.isNull(it)) null else cursor.getString(it) },
                     confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
                     left = cursor.getFloat(cursor.getColumnIndexOrThrow("left_pos")),
@@ -1952,9 +2080,10 @@ class GalleryDatabase(
                     right = cursor.getFloat(cursor.getColumnIndexOrThrow("right_pos")),
                     bottom = cursor.getFloat(cursor.getColumnIndexOrThrow("bottom_pos")),
                     producerVersion = cursor.getString(cursor.getColumnIndexOrThrow("producer_version")),
-                ),
-            )
+                ))
+            }
         }
+    }
     }
 
     fun fullTextMatches(terms: List<String>, limit: Int = 500): Set<String> {
