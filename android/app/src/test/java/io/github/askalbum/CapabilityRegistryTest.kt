@@ -51,6 +51,17 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun listUsesCompleteDeterministicEvidenceInsteadOfRankedTopK() {
+        val complete = hit("three", "Trip C", "INR 30.00", 1_720_000_000_000)
+        val base = context(QueryIntent.LIST)
+        val answer = CapabilityAnswerExecutor.execute(
+            base.copy(deterministicHits = base.hits + complete),
+        )
+
+        assertTrue(answer.detail.contains("Trip C"))
+    }
+
+    @Test
     fun minAndMaxRespectTheRequestedOperation() {
         val base = context(QueryIntent.MIN_MAX)
         val minimum = CapabilityAnswerExecutor.execute(

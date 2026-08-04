@@ -132,9 +132,9 @@ object CapabilityAnswerExecutor {
     ): SearchAnswer {
         val sourceHits = context.deterministicHits.ifEmpty { context.hits }
         val values = when (context.plan.grouping) {
-            Grouping.PLACE -> context.hits.map { it.item.location }.filter(String::isNotBlank)
-            Grouping.EVENT -> context.hits.mapNotNull { context.eventsByMedia[it.item.id]?.title }
-            Grouping.DAY, Grouping.MONTH, Grouping.YEAR -> context.hits.mapNotNull { it.item.capturedAt }.map(::formatDate)
+            Grouping.PLACE -> sourceHits.map { it.item.location }.filter(String::isNotBlank)
+            Grouping.EVENT -> sourceHits.mapNotNull { context.eventsByMedia[it.item.id]?.title }
+            Grouping.DAY, Grouping.MONTH, Grouping.YEAR -> sourceHits.mapNotNull { it.item.capturedAt }.map(::formatDate)
             else -> {
                 val requested = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField)
                 if (requested == null) context.hits.map { it.item.title }
