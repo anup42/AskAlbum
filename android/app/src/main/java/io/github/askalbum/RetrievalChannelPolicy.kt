@@ -48,6 +48,7 @@ internal object SemanticChannelReporter {
         topK: Int,
         indexedIds: suspend () -> Set<String>,
         search: suspend (String, Int, Set<String>) -> List<VectorHit>,
+        coverageIds: suspend (Set<String>) -> Set<String> = { it },
     ): RetrievalChannelReport<VectorHit> {
         if (query.isBlank()) return notRequired()
         if (modelVersion == null) {
@@ -62,7 +63,8 @@ internal object SemanticChannelReporter {
             )
         }
         return try {
-            val indexedEligibleIds = indexedIds().intersect(eligibleVectorIds)
+            val indexedEligibleVectorIds = indexedIds().intersect(eligibleVectorIds)
+            val indexedEligibleIds = coverageIds(indexedEligibleVectorIds)
             val hits = search(query, topK, eligibleVectorIds)
             RetrievalChannelReport(
                 channel = RetrievalChannel.SEMANTIC,

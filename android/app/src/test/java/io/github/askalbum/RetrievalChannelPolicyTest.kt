@@ -72,6 +72,21 @@ class RetrievalChannelPolicyTest {
     }
 
     @Test
+    fun videoKeyframesCountOnceForEligibleMediaCoverage() = runBlocking {
+        val report = SemanticChannelReporter.execute(
+            "beach", "siglip@test", 2, setOf("photo", "video", "video-kf-1", "video-kf-2"), 100,
+            indexedIds = { setOf("photo", "video-kf-1", "video-kf-2") },
+            search = { _, _, _ -> emptyList() },
+            coverageIds = { indexed -> indexed.mapTo(mutableSetOf()) { id -> if (id.startsWith("video-kf")) "video" else id } },
+        )
+
+        assertEquals(ChannelStatus.SUCCESS, report.status)
+        assertEquals(2, report.eligibleCount)
+        assertEquals(2, report.indexedCount)
+        assertEquals(2, report.searchedCount)
+    }
+
+    @Test
     fun hardFilterIsAppliedBeforeTopK() = runBlocking {
         val index = ReferenceVectorIndex(2)
         repeat(101) { index.upsert("global-$it", floatArrayOf(1f, 0f)) }

@@ -326,6 +326,16 @@ class GalleryDatabase(
         return mediaIds + keyframes
     }
 
+    fun mediaIdsForVectorIds(vectorIds: Set<String>): Set<String> {
+        if (vectorIds.isEmpty()) return emptySet()
+        val placeholders = vectorIds.joinToString(",") { "?" }
+        return readableDatabase.rawQuery(
+            "SELECT id FROM media_item WHERE id IN ($placeholders) " +
+                "UNION SELECT media_id FROM video_keyframe WHERE id IN ($placeholders)",
+            (vectorIds + vectorIds).toTypedArray(),
+        ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+    }
+
     fun keyframeEmbeddingPendingItems(producerVersion: String, limit: Int): List<VideoKeyframeRecord> = readableDatabase.rawQuery(
         "SELECT v.* FROM video_keyframe v JOIN media_item m ON m.id=v.media_id WHERE m.access_state='ACCESSIBLE' AND (v.embedding_version IS NULL OR v.embedding_version!=?) ORDER BY COALESCE(m.captured_at,0) DESC,v.timestamp_ms LIMIT ?",
         arrayOf(producerVersion, limit.toString()),

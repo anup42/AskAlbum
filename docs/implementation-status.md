@@ -34,6 +34,8 @@ not represented as a GitHub Actions pass.
 - Phase 7 hardening: semantic fact persistence now preserves EVENT and
   VISUAL_GROUP provenance; migration 18->19 repairs known legacy copies and
   quarantines ambiguous scope as contextual evidence.
+- Phase 1 retrieval: semantic vector coverage now maps parent media and video
+  keyframes to unique eligible media before reporting completeness.
 
 ## Privacy boundary
 

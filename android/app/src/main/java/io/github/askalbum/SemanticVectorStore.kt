@@ -33,6 +33,7 @@ class SemanticVectorStore(
         topK: Int,
         eligibleCount: Int,
         allowedIds: Set<String>,
+        coverageIds: suspend (Set<String>) -> Set<String> = { it },
     ): RetrievalChannelReport<VectorHit> = SemanticChannelReporter.execute(
         query = query,
         modelVersion = producerVersion(),
@@ -46,6 +47,7 @@ class SemanticVectorStore(
             current.index.search(vector, limit, eligibleIds)
                 .filter { it.score >= current.pack.manifest.minimumSimilarity }
         },
+        coverageIds = coverageIds,
     )
 
     suspend fun reconcile(accessibleIds: Set<String>) {

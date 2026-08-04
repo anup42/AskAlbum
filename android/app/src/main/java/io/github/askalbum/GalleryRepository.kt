@@ -584,6 +584,7 @@ class GalleryRepository(context: Context) {
                     topK = plan.limit.coerceIn(20, 100),
                     eligibleCount = eligibleIds.size,
                     allowedIds = eligibleVectorIds,
+                    coverageIds = database::mediaIdsForVectorIds,
                 )
             },
         )
