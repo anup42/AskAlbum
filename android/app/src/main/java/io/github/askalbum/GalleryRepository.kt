@@ -640,7 +640,7 @@ class GalleryRepository(context: Context) {
         val captionChannelReport = RetrievalChannelReport(
             RetrievalChannel.CAPTION,
             CaptionCoveragePolicy.status(eligibleIds.size, captionCoverage),
-            allItems.size,
+            eligibleIds.size,
             captionCoverage,
             captionRanked.size,
             captionRanked.mapNotNull { match ->
