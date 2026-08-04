@@ -142,11 +142,11 @@ internal object SemanticEnrichmentCodec {
         val confidentlyAssociatedLabels = mutableSetOf<String>()
         for (index in 0 until minOf(people.length(), MAX_PEOPLE)) {
             val person = people.optJSONObject(index) ?: continue
-            val personRef = person.optString("personRef").trim()
+            val personRef = person.safeText("personRef", 20)
             val binding = bindingByLabel[personRef] ?: continue
-            val association = enumValue<PersonAssociationStatus>(person.optString("associationStatus"))
+            val association = enumValue<PersonAssociationStatus>(person.safeText("associationStatus", 40))
                 ?: PersonAssociationStatus.AMBIGUOUS
-            val visibility = enumValue<PersonVisibility>(person.optString("visibility")) ?: PersonVisibility.UNKNOWN
+            val visibility = enumValue<PersonVisibility>(person.safeText("visibility", 40)) ?: PersonVisibility.UNKNOWN
             val bodyBox = person.optJSONArray("bodyRegion")?.normalizedRegion()
             refs += SemanticCaptionPersonRefRecord(
                 personRef = personRef,
@@ -185,13 +185,14 @@ internal object SemanticEnrichmentCodec {
             }
             val actions = person.optJSONArray("actions") ?: JSONArray()
             for (actionIndex in 0 until minOf(actions.length(), 12)) {
-                val action = actions.optString(actionIndex).trim()
-                if (action.isBlank() || action.length > 120 || SensitiveContentClassifier.isSensitive(action)) continue
+                val action = actions.safeTextAt(actionIndex, 120)
+                val relation = normalizeActionRelation(action) ?: continue
+                if (SensitiveContentClassifier.isSensitive(action)) continue
                 personFacts += PersonVisualFactRecord(
                     mediaId = job.representativeMediaId,
                     clusterId = binding.clusterId,
                     personRef = personRef,
-                    relation = PersonVisualRelation.ACTION,
+                    relation = relation,
                     value = action,
                     bodyRegion = BodyRegion.FULL_BODY,
                     confidence = person.opt("confidence").asConfidence() ?: captionConfidence ?: 0.6f,
@@ -301,12 +302,8 @@ internal object SemanticEnrichmentCodec {
             val objectRef = actionObject.safeText("objectRef", 120)
             val value = listOf(action, objectRef).filter(String::isNotBlank).joinToString(" ").take(240)
             if (value.isBlank() || SensitiveContentClassifier.isSensitive(value)) continue
-            val relation = when {
-                action.startsWith("hold", ignoreCase = true) -> PersonVisualRelation.HOLDING
-                action.startsWith("carry", ignoreCase = true) -> PersonVisualRelation.CARRYING
-                action.startsWith("us", ignoreCase = true) -> PersonVisualRelation.USING
-                else -> PersonVisualRelation.ACTION
-            }
+            val relation = normalizeActionRelation(action) ?: continue
+            if (hasNegativePredicate(objectRef)) continue
             add(
                 PersonVisualFactRecord(
                     mediaId = job.representativeMediaId,
@@ -343,11 +340,7 @@ internal object SemanticEnrichmentCodec {
             if (subjectRef !in confidentlyAssociatedLabels || targetRef !in confidentlyAssociatedLabels) continue
             val predicate = interaction.safeText("predicate", 120)
             if (predicate.isBlank() || SensitiveContentClassifier.isSensitive(predicate)) continue
-            val relation = when {
-                predicate.contains("standing beside", ignoreCase = true) -> PersonVisualRelation.STANDING_BESIDE
-                predicate.contains("sitting beside", ignoreCase = true) -> PersonVisualRelation.SITTING_BESIDE
-                else -> PersonVisualRelation.INTERACTING_WITH
-            }
+            val relation = normalizeInteractionPredicate(predicate) ?: continue
             add(
                 PersonVisualFactRecord(
                     mediaId = job.representativeMediaId,
@@ -366,6 +359,83 @@ internal object SemanticEnrichmentCodec {
             )
         }
     }
+
+    private fun normalizeActionRelation(raw: String): PersonVisualRelation? {
+        if (raw.isBlank() || hasNegativePredicate(raw)) return null
+        val normalized = normalizePredicate(raw)
+        if (normalized.isBlank() || normalized in PLACEHOLDER_VALUES) return null
+        val tokens = normalized.split(' ').filter(String::isNotBlank)
+        return when {
+            tokens.any { it in HOLDING_ACTIONS } -> PersonVisualRelation.HOLDING
+            tokens.any { it in CARRYING_ACTIONS } -> PersonVisualRelation.CARRYING
+            tokens.any { it in USING_ACTIONS } -> PersonVisualRelation.USING
+            tokens.any { it in OBSERVED_ACTIONS } -> PersonVisualRelation.ACTION
+            else -> null
+        }
+    }
+
+    private fun normalizeInteractionPredicate(raw: String): PersonVisualRelation? {
+        if (raw.isBlank() || hasNegativePredicate(raw)) return null
+        val normalized = normalizePredicate(raw)
+        if (normalized.isBlank() || normalized in PLACEHOLDER_VALUES) return null
+        return when {
+            normalized.contains("standing beside") ||
+                normalized.contains("standing next to") ||
+                normalized.contains("standing near") -> PersonVisualRelation.STANDING_BESIDE
+            normalized.contains("sitting beside") ||
+                normalized.contains("sitting next to") ||
+                normalized.contains("sitting near") -> PersonVisualRelation.SITTING_BESIDE
+            normalized == "interacting" ||
+                normalized.startsWith("interacting with ") ||
+                normalized.contains(" interacting with ") -> PersonVisualRelation.INTERACTING_WITH
+            else -> null
+        }
+    }
+
+    private fun hasNegativePredicate(raw: String): Boolean =
+        NEGATIVE_PREDICATE.containsMatchIn(raw.lowercase(Locale.ROOT)) ||
+            normalizePredicate(raw).split(' ').any { it in NEGATIVE_TOKENS }
+
+    private fun normalizePredicate(raw: String): String =
+        raw.lowercase(Locale.ROOT).replace(Regex("""[^\p{L}\p{N}]+"""), " ").trim()
+
+    private fun JSONArray.safeTextAt(index: Int, maximumLength: Int): String {
+        val value = opt(index)
+        if (value !is String) return ""
+        val text = value.trim().take(maximumLength)
+        return text.takeUnless { normalizePredicate(it) in PLACEHOLDER_VALUES }.orEmpty()
+    }
+
+    private val NEGATIVE_PREDICATE = Regex(
+        """\b(?:not|never|without|no|isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent|doesn't|doesnt|don't|dont|can't|cant|cannot|won't|wont)\b""",
+    )
+    private val NEGATIVE_TOKENS = setOf("not", "never", "without", "no", "isnt", "arent", "wasnt", "werent", "doesnt", "dont", "cant", "cannot", "wont")
+    private val PLACEHOLDER_VALUES = setOf("null", "undefined", "unknown", "n a", "na")
+    private val HOLDING_ACTIONS = setOf("hold", "holds", "holding", "held")
+    private val CARRYING_ACTIONS = setOf("carry", "carries", "carrying", "carried")
+    private val USING_ACTIONS = setOf("use", "uses", "using", "used")
+    private val OBSERVED_ACTIONS = setOf(
+        "stand", "stands", "standing", "stood",
+        "sit", "sits", "sitting", "sat",
+        "pose", "poses", "posing", "posed",
+        "walk", "walks", "walking", "walked",
+        "run", "runs", "running", "ran",
+        "cut", "cuts", "cutting",
+        "eat", "eats", "eating", "ate",
+        "drink", "drinks", "drinking", "drank",
+        "dance", "dances", "dancing", "danced",
+        "play", "plays", "playing", "played",
+        "open", "opens", "opening", "opened",
+        "close", "closes", "closing", "closed",
+        "wave", "waves", "waving", "waved",
+        "talk", "talks", "talking", "spoke", "speaking",
+        "read", "reads", "reading",
+        "write", "writes", "writing", "wrote",
+        "look", "looks", "looking",
+        "smile", "smiles", "smiling",
+        "sleep", "sleeps", "sleeping",
+        "feed", "feeds", "feeding",
+    )
 
     private fun activityAwareCaption(sceneSummary: String, detailedCaption: String): String {
         if (detailedCaption.isBlank()) return ""
@@ -389,16 +459,16 @@ internal object SemanticEnrichmentCodec {
         visibility: PersonVisibility,
         modelVersion: String,
     ): PersonVisualFactRecord? {
-        val itemType = item.optString("itemType").trim().takeIf(String::isNotBlank) ?: return null
+        val itemType = item.safeText("itemType", 120).takeIf(String::isNotBlank) ?: return null
         if (itemType.length > 120 || SensitiveContentClassifier.isSensitive(itemType)) return null
         val confidence = item.opt("confidence").asConfidence() ?: return null
-        val category = enumValue<WornItemCategory>(item.optString("category")) ?: defaultCategory
-        val bodyRegion = enumValue<BodyRegion>(item.optString("bodyRegion")) ?: inferredBodyRegion(category, visibility)
+        val category = enumValue<WornItemCategory>(item.safeText("category", 40)) ?: defaultCategory
+        val bodyRegion = enumValue<BodyRegion>(item.safeText("bodyRegion", 40)) ?: inferredBodyRegion(category, visibility)
         val evidenceRegion = item.optJSONArray("region")?.normalizedRegion()
         val attributes = buildMap {
             item.optJSONArray("colors")?.strings()?.takeIf(List<String>::isNotEmpty)?.let { put("colors", it) }
             listOf("pattern", "material", "style", "length", "sleeves").forEach { key ->
-                item.optString(key).trim().takeIf(String::isNotBlank)?.let { put(key, listOf(it.take(120))) }
+                item.safeText(key, 120).takeIf(String::isNotBlank)?.let { put(key, listOf(it)) }
             }
         }
         val value = buildString {

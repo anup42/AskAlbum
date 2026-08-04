@@ -114,6 +114,47 @@ class ComprehensiveSemanticCaptionTest {
         assertEquals("placing a cake on a counter", result.facts.single { it.predicate == "primary_activity" }.value)
     }
 
+    @Test
+    fun negativeAndUnknownPersonPredicatesCannotBecomePositiveFacts() {
+        val raw = """
+            {"sceneSummary":"P1 and P2 are visible indoors.",
+             "detailedCaption":"P1 and P2 are visible indoors.","captionConfidence":0.9,
+             "people":[
+               {"personRef":"P1","visibility":"FULL_BODY","associationStatus":"CONFIDENT","actions":[]},
+               {"personRef":"P2","visibility":"FULL_BODY","associationStatus":"CONFIDENT","actions":[]}],
+             "actions":[
+               {"subjectRef":"P1","action":"not holding","objectRef":"the bag","confidence":0.95},
+               {"subjectRef":"P1","action":"photographing","objectRef":"the scene","confidence":0.95}],
+             "interactions":[
+               {"subjectRef":"P1","predicate":"not standing beside","targetRef":"P2","confidence":0.95},
+               {"subjectRef":"P1","predicate":"laughing with","targetRef":"P2","confidence":0.95}],
+             "facts":[]}
+        """.trimIndent()
+
+        val result = SemanticEnrichmentCodec.decode(job, raw, "fixture", bindings)
+
+        assertTrue(result.personFacts.none { it.relation == PersonVisualRelation.HOLDING })
+        assertTrue(result.personFacts.none { it.relation == PersonVisualRelation.INTERACTING_WITH })
+        assertTrue(result.personFacts.none { it.value.contains("null", ignoreCase = true) })
+    }
+
+    @Test
+    fun nullObjectReferenceIsAbsentFromTypedFact() {
+        val raw = """
+            {"sceneSummary":"P1 is holding an object.",
+             "detailedCaption":"P1 is holding an object.","captionConfidence":0.9,
+             "people":[{"personRef":"P1","visibility":"FULL_BODY","associationStatus":"CONFIDENT","actions":[]}],
+             "actions":[{"subjectRef":"P1","action":"holding","objectRef":null,"confidence":0.95}],
+             "interactions":[],"facts":[]}
+        """.trimIndent()
+
+        val result = SemanticEnrichmentCodec.decode(job, raw, "fixture", bindings)
+        val holding = result.personFacts.single { it.relation == PersonVisualRelation.HOLDING }
+
+        assertNull(holding.itemType)
+        assertTrue(holding.value != "null" && !holding.value.contains("null ", ignoreCase = true))
+    }
+
     @Test(expected = SemanticEnrichmentOutputException::class)
     fun captionWithoutSceneSummaryIsRejectedForCorrectiveRetry() {
         SemanticEnrichmentCodec.decode(
