@@ -68,6 +68,27 @@ class Phase4OrchestrationTest {
     }
 
     @Test
+    fun embeddedPersonNegationBecomesKotlinOwnedPolarity() {
+        val normalized = SemanticPolarityNormalizer.normalize(
+            SemanticClause("where I am not wearing red shoes", canonicalText = "I am not wearing red footwear"),
+        )
+
+        assertEquals("where I am wearing red shoes", normalized.text)
+        assertEquals("I am wearing red footwear", normalized.canonicalText)
+        assertEquals(Polarity.NEGATIVE, normalized.polarity)
+    }
+
+    @Test
+    fun modelNegativeActionCannotRemainAPositivePredicate() {
+        val normalized = SemanticPolarityNormalizer.normalize(
+            SemanticClause("P1 is not holding the bag"),
+        )
+
+        assertEquals("P1 is holding the bag", normalized.text)
+        assertEquals(Polarity.NEGATIVE, normalized.polarity)
+    }
+
+    @Test
     fun matchedVideoTimestampSelectsNearestKeyframe() {
         assertEquals(
             10_000L,
