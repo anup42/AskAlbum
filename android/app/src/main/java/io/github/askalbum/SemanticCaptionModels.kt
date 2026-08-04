@@ -148,11 +148,11 @@ internal object SemanticEnrichmentCodec {
         val confidentlyAssociatedLabels = mutableSetOf<String>()
         for (index in 0 until minOf(people.length(), MAX_PEOPLE)) {
             val person = people.optJSONObject(index) ?: continue
-            val personRef = person.optString("personRef").trim()
+            val personRef = person.safeText("personRef", 20)
             val binding = bindingByLabel[personRef] ?: continue
-            val association = enumValue<PersonAssociationStatus>(person.optString("associationStatus"))
+            val association = enumValue<PersonAssociationStatus>(person.safeText("associationStatus", 32))
                 ?: PersonAssociationStatus.AMBIGUOUS
-            val visibility = enumValue<PersonVisibility>(person.optString("visibility")) ?: PersonVisibility.UNKNOWN
+            val visibility = enumValue<PersonVisibility>(person.safeText("visibility", 32)) ?: PersonVisibility.UNKNOWN
             val bodyBox = person.optJSONArray("bodyRegion")?.normalizedRegion()
             refs += SemanticCaptionPersonRefRecord(
                 personRef = personRef,
@@ -191,13 +191,14 @@ internal object SemanticEnrichmentCodec {
             }
             val actions = person.optJSONArray("actions") ?: JSONArray()
             for (actionIndex in 0 until minOf(actions.length(), 12)) {
-                val action = actions.optString(actionIndex).trim()
+                val action = actions.safeText(actionIndex, 120)
                 if (action.isBlank() || action.length > 120 || SensitiveContentClassifier.isSensitive(action)) continue
+                val negative = isNegative(action)
                 personFacts += PersonVisualFactRecord(
                     mediaId = job.representativeMediaId,
                     clusterId = binding.clusterId,
                     personRef = personRef,
-                    relation = PersonVisualRelation.ACTION,
+                    relation = normalizedActionRelation(action),
                     value = action,
                     bodyRegion = BodyRegion.FULL_BODY,
                     confidence = person.opt("confidence").asConfidence() ?: captionConfidence ?: 0.6f,
@@ -205,6 +206,7 @@ internal object SemanticEnrichmentCodec {
                     evidenceRegion = bodyBox,
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
+                    verdict = if (negative) PersonVisualVerdict.VERIFIED_FALSE else PersonVisualVerdict.VERIFIED_TRUE,
                 )
             }
         }
@@ -308,12 +310,8 @@ internal object SemanticEnrichmentCodec {
             val objectRef = actionObject.safeText("objectRef", 120)
             val value = listOf(action, objectRef).filter(String::isNotBlank).joinToString(" ").take(240)
             if (value.isBlank() || SensitiveContentClassifier.isSensitive(value)) continue
-            val relation = when {
-                action.startsWith("hold", ignoreCase = true) -> PersonVisualRelation.HOLDING
-                action.startsWith("carry", ignoreCase = true) -> PersonVisualRelation.CARRYING
-                action.startsWith("us", ignoreCase = true) -> PersonVisualRelation.USING
-                else -> PersonVisualRelation.ACTION
-            }
+            val negative = isNegative(actionObject.safeText("polarity", 24)) || isNegative(action)
+            val relation = normalizedActionRelation(action)
             add(
                 PersonVisualFactRecord(
                     mediaId = job.representativeMediaId,
@@ -328,6 +326,7 @@ internal object SemanticEnrichmentCodec {
                     evidenceRegion = actionObject.optJSONArray("region")?.normalizedRegion(),
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
+                    verdict = if (negative) PersonVisualVerdict.VERIFIED_FALSE else PersonVisualVerdict.VERIFIED_TRUE,
                 ),
             )
         }
@@ -350,10 +349,13 @@ internal object SemanticEnrichmentCodec {
             if (subjectRef !in confidentlyAssociatedLabels || targetRef !in confidentlyAssociatedLabels) continue
             val predicate = interaction.safeText("predicate", 120)
             if (predicate.isBlank() || SensitiveContentClassifier.isSensitive(predicate)) continue
+            val negative = isNegative(interaction.safeText("polarity", 24)) || isNegative(predicate)
+            val normalizedPredicate = relationText(predicate)
             val relation = when {
-                predicate.contains("standing beside", ignoreCase = true) -> PersonVisualRelation.STANDING_BESIDE
-                predicate.contains("sitting beside", ignoreCase = true) -> PersonVisualRelation.SITTING_BESIDE
-                else -> PersonVisualRelation.INTERACTING_WITH
+                normalizedPredicate.contains("standing beside") -> PersonVisualRelation.STANDING_BESIDE
+                normalizedPredicate.contains("sitting beside") -> PersonVisualRelation.SITTING_BESIDE
+                normalizedPredicate.contains("interact") -> PersonVisualRelation.INTERACTING_WITH
+                else -> PersonVisualRelation.ACTION
             }
             add(
                 PersonVisualFactRecord(
@@ -369,6 +371,7 @@ internal object SemanticEnrichmentCodec {
                     targetClusterId = target.clusterId,
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
+                    verdict = if (negative) PersonVisualVerdict.VERIFIED_FALSE else PersonVisualVerdict.VERIFIED_TRUE,
                 ),
             )
         }
@@ -396,16 +399,16 @@ internal object SemanticEnrichmentCodec {
         visibility: PersonVisibility,
         modelVersion: String,
     ): PersonVisualFactRecord? {
-        val itemType = item.optString("itemType").trim().takeIf(String::isNotBlank) ?: return null
+        val itemType = item.safeText("itemType", 120).takeIf(String::isNotBlank) ?: return null
         if (itemType.length > 120 || SensitiveContentClassifier.isSensitive(itemType)) return null
         val confidence = item.opt("confidence").asConfidence() ?: return null
-        val category = enumValue<WornItemCategory>(item.optString("category")) ?: defaultCategory
-        val bodyRegion = enumValue<BodyRegion>(item.optString("bodyRegion")) ?: inferredBodyRegion(category, visibility)
+        val category = enumValue<WornItemCategory>(item.safeText("category", 48)) ?: defaultCategory
+        val bodyRegion = enumValue<BodyRegion>(item.safeText("bodyRegion", 48)) ?: inferredBodyRegion(category, visibility)
         val evidenceRegion = item.optJSONArray("region")?.normalizedRegion()
         val attributes = buildMap {
             item.optJSONArray("colors")?.strings()?.takeIf(List<String>::isNotEmpty)?.let { put("colors", it) }
             listOf("pattern", "material", "style", "length", "sleeves").forEach { key ->
-                item.optString(key).trim().takeIf(String::isNotBlank)?.let { put(key, listOf(it.take(120))) }
+                item.safeText(key, 120).takeIf(String::isNotBlank)?.let { put(key, listOf(it)) }
             }
         }
         val value = buildString {
@@ -452,12 +455,50 @@ internal object SemanticEnrichmentCodec {
 
     private fun JSONArray.strings(): List<String> = buildList {
         for (index in 0 until minOf(length(), 12)) {
-            optString(index).trim().takeIf { it.isNotBlank() && it.length <= 120 }?.let(::add)
+            safeText(index, 120).takeIf(String::isNotBlank)?.let(::add)
         }
     }
 
     private fun JSONObject.safeText(key: String, maxLength: Int): String =
-        optString(key).trim().take(maxLength).takeUnless(SensitiveContentClassifier::isSensitive).orEmpty()
+        (opt(key) as? String)
+            ?.trim()
+            ?.takeUnless {
+                it.isBlank() ||
+                    it.equals("null", ignoreCase = true) ||
+                    it.equals("undefined", ignoreCase = true) ||
+                    it.equals("unknown", ignoreCase = true)
+            }
+            ?.take(maxLength)
+            ?.takeUnless(SensitiveContentClassifier::isSensitive)
+            .orEmpty()
+
+    private fun JSONArray.safeText(index: Int, maxLength: Int): String =
+        (opt(index) as? String)
+            ?.trim()
+            ?.takeUnless {
+                it.isBlank() ||
+                    it.equals("null", ignoreCase = true) ||
+                    it.equals("undefined", ignoreCase = true) ||
+                    it.equals("unknown", ignoreCase = true)
+            }
+            ?.take(maxLength)
+            ?.takeUnless(SensitiveContentClassifier::isSensitive)
+            .orEmpty()
+
+    private fun normalizedActionRelation(action: String): PersonVisualRelation = when {
+        relationText(action).startsWith("hold") -> PersonVisualRelation.HOLDING
+        relationText(action).startsWith("carry") -> PersonVisualRelation.CARRYING
+        relationText(action).startsWith("us") -> PersonVisualRelation.USING
+        else -> PersonVisualRelation.ACTION
+    }
+
+    private fun relationText(value: String): String = value.lowercase(Locale.ROOT)
+        .replace(Regex("\\b(?:does not|doesn't|is not|isn't|not|never|without|no)\\b"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+
+    private fun isNegative(value: String): Boolean = value.isNotBlank() &&
+        Regex("(?i)\\b(?:not|never|without|no|doesn't|does not|isn't|is not)\\b").containsMatchIn(value)
 
     private fun Any?.asConfidence(): Float? = when (this) {
         is Number -> toFloat()
