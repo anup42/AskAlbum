@@ -5,19 +5,19 @@
             android:name=".TestSeedContentProvider"
             android:authorities="${applicationId}.testseed"
             android:enabled="true"
-            android:exported="true"
+            android:exported="false"
             android:permission="android.permission.DUMP" />
         <service
             android:name=".TestGallerySeederService"
             android:enabled="true"
-            android:exported="true"
+            android:exported="false"
             android:permission="android.permission.DUMP"
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
         <receiver
             android:name=".TestGallerySeederReceiver"
             android:enabled="true"
-            android:exported="true"
+            android:exported="false"
             android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="io.github.anup42.askalbum.test.SEED_GALLERY" />
@@ -33,7 +33,7 @@
         <receiver
             android:name=".TestGemmaModelReceiver"
             android:enabled="true"
-            android:exported="true"
+            android:exported="false"
             android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="io.github.anup42.askalbum.test.DOWNLOAD_GEMMA" />
@@ -44,7 +44,7 @@
         <activity
             android:name=".TestGemmaDownloadActivity"
             android:excludeFromRecents="true"
-            android:exported="true"
+            android:exported="false"
             android:permission="android.permission.DUMP"
             android:finishOnTaskLaunch="true"
             android:noHistory="true"

@@ -39,6 +39,8 @@ not represented as a GitHub Actions pass.
 - Phase 6 evidence: migration 19->20 adds shared generation provenance to
   semantic facts, captions, person facts, and caption chunks; legacy captions
   remain available without cross-generation structured-fact backfill.
+- Phase 7 hardening: debug-only seed/model components are same-app-only
+  (`exported=false`) and retain the `DUMP` permission defense in depth.
 
 ## Privacy boundary
 
