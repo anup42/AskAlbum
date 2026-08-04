@@ -115,6 +115,24 @@ class ComprehensiveSemanticCaptionTest {
     }
 
     @Test
+    fun staticImageStoresSubjectAndNoVisibleActivity() {
+        val raw = """
+            {"imageSubject":"medication blister pack","sceneSummary":"A close-up photograph of a medication blister pack.",
+             "observedActivity":null,"activityState":"NONE_VISIBLE",
+             "primaryActivity":{"label":"viewing medication packaging","confidence":0.9},
+             "detailedCaption":"A close-up photograph of a medication blister pack on a plain surface.",
+             "captionConfidence":0.9,"people":[],"facts":[]}
+        """.trimIndent()
+
+        val result = SemanticEnrichmentCodec.decode(job, raw, "fixture", emptyList())
+
+        assertEquals("medication blister pack", result.facts.single { it.predicate == "image_subject" }.value)
+        assertEquals("NONE_VISIBLE", result.facts.single { it.predicate == "activity_state" }.value)
+        assertTrue(result.facts.none { it.predicate == "primary_activity" })
+        assertTrue(result.personFacts.isEmpty())
+    }
+
+    @Test
     fun nullPlaceholdersAndNegativeActionsCannotBecomePositiveFacts() {
         val raw = """
             {"sceneSummary":"Two people are indoors.",

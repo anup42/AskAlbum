@@ -11,6 +11,7 @@ enum class BodyRegion { HEAD, NECK, UPPER_BODY, LOWER_BODY, FULL_BODY, FEET, HAN
 enum class PersonVisibility { FULL_BODY, UPPER_BODY, LOWER_BODY, FACE_ONLY, PARTIAL, OCCLUDED, UNKNOWN }
 enum class PersonAssociationStatus { CONFIDENT, AMBIGUOUS, UNAVAILABLE }
 enum class PersonVisualVerdict { VERIFIED_TRUE, VERIFIED_FALSE, AMBIGUOUS, NOT_VISIBLE }
+enum class ActivityState { OBSERVED, NONE_VISIBLE, AMBIGUOUS, NOT_APPLICABLE }
 
 data class SemanticCaptionPersonRefRecord(
     val personRef: String,
@@ -265,13 +266,30 @@ internal object SemanticEnrichmentCodec {
             )
         }
 
+        root.safeText("imageSubject", 600).takeIf(String::isNotBlank)?.let {
+            addFact("image_subject", it, defaultConfidence)
+        }
         root.safeText("sceneSummary", 600).takeIf(String::isNotBlank)?.let {
             addFact("scene_summary", it, defaultConfidence)
         }
-        root.optJSONObject("primaryActivity")?.let { activity ->
-            addFact("primary_activity", activity.safeText("label", 240), activity.opt("confidence").asConfidence())
-            activity.optJSONArray("evidence")?.strings()?.forEach {
-                addFact("activity_indicator", it, activity.opt("confidence").asConfidence())
+        val primaryActivity = root.optJSONObject("primaryActivity")
+        val explicitObservedActivity = root.safeText("observedActivity", 240)
+        val explicitState = enumValue<ActivityState>(root.safeText("activityState", 40))
+        val activityState = explicitState ?: when {
+            explicitObservedActivity.isNotBlank() || primaryActivity?.safeText("label", 240).orEmpty().isNotBlank() ->
+                ActivityState.OBSERVED
+            else -> ActivityState.NONE_VISIBLE
+        }
+        addFact("activity_state", activityState.name, defaultConfidence)
+        if (activityState == ActivityState.OBSERVED) {
+            explicitObservedActivity.takeIf(String::isNotBlank)?.let {
+                addFact("observed_activity", it, defaultConfidence)
+            }
+            primaryActivity?.let { activity ->
+                addFact("primary_activity", activity.safeText("label", 240), activity.opt("confidence").asConfidence())
+                activity.optJSONArray("evidence")?.strings()?.forEach {
+                    addFact("activity_indicator", it, activity.opt("confidence").asConfidence())
+                }
             }
         }
         val indicators = root.optJSONArray("occasionIndicators") ?: JSONArray()

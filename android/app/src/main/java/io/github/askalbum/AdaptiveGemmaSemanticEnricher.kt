@@ -55,6 +55,10 @@ class AdaptiveGemmaSemanticEnricher(
         clothing, signs, or other evidence suggest an occasion, report it only as a possibleOccasion with confidence and list
         the supporting occasionIndicators. Do not present an inferred occasion as confirmed. Begin detailedCaption with a natural
         scene-and-activity summary, then continue with all other grounded search-useful details.
+        Distinguish the image subject from an observed activity. A stationary product, note, or document has no visible activity;
+        use activityState NONE_VISIBLE and observedActivity null. A screenshot or other non-physical scene may use
+        NOT_APPLICABLE. Use OBSERVED only when a visible person, animal, or physical process performs an action, and AMBIGUOUS
+        when the action or body association is unclear. Never invent viewing, displaying, writing, or handling when it is not visible.
         Write a comprehensive detailedCaption covering every search-useful visible scene, setting, occasion cue, labelled person,
         clothing, footwear, headwear, accessory, jewelry, eyewear, bag, carried or held object, action, pose, interaction,
         foreground and background object, animal, food, vehicle, furniture, decoration, color, pattern, material, style,
@@ -63,7 +67,10 @@ class AdaptiveGemmaSemanticEnricher(
         Use P labels only. Never infer identities, relationships, occupations, private traits, sensitive attributes, exact location,
         or an event without visible cues. Never output sensitive OCR values, paths, filenames, URIs, tools, passwords, payment data,
         phone numbers, emails, account data, or identity numbers.
-        Shape: {"sceneSummary":"Two people are posing beside and cutting a decorated cake in a living room.",
+        Shape: {"imageSubject":"cake-cutting scene in a decorated living room",
+        "sceneSummary":"Two people are posing beside and cutting a decorated cake in a living room.",
+        "observedActivity":"P1 is cutting the cake while P2 stands beside P1",
+        "activityState":"OBSERVED",
         "primaryActivity":{"label":"posing beside and cutting a cake","confidence":0.95,
         "evidence":["P1 is holding a knife near the cake","P2 is standing beside P1"]},
         "actions":[{"subjectRef":"P1","action":"cutting","objectRef":"decorated cake","confidence":0.96,
@@ -84,7 +91,9 @@ class AdaptiveGemmaSemanticEnricher(
         bodyRegion: HEAD, NECK, UPPER_BODY, LOWER_BODY, FULL_BODY, FEET, HAND, or UNKNOWN.
         Include every visible worn item, not only shirts: dresses, sarees, suits, trousers, shoes, sandals, hats, glasses,
         jewelry, bags, and uncommon items using OTHER_WORN_ITEM with a safe itemType.
-        sceneSummary must describe the visible scene and main activity, not only list objects or clothing.
+        imageSubject must state what the image is about without inventing an action. sceneSummary must describe the visible scene and
+        main activity when activityState is OBSERVED, or the subject and setting when it is not. observedActivity is null unless
+        activityState is OBSERVED. activityState must be OBSERVED, NONE_VISIBLE, AMBIGUOUS, or NOT_APPLICABLE.
         primaryActivity, actions, interactions, occasionIndicators, and possibleOccasion may be null or empty when unsupported.
         Every action or interaction personRef must use a supplied P label. possibleOccasion is always an uncertain visual
         interpretation in this call: isDirectlyConfirmed must be false. Never infer whose occasion it is.

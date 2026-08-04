@@ -82,6 +82,9 @@ not represented as a GitHub Actions pass.
 - Shared Gemma calls now carry typed per-call seed, temperature, structured
   output, and bounded output-token options while retaining one initialized
   session and GPU/MTP selection.
+- Activity-aware semantic facts now persist `image_subject` and an explicit
+  `activity_state`; static images default to `NONE_VISIBLE` and cannot promote
+  a model-supplied activity unless the output declares `OBSERVED`.
 
 ## Privacy boundary
 
