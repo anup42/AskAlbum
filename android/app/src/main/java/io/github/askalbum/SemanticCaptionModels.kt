@@ -85,7 +85,7 @@ internal object SemanticEnrichmentCodec {
     private const val MAX_CAPTION_LENGTH = 4_000
     private const val MAX_PEOPLE = 12
     private const val MAX_ITEMS_PER_PERSON = 24
-    internal const val PROMPT_VERSION = "adaptive-comprehensive-caption-v4"
+    internal const val PROMPT_VERSION = CURRENT_SEMANTIC_PROMPT_VERSION
 
     fun decode(
         job: SemanticEnrichmentJobRecord,

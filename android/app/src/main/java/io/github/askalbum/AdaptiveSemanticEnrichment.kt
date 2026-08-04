@@ -105,6 +105,8 @@ data class EventRepresentativePlan(
     val reason: String,
 )
 
+internal const val CURRENT_SEMANTIC_PROMPT_VERSION = "adaptive-comprehensive-caption-v5"
+
 data class SemanticEnrichmentPlan(
     val groups: List<VisualGroupPlan>,
     val eventRepresentatives: List<EventRepresentativePlan>,
@@ -115,7 +117,7 @@ internal object PersonalSemanticMemoryPolicy {
     const val JOB_PREFIX = "personal_media:"
     const val CAPTION_POLICY_VERSION = "personal-caption-policy-v1"
     const val BODY_REGION_VERSION = "person-body-regions-v1"
-    const val PROMPT_VERSION = "adaptive-comprehensive-caption-v4"
+    const val PROMPT_VERSION = CURRENT_SEMANTIC_PROMPT_VERSION
 
     private val familyRelationships = setOf(
         "me", "mother", "mom", "mum", "father", "dad", "brother", "sister",

@@ -85,6 +85,9 @@ not represented as a GitHub Actions pass.
 - Activity-aware semantic facts now persist `image_subject` and an explicit
   `activity_state`; static images default to `NONE_VISIBLE` and cannot promote
   a model-supplied activity unless the output declares `OBSERVED`.
+- Generic facts, activity facts, person facts, captions, and chunks from one
+  Gemma response now share the same active prompt version, preventing valid
+  facts from being dropped as cross-prompt provenance.
 
 ## Privacy boundary
 

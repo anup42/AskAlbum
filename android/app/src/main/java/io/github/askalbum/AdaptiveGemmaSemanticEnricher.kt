@@ -156,7 +156,7 @@ internal object SemanticFactCodec {
                         evidenceMediaId = job.representativeMediaId,
                         applicability = applicability,
                         modelVersion = modelVersion,
-                        promptVersion = PROMPT_VERSION,
+                        promptVersion = CURRENT_SEMANTIC_PROMPT_VERSION,
                     ),
                 )
             }
@@ -217,7 +217,7 @@ internal object SemanticFactCodec {
             ?: "EVIDENCE_MEDIA_ONLY"
 
     private object Rules {
-        const val PROMPT_VERSION = "adaptive-semantic-facts-v2"
+        const val PROMPT_VERSION = CURRENT_SEMANTIC_PROMPT_VERSION
         const val MAX_FACTS = 20
         const val MAX_VALUE_LENGTH = 120
         val MALFORMED_CONFIDENCE = Regex(

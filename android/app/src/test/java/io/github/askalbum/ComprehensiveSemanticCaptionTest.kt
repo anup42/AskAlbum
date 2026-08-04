@@ -56,6 +56,7 @@ class ComprehensiveSemanticCaptionTest {
         assertEquals(BodyRegion.FEET, result.personFacts.single { it.itemType == "shoes" }.bodyRegion)
         assertEquals("person_wife", result.personFacts.single { it.itemType == "shoes" }.clusterId)
         assertTrue(requireNotNull(result.caption).text.startsWith("P1 and P2 are posing together"))
+        assertTrue(result.facts.all { it.promptVersion == requireNotNull(result.caption).promptVersion })
         assertEquals("posing together", result.facts.single { it.predicate == "primary_activity" }.value)
         assertEquals(
             "POSSIBLE_INFERENCE",
