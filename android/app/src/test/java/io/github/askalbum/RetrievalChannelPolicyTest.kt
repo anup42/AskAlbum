@@ -8,6 +8,14 @@ import org.junit.Test
 
 class RetrievalChannelPolicyTest {
     @Test
+    fun captionCoverageIsPartialWhenOnlySomeEligibleMediaHaveCaptions() {
+        assertEquals(ChannelStatus.PARTIAL, CaptionCoveragePolicy.status(10, 0))
+        assertEquals(ChannelStatus.PARTIAL, CaptionCoveragePolicy.status(10, 3))
+        assertEquals(ChannelStatus.SUCCESS, CaptionCoveragePolicy.status(10, 10))
+        assertEquals(ChannelStatus.SUCCESS, CaptionCoveragePolicy.status(0, 0))
+    }
+
+    @Test
     fun missingModelIsUnavailableAndDoesNotExecuteSearch() = runBlocking {
         var searched = false
         val report = SemanticChannelReporter.execute(

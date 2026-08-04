@@ -636,10 +636,10 @@ class GalleryRepository(context: Context) {
             eventMediaRank.mapNotNull { id -> itemById[id]?.let { SearchHit(it, 1.0, emptyList()) } },
             modelVersion = EventCompiler.PRODUCER_VERSION,
         )
-        val captionCoverage = database.semanticCaptionEvidenceCount()
+        val captionCoverage = database.semanticCaptionEvidenceCount(eligibleIds)
         val captionChannelReport = RetrievalChannelReport(
             RetrievalChannel.CAPTION,
-            if (captionCoverage == 0) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
+            CaptionCoveragePolicy.status(eligibleIds.size, captionCoverage),
             allItems.size,
             captionCoverage,
             captionRanked.size,
