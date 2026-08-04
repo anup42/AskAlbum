@@ -553,7 +553,12 @@ class GalleryRepository(context: Context) {
             .mapNotNull { item -> score(item, terms, item.id in fullTextIds) }
             .sortedWith(compareByDescending<SearchHit> { it.score }.thenBy { it.item.title })
             .toList()
-        val semanticQueries = SemanticQueryVariants.from(plan)
+        val deterministicDocumentField = DeterministicDocumentQueryPolicy.field(plan)
+        val semanticQueries = if (deterministicDocumentField != null) {
+            emptyList()
+        } else {
+            SemanticQueryVariants.from(plan)
+        }
         val requiredPersonChunkClusters = PersonCaptionConstraintPolicy.requiredClusterIds(plan)
         val captionRanked = database.searchSemanticCaptions(
             semanticQueries + terms,
@@ -763,12 +768,10 @@ class GalleryRepository(context: Context) {
                 ),
             )
         }
-        val ranked = when (plan.sort) {
-            SortSpec.CAPTURE_TIME_DESC -> fusedHits.sortedWith(compareByDescending<SearchHit> { it.item.capturedAt ?: Long.MIN_VALUE }.thenByDescending { it.score })
-            SortSpec.CAPTURE_TIME_ASC -> fusedHits.sortedWith(compareBy<SearchHit> { it.item.capturedAt ?: Long.MAX_VALUE }.thenByDescending { it.score })
-            SortSpec.QUALITY -> fusedHits.sortedWith(compareByDescending<SearchHit> { it.item.qualityScore ?: 0f }.thenByDescending { it.score })
-            else -> fusedHits
-        }
+        val ranked = sortHits(
+            plan,
+            deterministicDocumentField?.let { deterministicDocumentHits(plan, allItems, it) } ?: fusedHits,
+        )
         val collapsed = if (plan.intent == QueryIntent.COUNT) ranked else DuplicateCollapse.collapse(ranked)
         val diverse = if (
             plan.intent == QueryIntent.FIND_MEDIA && (plan.grouping == Grouping.EVENT || plan.terms.size <= 3)
@@ -830,7 +833,11 @@ class GalleryRepository(context: Context) {
         } else {
             enriched
         }
-        val hits = verified.take(plan.limit.coerceIn(1, 100))
+        val hits = if (DeterministicDocumentQueryPolicy.requiresCompleteHits(plan)) {
+            verified
+        } else {
+            verified.take(plan.limit.coerceIn(1, 100))
+        }
         val visualChannelReport = RetrievalChannelReport(
             RetrievalChannel.VISUAL_VERIFICATION,
             when {
@@ -995,10 +1002,14 @@ class GalleryRepository(context: Context) {
         val deterministicResultSetFilter = plan.baseResultIds != null && plan.terms.isEmpty() &&
             plan.semanticClauses.isEmpty() && plan.filter != FilterExpression.True && !verification.applied
         val deterministicAggregation = plan.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
-            plan.aggregation != null && plan.semanticClauses.isEmpty() && !usedSemanticRetrieval && !verification.applied
+            plan.aggregation != null &&
+            (plan.semanticClauses.isEmpty() || DeterministicDocumentQueryPolicy.field(plan) != null) &&
+            !usedSemanticRetrieval && !verification.applied
+        val deterministicDocumentOperation = DeterministicDocumentQueryPolicy.field(plan) != null &&
+            !usedSemanticRetrieval && !verification.applied
         val exactness = RetrievalExactnessPolicy.resolve(
             allEligibleIndexed = readyItems == totalItems,
-            deterministicOperation = deterministicAggregation || deterministicResultSetFilter,
+            deterministicOperation = deterministicAggregation || deterministicResultSetFilter || deterministicDocumentOperation,
             semanticReport = semanticReport,
             verificationApplied = verification.applied,
         )
@@ -1175,6 +1186,22 @@ class GalleryRepository(context: Context) {
             )
         }
         return if (evidence.isEmpty()) hit else hit.copy(evidence = evidence + hit.evidence)
+    }
+
+    private fun deterministicDocumentHits(
+        plan: GalleryQueryPlan,
+        allItems: List<GalleryItem>,
+        field: OcrFactField,
+    ): List<SearchHit> = allItems.asSequence()
+        .filter { item -> database.ocrEntities(item.id, field.type).isNotEmpty() }
+        .map { item -> addDeterministicFactEvidence(SearchHit(item, 1.0, emptyList()), plan) }
+        .toList()
+
+    private fun sortHits(plan: GalleryQueryPlan, hits: List<SearchHit>): List<SearchHit> = when (plan.sort) {
+        SortSpec.CAPTURE_TIME_DESC -> hits.sortedWith(compareByDescending<SearchHit> { it.item.capturedAt ?: Long.MIN_VALUE }.thenByDescending { it.score })
+        SortSpec.CAPTURE_TIME_ASC -> hits.sortedWith(compareBy<SearchHit> { it.item.capturedAt ?: Long.MAX_VALUE }.thenByDescending { it.score })
+        SortSpec.QUALITY -> hits.sortedWith(compareByDescending<SearchHit> { it.item.qualityScore ?: 0f }.thenByDescending { it.score })
+        else -> hits
     }
 }
 
