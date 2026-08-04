@@ -3148,9 +3148,7 @@ class GalleryDatabase(
             val where = if (userRequestedOnly) " AND user_requested=1" else ""
             selected = db.rawQuery(
                 "SELECT * FROM semantic_enrichment_job WHERE status=? AND attempt_count<? AND next_attempt_at<=?$where " +
-                    "ORDER BY user_requested DESC," +
-                    "CASE WHEN reason LIKE '${PersonalSemanticMemoryPolicy.JOB_PREFIX}%' THEN 0 ELSE 1 END," +
-                    "updated_at LIMIT 1",
+                    "ORDER BY ${SemanticEnrichmentPriority.sqlOrderBy()} LIMIT 1",
                 arrayOf(
                     SemanticEnrichmentStatus.PENDING.name,
                     IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
@@ -3283,7 +3281,11 @@ class GalleryDatabase(
             emptyArray(),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
         val latestError = db.rawQuery(
-            "SELECT error FROM semantic_enrichment_job WHERE error IS NOT NULL AND error<>'' ORDER BY updated_at DESC LIMIT 1",
+            "SELECT error FROM semantic_enrichment_job " +
+                "WHERE error IS NOT NULL AND error<>'' " +
+                "AND status IN ('FAILED','AUTH_REQUIRED') " +
+                "AND COALESCE(model_version,'') NOT LIKE 'superseded:%' " +
+                "ORDER BY updated_at DESC LIMIT 1",
             emptyArray(),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
         return SemanticMemoryProgress(

@@ -76,6 +76,9 @@ not represented as a GitHub Actions pass.
   downloads/assets and injects a deterministic fixture image/text embedding
   engine only when `MODEL_INDEPENDENT` is true. Production model-bearing
   variants still use the verified LiteRT/ONNX engine and signed packs.
+- Semantic enrichment claims now use deterministic work-class priority so
+  personal media cannot be starved by old representative requests; visible
+  latest errors ignore superseded jobs while diagnostic rows remain intact.
 
 ## Privacy boundary
 
