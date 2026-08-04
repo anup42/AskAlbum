@@ -58,6 +58,13 @@ not represented as a GitHub Actions pass.
 - Expired claims at the maximum item-attempt budget are quarantined as failed
   exhausted rather than re-entering `PENDING`; semantic claim selection also
   rejects durable rows at or above the retry limit.
+- Caption provenance hardening: Room migration 20->21 records generation-level
+  job/scope/media/model/prompt provenance; chunk backfill now requires matching
+  generation, scope, subject, evidence media, model, and prompt. Event/group
+  person facts are not persisted as media facts, and exact-duplicate sharing
+  requires a media fact plus verified digest and compatible dimensions.
+- Focused validation: `SemanticGenerationProvenanceTest`, `consumerDebug`
+  Kotlin compilation, and connected `GalleryMigration20To21Test` passed.
 
 ## Privacy boundary
 

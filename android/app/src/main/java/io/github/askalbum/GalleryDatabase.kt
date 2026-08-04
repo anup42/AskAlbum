@@ -3340,16 +3340,14 @@ class GalleryDatabase(
                 ?: "job:${job.id}"
             val facts = result.facts.map { it.copy(generationId = generationId) }
             val personFacts = result.personFacts.map { it.copy(generationId = generationId) }
+            val storedPersonFacts = personFacts.takeIf { job.scope == SemanticFactScope.MEDIA }.orEmpty()
             val caption = result.caption?.copy(generationId = generationId)
             var storedCaption: SemanticCaptionRecord? = null
             facts.forEach { fact ->
                 val exactDuplicateTargets = if (
                     fact.applicability == "SAFE_FOR_EXACT_DUPLICATES" &&
-                    fact.scope in setOf(
-                        SemanticFactScope.MEDIA,
-                        SemanticFactScope.VISUAL_GROUP,
-                        SemanticFactScope.EXACT_DUPLICATE_GROUP,
-                    )
+                    fact.scope == SemanticFactScope.MEDIA &&
+                    fact.subjectId == fact.evidenceMediaId
                 ) {
                     exactDuplicateMediaIds(db, fact.evidenceMediaId)
                 } else {
@@ -3357,22 +3355,23 @@ class GalleryDatabase(
                 }
                 val targets = exactDuplicateTargets.ifEmpty { setOf(fact.subjectId) }
                 targets.forEach { subjectId ->
-                    val stable = "${fact.scope}|$subjectId|${fact.predicate}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}"
+                    val isExactDuplicateCopy = exactDuplicateTargets.isNotEmpty() && subjectId != fact.evidenceMediaId
+                    val storedScope = if (isExactDuplicateCopy) SemanticFactScope.MEDIA else fact.scope
+                    val storedSubjectId = if (isExactDuplicateCopy) subjectId else fact.subjectId
+                    val storedEvidenceMediaId = if (isExactDuplicateCopy) subjectId else fact.evidenceMediaId
+                    val storedApplicability = if (isExactDuplicateCopy) "EXACT_DUPLICATE_SHARED" else fact.applicability
+                    val stable = "${storedScope}|$storedSubjectId|${fact.predicate}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}|$storedApplicability"
                     val id = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
-                    val isExactDuplicateCopy = exactDuplicateTargets.isNotEmpty()
                     db.insertWithOnConflict("semantic_fact", null, ContentValues().apply {
                         put("id", id)
-                        put("scope", if (isExactDuplicateCopy) SemanticFactScope.MEDIA.name else fact.scope.name)
-                        put("subject_id", subjectId)
+                        put("scope", storedScope.name)
+                        put("subject_id", storedSubjectId)
                         put("predicate", fact.predicate)
                         put("value", fact.value)
                         put("confidence", fact.confidence)
-                        put("evidence_media_id", if (isExactDuplicateCopy) subjectId else fact.evidenceMediaId)
+                        put("evidence_media_id", storedEvidenceMediaId)
                         if (fact.region == null) putNull("region") else put("region", JSONArray(fact.region).toString())
-                        put(
-                            "applicability",
-                            if (isExactDuplicateCopy) "EXACT_DUPLICATE_SHARED" else fact.applicability,
-                        )
+                        put("applicability", storedApplicability)
                         put("model_version", fact.modelVersion)
                         put("prompt_version", fact.promptVersion)
                         put("generation_id", fact.generationId)
@@ -3423,7 +3422,7 @@ class GalleryDatabase(
                     updatedAt = now,
                 )
             }
-            personFacts.forEach { fact ->
+            storedPersonFacts.forEach { fact ->
                 val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}|${fact.generationId}"
                 db.insertWithOnConflict("person_attribute_fact", null, ContentValues().apply {
                     put("id", UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString())
@@ -3449,7 +3448,28 @@ class GalleryDatabase(
                     put("updated_at", now)
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
-            storedCaption?.let { replaceCaptionChunks(db, it, facts, personFacts) }
+            storedCaption?.let { captionRecord ->
+                replaceCaptionChunks(
+                    db,
+                    captionRecord,
+                    SemanticCaptionProvenance.matchingFacts(captionRecord, facts),
+                    SemanticCaptionProvenance.matchingPersonFacts(captionRecord, storedPersonFacts),
+                )
+            }
+            val provenanceModel = caption?.modelVersion ?: facts.firstOrNull()?.modelVersion ?: "unknown"
+            val provenancePrompt = caption?.promptVersion ?: facts.firstOrNull()?.promptVersion ?: "unknown"
+            db.insertWithOnConflict("semantic_generation_provenance", null, ContentValues().apply {
+                put("generation_id", generationId)
+                if (storedCaption == null) putNull("caption_id") else put("caption_id", storedCaption!!.id)
+                put("job_id", job.id)
+                put("scope", caption?.scope?.name ?: job.scope.name)
+                put("scope_id", caption?.subjectId ?: job.subjectId)
+                put("evidence_media_id", caption?.evidenceMediaId ?: job.representativeMediaId)
+                put("model_version", provenanceModel)
+                put("prompt_version", provenancePrompt)
+                put("body_region_version", caption?.bodyRegionVersion ?: PersonalSemanticMemoryPolicy.BODY_REGION_VERSION)
+                put("created_at", now)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
             val producer = caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
             val completionPrefix = "caption-v4"
             db.update("semantic_enrichment_job", ContentValues().apply {
@@ -3673,14 +3693,16 @@ class GalleryDatabase(
             """.trimIndent(),
             arrayOf(SemanticCaptionChunker.POLICY_VERSION, limit.coerceIn(1, 32).toString()),
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(readSemanticCaption(cursor)) } }
-        captions.forEach { caption ->
-            replaceCaptionChunks(
-                db,
-                caption,
-                semanticFactsForMedia(caption.evidenceMediaId),
-                personVisualFactsForMedia(caption.evidenceMediaId),
-            )
-        }
+            captions.forEach { caption ->
+                val facts = semanticFactsForMedia(caption.evidenceMediaId)
+                val personFacts = personVisualFactsForMedia(caption.evidenceMediaId)
+                replaceCaptionChunks(
+                    db,
+                    caption,
+                    SemanticCaptionProvenance.matchingFacts(caption, facts),
+                    SemanticCaptionProvenance.matchingPersonFacts(caption, personFacts),
+                )
+            }
         captions.size
     }
 
@@ -4002,6 +4024,9 @@ class GalleryDatabase(
     private fun exactDuplicateMediaIds(db: GallerySqlDatabase, mediaId: String): Set<String> = db.rawQuery(
         "SELECT sibling.id FROM media_item source JOIN media_item sibling " +
             "ON sibling.exact_content_digest=source.exact_content_digest " +
+            "AND source.width>0 AND source.height>0 AND sibling.width>0 AND sibling.height>0 " +
+            "AND ((sibling.width=source.width AND sibling.height=source.height) OR " +
+            "(sibling.width=source.height AND sibling.height=source.width)) " +
             "WHERE source.id=? AND source.exact_content_digest IS NOT NULL",
         arrayOf(mediaId),
     ).use { cursor ->

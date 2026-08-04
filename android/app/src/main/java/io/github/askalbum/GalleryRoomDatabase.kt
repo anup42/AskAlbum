@@ -579,6 +579,26 @@ data class SemanticEnrichmentJobEntity(
     @ColumnInfo(name = "last_progress_at") val lastProgressAt: Long?,
 )
 
+@Entity(
+    tableName = "semantic_generation_provenance",
+    indices = [
+        Index(name = "semantic_generation_job_idx", value = ["job_id"]),
+        Index(name = "semantic_generation_evidence_idx", value = ["evidence_media_id"]),
+    ],
+)
+data class SemanticGenerationProvenanceEntity(
+    @PrimaryKey @ColumnInfo(name = "generation_id") val generationId: String,
+    @ColumnInfo(name = "caption_id") val captionId: String?,
+    @ColumnInfo(name = "job_id") val jobId: String,
+    val scope: String,
+    @ColumnInfo(name = "scope_id") val scopeId: String,
+    @ColumnInfo(name = "evidence_media_id") val evidenceMediaId: String,
+    @ColumnInfo(name = "model_version") val modelVersion: String,
+    @ColumnInfo(name = "prompt_version") val promptVersion: String,
+    @ColumnInfo(name = "body_region_version") val bodyRegionVersion: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+)
+
 @Database(
     entities = [
         MediaItemEntity::class,
@@ -608,8 +628,9 @@ data class SemanticEnrichmentJobEntity(
         SemanticCaptionChunkEntity::class,
         SemanticCaptionChunkFtsEntity::class,
         SemanticEnrichmentJobEntity::class,
+        SemanticGenerationProvenanceEntity::class,
     ],
-    version = 20,
+    version = 21,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -640,6 +661,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_17_18,
             MIGRATION_18_19,
             MIGRATION_19_20,
+            MIGRATION_20_21,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1012,6 +1034,21 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE semantic_caption ADD COLUMN generation_id TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE semantic_caption_chunk ADD COLUMN generation_id TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN generation_id TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        internal val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS semantic_generation_provenance (" +
+                        "generation_id TEXT NOT NULL, caption_id TEXT, job_id TEXT NOT NULL, " +
+                        "scope TEXT NOT NULL, scope_id TEXT NOT NULL, evidence_media_id TEXT NOT NULL, " +
+                        "model_version TEXT NOT NULL, prompt_version TEXT NOT NULL, " +
+                        "body_region_version TEXT NOT NULL, created_at INTEGER NOT NULL, " +
+                        "PRIMARY KEY(generation_id))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_generation_job_idx ON semantic_generation_provenance(job_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_generation_evidence_idx ON semantic_generation_provenance(evidence_media_id)")
             }
         }
 

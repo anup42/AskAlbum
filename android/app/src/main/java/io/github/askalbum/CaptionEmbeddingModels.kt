@@ -90,6 +90,35 @@ data class CaptionVectorSearchReport(
     val errorCode: String? = null,
 )
 
+internal object SemanticCaptionProvenance {
+    fun matchingFacts(
+        caption: SemanticCaptionRecord,
+        facts: List<SemanticFactRecord>,
+    ): List<SemanticFactRecord> = facts.filter {
+        caption.generationId.isNotBlank() &&
+            it.generationId == caption.generationId &&
+            it.scope == caption.scope &&
+            it.subjectId == caption.subjectId &&
+            it.evidenceMediaId == caption.evidenceMediaId &&
+            it.modelVersion == caption.modelVersion &&
+            it.promptVersion == caption.promptVersion
+    }
+
+    fun matchingPersonFacts(
+        caption: SemanticCaptionRecord,
+        personFacts: List<PersonVisualFactRecord>,
+    ): List<PersonVisualFactRecord> {
+        if (caption.scope != SemanticFactScope.MEDIA || caption.subjectId != caption.evidenceMediaId) return emptyList()
+        return personFacts.filter {
+            caption.generationId.isNotBlank() &&
+                it.generationId == caption.generationId &&
+                it.mediaId == caption.evidenceMediaId &&
+                it.modelVersion == caption.modelVersion &&
+                it.promptVersion == caption.promptVersion
+        }
+    }
+}
+
 internal object SemanticCaptionChunker {
     const val POLICY_VERSION = "caption-chunks-v3"
     const val MAX_CHUNKS_PER_CAPTION = 24
@@ -104,22 +133,8 @@ internal object SemanticCaptionChunker {
         personFacts: List<PersonVisualFactRecord>,
     ): List<SemanticCaptionChunkRecord> {
         if (caption.text.isBlank() || SensitiveContentClassifier.isSensitive(caption.text)) return emptyList()
-        val correlatedFacts = facts.filter {
-            caption.generationId.isNotBlank() &&
-                it.generationId == caption.generationId &&
-                it.scope == caption.scope &&
-                it.subjectId == caption.subjectId &&
-                it.evidenceMediaId == caption.evidenceMediaId &&
-                it.modelVersion == caption.modelVersion &&
-                it.promptVersion == caption.promptVersion
-        }
-        val correlatedPersonFacts = personFacts.filter {
-            caption.generationId.isNotBlank() &&
-                it.generationId == caption.generationId &&
-                it.mediaId == caption.evidenceMediaId &&
-                it.modelVersion == caption.modelVersion &&
-                it.promptVersion == caption.promptVersion
-        }
+        val correlatedFacts = SemanticCaptionProvenance.matchingFacts(caption, facts)
+        val correlatedPersonFacts = SemanticCaptionProvenance.matchingPersonFacts(caption, personFacts)
         val candidates = mutableListOf<Candidate>()
 
         correlatedPersonFacts
