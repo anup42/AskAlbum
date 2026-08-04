@@ -642,7 +642,7 @@ class GalleryRepository(context: Context) {
             CaptionCoveragePolicy.status(eligibleIds.size, captionCoverage),
             eligibleIds.size,
             captionCoverage,
-            captionRanked.size,
+            captionCoverage,
             captionRanked.mapNotNull { match ->
                 itemById[match.mediaId]?.let { SearchHit(it, match.score, emptyList()) }
             },
