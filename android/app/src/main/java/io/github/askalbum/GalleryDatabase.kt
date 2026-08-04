@@ -1855,7 +1855,7 @@ class GalleryDatabase(
         modelVersion: String,
     ) {
         require(PERSON_ID.matches(clusterId) && predicate.isNotBlank() && value.isNotBlank()) { "Invalid person fact" }
-        val id = "$mediaId:$clusterId:${predicate.lowercase(Locale.ROOT).hashCode().toUInt()}"
+        val id = "$mediaId:$clusterId:${StableDerivedId.sha256(predicate.lowercase(Locale.ROOT))}"
         writableDatabase.insertWithOnConflict("person_attribute_fact", null, ContentValues().apply {
             put("id", id)
             put("media_id", mediaId)
