@@ -19,7 +19,7 @@ class GalleryIndexWorker(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (!jobControls.load().mediaAnalysisEnabled) return@withContext Result.success()
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
-        repository.recoverInterruptedJobs()
+        repository.recoverInterruptedJobs(setOf(IndexRecoveryPipeline.MEDIA_ANALYSIS))
         val budget = IndexingWorkerRunBudget()
         var batches = 0
         var processed = 0

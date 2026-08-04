@@ -30,7 +30,7 @@ class GalleryRepository(context: Context) {
 
     fun initialize(): IndexSummary {
         val restartWorkersAfterUpdate = consumeWorkerUpdateRestart()
-        database.recoverInterruptedJobs()
+        database.recoverInterruptedJobs(IndexRecoveryPipeline.ALL)
         val legacyCaptionJobs = database.queueLegacySemanticCaptionJobs()
         if (legacyCaptionJobs > 0 && indexingJobControlsStore.load().semanticMemoryEnabled) {
             SemanticEnrichmentScheduler.schedule(
@@ -282,7 +282,7 @@ class GalleryRepository(context: Context) {
     fun completeEmbedding(id: String, producerVersion: String) = database.completeEmbedding(id, producerVersion)
     fun failEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean): StageStatus =
         database.failEmbedding(id, producerVersion, message, permanent)
-    fun recoverInterruptedJobs() = database.recoverInterruptedJobs()
+    fun recoverInterruptedJobs(pipelines: Set<IndexRecoveryPipeline>) = database.recoverInterruptedJobs(pipelines)
     fun markIndexing(
         id: String,
         owner: String = "repository-direct",

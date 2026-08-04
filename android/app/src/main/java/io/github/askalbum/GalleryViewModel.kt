@@ -337,7 +337,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    repository.recoverInterruptedJobs()
+                    repository.recoverInterruptedJobs(IndexRecoveryPipeline.ALL)
                     IndexScheduler.restart(getApplication())
                     if (retrievalPacks.status().installed) EmbeddingIndexScheduler.restart(getApplication())
                     if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.restart(getApplication())
@@ -369,7 +369,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 withContext(Dispatchers.IO) {
                     val saved = repository.saveIndexingRunCriteria(criteria)
-                    repository.recoverInterruptedJobs()
+                    repository.recoverInterruptedJobs(IndexRecoveryPipeline.ALL)
                     IndexScheduler.restart(getApplication())
                     if (retrievalPacks.status().installed) EmbeddingIndexScheduler.restart(getApplication())
                     if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.restart(getApplication())
@@ -438,7 +438,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                             else SemanticEnrichmentScheduler.cancelAndWait(getApplication())
                         }
                     }
-                    repository.recoverInterruptedJobs()
+                    repository.recoverInterruptedJobs(IndexRecoveryPipeline.ALL)
                     Triple(controls, repository.indexSummary(), repository.semanticMemoryProgress())
                 }
             }.onSuccess { (controls, summary, semanticMemory) ->

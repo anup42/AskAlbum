@@ -24,7 +24,7 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (!jobControls.load().embeddingsEnabled) return@withContext Result.success()
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
-        repository.recoverInterruptedJobs()
+        repository.recoverInterruptedJobs(setOf(IndexRecoveryPipeline.EMBEDDING))
         val processor = EmbeddingIndexBatchProcessor(
             context = applicationContext,
             repository = repository,

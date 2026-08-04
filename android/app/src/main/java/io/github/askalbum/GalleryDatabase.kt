@@ -733,48 +733,63 @@ class GalleryDatabase(
         return status
     }
 
-    fun recoverInterruptedJobs() {
+    fun recoverInterruptedJobs(pipelines: Set<IndexRecoveryPipeline>) {
+        if (pipelines.isEmpty()) return
         val db = writableDatabase
         val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
-            db.execSQL(
-                "UPDATE media_item SET index_state='PENDING' WHERE index_state='INDEXING' AND id IN (" +
-                    "SELECT media_id FROM media_index_stage WHERE stage='THUMBNAIL' AND status='RUNNING' " +
-                    "AND lease_expires_at IS NOT NULL AND lease_expires_at<=?)",
-                arrayOf(now),
-            )
-            db.execSQL(
-                "UPDATE media_index_stage SET status='PENDING'," +
-                    "attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END," +
-                    "updated_at=?,error='lease_expired',lease_owner=NULL,lease_expires_at=NULL " +
-                    "WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?",
-                arrayOf(now, now),
-            )
-            db.execSQL(
-                """
-                UPDATE semantic_enrichment_job
-                SET status='PENDING',
-                    attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
-                    updated_at=$now,
-                    error='lease_expired',
-                    lease_owner=NULL,
-                    lease_expires_at=NULL
-                WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=$now
-                """.trimIndent(),
-            )
-            db.execSQL(
-                """
-                UPDATE semantic_caption_chunk
-                SET embedding_state='PENDING',
-                    attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
-                    updated_at=$now,
-                    error='lease_expired',
-                    lease_owner=NULL,
-                    lease_expires_at=NULL
-                WHERE embedding_state='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=$now
-                """.trimIndent(),
-            )
+            val mediaStages = IndexRecoveryPolicy.mediaStages(pipelines).map(IndexStage::name)
+            if (mediaStages.isNotEmpty()) {
+                val placeholders = mediaStages.joinToString(",") { "?" }
+                if (IndexRecoveryPipeline.MEDIA_ANALYSIS in pipelines) {
+                    db.execSQL(
+                        "UPDATE media_item SET index_state='PENDING' WHERE index_state='INDEXING' AND id IN (" +
+                            "SELECT media_id FROM media_index_stage WHERE stage='THUMBNAIL' AND status='RUNNING' " +
+                            "AND lease_expires_at IS NOT NULL AND lease_expires_at<=?)",
+                        arrayOf<Any?>(now),
+                    )
+                }
+                db.execSQL(
+                    "UPDATE media_index_stage SET status='PENDING',updated_at=?,last_progress_at=?," +
+                        "next_attempt_at=0,error='lease_expired',lease_owner=NULL,lease_expires_at=NULL " +
+                        "WHERE status='RUNNING' AND stage IN ($placeholders) " +
+                        "AND lease_expires_at IS NOT NULL AND lease_expires_at<=?",
+                    arrayOf<Any?>(now, now, *mediaStages.toTypedArray(), now),
+                )
+            }
+            if (IndexRecoveryPipeline.SEMANTIC_MEMORY in pipelines) {
+                db.execSQL(
+                    """
+                    UPDATE semantic_enrichment_job
+                    SET status='PENDING',
+                        updated_at=?,
+                        last_progress_at=?,
+                        next_attempt_at=0,
+                        error='lease_expired',
+                        lease_owner=NULL,
+                        lease_expires_at=NULL
+                    WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?
+                    """.trimIndent(),
+                    arrayOf<Any?>(now, now, now),
+                )
+            }
+            if (IndexRecoveryPipeline.CAPTION_EMBEDDING in pipelines) {
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption_chunk
+                    SET embedding_state='PENDING',
+                        updated_at=?,
+                        last_progress_at=?,
+                        next_attempt_at=0,
+                        error='lease_expired',
+                        lease_owner=NULL,
+                        lease_expires_at=NULL
+                    WHERE embedding_state='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?
+                    """.trimIndent(),
+                    arrayOf<Any?>(now, now, now),
+                )
+            }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()

@@ -168,7 +168,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
     internal fun resumeIndexing(context: Context, runId: String, operationId: String? = null) {
         operationId?.let { require(OPERATION_ID.matches(it)) { "Invalid resume operation ID" } }
         val application = context.applicationContext as AskAlbumApplication
-        application.repository.recoverInterruptedJobs()
+        application.repository.recoverInterruptedJobs(IndexRecoveryPipeline.ALL)
         IndexScheduler.restart(context)
         if (application.services.semanticVectorStore.producerVersion() != null) {
             EmbeddingIndexScheduler.restart(context)
@@ -247,7 +247,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         val uris = seededUris(context, runId)
         val expected = uris.map(Uri::toString).toSet()
         val repository = (context.applicationContext as AskAlbumApplication).repository
-        repository.recoverInterruptedJobs()
+        repository.recoverInterruptedJobs(IndexRecoveryPipeline.ALL)
         val coverage = repository.indexCoverageForContentUris(expected)
         require(coverage.mediaCount == expected.size) { "Recovery changed row count: ${coverage.mediaCount}" }
         val stageRows = coverage.stageStatuses.values.sumOf { it.values.sum() }

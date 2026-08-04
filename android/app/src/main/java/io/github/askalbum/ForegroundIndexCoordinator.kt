@@ -61,7 +61,9 @@ internal class ForegroundIndexCoordinator(context: Context) {
         require(allowedMediaIds == null || allowedMediaIds.isNotEmpty()) { "Foreground index scope is empty" }
         IndexScheduler.cancelAndWait(appContext)
         EmbeddingIndexScheduler.cancelAndWait(appContext)
-        repository.recoverInterruptedJobs()
+        repository.recoverInterruptedJobs(
+            setOf(IndexRecoveryPipeline.MEDIA_ANALYSIS, IndexRecoveryPipeline.EMBEDDING),
+        )
         val started = SystemClock.elapsedRealtime()
         val job = currentCoroutineContext()[Job]
         var cycles = 0

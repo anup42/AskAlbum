@@ -44,7 +44,7 @@ internal class EmbeddingIndexBatchProcessor(
         val prepared = mutableListOf<Pair<GalleryItem, ModelImage>>()
         for (item in candidates) {
             if (!canContinue()) {
-                repository.recoverInterruptedJobs()
+                repository.recoverInterruptedJobs(setOf(IndexRecoveryPipeline.EMBEDDING))
                 return result(producer, allowedMediaIds, processed, retryableFailures, permanentFailures, stopped = true)
             }
             if (!repository.markEmbedding(item.id, producer, ownerId)) continue
@@ -63,7 +63,7 @@ internal class EmbeddingIndexBatchProcessor(
 
         if (prepared.isNotEmpty()) {
             if (!canContinue()) {
-                repository.recoverInterruptedJobs()
+                repository.recoverInterruptedJobs(setOf(IndexRecoveryPipeline.EMBEDDING))
                 return result(producer, allowedMediaIds, processed, retryableFailures, permanentFailures, stopped = true)
             }
             val embedded = try {

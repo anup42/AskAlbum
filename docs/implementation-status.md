@@ -52,6 +52,9 @@ not represented as a GitHub Actions pass.
   estimated.
 - COUNT wording now follows the answer exactness state rather than merely
   checking whether a semantic channel was present.
+- Index lease recovery is now pipeline-scoped; media, embeddings, People,
+  semantic memory, and caption embeddings cannot reclaim one another's expired
+  work, and lease recovery no longer decrements durable attempt counts.
 
 ## Privacy boundary
 

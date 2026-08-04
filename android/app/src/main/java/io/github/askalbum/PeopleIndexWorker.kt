@@ -24,6 +24,7 @@ class PeopleIndexWorker(
         if (!repository.peopleIndexStatus().enabled) return@withContext Result.success()
         if (!jobControls.load().peopleEnabled) return@withContext Result.success()
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
+        repository.recoverInterruptedJobs(setOf(IndexRecoveryPipeline.PEOPLE))
         val faceLease = services.faceEngines.acquireOrNull()
         val detector = if (faceLease == null) MlKitFaceDetectionEngine() else null
         val embedder = faceLease?.engine
