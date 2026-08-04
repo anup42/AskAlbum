@@ -3148,33 +3148,36 @@ class GalleryDatabase(
             val facts = result.facts
             var storedCaption: SemanticCaptionRecord? = null
             facts.forEach { fact ->
-                val targets = if (fact.applicability == "SAFE_FOR_EXACT_DUPLICATES") {
+                val exactDuplicateTargets = if (
+                    fact.applicability == "SAFE_FOR_EXACT_DUPLICATES" &&
+                    fact.scope in setOf(
+                        SemanticFactScope.MEDIA,
+                        SemanticFactScope.VISUAL_GROUP,
+                        SemanticFactScope.EXACT_DUPLICATE_GROUP,
+                    )
+                ) {
                     exactDuplicateMediaIds(db, fact.evidenceMediaId)
                 } else {
-                    setOf(fact.subjectId)
+                    emptySet()
                 }
+                val targets = exactDuplicateTargets.ifEmpty { setOf(fact.subjectId) }
                 targets.forEach { subjectId ->
                     val stable = "${fact.scope}|$subjectId|${fact.predicate}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}"
                     val id = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
+                    val isExactDuplicateCopy = exactDuplicateTargets.isNotEmpty()
                     db.insertWithOnConflict("semantic_fact", null, ContentValues().apply {
                         put("id", id)
-                    put(
-                        "scope",
-                        if (fact.applicability == "SAFE_FOR_EXACT_DUPLICATES") {
-                            SemanticFactScope.MEDIA.name
-                        } else if (subjectId == fact.evidenceMediaId) {
-                            fact.scope.name
-                        } else {
-                            SemanticFactScope.MEDIA.name
-                        },
-                    )
+                        put("scope", if (isExactDuplicateCopy) SemanticFactScope.MEDIA.name else fact.scope.name)
                         put("subject_id", subjectId)
                         put("predicate", fact.predicate)
                         put("value", fact.value)
                         put("confidence", fact.confidence)
-                        put("evidence_media_id", fact.evidenceMediaId)
+                        put("evidence_media_id", if (isExactDuplicateCopy) subjectId else fact.evidenceMediaId)
                         if (fact.region == null) putNull("region") else put("region", JSONArray(fact.region).toString())
-                        put("applicability", if (subjectId == fact.evidenceMediaId) fact.applicability else "EXACT_DUPLICATE_SHARED")
+                        put(
+                            "applicability",
+                            if (isExactDuplicateCopy) "EXACT_DUPLICATE_SHARED" else fact.applicability,
+                        )
                         put("model_version", fact.modelVersion)
                         put("prompt_version", fact.promptVersion)
                         put("updated_at", now)

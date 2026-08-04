@@ -795,6 +795,7 @@ class GalleryRepository(context: Context) {
                     it.applicability !in setOf(
                         "GROUP_CONTEXT_ONLY",
                         "LEGACY_GROUP_CONTEXT_ONLY",
+                        "LEGACY_SCOPE_UNCERTAIN",
                         "STALE_PERSON_BINDING",
                     )
             }

@@ -605,7 +605,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticCaptionChunkFtsEntity::class,
         SemanticEnrichmentJobEntity::class,
     ],
-    version = 18,
+    version = 19,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -634,6 +634,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_15_16,
             MIGRATION_16_17,
             MIGRATION_17_18,
+            MIGRATION_18_19,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -954,6 +955,49 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_cluster_idx ON semantic_caption_chunk(cluster_id)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_queue_idx ON semantic_caption_chunk(embedding_state,next_attempt_at)")
                 db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS semantic_caption_chunk_fts USING FTS4(chunk_id,exact_text)")
+            }
+        }
+
+        internal val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET scope='EVENT', applicability='LEGACY_EVENT_CONTEXT_ONLY'
+                    WHERE scope='MEDIA' AND applicability='EXACT_DUPLICATE_SHARED'
+                      AND EXISTS (
+                        SELECT 1 FROM gallery_event e
+                        WHERE CAST(e.id AS TEXT)=semantic_fact.subject_id
+                      )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET scope='VISUAL_GROUP', applicability='LEGACY_GROUP_CONTEXT_ONLY'
+                    WHERE scope='MEDIA' AND applicability='EXACT_DUPLICATE_SHARED'
+                      AND EXISTS (
+                        SELECT 1 FROM visual_group g
+                        WHERE g.id=semantic_fact.subject_id
+                      )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET applicability='LEGACY_SCOPE_UNCERTAIN'
+                    WHERE scope='MEDIA' AND applicability='EXACT_DUPLICATE_SHARED'
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM visual_group g
+                        JOIN visual_group_member source_member ON source_member.group_id=g.id
+                        JOIN visual_group_member target_member ON target_member.group_id=g.id
+                        WHERE g.kind='EXACT_DUPLICATE'
+                          AND source_member.media_id=semantic_fact.evidence_media_id
+                          AND target_member.media_id=semantic_fact.subject_id
+                      )
+                    """.trimIndent(),
+                )
             }
         }
 

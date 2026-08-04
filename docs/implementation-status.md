@@ -31,6 +31,9 @@ not represented as a GitHub Actions pass.
   derivation instead of JVM `hashCode()`; stability regression test PASS.
 - Phase 7 hardening: native vector scanning now uses the portable arm64
   baseline instead of universally compiling ARMv8.2 FP16 instructions.
+- Phase 7 hardening: semantic fact persistence now preserves EVENT and
+  VISUAL_GROUP provenance; migration 18->19 repairs known legacy copies and
+  quarantines ambiguous scope as contextual evidence.
 
 ## Privacy boundary
 
