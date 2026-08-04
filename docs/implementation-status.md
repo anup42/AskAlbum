@@ -27,6 +27,8 @@ not represented as a GitHub Actions pass.
 - Phase 1: semantic zero-vector coverage regression test PASS.
 - Phase 1: semantic retrieval now reports PARTIAL when eligible media have no
   indexed vectors; no model, media, or index data was changed.
+- Phase 7 hardening: durable evidence and person-fact IDs now use SHA-256
+  derivation instead of JVM `hashCode()`; stability regression test PASS.
 
 ## Privacy boundary
 

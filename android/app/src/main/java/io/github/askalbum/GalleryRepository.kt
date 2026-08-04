@@ -711,7 +711,7 @@ class GalleryRepository(context: Context) {
             val semanticEvidence = semantic?.let {
                 val keyframe = bestSemanticKeyframeByMedia[item.id]
                 EvidenceRecord(
-                    id = "${item.id}:image_text_embedding:${plan.originalQuery.hashCode().toUInt()}",
+                    id = StableRecordId.of("image_text_embedding", item.id, plan.originalQuery),
                     mediaId = item.id,
                     sourceField = "image_text_embedding",
                     text = if (keyframe == null) "Local image-text similarity" else "Local video-frame similarity at ${formatTimestamp(keyframe.timestampMs)}",
@@ -947,7 +947,7 @@ class GalleryRepository(context: Context) {
                 score += 10.0
                 val matchingBlock = database.ocrBlocks(item.id).firstOrNull { term in it.text.lowercase(Locale.ROOT) }
                 evidence += EvidenceRecord(
-                    id = "${item.id}:ocr:${term.hashCode().toUInt()}",
+                    id = StableRecordId.of("ocr_text", item.id, term.lowercase(Locale.ROOT)),
                     mediaId = item.id,
                     sourceField = "ocr_text",
                     text = matchingBlock?.text ?: term,
@@ -971,7 +971,7 @@ class GalleryRepository(context: Context) {
         value: String,
         confidence: Float,
     ) = EvidenceRecord(
-        id = "${item.id}:$source:${value.lowercase(Locale.ROOT).hashCode().toUInt()}",
+        id = StableRecordId.of(source, item.id, value.lowercase(Locale.ROOT)),
         mediaId = item.id,
         sourceField = source,
         text = value,
@@ -1163,7 +1163,7 @@ class GalleryRepository(context: Context) {
         val evidence = fields.mapNotNull { field ->
             val selected = database.ocrEntities(hit.item.id, field.type).firstOrNull() ?: return@mapNotNull null
             EvidenceRecord(
-                id = "${hit.item.id}:${field.sourceField}:${selected.normalizedValue.hashCode().toUInt()}",
+                id = StableRecordId.of(field.sourceField, hit.item.id, selected.normalizedValue),
                 mediaId = hit.item.id,
                 sourceField = field.sourceField,
                 text = selected.rawText,
