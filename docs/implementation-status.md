@@ -36,6 +36,9 @@ not represented as a GitHub Actions pass.
   quarantines ambiguous scope as contextual evidence.
 - Phase 1 retrieval: semantic vector coverage now maps parent media and video
   keyframes to unique eligible media before reporting completeness.
+- Phase 6 evidence: migration 19->20 adds shared generation provenance to
+  semantic facts, captions, person facts, and caption chunks; legacy captions
+  remain available without cross-generation structured-fact backfill.
 
 ## Privacy boundary
 

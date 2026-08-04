@@ -1872,6 +1872,7 @@ class GalleryDatabase(
             put("association_status", PersonAssociationStatus.CONFIDENT.name)
             put("verdict", PersonVisualVerdict.VERIFIED_TRUE.name)
             put("prompt_version", "query-visual-verification-v2")
+            put("generation_id", "query-verification:${StableRecordId.of(mediaId, modelVersion)}")
             put("updated_at", System.currentTimeMillis())
         }, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -3155,7 +3156,13 @@ class GalleryDatabase(
     fun completeSemanticEnrichment(job: SemanticEnrichmentJobRecord, result: SemanticEnrichmentResult) {
         writableDatabase.transaction { db ->
             val now = System.currentTimeMillis()
-            val facts = result.facts
+            val generationId = result.generationId.takeIf(String::isNotBlank)
+                ?: result.caption?.generationId?.takeIf(String::isNotBlank)
+                ?: result.facts.firstOrNull()?.generationId?.takeIf(String::isNotBlank)
+                ?: "job:${job.id}"
+            val facts = result.facts.map { it.copy(generationId = generationId) }
+            val personFacts = result.personFacts.map { it.copy(generationId = generationId) }
+            val caption = result.caption?.copy(generationId = generationId)
             var storedCaption: SemanticCaptionRecord? = null
             facts.forEach { fact ->
                 val exactDuplicateTargets = if (
@@ -3190,12 +3197,13 @@ class GalleryDatabase(
                         )
                         put("model_version", fact.modelVersion)
                         put("prompt_version", fact.promptVersion)
+                        put("generation_id", fact.generationId)
                         put("updated_at", now)
                     }, SQLiteDatabase.CONFLICT_REPLACE)
                 }
             }
-            result.caption?.let { caption ->
-                val stable = "${caption.scope}|${caption.subjectId}|${caption.evidenceMediaId}|${caption.modelVersion}|${caption.promptVersion}"
+            caption?.let { caption ->
+                val stable = "${caption.scope}|${caption.subjectId}|${caption.evidenceMediaId}|${caption.modelVersion}|${caption.promptVersion}|${caption.generationId}"
                 val captionId = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
                 db.insertWithOnConflict("semantic_caption", null, ContentValues().apply {
                     put("id", captionId)
@@ -3214,6 +3222,7 @@ class GalleryDatabase(
                     put("body_region_version", caption.bodyRegionVersion)
                     put("model_version", caption.modelVersion)
                     put("prompt_version", caption.promptVersion)
+                    put("generation_id", caption.generationId)
                     put("created_at", caption.createdAt.takeIf { it > 0L } ?: now)
                     put("updated_at", now)
                     putNull("chunk_policy_version")
@@ -3236,8 +3245,8 @@ class GalleryDatabase(
                     updatedAt = now,
                 )
             }
-            result.personFacts.forEach { fact ->
-                val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}"
+            personFacts.forEach { fact ->
+                val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}|${fact.generationId}"
                 db.insertWithOnConflict("person_attribute_fact", null, ContentValues().apply {
                     put("id", UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString())
                     put("media_id", fact.mediaId)
@@ -3258,11 +3267,12 @@ class GalleryDatabase(
                     put("verdict", fact.verdict.name)
                     if (fact.targetClusterId == null) putNull("target_cluster_id") else put("target_cluster_id", fact.targetClusterId)
                     put("prompt_version", fact.promptVersion)
+                    put("generation_id", fact.generationId)
                     put("updated_at", now)
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
-            storedCaption?.let { replaceCaptionChunks(db, it, facts, result.personFacts) }
-            val producer = result.caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
+            storedCaption?.let { replaceCaptionChunks(db, it, facts, personFacts) }
+            val producer = caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
             val completionPrefix = "caption-v4"
             db.update("semantic_enrichment_job", ContentValues().apply {
                 put("status", SemanticEnrichmentStatus.COMPLETE.name)
@@ -3347,6 +3357,7 @@ class GalleryDatabase(
                             applicability = cursor.text("applicability"),
                             modelVersion = cursor.text("model_version"),
                             promptVersion = cursor.text("prompt_version"),
+                            generationId = cursor.text("generation_id"),
                         ),
                     )
                 }
@@ -3374,6 +3385,7 @@ class GalleryDatabase(
                         applicability = cursor.text("applicability"),
                         modelVersion = cursor.text("model_version"),
                         promptVersion = cursor.text("prompt_version"),
+                        generationId = cursor.text("generation_id"),
                     ),
                 )
             }
@@ -3400,6 +3412,7 @@ class GalleryDatabase(
                         applicability = cursor.text("applicability"),
                         modelVersion = cursor.text("model_version"),
                         promptVersion = cursor.text("prompt_version"),
+                        generationId = cursor.text("generation_id"),
                     ),
                 )
             }
@@ -3844,6 +3857,7 @@ class GalleryDatabase(
             bodyRegionVersion = cursor.text("body_region_version"),
             modelVersion = cursor.text("model_version"),
             promptVersion = cursor.text("prompt_version"),
+            generationId = cursor.text("generation_id"),
             createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
             updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
             personRefs = captionPersonRefs(id),
@@ -3870,6 +3884,7 @@ class GalleryDatabase(
         captionModelVersion = cursor.text("caption_model_version"),
         captionPromptVersion = cursor.text("caption_prompt_version"),
         chunkPolicyVersion = cursor.text("chunk_policy_version"),
+        generationId = cursor.text("generation_id"),
         embeddingModelVersion = cursor.nullableText("embedding_model_version"),
         embeddingState = enumOrDefault(cursor.text("embedding_state"), CaptionEmbeddingState.PENDING),
         attemptCount = cursor.getInt(cursor.getColumnIndexOrThrow("attempt_count")),
@@ -3904,6 +3919,7 @@ class GalleryDatabase(
             targetClusterId = cursor.nullableText("target_cluster_id"),
             modelVersion = cursor.text("model_version"),
             promptVersion = cursor.text("prompt_version"),
+            generationId = cursor.text("generation_id"),
             updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
         )
     }
@@ -3938,6 +3954,7 @@ class GalleryDatabase(
                 put("caption_model_version", chunk.captionModelVersion)
                 put("caption_prompt_version", chunk.captionPromptVersion)
                 put("chunk_policy_version", chunk.chunkPolicyVersion)
+                put("generation_id", chunk.generationId)
                 putNull("embedding_model_version")
                 put("embedding_state", CaptionEmbeddingState.PENDING.name)
                 put("attempt_count", 0)

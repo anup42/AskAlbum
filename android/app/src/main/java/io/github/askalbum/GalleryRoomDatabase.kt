@@ -289,6 +289,7 @@ data class PersonAttributeFactEntity(
     @ColumnInfo(defaultValue = "'VERIFIED_TRUE'") val verdict: String = "VERIFIED_TRUE",
     @ColumnInfo(name = "target_cluster_id") val targetClusterId: String? = null,
     @ColumnInfo(name = "prompt_version", defaultValue = "'legacy-person-attribute-v1'") val promptVersion: String = "legacy-person-attribute-v1",
+    @ColumnInfo(name = "generation_id", defaultValue = "''") val generationId: String = "",
 )
 
 @Entity(tableName = "query_turn")
@@ -441,6 +442,7 @@ data class SemanticFactEntity(
     val applicability: String,
     @ColumnInfo(name = "model_version") val modelVersion: String,
     @ColumnInfo(name = "prompt_version") val promptVersion: String,
+    @ColumnInfo(name = "generation_id", defaultValue = "''") val generationId: String = "",
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
 )
 
@@ -471,6 +473,7 @@ data class SemanticCaptionEntity(
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
     @ColumnInfo(name = "chunk_policy_version") val chunkPolicyVersion: String?,
     @ColumnInfo(name = "chunked_at") val chunkedAt: Long?,
+    @ColumnInfo(name = "generation_id", defaultValue = "''") val generationId: String = "",
 )
 
 @Entity(
@@ -532,6 +535,7 @@ data class SemanticCaptionChunkEntity(
     @ColumnInfo(name = "last_progress_at") val lastProgressAt: Long?,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "generation_id", defaultValue = "''") val generationId: String = "",
 )
 
 @Fts4
@@ -605,7 +609,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticCaptionChunkFtsEntity::class,
         SemanticEnrichmentJobEntity::class,
     ],
-    version = 19,
+    version = 20,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -635,6 +639,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_16_17,
             MIGRATION_17_18,
             MIGRATION_18_19,
+            MIGRATION_19_20,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -998,6 +1003,15 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                       )
                     """.trimIndent(),
                 )
+            }
+        }
+
+        internal val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE semantic_fact ADD COLUMN generation_id TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE semantic_caption ADD COLUMN generation_id TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE semantic_caption_chunk ADD COLUMN generation_id TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN generation_id TEXT NOT NULL DEFAULT ''")
             }
         }
 

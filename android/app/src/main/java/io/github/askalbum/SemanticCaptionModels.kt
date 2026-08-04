@@ -1,6 +1,7 @@
 package io.github.anup42.askalbum
 
 import java.util.Locale
+import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -36,6 +37,7 @@ data class SemanticCaptionRecord(
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
     val personRefs: List<SemanticCaptionPersonRefRecord> = emptyList(),
+    val generationId: String = "",
 )
 
 data class PersonVisualFactRecord(
@@ -59,12 +61,14 @@ data class PersonVisualFactRecord(
     val modelVersion: String,
     val promptVersion: String,
     val updatedAt: Long = 0L,
+    val generationId: String = "",
 )
 
 data class SemanticEnrichmentResult(
     val facts: List<SemanticFactRecord>,
     val caption: SemanticCaptionRecord? = null,
     val personFacts: List<PersonVisualFactRecord> = emptyList(),
+    val generationId: String = "",
 )
 
 data class CaptionSearchHit(
@@ -92,6 +96,7 @@ internal object SemanticEnrichmentCodec {
             extractFirstJsonObject(raw)
                 ?: throw SemanticEnrichmentOutputException("Enrichment must return one JSON object"),
         )
+        val generationId = UUID.randomUUID().toString()
         val baseFacts = SemanticFactCodec.decode(job, raw, modelVersion)
         val bindingByLabel = bindings.distinctBy(PersonVerificationBinding::clusterId)
             .associateBy(PersonVerificationBinding::stableLabel)
@@ -103,7 +108,7 @@ internal object SemanticEnrichmentCodec {
         val captionText = activityAwareCaption(sceneSummary, detailedCaption)
         val captionConfidence = root.opt("captionConfidence").asConfidence()
         val activityFacts = decodeSceneActivityFacts(job, root, modelVersion, captionConfidence)
-        val facts = (baseFacts + activityFacts).distinctBy {
+        val facts = (baseFacts + activityFacts).map { it.copy(generationId = generationId) }.distinctBy {
             "${it.scope}|${it.subjectId}|${it.predicate}|${it.value}|${it.applicability}"
         }
         val caption = captionText
@@ -131,6 +136,7 @@ internal object SemanticEnrichmentCodec {
                     bodyRegionVersion = PersonalSemanticMemoryPolicy.BODY_REGION_VERSION,
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
+                    generationId = generationId,
                 )
             }
         if (PersonalSemanticMemoryPolicy.isPersonalJob(job.reason) && caption == null) {
@@ -223,7 +229,8 @@ internal object SemanticEnrichmentCodec {
             caption = caption?.copy(personRefs = refs.distinctBy(SemanticCaptionPersonRefRecord::clusterId)),
             personFacts = personFacts.distinctBy {
                 "${it.clusterId}|${it.relation}|${it.category}|${it.itemType}|${it.value}|${it.bodyRegion}"
-            },
+            }.map { it.copy(generationId = generationId) },
+            generationId = generationId,
         )
     }
 

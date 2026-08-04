@@ -59,6 +59,7 @@ data class SemanticCaptionChunkRecord(
     val lastProgressAt: Long? = null,
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
+    val generationId: String = "",
 )
 
 data class CaptionEmbeddingProgress(
@@ -103,9 +104,25 @@ internal object SemanticCaptionChunker {
         personFacts: List<PersonVisualFactRecord>,
     ): List<SemanticCaptionChunkRecord> {
         if (caption.text.isBlank() || SensitiveContentClassifier.isSensitive(caption.text)) return emptyList()
+        val correlatedFacts = facts.filter {
+            caption.generationId.isNotBlank() &&
+                it.generationId == caption.generationId &&
+                it.scope == caption.scope &&
+                it.subjectId == caption.subjectId &&
+                it.evidenceMediaId == caption.evidenceMediaId &&
+                it.modelVersion == caption.modelVersion &&
+                it.promptVersion == caption.promptVersion
+        }
+        val correlatedPersonFacts = personFacts.filter {
+            caption.generationId.isNotBlank() &&
+                it.generationId == caption.generationId &&
+                it.mediaId == caption.evidenceMediaId &&
+                it.modelVersion == caption.modelVersion &&
+                it.promptVersion == caption.promptVersion
+        }
         val candidates = mutableListOf<Candidate>()
 
-        personFacts
+        correlatedPersonFacts
             .filter {
                 it.mediaId == caption.evidenceMediaId &&
                     it.verdict == PersonVisualVerdict.VERIFIED_TRUE &&
@@ -156,7 +173,7 @@ internal object SemanticCaptionChunker {
                 }
             }
 
-        facts
+        correlatedFacts
             .filter {
                 it.evidenceMediaId == caption.evidenceMediaId &&
                     it.applicability !in setOf("STALE_PERSON_BINDING", "LEGACY_GROUP_CONTEXT_ONLY")
@@ -220,6 +237,7 @@ internal object SemanticCaptionChunker {
                 embeddingState = CaptionEmbeddingState.PENDING,
                 createdAt = now,
                 updatedAt = now,
+                generationId = caption.generationId,
             )
         }
     }

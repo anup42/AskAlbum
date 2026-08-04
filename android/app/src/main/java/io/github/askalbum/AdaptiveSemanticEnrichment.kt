@@ -9,6 +9,19 @@ import kotlin.math.max
 enum class SemanticFactScope { MEDIA, EXACT_DUPLICATE_GROUP, VISUAL_GROUP, EVENT, QUERY_VERIFICATION }
 enum class SemanticEnrichmentStatus { PENDING, RUNNING, COMPLETE, FAILED, AUTH_REQUIRED }
 
+data class SemanticGenerationProvenance(
+    val generationId: String,
+    val captionId: String?,
+    val jobId: String,
+    val scope: SemanticFactScope,
+    val scopeId: String,
+    val evidenceMediaId: String,
+    val modelVersion: String,
+    val promptVersion: String,
+    val bodyRegionVersion: String,
+    val createdAt: Long,
+)
+
 data class SemanticFactRecord(
     val scope: SemanticFactScope,
     val subjectId: String,
@@ -20,6 +33,7 @@ data class SemanticFactRecord(
     val applicability: String = "EVIDENCE_MEDIA_ONLY",
     val modelVersion: String,
     val promptVersion: String,
+    val generationId: String = "",
 )
 
 data class SemanticEnrichmentJobRecord(
