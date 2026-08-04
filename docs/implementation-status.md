@@ -29,6 +29,8 @@ not represented as a GitHub Actions pass.
   indexed vectors; no model, media, or index data was changed.
 - Phase 7 hardening: durable evidence and person-fact IDs now use SHA-256
   derivation instead of JVM `hashCode()`; stability regression test PASS.
+- Phase 7 hardening: native vector scanning now uses the portable arm64
+  baseline instead of universally compiling ARMv8.2 FP16 instructions.
 
 ## Privacy boundary
 
