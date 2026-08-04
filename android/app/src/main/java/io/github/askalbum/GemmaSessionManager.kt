@@ -28,9 +28,22 @@ internal interface SharedGemmaEngine : AutoCloseable {
     val mtpEnabled: Boolean
         get() = false
 
-    suspend fun generateText(prompt: String, seed: Int): String
+    suspend fun generateText(prompt: String, options: GemmaGenerationOptions): String
 
-    suspend fun generateVision(imageBytes: ByteArray, prompt: String, seed: Int): String
+    suspend fun generateVision(imageBytes: ByteArray, prompt: String, options: GemmaGenerationOptions): String
+}
+
+/** Per-call generation contract shared by planning, verification, captions, and answers. */
+internal data class GemmaGenerationOptions(
+    val seed: Int,
+    val maximumOutputTokens: Int,
+    val temperature: Float,
+    val structuredOutput: Boolean,
+) {
+    init {
+        require(maximumOutputTokens in 64..4096) { "Gemma output budget must be between 64 and 4096 tokens" }
+        require(temperature in 0f..2f) { "Gemma temperature must be between 0 and 2" }
+    }
 }
 
 internal fun interface SharedGemmaEngineFactory {
@@ -199,25 +212,34 @@ private class LiteRtSharedGemmaEngine(
     override val mtpSupported: Boolean,
     override val mtpEnabled: Boolean,
 ) : SharedGemmaEngine {
-    override suspend fun generateText(prompt: String, seed: Int): String =
-        engine.generateTextCancellable(conversation(seed), prompt, DISABLE_THINKING)
+    override suspend fun generateText(prompt: String, options: GemmaGenerationOptions): String =
+        engine.generateTextCancellable(conversation(options), boundedPrompt(prompt, options), context(options))
 
-    override suspend fun generateVision(imageBytes: ByteArray, prompt: String, seed: Int): String =
+    override suspend fun generateVision(imageBytes: ByteArray, prompt: String, options: GemmaGenerationOptions): String =
         engine.generateTextCancellable(
-            conversation(seed),
-            Contents.of(Content.ImageBytes(imageBytes), Content.Text(prompt)),
-            DISABLE_THINKING,
+            conversation(options),
+            Contents.of(Content.ImageBytes(imageBytes), Content.Text(boundedPrompt(prompt, options))),
+            context(options),
         )
 
     override fun close() = engine.close()
 
-    private fun conversation(seed: Int) = ConversationConfig(
-        samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = seed),
-        extraContext = DISABLE_THINKING,
+    private fun conversation(options: GemmaGenerationOptions) = ConversationConfig(
+        samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = options.temperature.toDouble(), seed = options.seed),
+        extraContext = context(options),
     )
 
+    private fun context(options: GemmaGenerationOptions): Map<String, Any> = mapOf(
+        "enable_thinking" to false,
+        "maximum_output_tokens" to options.maximumOutputTokens,
+        "structured_output" to options.structuredOutput,
+    )
+
+    private fun boundedPrompt(prompt: String, options: GemmaGenerationOptions): String =
+        "$prompt\n\nGeneration contract: produce no more than ${options.maximumOutputTokens} output tokens; " +
+            if (options.structuredOutput) "return only the requested structured JSON." else "return only the requested grounded response."
+
     private companion object {
-        val DISABLE_THINKING = mapOf("enable_thinking" to false)
     }
 }
 

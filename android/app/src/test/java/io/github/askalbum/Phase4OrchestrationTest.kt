@@ -110,9 +110,15 @@ class Phase4OrchestrationTest {
             idleTimeoutMs = 60_000L,
         )
 
-        manager.withEngine("fixture.task", multimodal = true) { it.engine.generateText("plan", 17) }
-        manager.withEngine("fixture.task", multimodal = true) { it.engine.generateVision(byteArrayOf(1), "verify", 23) }
-        manager.withEngine("fixture.task", multimodal = true) { it.engine.generateText("answer", 29) }
+        manager.withEngine("fixture.task", multimodal = true) {
+            it.engine.generateText("plan", GemmaGenerationOptions(17, 1024, 0f, true))
+        }
+        manager.withEngine("fixture.task", multimodal = true) {
+            it.engine.generateVision(byteArrayOf(1), "verify", GemmaGenerationOptions(23, 1024, 0f, true))
+        }
+        manager.withEngine("fixture.task", multimodal = true) {
+            it.engine.generateText("answer", GemmaGenerationOptions(29, 768, 0f, true))
+        }
 
         assertEquals(1, manager.initializationCount)
         assertEquals(3, fake.calls)
@@ -125,9 +131,9 @@ class Phase4OrchestrationTest {
         var calls = 0
         var closed = false
 
-        override suspend fun generateText(prompt: String, seed: Int): String = "{}".also { calls++ }
+        override suspend fun generateText(prompt: String, options: GemmaGenerationOptions): String = "{}".also { calls++ }
 
-        override suspend fun generateVision(imageBytes: ByteArray, prompt: String, seed: Int): String =
+        override suspend fun generateVision(imageBytes: ByteArray, prompt: String, options: GemmaGenerationOptions): String =
             "{}".also { calls++ }
 
         override fun close() {

@@ -24,7 +24,16 @@ class AdaptiveGemmaSemanticEnricher(
         require(status.deviceAssessment?.supported != false) { status.deviceAssessment?.reason ?: "Device unsupported" }
         require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
         val response = sessions.withEngine(path, multimodal = true) { lease ->
-            lease.engine.generateVision(imageBytes, prompt(job, bindings, repairReason), seed = 31)
+            lease.engine.generateVision(
+                imageBytes,
+                prompt(job, bindings, repairReason),
+                GemmaGenerationOptions(
+                    seed = 31,
+                    maximumOutputTokens = 3072,
+                    temperature = 0f,
+                    structuredOutput = true,
+                ),
+            )
         }
         return SemanticEnrichmentCodec.decode(job, response, "gemma-4-${status.packVersion ?: "unknown"}", bindings)
     }

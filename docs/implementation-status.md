@@ -79,6 +79,9 @@ not represented as a GitHub Actions pass.
 - Semantic enrichment claims now use deterministic work-class priority so
   personal media cannot be starved by old representative requests; visible
   latest errors ignore superseded jobs while diagnostic rows remain intact.
+- Shared Gemma calls now carry typed per-call seed, temperature, structured
+  output, and bounded output-token options while retaining one initialized
+  session and GPU/MTP selection.
 
 ## Privacy boundary
 
