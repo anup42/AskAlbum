@@ -10,7 +10,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Keystore-backed envelope for high-risk OCR entity values. Legacy plaintext remains readable. */
+/** Keystore-backed envelope for sensitive derived OCR, query, and retrieval values. */
 internal class SensitiveDataAtRest {
     fun protect(value: String): String {
         if (value.isBlank() || value.startsWith(PREFIX)) return value
@@ -55,6 +55,7 @@ internal class SensitiveDataAtRest {
     }
 
     companion object {
+        const val MIGRATION_VERSION = 2
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "askalbum_sensitive_ocr_v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"

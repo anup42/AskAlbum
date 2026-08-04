@@ -305,6 +305,13 @@ data class QueryTurnEntity(
     @ColumnInfo(name = "plan_patch_summary") val planPatchSummary: String?,
 )
 
+@Entity(tableName = "sensitive_data_migration")
+data class SensitiveDataMigrationEntity(
+    @PrimaryKey val id: Int = 1,
+    val version: Int,
+    @ColumnInfo(name = "completed_at") val completedAt: Long,
+)
+
 @Entity(tableName = "query_session")
 data class QuerySessionEntity(
     @PrimaryKey @ColumnInfo(name = "session_id") val sessionId: String,
@@ -607,8 +614,9 @@ data class SemanticEnrichmentJobEntity(
         SemanticPredicateScanEntity::class,
         SemanticPredicateScanScopeEntity::class,
         SemanticPredicateScanHitEntity::class,
+        SensitiveDataMigrationEntity::class,
     ],
-    version = 19,
+    version = 20,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -638,6 +646,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_16_17,
             MIGRATION_17_18,
             MIGRATION_18_19,
+            MIGRATION_19_20,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1017,6 +1026,16 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                     """.trimIndent(),
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_predicate_scan_hit_score_idx ON semantic_predicate_scan_hit(scan_id,score)")
+            }
+        }
+
+        internal val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `sensitive_data_migration` (" +
+                        "`id` INTEGER NOT NULL, `version` INTEGER NOT NULL, " +
+                        "`completed_at` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
             }
         }
 

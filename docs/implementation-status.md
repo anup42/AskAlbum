@@ -82,3 +82,11 @@ Historical device-specific reports and generated diagnostics are intentionally
 not part of the public source snapshot. Record new reproducible results in a
 redacted issue or pull request instead of committing private paths, serials,
 media, databases, or logs.
+
+### Secure derived storage checkpoint (2026-08-05)
+
+- Added the non-destructive Room v19-to-v20 migration and an idempotent Keystore backfill marker.
+- OCR blocks, video-keyframe OCR, query history, follow-up session text, result-set queries, and semantic-scan query text are protected at rest while existing read/search APIs transparently reveal values at the database boundary.
+- Existing media rows, vectors, People data, semantic facts, captions, events, and model packs are preserved; no uninstall or data reset was used.
+- Unit tests, the v19-to-v20 migration test, Keystore instrumentation, replacement install, and consumer launch passed on SM-F966B.
+- Remaining privacy scope: media aggregate OCR/FTS fields and historical People-derived identity fields still require a separate compatibility-safe encrypted-index design.

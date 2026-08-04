@@ -18,6 +18,77 @@ class GalleryDatabase(
     private val readableDatabase get() = GallerySqlDatabase(room.openHelper.readableDatabase)
     private val writableDatabase get() = GallerySqlDatabase(room.openHelper.writableDatabase)
 
+    init {
+        migrateSensitiveDerivedData()
+    }
+
+    private fun migrateSensitiveDerivedData() {
+        val db = writableDatabase
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS sensitive_data_migration " +
+                "(id INTEGER NOT NULL PRIMARY KEY, version INTEGER NOT NULL, completed_at INTEGER NOT NULL)",
+        )
+        val currentVersion = db.query(
+            "sensitive_data_migration", arrayOf("version"), "id=1", null, null, null, null, "1",
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        if (currentVersion >= SensitiveDataAtRest.MIGRATION_VERSION) return
+
+        db.beginTransaction()
+        try {
+            migrateSensitiveColumn(db, "ocr_block", "id", "text")
+            migrateSensitiveColumn(db, "ocr_block", "id", "normalized_text")
+            migrateSensitiveColumn(db, "video_keyframe", "id", "ocr_text")
+            migrateSensitiveColumn(db, "query_turn", "id", "query")
+            migrateSensitiveColumn(db, "query_turn", "id", "plan_summary")
+            migrateSensitiveColumn(db, "query_session", "session_id", "last_query")
+            migrateSensitiveColumn(db, "result_set", "id", "query")
+            migrateSensitiveColumn(db, "semantic_predicate_scan", "id", "query_text")
+            db.insertWithOnConflict(
+                "sensitive_data_migration",
+                null,
+                ContentValues().apply {
+                    put("id", 1)
+                    put("version", SensitiveDataAtRest.MIGRATION_VERSION)
+                    put("completed_at", System.currentTimeMillis())
+                },
+                SQLiteDatabase.CONFLICT_REPLACE,
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun migrateSensitiveColumn(
+        db: GallerySqlDatabase,
+        table: String,
+        idColumn: String,
+        valueColumn: String,
+    ) {
+        db.query(
+            table,
+            arrayOf(idColumn, valueColumn),
+            "$valueColumn IS NOT NULL AND $valueColumn<>''",
+            null,
+            null,
+            null,
+            null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val raw = cursor.getString(cursor.getColumnIndexOrThrow(valueColumn))
+                val protected = sensitiveDataAtRest.protect(raw)
+                if (protected == raw) continue
+                val idIndex = cursor.getColumnIndexOrThrow(idColumn)
+                db.update(
+                    table,
+                    ContentValues().apply { put(valueColumn, protected) },
+                    "$idColumn=?",
+                    arrayOf(cursor.getString(idIndex)),
+                )
+            }
+        }
+    }
+
     fun seedDemoIfEmpty(): Int {
         readableDatabase.rawQuery("SELECT COUNT(*) FROM media_item WHERE source_kind='DEMO_ASSET'", null).use { cursor ->
             if (cursor.moveToFirst() && cursor.getInt(0) > 0) return cursor.getInt(0)
@@ -528,8 +599,8 @@ class GalleryDatabase(
             blocks.forEach { block ->
                 db.insert("ocr_block", null, ContentValues().apply {
                     put("media_id", id)
-                    put("text", block.text)
-                    put("normalized_text", block.normalizedText)
+                    put("text", sensitiveDataAtRest.protect(block.text))
+                    put("normalized_text", sensitiveDataAtRest.protect(block.normalizedText))
                     if (block.language == null) putNull("language") else put("language", block.language)
                     put("page_index", block.pageIndex)
                     if (block.timestampMs == null) putNull("timestamp_ms") else put("timestamp_ms", block.timestampMs)
@@ -563,7 +634,7 @@ class GalleryDatabase(
                     put("timestamp_ms", keyframe.timestampMs)
                     put("preview_path", keyframe.previewPath)
                     put("labels", keyframe.labels.joinToString(TAG_SEPARATOR))
-                    put("ocr_text", keyframe.ocrText)
+                    put("ocr_text", sensitiveDataAtRest.protect(keyframe.ocrText))
                     put("perceptual_hash", java.lang.Long.toUnsignedString(keyframe.perceptualHash, 16))
                     put("quality_score", keyframe.qualityScore)
                     put("producer_version", keyframe.producerVersion)
@@ -1917,8 +1988,8 @@ class GalleryDatabase(
         buildList {
             while (cursor.moveToNext()) add(
                 OcrBlockRecord(
-                    text = cursor.getString(cursor.getColumnIndexOrThrow("text")),
-                    normalizedText = cursor.getString(cursor.getColumnIndexOrThrow("normalized_text")),
+                    text = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("text"))),
+                    normalizedText = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("normalized_text"))),
                     language = cursor.getColumnIndexOrThrow("language").let { if (cursor.isNull(it)) null else cursor.getString(it) },
                     pageIndex = cursor.getInt(cursor.getColumnIndexOrThrow("page_index")),
                     timestampMs = cursor.getColumnIndexOrThrow("timestamp_ms").let { if (cursor.isNull(it)) null else cursor.getLong(it) },
@@ -2196,11 +2267,11 @@ class GalleryDatabase(
 
     fun recordQuery(outcome: SearchOutcome, sessionId: String? = null) {
         writableDatabase.insert("query_turn", null, ContentValues().apply {
-            put("query", outcome.plan.originalQuery)
+            put("query", sensitiveDataAtRest.protect(outcome.plan.originalQuery))
             val channels = outcome.channelReports.joinToString(",") { report ->
                 "${report.channel}:${report.status}:${report.searchedCount}/${report.eligibleCount}"
             }
-            put("plan_summary", "${outcome.plan.intent}:${outcome.plan.terms.joinToString(",")}|channels=$channels")
+            put("plan_summary", sensitiveDataAtRest.protect("${outcome.plan.intent}:${outcome.plan.terms.joinToString(",")}|channels=$channels"))
             put("result_count", outcome.hits.size)
             put("elapsed_ms", outcome.elapsedMs)
             put("created_at", System.currentTimeMillis())
@@ -2222,7 +2293,7 @@ class GalleryDatabase(
                 sessionId = sessionId,
                 activeResultSetId = active,
                 activeResultIds = active?.let(::resultSetMediaIds).orEmpty(),
-                lastQuery = cursor.nullableText("last_query"),
+                lastQuery = cursor.nullableText("last_query")?.let(sensitiveDataAtRest::reveal),
                 referencedPeople = decodeStrings(cursor.text("referenced_people")),
                 referencedEvents = decodeLongs(cursor.text("referenced_events")),
                 currentTimeScope = if (cursor.isNull(cursor.getColumnIndexOrThrow("time_start")) && cursor.isNull(cursor.getColumnIndexOrThrow("time_end"))) {
@@ -2264,7 +2335,7 @@ class GalleryDatabase(
                 put("id", resultSetId)
                 put("session_id", sessionId)
                 put("parent_result_set_id", expectedParentResultSetId)
-                put("query", outcome.plan.originalQuery.take(2_000))
+                put("query", sensitiveDataAtRest.protect(outcome.plan.originalQuery.take(2_000)))
                 put("intent", outcome.plan.intent.name)
                 put("exactness", outcome.answer.exactness.name)
                 put("created_at", now)
@@ -2282,7 +2353,7 @@ class GalleryDatabase(
             db.insertWithOnConflict("query_session", null, ContentValues().apply {
                 put("session_id", sessionId)
                 put("active_result_set_id", resultSetId)
-                put("last_query", outcome.plan.originalQuery.take(2_000))
+                put("last_query", sensitiveDataAtRest.protect(outcome.plan.originalQuery.take(2_000)))
                 put("referenced_people", encode(outcome.plan.peopleClauses.map { it.personId }))
                 put("referenced_events", encode(eventIds))
                 put("time_start", timeRange?.startEpochMs)
@@ -2551,7 +2622,7 @@ class GalleryDatabase(
         timestampMs = cursor.getLong(cursor.getColumnIndexOrThrow("timestamp_ms")),
         previewPath = cursor.text("preview_path"),
         labels = cursor.text("labels").split(TAG_SEPARATOR).filter(String::isNotBlank),
-        ocrText = cursor.text("ocr_text"),
+        ocrText = sensitiveDataAtRest.reveal(cursor.text("ocr_text")),
         perceptualHash = java.lang.Long.parseUnsignedLong(cursor.text("perceptual_hash"), 16),
         qualityScore = cursor.getFloat(cursor.getColumnIndexOrThrow("quality_score")),
         producerVersion = cursor.text("producer_version"),
@@ -4035,7 +4106,7 @@ class GalleryDatabase(
                 db.insertOrThrow("semantic_predicate_scan", null, ContentValues().apply {
                     put("id", scanId)
                     put("query_key", queryKey)
-                    put("query_text", query)
+                    put("query_text", sensitiveDataAtRest.protect(query))
                     put("model_version", modelVersion)
                     put("scope_hash", scopeHash)
                     put("eligible_count", orderedMediaIds.size)
@@ -4249,7 +4320,7 @@ class GalleryDatabase(
     private fun readSemanticPredicateScan(cursor: android.database.Cursor): SemanticPredicateScanRecord = SemanticPredicateScanRecord(
         id = cursor.text("id"),
         queryKey = cursor.text("query_key"),
-        queryText = cursor.text("query_text"),
+        queryText = sensitiveDataAtRest.reveal(cursor.text("query_text")),
         modelVersion = cursor.text("model_version"),
         scopeHash = cursor.text("scope_hash"),
         eligibleCount = cursor.getInt(cursor.getColumnIndexOrThrow("eligible_count")),
