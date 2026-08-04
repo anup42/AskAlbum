@@ -636,18 +636,18 @@ class GalleryRepository(context: Context) {
             eventMediaRank.mapNotNull { id -> itemById[id]?.let { SearchHit(it, 1.0, emptyList()) } },
             modelVersion = EventCompiler.PRODUCER_VERSION,
         )
-        val captionCoverage = database.semanticCaptionEvidenceCount()
+        val captionCoverage = database.semanticCaptionEvidenceCount(eligibleIds)
         val captionChannelReport = RetrievalChannelReport(
             RetrievalChannel.CAPTION,
-            if (captionCoverage == 0) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
-            allItems.size,
+            CaptionCoveragePolicy.status(eligibleIds.size, captionCoverage),
+            eligibleIds.size,
             captionCoverage,
-            captionRanked.size,
+            captionCoverage,
             captionRanked.mapNotNull { match ->
                 itemById[match.mediaId]?.let { SearchHit(it, match.score, emptyList()) }
             },
             modelVersion = captionRanked.firstOrNull()?.caption?.modelVersion,
-            errorCode = if (captionCoverage == 0) "NO_CACHED_CAPTIONS" else null,
+            errorCode = if (eligibleIds.isNotEmpty() && captionCoverage == 0) "NO_CACHED_CAPTIONS" else null,
         )
         val captionEmbeddingSearchedMediaCount = eligibleCaptionChunks.asSequence()
             .filter {

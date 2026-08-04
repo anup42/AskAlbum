@@ -2,6 +2,12 @@ package io.github.anup42.askalbum
 
 import java.util.Locale
 
+internal object CaptionCoveragePolicy {
+    fun status(eligibleCount: Int, indexedCount: Int): ChannelStatus {
+        return if (indexedCount >= eligibleCount) ChannelStatus.SUCCESS else ChannelStatus.PARTIAL
+    }
+}
+
 internal object SemanticQueryVariants {
     private const val MAX_VARIANTS = 8
 

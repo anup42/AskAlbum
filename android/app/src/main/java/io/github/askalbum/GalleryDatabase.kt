@@ -3780,6 +3780,19 @@ class GalleryDatabase(
         emptyArray(),
     ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
 
+    fun semanticCaptionEvidenceCount(allowedMediaIds: Set<String>): Int {
+        if (allowedMediaIds.isEmpty()) return 0
+
+        return allowedMediaIds.chunked(SQLITE_ID_CHUNK).sumOf { ids ->
+            val placeholders = ids.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption " +
+                    "WHERE evidence_media_id IN ($placeholders)",
+                ids.toTypedArray(),
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        }
+    }
+
     fun hasAuthenticationProtectedOcr(mediaId: String): Boolean = readableDatabase.rawQuery(
         "SELECT 1 FROM ocr_entity WHERE media_id=? AND entity_type IN ('PASSWORD','EMAIL','PHONE','ORDER_ID') LIMIT 1",
         arrayOf(mediaId),
