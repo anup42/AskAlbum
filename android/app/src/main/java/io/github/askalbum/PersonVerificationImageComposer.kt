@@ -15,7 +15,7 @@ object PersonVerificationImageComposer {
         if (bindings.isEmpty()) return jpeg
         val source = requireNotNull(BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)) { "Verification image could not be decoded" }
         val cropSize = (source.width / bindings.size.coerceAtLeast(1)).coerceIn(160, 420)
-        val output = Bitmap.createBitmap(source.width, source.height + cropSize * 2, Bitmap.Config.ARGB_8888)
+        val output = Bitmap.createBitmap(source.width, source.height + cropSize * 4, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
         canvas.drawColor(Color.BLACK)
         canvas.drawBitmap(source, 0f, 0f, null)
@@ -70,12 +70,30 @@ object PersonVerificationImageComposer {
                 corridor.last.coerceAtLeast(box.right).coerceAtMost(source.width),
                 source.height,
             )
+            val lowerBody = Rect(
+                corridor.first.coerceAtMost(box.left),
+                (box.bottom - faceHeight / 2).coerceAtLeast(0),
+                corridor.last.coerceAtLeast(box.right).coerceAtMost(source.width),
+                source.height,
+            )
+            val feet = Rect(
+                corridor.first.coerceAtMost(box.left),
+                (source.height - maxOf(faceHeight * 2, source.height / 4)).coerceAtLeast(0),
+                corridor.last.coerceAtLeast(box.right).coerceAtMost(source.width),
+                source.height,
+            )
             val fullDestination = Rect(index * cropSize, source.height, minOf(source.width, (index + 1) * cropSize), source.height + cropSize)
             canvas.drawBitmap(source, fullBody, fullDestination, null)
             canvas.drawText("${binding.stableLabel} FULL", fullDestination.left + 8f, fullDestination.top + labelPaint.textSize, labelPaint)
             val upperDestination = Rect(index * cropSize, source.height + cropSize, minOf(source.width, (index + 1) * cropSize), source.height + cropSize * 2)
             canvas.drawBitmap(source, upperBody, upperDestination, null)
-            canvas.drawText("${binding.stableLabel} UPPER", upperDestination.left + 8f, upperDestination.top + labelPaint.textSize, labelPaint)
+            canvas.drawText("${binding.stableLabel} UPPER/HANDS", upperDestination.left + 8f, upperDestination.top + labelPaint.textSize, labelPaint)
+            val lowerDestination = Rect(index * cropSize, source.height + cropSize * 2, minOf(source.width, (index + 1) * cropSize), source.height + cropSize * 3)
+            canvas.drawBitmap(source, lowerBody, lowerDestination, null)
+            canvas.drawText("${binding.stableLabel} LOWER", lowerDestination.left + 8f, lowerDestination.top + labelPaint.textSize, labelPaint)
+            val feetDestination = Rect(index * cropSize, source.height + cropSize * 3, minOf(source.width, (index + 1) * cropSize), source.height + cropSize * 4)
+            canvas.drawBitmap(source, feet, feetDestination, null)
+            canvas.drawText("${binding.stableLabel} FEET", feetDestination.left + 8f, feetDestination.top + labelPaint.textSize, labelPaint)
         }
         return try {
             ByteArrayOutputStream().use { bytes ->

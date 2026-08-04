@@ -189,7 +189,7 @@ class LiteRtGemmaVisualVerifier(
             bindings.forEach { binding -> put(binding.stableLabel, "reviewed-cluster:${binding.clusterId}") }
         }
         return """
-            Inspect the supplied contact sheet. Its top panel is the full image with labelled face boxes; lower panels are expanded upper/full-body crops.
+            Inspect the supplied contact sheet. Its top panel is the full image with labelled face boxes; lower panels repeat each stable P-label as FULL, UPPER/HANDS, LOWER, and FEET evidence. Do not transfer an attribute between panels or people.
             Return exactly one JSON object and no markdown or explanation.
             Every condition text is a positive visual predicate. Set satisfied=true only when that predicate is visibly present.
             Kotlin applies polarity after your response: a NEGATIVE condition matches only when its positive predicate is not visible. Never invert polarity yourself.

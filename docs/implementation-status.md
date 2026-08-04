@@ -69,6 +69,9 @@ not represented as a GitHub Actions pass.
   repeating semantically equivalent scene/activity summaries, and truncates
   only at a sentence or word boundary. `CaptionActivityCompositionTest`
   covers inflectional activity wording.
+- Person verification composites now include separate stable-label panels for
+  full body, upper body/hands, lower body, and feet in one Gemma call. The
+  prompt explicitly forbids transferring attributes across panels or people.
 
 ## Privacy boundary
 
