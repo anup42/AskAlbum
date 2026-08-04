@@ -14,6 +14,7 @@ class GalleryDatabase(
     private val databaseName: String = GalleryRoomDatabase.NAME,
 ) {
     private val room = GalleryRoomDatabase.open(context, databaseName)
+    private val sensitiveDataAtRest = SensitiveDataAtRest()
     private val readableDatabase get() = GallerySqlDatabase(room.openHelper.readableDatabase)
     private val writableDatabase get() = GallerySqlDatabase(room.openHelper.writableDatabase)
 
@@ -543,8 +544,8 @@ class GalleryDatabase(
                 db.insert("ocr_entity", null, ContentValues().apply {
                     put("media_id", id)
                     put("entity_type", entity.type.name)
-                    put("raw_text", entity.rawText)
-                    put("normalized_value", entity.normalizedValue)
+                    put("raw_text", if (entity.type.isHighRiskAtRest()) sensitiveDataAtRest.protect(entity.rawText) else entity.rawText)
+                    put("normalized_value", if (entity.type.isHighRiskAtRest()) sensitiveDataAtRest.protect(entity.normalizedValue) else entity.normalizedValue)
                     if (entity.label == null) putNull("label") else put("label", entity.label)
                     put("confidence", entity.confidence)
                     put("left_pos", entity.left)
@@ -1941,11 +1942,13 @@ class GalleryDatabase(
         "confidence DESC, id",
     ).use { cursor ->
         buildList {
-            while (cursor.moveToNext()) add(
-                OcrEntityRecord(
-                    type = OcrEntityType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow("entity_type"))),
-                    rawText = cursor.getString(cursor.getColumnIndexOrThrow("raw_text")),
-                    normalizedValue = cursor.getString(cursor.getColumnIndexOrThrow("normalized_value")),
+            while (cursor.moveToNext()) {
+                val entityType = OcrEntityType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow("entity_type")))
+                add(
+                    OcrEntityRecord(
+                    type = entityType,
+                    rawText = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("raw_text"))),
+                    normalizedValue = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("normalized_value"))),
                     label = cursor.getColumnIndexOrThrow("label").let { if (cursor.isNull(it)) null else cursor.getString(it) },
                     confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
                     left = cursor.getFloat(cursor.getColumnIndexOrThrow("left_pos")),
@@ -1953,8 +1956,9 @@ class GalleryDatabase(
                     right = cursor.getFloat(cursor.getColumnIndexOrThrow("right_pos")),
                     bottom = cursor.getFloat(cursor.getColumnIndexOrThrow("bottom_pos")),
                     producerVersion = cursor.getString(cursor.getColumnIndexOrThrow("producer_version")),
-                ),
-            )
+                    ),
+                )
+            }
         }
     }
 
