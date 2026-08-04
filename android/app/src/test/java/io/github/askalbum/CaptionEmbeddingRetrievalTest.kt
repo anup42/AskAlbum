@@ -17,6 +17,7 @@ class CaptionEmbeddingRetrievalTest {
         evidenceMediaId = "media-1",
         modelVersion = "gemma-e2b",
         promptVersion = "caption-v3",
+        generationId = "generation-1",
     )
 
     @Test
@@ -62,6 +63,7 @@ class CaptionEmbeddingRetrievalTest {
                     faceRegion = listOf(0.5f, 0.1f, 0.7f, 0.3f),
                     modelVersion = "gemma-e2b",
                     promptVersion = "caption-v3",
+                    generationId = "generation-1",
                 ),
             ),
         )
@@ -124,5 +126,6 @@ class CaptionEmbeddingRetrievalTest {
         evidenceMediaId = "media-1",
         modelVersion = "gemma-e2b",
         promptVersion = "caption-v3",
+        generationId = "generation-1",
     )
 }
