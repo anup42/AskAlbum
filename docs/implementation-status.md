@@ -54,6 +54,16 @@ See `PRIVACY.md` and `THIRD_PARTY_NOTICES.md`.
   device, and replacement launches for consumer and fixture APKs.
 - Debug test components use an app-owned signature permission; nonessential
   provider, service, and download-activity entry points are not exported.
+- Person verification now includes labelled lower-body/feet crops, and the
+  deterministic follow-up fallback handles natural references such as “make
+  them close-ups” and “same event but videos”.
+- Native vector scanning ships a portable scalar baseline instead of assuming
+  ARMv8.2 FP16; derived evidence IDs use SHA-256 and the Gradle wrapper is
+  executable in Git.
+- High-risk OCR entity values are encrypted with an Android Keystore AES-GCM
+  envelope; legacy plaintext rows remain readable for non-destructive upgrade.
+  OCR blocks, aggregate OCR text, and historical query fields still require a
+  separate migration before they can be called encrypted at rest.
 - Current checkpoint was replacement-installed only; no app data, People data,
   indexes, media, or model packs were cleared or reset.
 
