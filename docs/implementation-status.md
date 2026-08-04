@@ -65,6 +65,10 @@ not represented as a GitHub Actions pass.
   requires a media fact plus verified digest and compatible dimensions.
 - Focused validation: `SemanticGenerationProvenanceTest`, `consumerDebug`
   Kotlin compilation, and connected `GalleryMigration20To21Test` passed.
+- Caption composition now compares normalized opening sentences, avoids
+  repeating semantically equivalent scene/activity summaries, and truncates
+  only at a sentence or word boundary. `CaptionActivityCompositionTest`
+  covers inflectional activity wording.
 
 ## Privacy boundary
 

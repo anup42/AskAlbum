@@ -382,12 +382,64 @@ internal object SemanticEnrichmentCodec {
         val normalizedSummary = sceneSummary.trim().trimEnd('.', '!', '?')
         if (normalizedSummary.isBlank()) return detailedCaption
         val normalizedCaption = detailedCaption.trim()
-        return if (normalizedCaption.startsWith(normalizedSummary, ignoreCase = true)) {
+        val opening = normalizedCaption
+            .split(Regex("(?<=[.!?])\\s+"))
+            .take(2)
+            .joinToString(" ")
+        return if (equivalentOpening(normalizedSummary, opening)) {
             normalizedCaption
         } else {
-            "$normalizedSummary. $normalizedCaption".take(MAX_CAPTION_LENGTH)
+            boundedCaption("$normalizedSummary. $normalizedCaption")
         }
     }
+
+    private fun equivalentOpening(summary: String, opening: String): Boolean {
+        val summaryTokens = captionMeaningfulTokens(summary)
+        val openingTokens = captionMeaningfulTokens(opening)
+        if (summaryTokens.isEmpty() || openingTokens.isEmpty()) return false
+        if (
+            summaryTokens == openingTokens ||
+            summaryTokens.all(openingTokens::contains) ||
+            openingTokens.all(summaryTokens::contains)
+        ) return true
+        val common = summaryTokens.intersect(openingTokens).size.toFloat()
+        return common / minOf(summaryTokens.size, openingTokens.size) >= 0.8f
+    }
+
+    private fun captionMeaningfulTokens(text: String): Set<String> = text
+        .lowercase(Locale.ROOT)
+        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .split(Regex("\\s+"))
+        .asSequence()
+        .filter { it.isNotBlank() && it !in CAPTION_STOP_WORDS }
+        .map { token ->
+            val stemmed = when {
+                token.endsWith("ing") && token.length > 5 -> token.dropLast(3)
+                token.endsWith("ed") && token.length > 4 -> token.dropLast(2)
+                token.endsWith("s") && token.length > 4 -> token.dropLast(1)
+                else -> token
+            }
+            if (stemmed.length > 2 && stemmed.last() == stemmed[stemmed.lastIndex - 1]) {
+                stemmed.dropLast(1)
+            } else {
+                stemmed
+            }
+        }
+        .toSet()
+
+    private fun boundedCaption(text: String): String {
+        if (text.length <= MAX_CAPTION_LENGTH) return text
+        val prefix = text.take(MAX_CAPTION_LENGTH)
+        val sentenceEnd = prefix.lastIndexOfAny(charArrayOf('.', '!', '?'))
+        if (sentenceEnd >= MAX_CAPTION_LENGTH / 2) return prefix.substring(0, sentenceEnd + 1).trim()
+        val wordEnd = prefix.lastIndexOf(' ')
+        return prefix.substring(0, wordEnd.takeIf { it > 0 } ?: MAX_CAPTION_LENGTH).trimEnd()
+    }
+
+    private val CAPTION_STOP_WORDS = setOf(
+        "a", "an", "and", "are", "at", "beside", "by", "for", "from", "in", "is", "near",
+        "of", "on", "or", "the", "to", "with",
+    )
 
     private fun decodeVisibleItem(
         mediaId: String,
