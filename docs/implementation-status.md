@@ -55,6 +55,9 @@ not represented as a GitHub Actions pass.
 - Index lease recovery is now pipeline-scoped; media, embeddings, People,
   semantic memory, and caption embeddings cannot reclaim one another's expired
   work, and lease recovery no longer decrements durable attempt counts.
+- Expired claims at the maximum item-attempt budget are quarantined as failed
+  exhausted rather than re-entering `PENDING`; semantic claim selection also
+  rejects durable rows at or above the retry limit.
 
 ## Privacy boundary
 

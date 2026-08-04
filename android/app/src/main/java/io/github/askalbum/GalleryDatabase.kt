@@ -744,50 +744,74 @@ class GalleryDatabase(
                 val placeholders = mediaStages.joinToString(",") { "?" }
                 if (IndexRecoveryPipeline.MEDIA_ANALYSIS in pipelines) {
                     db.execSQL(
-                        "UPDATE media_item SET index_state='PENDING' WHERE index_state='INDEXING' AND id IN (" +
+                        "UPDATE media_item SET index_state=CASE WHEN EXISTS (" +
+                            "SELECT 1 FROM media_index_stage WHERE media_id=media_item.id AND stage='THUMBNAIL' " +
+                            "AND attempt_count>=?) THEN 'FAILED_EXHAUSTED' ELSE 'PENDING' END " +
+                            "WHERE index_state='INDEXING' AND id IN (" +
                             "SELECT media_id FROM media_index_stage WHERE stage='THUMBNAIL' AND status='RUNNING' " +
                             "AND lease_expires_at IS NOT NULL AND lease_expires_at<=?)",
-                        arrayOf<Any?>(now),
+                        arrayOf<Any?>(IndexingRetryPolicy.MAX_ITEM_ATTEMPTS, now),
                     )
                 }
                 db.execSQL(
-                    "UPDATE media_index_stage SET status='PENDING',updated_at=?,last_progress_at=?," +
-                        "next_attempt_at=0,error='lease_expired',lease_owner=NULL,lease_expires_at=NULL " +
+                    "UPDATE media_index_stage SET status=CASE WHEN attempt_count>=? THEN 'FAILED_EXHAUSTED' ELSE 'PENDING' END," +
+                        "updated_at=?,last_progress_at=?,next_attempt_at=0," +
+                        "error=CASE WHEN attempt_count>=? THEN 'retry_exhausted:lease_expired' ELSE 'lease_expired' END," +
+                        "lease_owner=NULL,lease_expires_at=NULL " +
                         "WHERE status='RUNNING' AND stage IN ($placeholders) " +
                         "AND lease_expires_at IS NOT NULL AND lease_expires_at<=?",
-                    arrayOf<Any?>(now, now, *mediaStages.toTypedArray(), now),
+                    arrayOf<Any?>(
+                        IndexingRetryPolicy.MAX_ITEM_ATTEMPTS,
+                        now,
+                        now,
+                        IndexingRetryPolicy.MAX_ITEM_ATTEMPTS,
+                        *mediaStages.toTypedArray(),
+                        now,
+                    ),
                 )
             }
             if (IndexRecoveryPipeline.SEMANTIC_MEMORY in pipelines) {
                 db.execSQL(
                     """
                     UPDATE semantic_enrichment_job
-                    SET status='PENDING',
+                    SET status=CASE WHEN attempt_count>=? THEN 'FAILED' ELSE 'PENDING' END,
                         updated_at=?,
                         last_progress_at=?,
                         next_attempt_at=0,
-                        error='lease_expired',
+                        error=CASE WHEN attempt_count>=? THEN 'retry_exhausted:lease_expired' ELSE 'lease_expired' END,
                         lease_owner=NULL,
                         lease_expires_at=NULL
                     WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?
                     """.trimIndent(),
-                    arrayOf<Any?>(now, now, now),
+                    arrayOf<Any?>(
+                        IndexingRetryPolicy.MAX_ITEM_ATTEMPTS,
+                        now,
+                        now,
+                        IndexingRetryPolicy.MAX_ITEM_ATTEMPTS,
+                        now,
+                    ),
                 )
             }
             if (IndexRecoveryPipeline.CAPTION_EMBEDDING in pipelines) {
                 db.execSQL(
                     """
                     UPDATE semantic_caption_chunk
-                    SET embedding_state='PENDING',
+                    SET embedding_state=CASE WHEN attempt_count>=? THEN 'FAILED_EXHAUSTED' ELSE 'PENDING' END,
                         updated_at=?,
                         last_progress_at=?,
                         next_attempt_at=0,
-                        error='lease_expired',
+                        error=CASE WHEN attempt_count>=? THEN 'retry_exhausted:lease_expired' ELSE 'lease_expired' END,
                         lease_owner=NULL,
                         lease_expires_at=NULL
                     WHERE embedding_state='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?
                     """.trimIndent(),
-                    arrayOf<Any?>(now, now, now),
+                    arrayOf<Any?>(
+                        IndexingRetryPolicy.MAX_ITEM_ATTEMPTS,
+                        now,
+                        now,
+                        IndexingRetryPolicy.MAX_ITEM_ATTEMPTS,
+                        now,
+                    ),
                 )
             }
             db.setTransactionSuccessful()
@@ -3113,11 +3137,15 @@ class GalleryDatabase(
         writableDatabase.transaction { db ->
             val where = if (userRequestedOnly) " AND user_requested=1" else ""
             selected = db.rawQuery(
-                "SELECT * FROM semantic_enrichment_job WHERE status=? AND next_attempt_at<=?$where " +
+                "SELECT * FROM semantic_enrichment_job WHERE status=? AND attempt_count<? AND next_attempt_at<=?$where " +
                     "ORDER BY user_requested DESC," +
                     "CASE WHEN reason LIKE '${PersonalSemanticMemoryPolicy.JOB_PREFIX}%' THEN 0 ELSE 1 END," +
                     "updated_at LIMIT 1",
-                arrayOf(SemanticEnrichmentStatus.PENDING.name, System.currentTimeMillis().toString()),
+                arrayOf(
+                    SemanticEnrichmentStatus.PENDING.name,
+                    IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
+                    System.currentTimeMillis().toString(),
+                ),
             ).use { cursor ->
                 if (!cursor.moveToFirst()) null else SemanticEnrichmentJobRecord(
                     id = cursor.text("id"),
@@ -3148,13 +3176,13 @@ class GalleryDatabase(
     }
 
     fun hasPendingSemanticEnrichmentJobs(): Boolean = readableDatabase.rawQuery(
-        "SELECT 1 FROM semantic_enrichment_job WHERE status=? LIMIT 1",
-        arrayOf(SemanticEnrichmentStatus.PENDING.name),
+        "SELECT 1 FROM semantic_enrichment_job WHERE status=? AND attempt_count<? LIMIT 1",
+        arrayOf(SemanticEnrichmentStatus.PENDING.name, IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString()),
     ).use(android.database.Cursor::moveToFirst)
 
     fun hasUserRequestedPendingSemanticEnrichmentJobs(): Boolean = readableDatabase.rawQuery(
-        "SELECT 1 FROM semantic_enrichment_job WHERE status=? AND user_requested=1 LIMIT 1",
-        arrayOf(SemanticEnrichmentStatus.PENDING.name),
+        "SELECT 1 FROM semantic_enrichment_job WHERE status=? AND attempt_count<? AND user_requested=1 LIMIT 1",
+        arrayOf(SemanticEnrichmentStatus.PENDING.name, IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString()),
     ).use(android.database.Cursor::moveToFirst)
 
     fun semanticEnrichmentPlanNeedsRebuild(): Boolean {
@@ -3662,17 +3690,8 @@ class GalleryDatabase(
         )
     }
 
-    fun recoverCaptionEmbeddingClaims() {
-        val now = System.currentTimeMillis()
-        writableDatabase.execSQL(
-            """
-            UPDATE semantic_caption_chunk SET embedding_state='PENDING',lease_owner=NULL,lease_expires_at=NULL,
-                error='lease_expired',updated_at=?
-            WHERE embedding_state='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?
-            """.trimIndent(),
-            arrayOf(now, now),
-        )
-    }
+    fun recoverCaptionEmbeddingClaims() =
+        recoverInterruptedJobs(setOf(IndexRecoveryPipeline.CAPTION_EMBEDDING))
 
     fun claimCaptionEmbeddingChunks(owner: String, producerVersion: String, limit: Int): List<SemanticCaptionChunkRecord> =
         writableDatabase.transaction { db ->

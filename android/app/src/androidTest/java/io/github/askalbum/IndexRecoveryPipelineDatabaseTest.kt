@@ -29,6 +29,11 @@ class IndexRecoveryPipelineDatabaseTest {
                     "WHERE media_id=? AND stage='EMBEDDING'",
                 arrayOf(mediaId),
             )
+            sql.execSQL(
+                "UPDATE media_index_stage SET status='RUNNING', lease_owner='embedding-owner', lease_expires_at=0, attempt_count=2 " +
+                    "WHERE media_id=? AND stage='EMBEDDING'",
+                arrayOf(mediaId),
+            )
 
             database.recoverInterruptedJobs(setOf(IndexRecoveryPipeline.EMBEDDING))
 
@@ -43,7 +48,22 @@ class IndexRecoveryPipelineDatabaseTest {
                 }
             }
             assertEquals("RUNNING" to 3, stages[IndexStage.THUMBNAIL.name])
-            assertEquals("PENDING" to 3, stages[IndexStage.EMBEDDING.name])
+            assertEquals("PENDING" to 2, stages[IndexStage.EMBEDDING.name])
+
+            sql.execSQL(
+                "UPDATE media_index_stage SET status='RUNNING', lease_owner='media-owner', lease_expires_at=0, attempt_count=3 " +
+                    "WHERE media_id=? AND stage='THUMBNAIL'",
+                arrayOf(mediaId),
+            )
+            database.recoverInterruptedJobs(setOf(IndexRecoveryPipeline.MEDIA_ANALYSIS))
+            val exhausted = sql.query(
+                "SELECT status,attempt_count FROM media_index_stage WHERE media_id=? AND stage='THUMBNAIL'",
+                arrayOf(mediaId),
+            ).use { cursor ->
+                check(cursor.moveToFirst())
+                cursor.getString(0) to cursor.getInt(1)
+            }
+            assertEquals("FAILED_EXHAUSTED" to 3, exhausted)
         } finally {
             context.deleteDatabase(databaseName)
         }
