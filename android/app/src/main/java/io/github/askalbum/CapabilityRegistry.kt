@@ -106,7 +106,7 @@ object CapabilityAnswerExecutor {
                     context.matchCount,
                     context.channelReports.any { it.channel == RetrievalChannel.SEMANTIC && it.status != ChannelStatus.NOT_REQUIRED },
                 ),
-                if (context.exactness == ResultExactness.EXACT) {
+                if (context.exactness in setOf(ResultExactness.EXACT, ResultExactness.COMPLETE_PREDICATE_SCAN)) {
                     "This is a deterministic count over complete eligible coverage."
                 } else {
                     "This is not an exhaustive visual predicate count; channel coverage is shown below."

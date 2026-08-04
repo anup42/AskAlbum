@@ -22,7 +22,15 @@ enum class AnswerMode { RESULTS_ONLY, SUMMARY_ONLY, RESULTS_AND_SUMMARY }
 enum class Polarity { POSITIVE, NEGATIVE }
 enum class ConstraintStrength { HARD, SOFT }
 enum class SemanticSubject { WHOLE_MEDIA, PERSON, EVENT, DOCUMENT }
-enum class ResultExactness { EXACT, COMPLETE_MODEL_SCAN, ESTIMATED_FROM_RETRIEVAL, PARTIAL_INDEX }
+enum class ResultExactness {
+    EXACT,
+    COMPLETE_PREDICATE_SCAN,
+    /** Legacy persisted value; new answers must use COMPLETE_PREDICATE_SCAN. */
+    @Deprecated("Use COMPLETE_PREDICATE_SCAN for an explicit complete predicate scan")
+    COMPLETE_MODEL_SCAN,
+    ESTIMATED_FROM_RETRIEVAL,
+    PARTIAL_INDEX,
+}
 enum class RetrievalChannel { LEXICAL, SEMANTIC, CAPTION, CAPTION_EMBEDDING, EVENT, OCR, PEOPLE, VISUAL_VERIFICATION }
 enum class ChannelStatus { SUCCESS, UNAVAILABLE, FAILED, PARTIAL, NOT_REQUIRED }
 enum class MediaSource { DEMO_ASSET, MEDIA_STORE, PHOTO_PICKER, SAF_DOCUMENT }

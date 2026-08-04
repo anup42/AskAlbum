@@ -46,6 +46,10 @@ not represented as a GitHub Actions pass.
   lazy per-media migration time. Searchable OCR text is redacted before
   persistence; ordinary metadata reads return `[REDACTED]`, while the explicit
   authenticated metadata path requests decrypted values.
+- Phase 1 truthfulness: non-deterministic queries no longer fall through to
+  `COMPLETE_MODEL_SCAN`; only an explicit full predicate evaluator may report
+  `COMPLETE_PREDICATE_SCAN`, while bounded or non-deterministic paths remain
+  estimated.
 
 ## Privacy boundary
 
