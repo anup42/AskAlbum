@@ -6,6 +6,34 @@ import org.junit.Test
 
 class AdaptiveSemanticEnrichmentTest {
     @Test
+    fun unavailableModelRetriesOnlyWhenPendingJobsExist() {
+        assertEquals(
+            true,
+            SemanticEnrichmentAvailabilityPolicy.shouldRetryForUnavailableModel(
+                modelInstalled = false,
+                modelMultimodal = false,
+                hasPendingJobs = true,
+            ),
+        )
+        assertEquals(
+            false,
+            SemanticEnrichmentAvailabilityPolicy.shouldRetryForUnavailableModel(
+                modelInstalled = false,
+                modelMultimodal = false,
+                hasPendingJobs = false,
+            ),
+        )
+        assertEquals(
+            false,
+            SemanticEnrichmentAvailabilityPolicy.shouldRetryForUnavailableModel(
+                modelInstalled = true,
+                modelMultimodal = true,
+                hasPendingJobs = true,
+            ),
+        )
+    }
+
+    @Test
     fun exactDuplicatesShareOneCanonicalRepresentativeAndEventsStayDiverse() {
         val items = listOf(
             item("a", hash = 7L, time = 1_000L, quality = 0.9f, faces = 1, exactDigest = "same-pixels"),

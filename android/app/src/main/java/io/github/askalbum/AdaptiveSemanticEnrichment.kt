@@ -35,6 +35,14 @@ object SemanticEnrichmentPriority {
     }
 }
 
+internal object SemanticEnrichmentAvailabilityPolicy {
+    fun shouldRetryForUnavailableModel(
+        modelInstalled: Boolean,
+        modelMultimodal: Boolean,
+        hasPendingJobs: Boolean,
+    ): Boolean = hasPendingJobs && (!modelInstalled || !modelMultimodal)
+}
+
 data class SemanticGenerationProvenance(
     val generationId: String,
     val captionId: String? = null,

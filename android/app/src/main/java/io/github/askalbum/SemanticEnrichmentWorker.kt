@@ -32,21 +32,35 @@ class SemanticEnrichmentWorker(
             Log.i(TAG, "Semantic enrichment deferred: ${admission.reason}")
             return Result.retry()
         }
-        if (!services.modelPackManager.status().let { it.installed && it.multimodal }) {
-            Log.w(TAG, "Semantic enrichment unavailable: no verified multimodal Gemma generation")
-            return Result.success()
-        }
         val database = services.galleryDatabase
+        val modelStatus = services.modelPackManager.status()
+        if (SemanticEnrichmentAvailabilityPolicy.shouldRetryForUnavailableModel(
+                modelInstalled = modelStatus.installed,
+                modelMultimodal = modelStatus.multimodal,
+                hasPendingJobs = database.hasPendingSemanticEnrichmentJobs(),
+            )
+        ) {
+            Log.w(TAG, "Semantic enrichment unavailable: no verified multimodal Gemma generation")
+            setProgress(
+                workDataOf(
+                    "status" to "UNAVAILABLE",
+                    "error_code" to "VERIFIED_MULTIMODAL_MODEL_REQUIRED",
+                    "last_progress_at" to System.currentTimeMillis(),
+                    "next_attempt_at" to 0L,
+                ),
+            )
+            return Result.retry()
+        }
         if (database.semanticEnrichmentPlanNeedsRebuild()) {
             SemanticEnrichmentCoordinator(database).rebuildPlan(
                 userRequested = true,
-                modelVersion = services.modelPackManager.status().packVersion,
+                modelVersion = modelStatus.packVersion,
             )
         }
         var job = database.claimSemanticEnrichmentJob(owner = id.toString())
         if (job == null) {
             SemanticEnrichmentCoordinator(database).rebuildPlan(
-                modelVersion = services.modelPackManager.status().packVersion,
+                modelVersion = modelStatus.packVersion,
             )
             job = database.claimSemanticEnrichmentJob(owner = id.toString())
             if (job == null) {
