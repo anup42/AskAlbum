@@ -25,6 +25,9 @@ class PeopleIndexWorker(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (!repository.peopleIndexStatus().enabled) return@withContext Result.success()
         if (!jobControls.load().peopleEnabled) return@withContext Result.success()
+        if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+            return@withContext Result.retry()
+        }
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         val faceLease = services.faceEngines.acquireOrNull()
         val detector = if (faceLease == null) MlKitFaceDetectionEngine() else null
@@ -43,6 +46,9 @@ class PeopleIndexWorker(
             for ((index, item) in pendingItems.withIndex()) {
                 if (isStopped || !repository.peopleIndexStatus().enabled || !jobControls.load().peopleEnabled) {
                     return@withContext Result.success()
+                }
+                if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+                    return@withContext Result.retry()
                 }
                 if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
                 if (!repository.markFaces(item.id, faceProducerVersion, ownerId)) {
@@ -93,6 +99,9 @@ class PeopleIndexWorker(
                 }
                 processed = index + 1
                 publishProgress(processed, pendingItems.size, pendingItems.size - processed, retryableFailures, quarantinedFailures, progressStartedAt)
+            }
+            if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+                return@withContext Result.retry()
             }
             val enabled = repository.peopleIndexStatus().enabled && jobControls.load().peopleEnabled
             val hasMore = repository.facePendingItems(1).isNotEmpty()

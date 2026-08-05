@@ -19,6 +19,9 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
         val application = applicationContext as AskAlbumApplication
         val controls = IndexingJobControlsStore(applicationContext)
         if (!controls.load().captionEmbeddingsEnabled) return@withContext Result.success()
+        if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+            return@withContext Result.retry()
+        }
 
         val services = application.services
         val database = services.galleryDatabase
@@ -80,6 +83,10 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
         var failures = 0
         val progressStartedAt = System.currentTimeMillis()
         val chunks = database.claimCaptionEmbeddingChunks(id.toString(), producer, CHUNKS_PER_RUN)
+        if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+            database.releaseCaptionEmbeddingClaims(id.toString(), "foreground_index_active")
+            return@withContext Result.retry()
+        }
         if (chunks.isNotEmpty()) {
             try {
                 val vectors = IndexingResourceCoordinator.withBackgroundPermit {

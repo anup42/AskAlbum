@@ -28,6 +28,13 @@ class IndexingReliabilityPolicyTest {
     }
 
     @Test
+    fun supervisorDoesNotScheduleBackgroundWorkDuringForegroundOrUserPause() {
+        assertFalse(IndexingSupervisorPolicy.shouldScheduleBackgroundWork(true, false))
+        assertFalse(IndexingSupervisorPolicy.shouldScheduleBackgroundWork(false, true))
+        assertTrue(IndexingSupervisorPolicy.shouldScheduleBackgroundWork(false, false))
+    }
+
+    @Test
     fun unexpectedServiceDestructionSchedulesRecoveryButExplicitStopDoesNot() {
         assertTrue(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(false, true))
         assertFalse(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(true, true))

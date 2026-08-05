@@ -834,3 +834,7 @@ media, databases, or logs.
 - This prevents stale or zero Gemma counts from being shown while durable semantic jobs are running.
 - Validation: fixture unit tests and `consumerDebug`/`offlineDemoDebug` assembly PASS; production device validation NOT RUN.
 - Published to AskAlbum as commit `acd3881`.
+2026-08-06 - Foreground indexing lane admission
+- Confirmed the supervisor could still schedule People, semantic enrichment, and caption-vector background work while the explicit media-processing foreground service was active.
+- Added a shared supervisor gate and worker-side checks; caption-vector claims are released before retry when the foreground lane takes priority.
+- Added a policy regression test. No completed gallery, People, vector, semantic, caption, event, or model data is modified.

@@ -27,6 +27,10 @@ class SemanticEnrichmentWorker(
             Log.i(TAG, "Semantic enrichment worker stopped by user control")
             return Result.success()
         }
+        if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+            Log.i(TAG, "Semantic enrichment deferred while foreground indexing is active")
+            return Result.retry()
+        }
         val admission = BackgroundWorkAdmissionPolicy(applicationContext).evaluate()
         if (!admission.allowed) {
             Log.i(TAG, "Semantic enrichment deferred: ${admission.reason}")

@@ -296,7 +296,11 @@ internal object IndexingSupervisor {
         controls: IndexingJobControls,
         retrievalAvailable: Boolean,
     ) {
-        if (controls.foregroundPaused) return
+        if (!IndexingSupervisorPolicy.shouldScheduleBackgroundWork(
+                foregroundActive = ForegroundIndexRuntime.active,
+                pausedByUser = controls.foregroundPaused,
+            )
+        ) return
         if (!ForegroundIndexRuntime.active) {
             if (controls.mediaAnalysisEnabled && summary.pending > 0) IndexScheduler.schedule(context)
             if (

@@ -77,6 +77,13 @@ internal object ForegroundIndexHandoffPolicy {
         importJobActive && !explicitUserStop
 }
 
+internal object IndexingSupervisorPolicy {
+    fun shouldScheduleBackgroundWork(
+        foregroundActive: Boolean,
+        pausedByUser: Boolean,
+    ): Boolean = !foregroundActive && !pausedByUser
+}
+
 internal object IndexingResourceCoordinator {
     private val backgroundInference = Mutex()
     private val interactiveQueries = java.util.concurrent.atomic.AtomicInteger()
