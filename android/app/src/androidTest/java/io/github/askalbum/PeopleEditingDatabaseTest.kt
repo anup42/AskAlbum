@@ -107,6 +107,9 @@ class PeopleEditingDatabaseTest {
                 .thenBy { it.modifiedAt ?: 0L },
         )
         assertEquals(expectedNewest.id, firstPage.single().mediaId)
+        val summaryBeforeRepresentative = store.personClusterSummaries(true).single { it.id == "person_me" }
+        assertEquals(expectedNewest.id, summaryBeforeRepresentative.sampleMediaId)
+        assertEquals(expectedNewest.id, summaryBeforeRepresentative.supportingFaces.first().mediaId)
         store.setPersonClusterRepresentative("person_me", secondPage.single().id)
         assertEquals(secondPage.single().id, store.personClusterSummaries(true).single { it.id == "person_me" }.representativeFaceId)
         assertEquals(
@@ -121,7 +124,10 @@ class PeopleEditingDatabaseTest {
         assertTrue(store.resolveReviewedPersonIds("Anup Kumar").contains("person_me"))
 
         store.removePersonLabel("person_brother")
-        assertFalse(store.personClusterSummaries(true).single { it.id == "person_brother" }.reviewed)
+        assertTrue(
+            "Unreviewed clusters with fewer than five media items should not be shown",
+            store.personClusterSummaries(true).none { it.id == "person_brother" },
+        )
         val reset = store.resetPeopleIndex()
         assertEquals(0, reset.faceInstanceCount)
         assertEquals(0, reset.personClusterCount)

@@ -1512,7 +1512,12 @@ class GalleryDatabase(
     fun personClusterSummaries(includeHidden: Boolean = false): List<PersonClusterReviewItem> {
         val summaries = readableDatabase.rawQuery(
             "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(f.id) AS face_count, " +
-                "COUNT(DISTINCT f.media_id) AS media_count, MAX(f.media_id) AS sample_media_id " +
+                "COUNT(DISTINCT f.media_id) AS media_count, " +
+                "(SELECT latest_face.media_id FROM face_instance latest_face " +
+                "JOIN media_item latest_media ON latest_media.id=latest_face.media_id " +
+                "WHERE latest_face.cluster_id=c.id " +
+                "ORDER BY COALESCE(latest_media.captured_at,latest_media.modified_at,0) DESC, " +
+                "COALESCE(latest_media.modified_at,0) DESC, latest_face.created_at DESC, latest_face.id LIMIT 1) AS sample_media_id " +
                 ", c.reviewed, c.hidden, c.representative_face_id, c.include_in_personal_memory " +
                 "FROM person_cluster c LEFT JOIN face_instance f ON c.id = f.cluster_id " +
                 (if (includeHidden) "" else "WHERE c.hidden = 0 ") +
@@ -1550,8 +1555,11 @@ class GalleryDatabase(
         )
         return visibleSummaries.map { summary ->
             val faces = facesByCluster[summary.id].orEmpty()
+            val selectedRepresentative = summary.representativeFaceId?.let { representativeId ->
+                faces.firstOrNull { it.id == representativeId } ?: personFace(representativeId)
+            }
             summary.copy(
-                representativeFace = faces.firstOrNull { it.id == summary.representativeFaceId } ?: faces.firstOrNull(),
+                representativeFace = selectedRepresentative ?: faces.firstOrNull(),
                 supportingFaces = faces,
             )
         }
@@ -1679,8 +1687,12 @@ class GalleryDatabase(
             val placeholders = clusterChunk.joinToString(",") { "?" }
             readableDatabase.rawQuery(
                 "SELECT f.id,f.media_id,f.cluster_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,f.quality,f.user_corrected " +
-                    "FROM face_instance f JOIN person_cluster c ON c.id=f.cluster_id WHERE f.cluster_id IN ($placeholders) " +
-                    "ORDER BY f.cluster_id,CASE WHEN f.id=c.representative_face_id THEN 0 ELSE 1 END,f.quality DESC,f.created_at DESC",
+                    "FROM face_instance f " +
+                    "JOIN person_cluster c ON c.id=f.cluster_id " +
+                    "JOIN media_item m ON m.id=f.media_id " +
+                    "WHERE f.cluster_id IN ($placeholders) " +
+                    "ORDER BY f.cluster_id,COALESCE(m.captured_at,m.modified_at,0) DESC, " +
+                    "COALESCE(m.modified_at,0) DESC,f.created_at DESC,f.quality DESC,f.id",
                 clusterChunk.toTypedArray(),
             ).use { cursor ->
                 while (cursor.moveToNext()) {

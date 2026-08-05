@@ -251,3 +251,8 @@ media, databases, or logs.
 
 - Typed activity, action, and interaction facts now require an explicit `activityState=OBSERVED` value.
 - Missing or malformed state preserves safe scene/image-subject facts but cannot create observed activity claims.
+
+### 2026-08-05 - Order People thumbnails by latest media
+
+- People cluster sample media and supporting thumbnails now use capture/modified timestamps instead of media-ID ordering or face quality.
+- Explicitly selected representatives remain visible without displacing the latest thumbnail ordering.
