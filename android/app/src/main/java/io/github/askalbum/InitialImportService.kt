@@ -309,10 +309,16 @@ class InitialImportService : Service() {
         recoveryHandoffScheduled = true
         IndexScheduler.schedule(this)
         EmbeddingIndexScheduler.schedule(this)
+        PeopleIndexScheduler.schedule(this)
+        CaptionEmbeddingScheduler.schedule(this)
+        SemanticEnrichmentScheduler.schedule(this)
     }
 
     private fun ensureWorkManagerRecovery() {
         IndexScheduler.schedule(this)
         EmbeddingIndexScheduler.schedule(this)
+        PeopleIndexScheduler.schedule(this)
+        CaptionEmbeddingScheduler.schedule(this)
+        SemanticEnrichmentScheduler.schedule(this)
     }
 }

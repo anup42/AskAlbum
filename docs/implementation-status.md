@@ -855,3 +855,6 @@ media, databases, or logs.
 ### 2026-08-06 - Reject partial caption-vector batches
 
 Caption embedding now validates that the text encoder returned exactly one vector per claimed chunk before persisting any result. A cardinality mismatch retries every claimed chunk with a bounded item attempt instead of silently dropping rows through `zip` and leaving them in-flight. Added a regression test; existing captions and image vectors are unchanged.
+### 2026-08-06 - Resume every durable pipeline after foreground timeout
+
+Unexpected foreground-service destruction and the Android `mediaProcessing` timeout now hand off media analysis, SigLIP2 vectors, People, caption embeddings, and semantic-memory work to their existing guarded WorkManager schedulers. This preserves durable leases/checkpoints and avoids leaving secondary queues dormant after a long foreground indexing session. No completed data or model state is changed.
