@@ -892,3 +892,9 @@ People cluster summaries now expose both the user-selected representative face a
 - Exact-duplicate caption and semantic-fact reuse now requires explicit `SAFE_FOR_EXACT_DUPLICATES` applicability in addition to the existing normalized-pixel digest and reviewed-face binding checks.
 - Media-only evidence, possible inferences, and contextual facts are no longer silently promoted to exact-duplicate truth; those targets remain eligible for direct generation.
 - Added a provenance regression. Existing media, captions, facts, People data, vectors, events, and model packs are unchanged.
+
+## 2026-08-06 - Match exact-duplicate person facts to the source generation
+
+- Exact-duplicate reuse now copies only person facts matching the source caption's generation, media, model, prompt, and body-region versions.
+- Older person observations on the same source image cannot leak into a newer duplicate caption; the existing caption provenance policy remains the single matching rule.
+- No media, People corrections, captions, facts, vectors, events, or model packs were modified.

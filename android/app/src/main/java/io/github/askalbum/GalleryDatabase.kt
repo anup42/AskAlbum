@@ -3260,7 +3260,10 @@ class GalleryDatabase(
                         applicability = "EXACT_DUPLICATE_SHARED",
                     )
                 }
-            val sourcePersonFacts = personVisualFactsForMedia(sourceId)
+            val sourcePersonFacts = CaptionChunkFactProvenancePolicy.matchingPersonFacts(
+                caption,
+                personVisualFactsForMedia(sourceId),
+            )
             val copiedPersonFacts = sourcePersonFacts.mapNotNull { sourceFact ->
                 val target = targetBindings.firstOrNull {
                     it.clusterId == sourceFact.clusterId && it.stableLabel == sourceFact.personRef
