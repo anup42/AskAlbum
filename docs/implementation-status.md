@@ -411,3 +411,4 @@ media, databases, or logs.
 - Caption chunk backfill now requires matching generation, scope, scope ID, evidence media, model, prompt, and body-region provenance. Legacy captions remain text-only, and contextual captions cannot inherit person facts.
 - Gemma scalar placeholder values such as `null`, `undefined`, and `unknown` are rejected before typed semantic facts or chunks are persisted.
 - Room v25-to-v26 adds body-region provenance to person visual facts with a data-preserving migration and migration coverage.
+- Visual Gemma fact decoding now forces `occasion` and `possible_occasion` records to `POSSIBLE_INFERENCE`, preventing visual occasion text from becoming confirmed media evidence.

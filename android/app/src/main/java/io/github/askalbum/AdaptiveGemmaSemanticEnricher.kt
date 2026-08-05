@@ -156,7 +156,13 @@ internal object SemanticFactCodec {
                     else -> null
                 } ?: continue
                 if (!confidence.isFinite() || confidence !in 0f..1f) continue
-                val applicability = canonicalApplicability(fact.opt("applicability") as? String)
+                val applicability = when (predicate) {
+                    // A visual model cannot authenticate an occasion. Keep both
+                    // legacy spellings non-confirming even if the model emits a
+                    // direct-looking applicability value.
+                    "occasion", "possible_occasion" -> SemanticProvenanceApplicability.POSSIBLE_INFERENCE
+                    else -> canonicalApplicability(fact.opt("applicability") as? String)
+                }
                 add(
                     SemanticFactRecord(
                         scope = job.scope,
@@ -238,7 +244,11 @@ internal object SemanticFactCodec {
         val MALFORMED_CONFIDENCE = Regex(
             """"confidence\(\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*\)"""",
         )
-        val APPLICABILITY = setOf("EVIDENCE_MEDIA_ONLY", "SAFE_FOR_EXACT_DUPLICATES")
+        val APPLICABILITY = setOf(
+            "EVIDENCE_MEDIA_ONLY",
+            "SAFE_FOR_EXACT_DUPLICATES",
+            SemanticProvenanceApplicability.POSSIBLE_INFERENCE,
+        )
         val SENSITIVE = listOf(
             Regex("""(?i)\b(?:password|passcode|cvv)\b"""),
             Regex("""(?i)\bpin\s*(?:code|number|[:=#]|\d)"""),

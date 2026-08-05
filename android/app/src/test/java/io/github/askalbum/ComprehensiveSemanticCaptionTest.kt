@@ -115,6 +115,22 @@ class ComprehensiveSemanticCaptionTest {
     }
 
     @Test
+    fun visualFactOccasionIsAlwaysStoredAsPossibleInference() {
+        val raw = """
+            {"sceneSummary":"People are standing beside a decorated table.",
+             "detailedCaption":"People are standing beside a decorated table.",
+             "people":[],
+             "facts":[{"predicate":"possible_occasion","value":"birthday celebration","confidence":0.88,"applicability":"EVIDENCE_MEDIA_ONLY"}]}
+        """.trimIndent()
+
+        val result = SemanticEnrichmentCodec.decode(job, raw, "fixture", emptyList())
+        val occasions = result.facts.filter { it.predicate == "possible_occasion" }
+
+        assertEquals(1, occasions.size)
+        assertEquals(SemanticProvenanceApplicability.POSSIBLE_INFERENCE, occasions.single().applicability)
+    }
+
+    @Test
     fun negativeAndUnknownPersonPredicatesCannotBecomePositiveFacts() {
         val raw = """
             {"sceneSummary":"P1 and P2 are visible indoors.",
