@@ -647,7 +647,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticPredicateScanHitEntity::class,
         SensitiveDataMigrationEntity::class,
     ],
-    version = 22,
+    version = 23,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -680,6 +680,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_19_20,
             MIGRATION_20_21,
             MIGRATION_21_22,
+            MIGRATION_22_23,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1125,6 +1126,139 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS semantic_enrichment_priority_idx " +
                         "ON semantic_enrichment_job(status,priority,next_attempt_at,updated_at)",
                 )
+            }
+        }
+
+        internal val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Repair only rows that can be proven to belong to an event or visual group.
+                // Other legacy propagation is retained but excluded from direct truth.
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET scope = 'EVENT', applicability = '${SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY}'
+                    WHERE scope = 'MEDIA'
+                      AND applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND EXISTS (
+                        SELECT 1 FROM event_media em
+                        WHERE CAST(em.event_id AS TEXT) = semantic_fact.subject_id
+                          AND em.media_id = semantic_fact.evidence_media_id
+                      )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET scope = 'VISUAL_GROUP', applicability = '${SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY}'
+                    WHERE scope = 'MEDIA'
+                      AND applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND EXISTS (
+                        SELECT 1 FROM visual_group_member vgm
+                        WHERE vgm.group_id = semantic_fact.subject_id
+                          AND vgm.media_id = semantic_fact.evidence_media_id
+                      )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET applicability = '${SemanticProvenanceApplicability.LEGACY_SCOPE_UNCERTAIN}'
+                    WHERE applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM media_item source
+                        JOIN media_item target ON target.id = semantic_fact.evidence_media_id
+                        WHERE source.id = semantic_fact.subject_id
+                          AND source.exact_content_digest IS NOT NULL
+                          AND source.exact_content_digest = target.exact_content_digest
+                      )
+                    """.trimIndent(),
+                )
+
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET scope = 'EVENT', applicability = '${SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY}'
+                    WHERE scope = 'MEDIA'
+                      AND applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND EXISTS (
+                        SELECT 1 FROM event_media em
+                        WHERE CAST(em.event_id AS TEXT) = semantic_caption.subject_id
+                          AND em.media_id = semantic_caption.evidence_media_id
+                      )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET scope = 'VISUAL_GROUP', applicability = '${SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY}'
+                    WHERE scope = 'MEDIA'
+                      AND applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND EXISTS (
+                        SELECT 1 FROM visual_group_member vgm
+                        WHERE vgm.group_id = semantic_caption.subject_id
+                          AND vgm.media_id = semantic_caption.evidence_media_id
+                      )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET applicability = '${SemanticProvenanceApplicability.LEGACY_SCOPE_UNCERTAIN}'
+                    WHERE applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM media_item source
+                        JOIN media_item target ON target.id = semantic_caption.evidence_media_id
+                        WHERE source.id = semantic_caption.subject_id
+                          AND source.exact_content_digest IS NOT NULL
+                          AND source.exact_content_digest = target.exact_content_digest
+                      )
+                    """.trimIndent(),
+                )
+
+                // Legacy chunks are rebuilt from caption text only. Generated chunks must match
+                // the complete caption generation, scope, and evidence identity.
+                db.execSQL("DROP TABLE IF EXISTS semantic_provenance_repair_caption")
+                db.execSQL(
+                    """
+                    CREATE TEMP TABLE semantic_provenance_repair_caption AS
+                    SELECT DISTINCT chunk.caption_id
+                    FROM semantic_caption_chunk chunk
+                    JOIN semantic_caption caption ON caption.id = chunk.caption_id
+                    WHERE caption.generation_id IS NULL
+                       OR chunk.scope IS NOT caption.scope
+                       OR chunk.scope_id IS NOT caption.subject_id
+                       OR chunk.evidence_media_id IS NOT caption.evidence_media_id
+                       OR chunk.caption_model_version IS NOT caption.model_version
+                       OR chunk.caption_prompt_version IS NOT caption.prompt_version
+                       OR chunk.generation_id IS NOT caption.generation_id
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    DELETE FROM semantic_caption_chunk_fts
+                    WHERE chunk_id IN (
+                        SELECT chunk.id
+                        FROM semantic_caption_chunk chunk
+                        WHERE chunk.caption_id IN (SELECT caption_id FROM semantic_provenance_repair_caption)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    DELETE FROM semantic_caption_chunk
+                    WHERE caption_id IN (SELECT caption_id FROM semantic_provenance_repair_caption)
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET chunk_policy_version = NULL, chunked_at = NULL
+                    WHERE id IN (SELECT caption_id FROM semantic_provenance_repair_caption)
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE semantic_provenance_repair_caption")
             }
         }
 

@@ -2799,7 +2799,7 @@ class GalleryDatabase(
                 WHERE c.evidence_media_id=semantic_enrichment_job.representative_media_id
                   AND c.scope=?
                   AND c.source_type IN (?,?)
-                  AND c.applicability<>'STALE_PERSON_BINDING'
+                  AND c.applicability NOT IN ('STALE_PERSON_BINDING','LEGACY_SCOPE_UNCERTAIN','POSSIBLE_INFERENCE')
                   AND c.prompt_version=?
             )
             """.trimIndent(),
@@ -2847,7 +2847,7 @@ class GalleryDatabase(
             val caption = semanticCaptionsForMedia(sourceId).firstOrNull {
                 it.scope == SemanticFactScope.MEDIA &&
                     it.subjectId == sourceId &&
-                    it.applicability != "STALE_PERSON_BINDING" &&
+                    it.applicability !in SemanticProvenanceApplicability.NON_CONFIRMING &&
                     it.promptVersion == SemanticEnrichmentCodec.PROMPT_VERSION
             } ?: continue
             val targetByLabel = targetBindings.associateBy(PersonVerificationBinding::stableLabel)
@@ -2864,11 +2864,7 @@ class GalleryDatabase(
                 .filter {
                     it.scope == SemanticFactScope.MEDIA &&
                         it.subjectId == sourceId &&
-                        it.applicability !in setOf(
-                            "GROUP_CONTEXT_ONLY",
-                            "LEGACY_GROUP_CONTEXT_ONLY",
-                            "STALE_PERSON_BINDING",
-                        )
+                        it.applicability !in SemanticProvenanceApplicability.NON_CONFIRMING
                 }
                 .map {
                     it.copy(
@@ -3847,7 +3843,12 @@ class GalleryDatabase(
             }
             val caption = captions[chunk.captionId] ?: return@flatMap emptyList()
             chunkTargets(chunk).filter { it in allowedMediaIds }.map { mediaId ->
-                val direct = chunk.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP || mediaId == chunk.evidenceMediaId
+                val direct = SemanticProvenanceApplicability.isDirect(
+                    scope = chunk.scope,
+                    applicability = chunk.applicability,
+                    mediaId = mediaId,
+                    evidenceMediaId = chunk.evidenceMediaId,
+                )
                 CaptionSearchHit(
                     mediaId = mediaId,
                     caption = caption,
@@ -3906,8 +3907,12 @@ class GalleryDatabase(
                             val caption = semanticCaptionById(chunk.captionId) ?: continue
                             val baseScore = CaptionFtsRanker.bm25(cursor.getBlob(cursor.getColumnIndexOrThrow("fts_info")))
                             chunkTargets(chunk).filter { it in allowedIds }.forEach { mediaId ->
-                                val direct = chunk.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP ||
-                                    mediaId == chunk.evidenceMediaId
+                                val direct = SemanticProvenanceApplicability.isDirect(
+                                    scope = chunk.scope,
+                                    applicability = chunk.applicability,
+                                    mediaId = mediaId,
+                                    evidenceMediaId = chunk.evidenceMediaId,
+                                )
                                 add(
                                     CaptionSearchHit(
                                         mediaId,
@@ -3946,7 +3951,12 @@ class GalleryDatabase(
                 val matched = terms.count { it in caption.text.lowercase(Locale.ROOT) }
                 if (matched == 0) return@flatMap emptyList()
                 captionTargets(caption).filter { it in allowedIds }.map { mediaId ->
-                    val direct = mediaId == caption.evidenceMediaId || caption.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP
+                    val direct = SemanticProvenanceApplicability.isDirect(
+                        scope = caption.scope,
+                        applicability = caption.applicability,
+                        mediaId = mediaId,
+                        evidenceMediaId = caption.evidenceMediaId,
+                    )
                     CaptionSearchHit(
                         mediaId,
                         caption,

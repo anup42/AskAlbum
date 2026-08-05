@@ -108,19 +108,20 @@ internal object SemanticCaptionChunker {
         val generationId = caption.generationId
         val scopedPersonFacts = personFacts.filter {
             generationId != null &&
-                it.generationId == generationId &&
-                it.mediaId == caption.evidenceMediaId &&
-                it.modelVersion == caption.modelVersion &&
-                it.promptVersion == caption.promptVersion
+            it.generationId == generationId &&
+            it.mediaId == caption.evidenceMediaId &&
+            it.modelVersion == caption.modelVersion &&
+            it.promptVersion == caption.promptVersion
         }
         val scopedFacts = facts.filter {
             generationId != null &&
-                it.generationId == generationId &&
-                it.scope == caption.scope &&
-                it.subjectId == caption.subjectId &&
-                it.evidenceMediaId == caption.evidenceMediaId &&
-                it.modelVersion == caption.modelVersion &&
-                it.promptVersion == caption.promptVersion
+            it.generationId == generationId &&
+            it.scope == caption.scope &&
+            it.subjectId == caption.subjectId &&
+            it.evidenceMediaId == caption.evidenceMediaId &&
+            it.modelVersion == caption.modelVersion &&
+            it.promptVersion == caption.promptVersion &&
+            it.applicability != SemanticProvenanceApplicability.LEGACY_SCOPE_UNCERTAIN
         }
 
         scopedPersonFacts
@@ -231,7 +232,11 @@ internal object SemanticCaptionChunker {
                 chunkType = candidate.type,
                 exactText = candidate.text,
                 confidence = candidate.confidence.coerceIn(0f, 1f),
-                applicability = caption.applicability,
+            applicability = if (caption.generationId == null) {
+                SemanticProvenanceApplicability.LEGACY_UNCORRELATED
+            } else {
+                caption.applicability
+            },
                 captionModelVersion = caption.modelVersion,
                 captionPromptVersion = caption.promptVersion,
                 chunkPolicyVersion = POLICY_VERSION,

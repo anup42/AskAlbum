@@ -130,3 +130,15 @@ media, databases, or logs.
 - Added typed `GemmaGenerationOptions` for seed, temperature, structured-output mode, and per-call maximum output tokens. Planner, visual verification, grounded answers, and adaptive captions now use explicit bounded budgets through the shared Gemma session.
 - Updated LiteRT-LM from `0.14.0` to `0.15.0` because the resolved runtime is the first locally available version exposing real per-conversation output-token and structured-response controls. No second engine or image-encoding pass was introduced.
 - Full consumer unit tests, consumer/offlineDemo/fixtureCi assemblies, consumer lint, replacement installation, and retained-data MainActivity launch passed. The launch smoke check found no fatal exception or ANR markers; it did not invoke a model-backed query.
+
+## 2026-08-05 - Semantic provenance repair
+
+- Status: PASS for focused implementation gates.
+- Added Room v22-to-v23 migration with idempotent event/group scope repair, digest-backed exact-duplicate preservation, and legacy ambiguity quarantine.
+- Invalid legacy and cross-generation caption chunks are invalidated for deterministic text-only backfill; valid Gemma captions, image vectors, OCR, People data, and model packs are preserved.
+- Retrieval direct-evidence scoring now rejects contextual, legacy-uncorrelated, legacy-uncertain, stale, and possible-inference applicability.
+- Focused JVM tests: PASS.
+- Migration instrumentation test on SM-F966: PASS.
+- Consumer lint and consumer/offlineDemo/fixtureCi assemblies: PASS.
+- Replacement consumer install and launch smoke check on SM-F966: PASS; no sampled fatal exception or ANR.
+- Remaining gap: full backlog repair and model-backed semantic acceptance queries require longer device observation.

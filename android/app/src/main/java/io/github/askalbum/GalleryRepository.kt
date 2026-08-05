@@ -914,11 +914,7 @@ class GalleryRepository(context: Context) {
         val cachedSemanticFacts = database.semanticFacts(deterministicFacts.map { it.item.id })
             .filter {
                 it.scope == SemanticFactScope.MEDIA &&
-                    it.applicability !in setOf(
-                        "GROUP_CONTEXT_ONLY",
-                        "LEGACY_GROUP_CONTEXT_ONLY",
-                        "STALE_PERSON_BINDING",
-                    )
+                    it.applicability !in SemanticProvenanceApplicability.NON_CONFIRMING
             }
             .groupBy(SemanticFactRecord::subjectId)
         val enriched = deterministicFacts.map { hit ->
