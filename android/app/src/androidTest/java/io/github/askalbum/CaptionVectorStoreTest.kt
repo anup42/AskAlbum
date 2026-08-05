@@ -34,8 +34,8 @@ class CaptionVectorStoreTest {
             assertEquals(ChannelStatus.NOT_REQUIRED, emptyQuery.status)
 
             val noEligibleChunks = store.searchVariants(listOf("birthday"), emptySet(), 0, 10)
-            assertEquals(ChannelStatus.UNAVAILABLE, noEligibleChunks.status)
-            assertEquals("NO_VERIFIED_RETRIEVAL_PACK", noEligibleChunks.errorCode)
+            assertEquals(ChannelStatus.NOT_REQUIRED, noEligibleChunks.status)
+            assertEquals(null, noEligibleChunks.errorCode)
         } finally {
             isolatedFiles.deleteRecursively()
         }

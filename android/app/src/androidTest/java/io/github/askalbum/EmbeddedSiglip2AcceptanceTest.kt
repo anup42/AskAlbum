@@ -9,6 +9,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -16,6 +17,7 @@ import org.junit.runner.RunWith
 class EmbeddedSiglip2AcceptanceTest {
     @Test
     fun bundledArchiveVerifiesAndActivatesWithoutNetwork() = runBlocking {
+        assumeTrue("Embedded SigLIP2 archive is not part of model-independent variants", !BuildConfig.MODEL_INDEPENDENT)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val application = instrumentation.targetContext.applicationContext as AskAlbumApplication
         val provisioner = application.services.embeddedRetrievalModelProvisioner
