@@ -262,6 +262,11 @@ media, databases, or logs.
 
 - Deleted the unreachable repository answer switch after `CapabilityAnswerExecutor` so planner-visible capabilities have one active executor and no stale receipt-only fallback can be restored accidentally.
 
+### 2026-08-05 - Enable release shrinking with runtime keep rules
+
+- Consumer release now enables R8 and resource shrinking.
+- JNI vector scanning and typed local model entry points have explicit keep rules; release assembly is required to validate the configuration.
+
 ### 2026-08-05 - Use explicit foreground indexing service types
 
 - Initial gallery indexing now calls the platform typed `startForeground` API, using `mediaProcessing` on Android 15+ and `dataSync` on older supported releases.
