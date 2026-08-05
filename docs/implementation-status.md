@@ -579,3 +579,8 @@ media, databases, or logs.
 - Semantic no-result wording now distinguishes indexed coverage from bounded top-K retrieval.
 - Retrieval coverage UI labels vector channels as indexed and bounded instead of implying exhaustive evaluation.
 - Added regression coverage for truthful bounded semantic wording.
+### 2026-08-05 - Close grounded-answer evidence scope
+
+- Grounded evidence now retains scope, subject, evidence-media, cluster, and applicability provenance.
+- Person-conditioned answer composition accepts only same-media visual-verification evidence; event/context evidence is limited to event capabilities.
+- Possible-inference claims must preserve uncertainty wording, with regression coverage for cross-media and contextual leakage.

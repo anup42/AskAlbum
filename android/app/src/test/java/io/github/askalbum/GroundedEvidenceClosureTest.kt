@@ -1,0 +1,113 @@
+package io.github.anup42.askalbum
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
+import org.junit.Test
+
+class GroundedEvidenceClosureTest {
+    @Test
+    fun personVisualAnswersUseOnlySameMediaVisualVerificationEvidence() {
+        val plan = GalleryQueryPlan(
+            originalQuery = "show wife wearing white",
+            intent = QueryIntent.FIND_MEDIA,
+            peopleClauses = listOf(PersonClause("wife")),
+            semanticClauses = listOf(
+                SemanticClause(
+                    text = "wearing white",
+                    subject = SemanticSubject.PERSON,
+                    relationToPerson = "wife",
+                    hardness = ConstraintStrength.HARD,
+                ),
+            ),
+        )
+        val hit = SearchHit(
+            item("m1"),
+            1.0,
+            listOf(
+                evidence("context", "m1", "semantic_caption_candidate_expansion", "Wife wears white"),
+                evidence("foreign", "m2", "visual_verification", "P1 wears white"),
+                evidence("direct", "m1", "visual_verification", "P1 wears white"),
+            ),
+        )
+
+        val packet = GroundedEvidencePacketBuilder.build(
+            GroundedAnswerInput(plan, listOf(hit), baseline()),
+        )
+
+        assertEquals(listOf("direct"), packet.evidence.map(EvidenceRecord::id))
+    }
+
+    @Test
+    fun eventContextIsOnlyAnswerEvidenceForEventCapabilities() {
+        val eventEvidence = evidence("event", "m1", "event", "Singapore trip")
+            .copy(scope = SemanticFactScope.EVENT, scopeId = "event-1")
+        val hit = SearchHit(item("m1"), 1.0, listOf(eventEvidence))
+        val ordinary = GroundedEvidencePacketBuilder.build(
+            GroundedAnswerInput(
+                GalleryQueryPlan(originalQuery = "show Singapore photos", intent = QueryIntent.FIND_MEDIA, terms = listOf("Singapore")),
+                listOf(hit),
+                baseline(),
+            ),
+        )
+        val event = GroundedEvidencePacketBuilder.build(
+            GroundedAnswerInput(
+                GalleryQueryPlan(originalQuery = "summarize Singapore trip", intent = QueryIntent.EVENT_SUMMARY, terms = listOf("Singapore")),
+                listOf(hit),
+                baseline(),
+            ),
+        )
+
+        assertTrue(ordinary.evidence.isEmpty())
+        assertEquals(listOf("event"), event.evidence.map(EvidenceRecord::id))
+    }
+
+    @Test
+    fun possibleInferenceClaimsMustRemainUncertain() {
+        val possible = evidence("occasion", "m1", "semantic_caption", "possible birthday celebration")
+            .copy(applicability = SemanticProvenanceApplicability.POSSIBLE_INFERENCE)
+        val packet = GroundedEvidencePacket(
+            query = "birthday photos",
+            baseline = baseline(),
+            evidence = listOf(possible),
+        )
+        val certain = """{"headline":"Birthday celebration","detail":"Birthday celebration","claims":[{"text":"Birthday celebration","evidenceIds":["occasion"],"confidence":0.8}]}"""
+        val uncertain = """{"headline":"Possible birthday celebration","detail":"Possible birthday celebration","claims":[{"text":"Possible birthday celebration","evidenceIds":["occasion"],"confidence":0.8}]}"""
+
+        assertThrows(IllegalArgumentException::class.java) { GroundedAnswerCodec().decode(certain, packet) }
+        assertEquals(listOf("occasion"), GroundedAnswerCodec().decode(uncertain, packet).evidenceIds)
+    }
+
+    private fun evidence(id: String, mediaId: String, source: String, text: String) = EvidenceRecord(
+        id = id,
+        mediaId = mediaId,
+        sourceField = source,
+        text = text,
+        confidence = .95f,
+        producerVersion = "fixture",
+    )
+
+    private fun baseline() = SearchAnswer(
+        headline = "Found 1 match",
+        detail = "Local evidence was used.",
+        evidenceIds = emptyList(),
+        exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+        indexedEligibleCount = 1,
+        totalEligibleCount = 1,
+    )
+
+    private fun item(id: String) = GalleryItem(
+        id = id,
+        filename = "$id.jpg",
+        title = id,
+        creator = null,
+        location = "fixture",
+        latitude = null,
+        longitude = null,
+        tags = emptyList(),
+        description = "fixture",
+        license = "CC0-1.0",
+        sourceUrl = "local-fixture",
+        assetPath = "images/$id.jpg",
+    )
+}

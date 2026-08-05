@@ -1034,6 +1034,10 @@ class GalleryRepository(context: Context) {
                     text = "${event.title} (${formatEventRange(event.startTime, event.endTime)})",
                     confidence = event.confidence,
                     producerVersion = event.producerVersion,
+                    scope = SemanticFactScope.EVENT,
+                    scopeId = event.id.toString(),
+                    evidenceMediaId = item.id,
+                    applicability = "EVENT_MEMBERSHIP",
                 )
             }
             val captionEvidence = caption?.let {
@@ -1044,6 +1048,11 @@ class GalleryRepository(context: Context) {
                     text = it.caption.text,
                     confidence = (it.caption.confidence * if (it.directEvidence) 1f else 0.72f).coerceIn(0f, 1f),
                     producerVersion = it.caption.modelVersion,
+                    scope = it.chunk?.scope ?: it.caption.scope,
+                    scopeId = it.chunk?.scopeId ?: it.caption.subjectId,
+                    evidenceMediaId = it.chunk?.evidenceMediaId ?: it.caption.evidenceMediaId,
+                    clusterId = it.chunk?.clusterId,
+                    applicability = it.chunk?.applicability ?: it.caption.applicability,
                 )
             }
             val captionEmbeddingEvidence = captionEmbedding?.let {
@@ -1055,6 +1064,11 @@ class GalleryRepository(context: Context) {
                     text = chunk.exactText,
                     confidence = (chunk.confidence * if (it.directEvidence) 1f else 0.72f).coerceIn(0f, 1f),
                     producerVersion = chunk.embeddingModelVersion ?: captionVectorSearch.modelVersion ?: "unknown-caption-vector",
+                    scope = chunk.scope,
+                    scopeId = chunk.scopeId,
+                    evidenceMediaId = chunk.evidenceMediaId,
+                    clusterId = chunk.clusterId,
+                    applicability = chunk.applicability,
                 )
             }
             SearchHit(
@@ -1111,6 +1125,10 @@ class GalleryRepository(context: Context) {
                     confidence = fact.confidence,
                     producerVersion = fact.modelVersion,
                     region = fact.region,
+                    scope = fact.scope,
+                    scopeId = fact.subjectId,
+                    evidenceMediaId = fact.evidenceMediaId,
+                    applicability = fact.applicability,
                 )
             }
             hit.copy(evidence = (hit.evidence + cached).distinctBy(EvidenceRecord::id))

@@ -19,10 +19,12 @@ object GroundedEvidencePacketBuilder {
         require(input.hits.none(SensitiveEvidencePolicy::requiresAuthentication)) {
             "Sensitive OCR requires device authentication before an evidence packet can be built"
         }
-        val activeMediaIds = input.hits.mapTo(mutableSetOf()) { it.item.id }
         val evidence = input.hits.asSequence()
-            .flatMap { it.evidence.asSequence() }
-            .filter { it.mediaId in activeMediaIds }
+            .flatMap { hit ->
+                hit.evidence.asSequence()
+                    .filter { it.mediaId == hit.item.id }
+                    .filter { GroundedEvidencePolicy.allow(it, input.plan) }
+            }
             .distinctBy { it.id }
             .take(MAX_EVIDENCE)
             .toList()
@@ -102,6 +104,11 @@ class GroundedAnswerCodec {
         val claimWords = tokenize(text)
         require(claimWords.any { it in sourceWords }) { "Claim is not lexically connected to its cited evidence" }
         validateVocabulary(text, source)
+        if (cited.any(GroundedEvidencePolicy::requiresUncertainty)) {
+            require(UNCERTAINTY_MARKER.containsMatchIn(text)) {
+                "Claims using possible inference evidence must preserve uncertainty"
+            }
+        }
     }
 
     private fun validateVocabulary(text: String, source: String) {
@@ -152,6 +159,10 @@ class GroundedAnswerCodec {
             "\\b(?:january|february|march|april|may|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b",
             RegexOption.IGNORE_CASE,
         )
+        private val UNCERTAINTY_MARKER = Regex(
+            "\\b(?:possible|possibly|may|might|suggest|suggests|suggesting|appears|likely|could)\\b",
+            RegexOption.IGNORE_CASE,
+        )
         private val FORBIDDEN_OUTPUT = listOf(
             Regex("content://", RegexOption.IGNORE_CASE),
             Regex("file://", RegexOption.IGNORE_CASE),
@@ -186,6 +197,11 @@ internal fun GroundedEvidencePacket.toPromptJson(): JSONObject = JSONObject().ap
                 put("type", record.sourceField)
                 put("text", record.text.take(500))
                 put("confidence", record.confidence.toDouble())
+                record.scope?.let { put("scope", it.name) }
+                record.scopeId?.let { put("scopeId", it) }
+                record.evidenceMediaId?.let { put("evidenceMediaId", it) }
+                record.clusterId?.let { put("clusterId", it) }
+                record.applicability?.let { put("applicability", it) }
                 record.pageIndex?.let { put("pageIndex", it) }
             })
         }

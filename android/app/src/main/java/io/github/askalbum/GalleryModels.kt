@@ -193,6 +193,11 @@ data class EvidenceRecord(
     val region: List<Float>? = null,
     val timestampMs: Long? = null,
     val pageIndex: Int? = null,
+    val scope: SemanticFactScope? = null,
+    val scopeId: String? = null,
+    val evidenceMediaId: String? = null,
+    val clusterId: String? = null,
+    val applicability: String? = null,
 )
 
 data class SearchHit(
