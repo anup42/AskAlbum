@@ -29,6 +29,7 @@ class CaptionVectorStore(
     suspend fun searchVariants(
         queries: List<String>,
         eligibleChunkIds: Set<String>,
+        eligibleMediaCount: Int,
         topK: Int,
     ): CaptionVectorSearchReport {
         val normalizedQueries = queries
@@ -58,13 +59,18 @@ class CaptionVectorStore(
             )
         if (eligibleChunkIds.isEmpty()) {
             return CaptionVectorSearchReport(
-                status = ChannelStatus.NOT_REQUIRED,
-                eligibleChunkCount = 0,
+                status = CaptionVectorCoveragePolicy.status(
+                    queryRequired = true,
+                    eligibleMediaCount = eligibleMediaCount,
+                    eligibleChunkCount = 0,
+                    indexedChunkCount = 0,
+                ),
+                eligibleChunkCount = eligibleMediaCount,
                 indexedChunkCount = 0,
                 searchedChunkCount = 0,
                 hits = emptyList(),
                 modelVersion = modelVersion,
-                errorCode = null,
+                errorCode = if (eligibleMediaCount > 0) "NO_ELIGIBLE_CAPTION_CHUNKS" else null,
             )
         }
         return runCatching {
@@ -82,7 +88,12 @@ class CaptionVectorStore(
                 hits.map { CaptionVectorHit(it.mediaId, it.score, query) }
             }.groupBy(CaptionVectorHit::chunkId).mapValues { (_, hits) -> hits.maxBy(CaptionVectorHit::score) }
             CaptionVectorSearchReport(
-                status = if (indexed.size < eligibleChunkIds.size) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
+                status = CaptionVectorCoveragePolicy.status(
+                    queryRequired = true,
+                    eligibleMediaCount = eligibleMediaCount,
+                    eligibleChunkCount = eligibleChunkIds.size,
+                    indexedChunkCount = indexed.size,
+                ),
                 eligibleChunkCount = eligibleChunkIds.size,
                 indexedChunkCount = indexed.size,
                 searchedChunkCount = indexed.size,

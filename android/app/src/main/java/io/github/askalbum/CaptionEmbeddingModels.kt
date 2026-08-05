@@ -90,6 +90,20 @@ data class CaptionVectorSearchReport(
     val errorCode: String? = null,
 )
 
+internal object CaptionVectorCoveragePolicy {
+    fun status(
+        queryRequired: Boolean,
+        eligibleMediaCount: Int,
+        eligibleChunkCount: Int,
+        indexedChunkCount: Int,
+    ): ChannelStatus = when {
+        !queryRequired || eligibleMediaCount == 0 -> ChannelStatus.NOT_REQUIRED
+        eligibleChunkCount == 0 -> ChannelStatus.PARTIAL
+        indexedChunkCount < eligibleChunkCount -> ChannelStatus.PARTIAL
+        else -> ChannelStatus.SUCCESS
+    }
+}
+
 internal object SemanticCaptionChunker {
     const val POLICY_VERSION = "caption-chunks-v3"
     const val MAX_CHUNKS_PER_CAPTION = 24

@@ -678,6 +678,7 @@ class GalleryRepository(context: Context) {
         val captionVectorSearch = captionVectors.searchVariants(
             semanticQueries,
             eligibleCaptionChunks.mapTo(mutableSetOf(), SemanticCaptionChunkRecord::id),
+            eligibleIds.size,
             plan.limit.coerceIn(20, 100),
         )
         val captionEmbeddingRanked = database.resolveCaptionVectorHits(

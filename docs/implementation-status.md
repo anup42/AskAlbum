@@ -400,3 +400,4 @@ media, databases, or logs.
 - Caption-chunk embedding is now exposed as an independent indexing job with its own persisted toggle, runtime snapshot, retry/in-flight status, supervisor scheduling, and UI row.
 - Existing installs default the new control to enabled; image-vector and caption-vector workers can now be stopped independently.
 - Caption-vector availability still requires the verified SigLIP2 retrieval pack, and no caption, image vector, Gemma fact, or Room data is deleted by the control change.
+- Required caption-vector searches now report `PARTIAL` when eligible media have no usable caption chunks, instead of silently reporting `NOT_REQUIRED` with empty hits.
