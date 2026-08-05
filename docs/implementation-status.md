@@ -628,3 +628,6 @@ media, databases, or logs.
 - Extended the connected recovery harness to force device idle, verify recovery work is not cancelled, unforce idle, and verify the request remains available.
 - The test restores device idle state in `finally` and cancels only its two indexing work names.
 - The two recovery tests pass on `SM-F966B` and `SM-F731U`.
+### 2026-08-05 - Run 5k/20k vector workload gate
+- `VectorIndexBenchmarkTest` passed native FP16 vector-store construction and retrieval at 5,000 and 20,000 vectors on both connected devices.
+- This validates vector-store scale only; full MediaStore indexing at 5,000/20,000 items and six-hour foreground duration remain separate unverified gates.
