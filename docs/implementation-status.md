@@ -486,3 +486,10 @@ media, databases, or logs.
 - `PeopleIndexWorkerPolicyTest` PASS; `consumerDebug` and `fixtureCiDebug` compilation PASS.
 - Both APKs assembled PASS; consumer replacement install and launch smoke PASS on `SM-F731U`; fixture INTERNET permission ABSENT.
 - Process-death, screen-off/Doze, six-hour foreground-service timeout, 5k/20k workload, E4B, and full acceptance-query gates remain unverified.
+
+### 2026-08-05 - Lease recovery correctness
+- Normal pipeline recovery now reclaims only expired durable leases; stale `updated_at` or `last_progress_at` no longer interrupts a live slow item.
+- Explicit startup orphan recovery remains available only when the owning WorkManager pipeline has no active work.
+- `IndexingLeaseRecoveryPolicyTest` PASS; `consumerDebug` and `fixtureCiDebug` compilation PASS.
+- Both APKs assembled PASS; consumer replacement install and launch smoke PASS on `SM-F731U`; fixture INTERNET permission ABSENT.
+- Process-death, screen-off/Doze, foreground-service-timeout, 5k/20k workload, E4B, and full acceptance-query gates remain unverified.
