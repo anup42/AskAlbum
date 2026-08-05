@@ -800,6 +800,14 @@ class GalleryRepository(context: Context) {
             itemPredicateIds = itemPredicateIds,
             allowContextualExpansion = allowContextualEventExpansion,
         )
+        val eventCoverageRequired = plan.intent == QueryIntent.EVENT_SUMMARY ||
+            plan.grouping == Grouping.EVENT || rawEventMediaRank.isNotEmpty()
+        val eventStageCoverage = if (eventCoverageRequired) {
+            database.indexStageCoverage(eligibleIds, IndexStage.EVENTS)
+        } else {
+            IndexStageCoverage(eligibleCount = 0)
+        }
+        val eventStatus = EventChannelCoveragePolicy.status(eventCoverageRequired, eventStageCoverage)
         val itemById = allItems.associateBy { it.id }
         val deterministicScopeHit: (GalleryItem) -> SearchHit = { item ->
             val event = eventByMedia[item.id]
@@ -845,7 +853,8 @@ class GalleryRepository(context: Context) {
                     allItems.filter { item -> item.matchesComparisonScope(scope, eventByMedia[item.id]) }
                         .map(deterministicScopeHit)
                 }
-            plan.intent in setOf(QueryIntent.EVENT_SUMMARY, QueryIntent.TIMELINE, QueryIntent.COMPARE) && eventMediaRank.isNotEmpty() ->
+            plan.intent in setOf(QueryIntent.EVENT_SUMMARY, QueryIntent.TIMELINE, QueryIntent.COMPARE) &&
+                eventStatus == ChannelStatus.SUCCESS && eventMediaRank.isNotEmpty() ->
                 eventMediaRank.mapNotNull { itemById[it] }.map(deterministicScopeHit)
             else -> emptyList()
         }
@@ -880,12 +889,17 @@ class GalleryRepository(context: Context) {
         )
         val eventChannelReport = RetrievalChannelReport(
             RetrievalChannel.EVENT,
-            if (terms.isEmpty() && plan.intent != QueryIntent.EVENT_SUMMARY) ChannelStatus.NOT_REQUIRED else ChannelStatus.SUCCESS,
-            eligibleIds.size,
-            eventMediaRank.size,
+            eventStatus,
+            eventStageCoverage.eligibleCount,
+            eventStageCoverage.coveredCount,
             eventRanked.size,
             eventMediaRank.mapNotNull { id -> itemById[id]?.let { SearchHit(it, 1.0, emptyList()) } },
             modelVersion = EventCompiler.PRODUCER_VERSION,
+            errorCode = when (eventStatus) {
+                ChannelStatus.PARTIAL -> "EVENT_COVERAGE_PARTIAL"
+                ChannelStatus.UNAVAILABLE -> "EVENT_INDEX_UNAVAILABLE"
+                else -> null
+            },
         )
         val captionCoverage = database.semanticCaptionEvidenceCount(eligibleIds)
         val captionStatus = when {

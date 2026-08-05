@@ -530,3 +530,9 @@ media, databases, or logs.
 - Fixed answer-level sensitive-evidence detection to inspect both ranked hits and the complete deterministic evidence set used for OCR facts and aggregations.
 - Added regression coverage proving a password present only in deterministic answer evidence still requires authentication before the answer is returned.
 - No database migration or data rewrite was required.
+## 2026-08-05 - Event expansion now reports and requires real coverage
+
+- Event, timeline, and event-group comparison expansion now uses deterministic scope evidence only when the eligible media set has complete `EVENTS` stage coverage.
+- Partial or missing event indexing reports `PARTIAL` or `UNAVAILABLE`, prevents complete-scope wording, and leaves the answer on the bounded retrieval path.
+- Ordinary non-event queries no longer require event coverage when no event candidate was found.
+- Added policy tests for partial, unavailable, and not-required event coverage.
