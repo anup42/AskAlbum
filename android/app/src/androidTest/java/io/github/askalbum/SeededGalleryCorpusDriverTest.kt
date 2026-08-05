@@ -36,6 +36,7 @@ class SeededGalleryCorpusDriverTest {
         val safeRunId = requireNotNull(runId)
         when (arguments.getString("galleryDriverAction") ?: ACTION_PREPARE) {
             ACTION_PREPARE -> prepare(context, safeRunId, arguments)
+            ACTION_INDEX -> index(context, safeRunId, arguments)
             ACTION_CLEANUP -> cleanup(context, safeRunId)
             ACTION_REPORT -> report(context, safeRunId)
             ACTION_DIAGNOSE -> diagnose(context, safeRunId)
@@ -62,10 +63,13 @@ class SeededGalleryCorpusDriverTest {
         ))
         assertEquals("COMPLETE", adopted.getString("state"))
 
+        clearStatus(context, runId, "status.json")
+        clearStatus(context, runId, "seed-result.json")
         TestGallerySeederService.start(context, runId, TestGallerySeederService.ACTION_SEED)
         waitForState(context, runId, "status.json")
         waitForState(context, runId, "seed-result.json")
 
+        clearStatus(context, runId, "import-status.json")
         TestGallerySeederService.start(context, runId, TestGallerySeederService.ACTION_IMPORT)
         val imported = waitForState(context, runId, "import-status.json")
         assertEquals("COMPLETE", imported.optString("state"))
@@ -73,6 +77,7 @@ class SeededGalleryCorpusDriverTest {
     }
 
     private fun cleanup(context: android.content.Context, runId: String) {
+        clearStatus(context, runId, "cleanup-status.json")
         TestGallerySeederService.start(context, runId, TestGallerySeederService.ACTION_CLEANUP)
         waitForState(context, runId, "cleanup-status.json")
 
@@ -90,7 +95,26 @@ class SeededGalleryCorpusDriverTest {
         assertEquals(0, database.optInt("remainingCount", -1))
     }
 
+    private fun index(context: android.content.Context, runId: String, arguments: Bundle) {
+        val operationId = arguments.getString("galleryOperationId") ?: sha256("index:$runId").take(32)
+        require(TestGallerySeederReceiver.OPERATION_ID.matches(operationId)) { "Invalid galleryOperationId" }
+        val maxCycles = arguments.getString("galleryMaxCycles")?.toIntOrNull() ?: DEFAULT_INDEX_CYCLES
+        require(maxCycles in 1..MAX_INDEX_CYCLES) { "Invalid galleryMaxCycles" }
+        clearStatus(context, runId, "foreground-index-status.json")
+        TestGallerySeederService.start(
+            context,
+            runId,
+            TestGallerySeederService.ACTION_INDEX,
+            operationId,
+            maxCycles,
+        )
+        val indexed = waitForState(context, runId, "foreground-index-status.json")
+        assertEquals("COMPLETE", indexed.optString("state"))
+        assertEquals(operationId, indexed.optString("operationId"))
+    }
+
     private fun report(context: android.content.Context, runId: String) {
+        clearStatus(context, runId, "index-coverage-status.json")
         context.sendBroadcast(
             Intent(TestGallerySeederReceiver.ACTION_REPORT_INDEX)
                 .setComponent(ComponentName(context, TestGallerySeederReceiver::class.java))
@@ -148,6 +172,10 @@ class SeededGalleryCorpusDriverTest {
         error("Timed out waiting for $filename; last=$last")
     }
 
+    private fun clearStatus(context: android.content.Context, runId: String, filename: String) {
+        File(context.filesDir, "test-seed/$runId/$filename").delete()
+    }
+
     private fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().buffered().use { input ->
@@ -161,12 +189,19 @@ class SeededGalleryCorpusDriverTest {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
+    private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray())
+        .joinToString("") { "%02x".format(it) }
+
     private companion object {
         const val ACTION_PREPARE = "prepare"
+        const val ACTION_INDEX = "index"
         const val ACTION_CLEANUP = "cleanup"
         const val ACTION_REPORT = "report"
         const val ACTION_DIAGNOSE = "diagnose"
-        const val TIMEOUT_MS = 180_000L
+        const val TIMEOUT_MS = 30 * 60_000L
+        const val DEFAULT_INDEX_CYCLES = 5_000
+        const val MAX_INDEX_CYCLES = 5_000
         val ARCHIVE_NAME = Regex("[A-Za-z0-9._-]{1,180}")
     }
 }

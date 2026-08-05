@@ -9,7 +9,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -28,6 +30,7 @@ class TestGallerySeederService : Service() {
     private var seedJob: Job? = null
     private var activeRunId: String? = null
     private var activeAction: String? = null
+    private var pendingIntent: Intent? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -72,21 +75,11 @@ class TestGallerySeederService : Service() {
         )
         if (seedJob?.isActive == true) {
             if (activeRunId != runId || activeAction != action) {
-                TestGallerySeederReceiver().writeStatus(
-                    this,
-                    runId,
-                    when (action) {
-                        ACTION_CLEANUP -> "cleanup-status.json"
-                        ACTION_IMPORT -> "import-status.json"
-                        ACTION_INDEX -> "foreground-index-status.json"
-                        else -> "status.json"
-                    },
-                    org.json.JSONObject().put("state", "FAILED").put("runId", runId)
-                        .put("error", "Another test gallery operation is active").also {
-                            operationId?.let { value -> it.put("operationId", value) }
-                        },
-                )
-                return START_NOT_STICKY
+                // The preceding operation may have already published its result file while its
+                // coroutine is still unwinding. Queue the next same-run action instead of
+                // turning that short handoff window into a false failure.
+                pendingIntent = Intent(intent)
+                return START_REDELIVER_INTENT
             }
             return START_REDELIVER_INTENT
         }
@@ -104,7 +97,18 @@ class TestGallerySeederService : Service() {
                     ACTION_SEED -> engine.seed(runId)
                     ACTION_CLEANUP -> TestGallerySeederReceiver().cleanup(this@TestGallerySeederService, runId, operationId)
                     ACTION_IMPORT -> TestGallerySeederReceiver().importSeeded(this@TestGallerySeederService, runId, operationId)
-                    else -> indexSeeded(runId, requireNotNull(operationId), maxCycles)
+                    else -> {
+                        // Importing rows schedules normal maintenance work. Match the production
+                        // foreground service contract before entering the exclusive coordinator.
+                        IndexScheduler.cancelAndWait(this@TestGallerySeederService)
+                        EmbeddingIndexScheduler.cancelAndWait(this@TestGallerySeederService)
+                        ForegroundIndexRuntime.started()
+                        try {
+                            indexSeeded(runId, requireNotNull(operationId), maxCycles)
+                        } finally {
+                            ForegroundIndexRuntime.stopped()
+                        }
+                    }
                 }
                 getSystemService(NotificationManager::class.java).notify(
                     NOTIFICATION_ID,
@@ -145,10 +149,19 @@ class TestGallerySeederService : Service() {
                     notification("Test gallery paused: ${error.javaClass.simpleName}", 1, 1),
                 )
             } finally {
+                seedJob = null
+                val nextIntent = pendingIntent
+                pendingIntent = null
                 activeRunId = null
                 activeAction = null
-                ServiceCompat.stopForeground(this@TestGallerySeederService, ServiceCompat.STOP_FOREGROUND_DETACH)
-                stopSelf()
+                if (nextIntent != null) {
+                    Handler(Looper.getMainLooper()).post {
+                        onStartCommand(nextIntent, 0, startId)
+                    }
+                } else {
+                    ServiceCompat.stopForeground(this@TestGallerySeederService, ServiceCompat.STOP_FOREGROUND_DETACH)
+                    stopSelf()
+                }
             }
         }
         return START_REDELIVER_INTENT

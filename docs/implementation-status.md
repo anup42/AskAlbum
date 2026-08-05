@@ -631,3 +631,17 @@ media, databases, or logs.
 ### 2026-08-05 - Run 5k/20k vector workload gate
 - `VectorIndexBenchmarkTest` passed native FP16 vector-store construction and retrieval at 5,000 and 20,000 vectors on both connected devices.
 - This validates vector-store scale only; full MediaStore indexing at 5,000/20,000 items and six-hour foreground duration remain separate unverified gates.
+### 2026-08-05 - end-to-end 5,000-item MediaStore gate
+
+- PASS: `fixtureCiDebug` and its instrumentation APK built and replacement-installed on `R3CY30QFWLP` under the isolated package `io.github.anup42.askalbum.fixture`.
+- PASS: a valid 5,000-item, 320x240 JPEG corpus was adopted, seeded, imported, and indexed through the foreground coordinator. The first pass processed `4,996` media items in `237.7s` with zero retryable or permanent failures; after the two-minute durable-lease recovery window, the corrected report showed `5,000/5,000` rows `READY`, all media stages complete, and no active claims.
+- PASS: the report driver now clears stale status files before asynchronous report broadcasts, preventing a superseded `COMPLETE` report from masking current database state.
+- PASS: exact run-scoped cleanup removed `5,000/5,000` MediaStore rows and imported database rows; no unrelated media was targeted.
+- NOT RUN: full device SigLIP2 vector indexing. The fixture producer is intentionally absent (`vectorProducer=null`), while the consumer device lacked a verified SigLIP2 runtime and produced `0` media-analysis progress with retryable embedding failures; no consumer data was changed and that run was cleaned.
+- NOT RUN: 20,000-item full MediaStore indexing and six-hour foreground duration. The synthetic vector-store 5,000/20,000 benchmark remains separate coverage.
+
+### 2026-08-05 - debug corpus operation handoff
+
+- Fixed the debug-only seeded-gallery foreground service handoff so a completed seed operation can queue the following import/index/cleanup action while the prior coroutine releases its lease.
+- This prevents a transient `Another test gallery operation is active` result from being reported as a real import failure.
+- The corpus driver now removes only the current run's stale operation status before starting a new operation, so superseded failures cannot abort a fresh run.
