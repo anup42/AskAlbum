@@ -108,7 +108,7 @@ class AdaptiveSemanticEnrichmentTest {
 
         assertEquals(listOf("beach", "birthday card", "birthday party"), facts.map(SemanticFactRecord::value))
         assertEquals("occasion", facts.last().predicate)
-        assertEquals("EVIDENCE_MEDIA_ONLY", facts.last().applicability)
+        assertEquals("POSSIBLE_INFERENCE", facts.last().applicability)
     }
 
     @Test

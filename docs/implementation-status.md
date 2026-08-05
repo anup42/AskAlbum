@@ -412,3 +412,5 @@ media, databases, or logs.
 - Gemma scalar placeholder values such as `null`, `undefined`, and `unknown` are rejected before typed semantic facts or chunks are persisted.
 - Room v25-to-v26 adds body-region provenance to person visual facts with a data-preserving migration and migration coverage.
 - Visual Gemma fact decoding now forces `occasion` and `possible_occasion` records to `POSSIBLE_INFERENCE`, preventing visual occasion text from becoming confirmed media evidence.
+- Real Gemma planner acceptance now accounts for shared-session reuse: model-load timing is required at most once across English, Hindi, and Hinglish cases, and the test asserts no repeated Gemma initialization.
+- Validation: 254 consumer unit tests passed; `consumerDebug`, `offlineDemoDebug`, and `fixtureCiDebug` assembled successfully. The connected real-Gemma planner gate was first blocked by a per-case load-time assertion, then correctly skipped because the current app-private state has no active verified E2B generation and only an incomplete `e2b.litertlm.part`; no real-model result is claimed.
