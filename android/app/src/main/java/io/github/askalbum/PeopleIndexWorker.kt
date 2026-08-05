@@ -38,7 +38,15 @@ class PeopleIndexWorker(
         var quarantinedFailures = 0
         try {
             repository.recoverInterruptedJobs(IndexingPipeline.PEOPLE)
-            if (embedder != null) services.faceVectorStore.reconcile(repository.allEmbeddedFaceIds())
+            if (embedder != null) {
+                val persistedFaceIds = repository.allEmbeddedFaceIds()
+                val indexedFaceIds = services.faceVectorStore.ids()
+                val missingFaceIds = FaceVectorRepairPolicy.missingVectorIds(persistedFaceIds, indexedFaceIds)
+                if (missingFaceIds.isNotEmpty()) {
+                    repository.requestFaceEmbeddingRepair(missingFaceIds, faceProducerVersion)
+                }
+                services.faceVectorStore.reconcile(repository.allEmbeddedFaceIds())
+            }
             val pendingItems = repository.facePendingItems(BATCH_SIZE)
             var processed = 0
             val progressStartedAt = System.currentTimeMillis()

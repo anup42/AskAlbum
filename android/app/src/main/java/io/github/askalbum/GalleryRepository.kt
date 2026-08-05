@@ -327,6 +327,8 @@ class GalleryRepository(context: Context) {
         database.faceClusterMemberships(clusterId)
     fun markFaceEmbeddingAvailable(faceId: String, dimension: Int, producerVersion: String) =
         database.markFaceEmbeddingAvailable(faceId, dimension, producerVersion)
+    fun requestFaceEmbeddingRepair(faceIds: Set<String>, producerVersion: String) =
+        database.requestFaceEmbeddingRepair(faceIds, producerVersion)
     fun assignAutomaticFacesToReviewedCluster(clusterId: String, faceIds: Set<String>): Int =
         database.assignAutomaticFacesToReviewedCluster(clusterId, faceIds).also { movedCount ->
             if (movedCount > 0) queuePersonalSemanticMemory(userRequested = true)

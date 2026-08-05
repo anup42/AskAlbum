@@ -30,6 +30,13 @@ class FaceVectorStore(context: Context) {
     suspend fun clear() = index.replaceAll(emptyMap())
 }
 
+internal object FaceVectorRepairPolicy {
+    fun missingVectorIds(persistedFaceIds: Set<String>, indexedFaceIds: Set<String>): Set<String> =
+        persistedFaceIds.asSequence()
+            .filterNot(indexedFaceIds::contains)
+            .toCollection(linkedSetOf())
+}
+
 internal object FaceEmbeddingAvailabilityPolicy {
     fun isUsable(vectorDimension: Int?, expectedDimension: Int): Boolean =
         vectorDimension == expectedDimension

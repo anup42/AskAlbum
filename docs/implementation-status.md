@@ -905,3 +905,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Shared media facts and captions remain shared only when a distinct source-generation record and matching exact-content digest prove pixel-equivalent reuse; event/group rows become contextual and ambiguous legacy rows become `LEGACY_SCOPE_UNCERTAIN`.
 - Affected caption chunks and FTS rows are invalidated for provenance-safe regeneration without deleting captions, facts, media, People data, vectors, events, or models.
 - Added an Android migration regression covering valid reuse, ambiguous rows, event scope repair, and chunk invalidation.
+
+## 2026-08-06 - Self-heal missing face vectors
+
+- People worker now compares persisted face-embedding metadata with the face vector index.
+- Missing indexed vectors clear only the affected embedding metadata and requeue the owning media FACES stage.
+- Existing user-corrected cluster assignments, reviewed identities, media, and other indexes are preserved while SFace regenerates the affected embeddings.
+- Added model-free policy tests for missing-vector detection.

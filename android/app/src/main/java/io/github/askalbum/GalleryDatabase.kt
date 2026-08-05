@@ -1474,6 +1474,60 @@ class GalleryDatabase(
         arrayOf(FaceModelCatalog.sface.embeddingDimension.toString()),
     ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
 
+    fun requestFaceEmbeddingRepair(faceIds: Set<String>, producerVersion: String) {
+        if (faceIds.isEmpty()) return
+        require(producerVersion.isNotBlank() && producerVersion.length <= 240) { "Invalid face producer version" }
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val affectedMediaIds = linkedSetOf<String>()
+            faceIds.toList().chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                val placeholders = ids.joinToString(",") { "?" }
+                db.rawQuery(
+                    "SELECT DISTINCT media_id FROM face_instance WHERE id IN ($placeholders)",
+                    ids.toTypedArray(),
+                ).use { cursor ->
+                    while (cursor.moveToNext()) affectedMediaIds += cursor.getString(0)
+                }
+                db.update(
+                    "face_instance",
+                    ContentValues().apply {
+                        putNull("embedding_offset")
+                        put("embedding_dimension", 0)
+                        put("producer_version", producerVersion)
+                    },
+                    "id IN ($placeholders)",
+                    ids.toTypedArray(),
+                )
+            }
+            if (affectedMediaIds.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                affectedMediaIds.toList().chunked(SQLITE_ID_CHUNK).forEach { mediaIds ->
+                    val placeholders = mediaIds.joinToString(",") { "?" }
+                    db.update(
+                        "media_index_stage",
+                        ContentValues().apply {
+                            put("status", StageStatus.PENDING.name)
+                            put("producer_version", producerVersion)
+                            put("attempt_count", 0)
+                            put("updated_at", now)
+                            put("next_attempt_at", 0L)
+                            put("last_progress_at", now)
+                            putNull("lease_owner")
+                            putNull("lease_expires_at")
+                            putNull("error")
+                        },
+                        "stage=? AND media_id IN ($placeholders)",
+                        arrayOf(IndexStage.FACES.name) + mediaIds.toTypedArray(),
+                    )
+                }
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun markFaceEmbeddingAvailable(faceId: String, dimension: Int, producerVersion: String) {
         require(faceId.length in 3..240 && dimension == FaceModelCatalog.sface.embeddingDimension) {
             "Invalid repaired face embedding"
