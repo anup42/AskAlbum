@@ -829,19 +829,9 @@ class GalleryDatabase(
             val mediaStages = stages.intersect(IndexingRecoveryPolicy.mediaAnalysisStages)
             val stageNames = stages.joinToString(",") { "'${it.name}'" }
             val mediaStageNames = mediaStages.joinToString(",") { "'${it.name}'" }
-            val staleProgressAt = now - IndexingRetryPolicy.LEASE_MILLIS
-            val leasePredicate = if (reclaimOrphanedLeases) {
-                "status='RUNNING'"
-            } else {
-                "status='RUNNING' AND (" +
-                    "(lease_expires_at IS NOT NULL AND lease_expires_at<=?) OR " +
-                    "COALESCE(last_progress_at,updated_at)<=?)"
-            }
-            val leaseArgs: Array<Any?> = if (reclaimOrphanedLeases) {
-                emptyArray()
-            } else {
-                arrayOf(now, staleProgressAt)
-            }
+            val leaseFilter = IndexingLeaseRecoveryPolicy.runningFilter(reclaimOrphanedLeases, now)
+            val leasePredicate = leaseFilter.sql
+            val leaseArgs = leaseFilter.args
             val recoveryError = if (reclaimOrphanedLeases) "lease_orphaned" else "lease_expired"
             if (mediaStages.isNotEmpty()) {
                 val orphanedMediaIds = "SELECT media_id FROM media_index_stage WHERE stage IN ($mediaStageNames) AND $leasePredicate"
@@ -875,11 +865,7 @@ class GalleryDatabase(
                         lease_owner=NULL,
                         lease_expires_at=NULL
                     WHERE status='RUNNING'
-                        AND ${if (reclaimOrphanedLeases) {
-                            "1=1"
-                        } else {
-                            "(lease_expires_at IS NOT NULL AND lease_expires_at<=$now) OR updated_at<=$staleProgressAt"
-                        }}
+                        AND ${IndexingLeaseRecoveryPolicy.semanticFilter(reclaimOrphanedLeases, now)}
                     """.trimIndent(),
                 )
             }
@@ -894,11 +880,7 @@ class GalleryDatabase(
                         lease_owner=NULL,
                         lease_expires_at=NULL
                     WHERE embedding_state='RUNNING'
-                        AND ${if (reclaimOrphanedLeases) {
-                            "1=1"
-                        } else {
-                            "(lease_expires_at IS NOT NULL AND lease_expires_at<=$now) OR updated_at<=$staleProgressAt"
-                        }}
+                        AND ${IndexingLeaseRecoveryPolicy.semanticFilter(reclaimOrphanedLeases, now)}
                     """.trimIndent(),
                 )
             }
