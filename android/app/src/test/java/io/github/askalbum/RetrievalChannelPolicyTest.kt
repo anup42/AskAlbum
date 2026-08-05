@@ -52,6 +52,46 @@ class RetrievalChannelPolicyTest {
     }
 
     @Test
+    fun eligibleMediaWithoutAnyVectorIdsIsPartialAndDoesNotSearch() = runBlocking {
+        var searched = false
+        val report = SemanticChannelReporter.execute(
+            "dog", "siglip@test", 3, emptySet(), 100,
+            indexedIds = { emptySet() },
+            search = { _, _, _ -> searched = true; emptyList() },
+        )
+
+        assertEquals(ChannelStatus.PARTIAL, report.status)
+        assertEquals(3, report.eligibleCount)
+        assertEquals(0, report.indexedCount)
+        assertEquals("VECTOR_COVERAGE_PARTIAL", report.errorCode)
+        assertFalse(searched)
+    }
+
+    @Test
+    fun eligibleMediaWithMissingVectorIdsIsPartialEvenWhenIndexedSubsetIsComplete() = runBlocking {
+        val report = SemanticChannelReporter.execute(
+            "dog", "siglip@test", 3, setOf("a", "b"), 100,
+            indexedIds = { setOf("a", "b") },
+            search = { _, _, _ -> listOf(VectorHit("a", .8f)) },
+        )
+
+        assertEquals(ChannelStatus.PARTIAL, report.status)
+        assertEquals(2, report.indexedCount)
+        assertEquals("VECTOR_COVERAGE_PARTIAL", report.errorCode)
+    }
+
+    @Test
+    fun emptyEligibleScopeIsNotRequiredEvenWhenModelIsMissing() = runBlocking {
+        val report = SemanticChannelReporter.execute(
+            "dog", null, 0, emptySet(), 100,
+            indexedIds = { error("must not load an index") },
+            search = { _, _, _ -> error("must not search") },
+        )
+
+        assertEquals(ChannelStatus.NOT_REQUIRED, report.status)
+    }
+
+    @Test
     fun hardFilterIsAppliedBeforeTopK() = runBlocking {
         val index = ReferenceVectorIndex(2)
         repeat(101) { index.upsert("global-$it", floatArrayOf(1f, 0f)) }

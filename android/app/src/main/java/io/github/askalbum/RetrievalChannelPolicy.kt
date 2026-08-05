@@ -45,6 +45,7 @@ internal object SemanticChannelReporter {
         search: suspend (String, Int, Set<String>) -> List<VectorHit>,
     ): RetrievalChannelReport<VectorHit> {
         if (query.isBlank()) return notRequired()
+        if (eligibleCount <= 0) return notRequired()
         if (modelVersion == null) {
             return RetrievalChannelReport(
                 RetrievalChannel.SEMANTIC,
@@ -58,16 +59,30 @@ internal object SemanticChannelReporter {
         }
         return try {
             val indexedEligibleIds = indexedIds().intersect(eligibleVectorIds)
+            if (indexedEligibleIds.isEmpty()) {
+                return RetrievalChannelReport(
+                    channel = RetrievalChannel.SEMANTIC,
+                    status = ChannelStatus.PARTIAL,
+                    eligibleCount = eligibleCount,
+                    indexedCount = 0,
+                    searchedCount = 0,
+                    hits = emptyList(),
+                    modelVersion = modelVersion,
+                    errorCode = "VECTOR_COVERAGE_PARTIAL",
+                )
+            }
             val hits = search(query, topK, eligibleVectorIds)
+            val completeCoverage = eligibleVectorIds.size == eligibleCount &&
+                indexedEligibleIds.size == eligibleVectorIds.size
             RetrievalChannelReport(
                 channel = RetrievalChannel.SEMANTIC,
-                status = if (indexedEligibleIds.size < eligibleVectorIds.size) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
+                status = if (completeCoverage) ChannelStatus.SUCCESS else ChannelStatus.PARTIAL,
                 eligibleCount = eligibleCount,
                 indexedCount = indexedEligibleIds.size,
                 searchedCount = indexedEligibleIds.size,
                 hits = hits,
                 modelVersion = modelVersion,
-                errorCode = if (indexedEligibleIds.size < eligibleVectorIds.size) "VECTOR_COVERAGE_PARTIAL" else null,
+                errorCode = if (completeCoverage) null else "VECTOR_COVERAGE_PARTIAL",
             )
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled

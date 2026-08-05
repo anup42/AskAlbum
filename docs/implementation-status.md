@@ -659,3 +659,11 @@ media, databases, or logs.
 - PASS focused indexing-state, reliability, and foreground-completion unit tests.
 - PASS `consumerDebug` rebuilt and replacement-installed on `R3CW408WE4J`; `offlineDemoDebug` assembled successfully.
 - NOT RUN model-backed vector indexing on device; the connected consumer validation still lacks a verified external retrieval-pack path for that gate.
+
+### 2026-08-05 - reject empty semantic vector coverage
+- PASS semantic retrieval now reports `PARTIAL` with `VECTOR_COVERAGE_PARTIAL` when eligible media have no vector IDs or only a covered subset; it no longer treats `0 of 0` vector IDs as `SUCCESS`.
+- PASS empty hard-filtered scopes are `NOT_REQUIRED` before model availability checks, avoiding misleading retrieval-pack warnings for a query with no eligible media.
+- PASS caption-vector search follows the same empty-scope rule.
+- PASS focused retrieval-channel and caption-coverage tests.
+- PASS `consumerDebug` rebuilt and replacement-installed on `R3CW408WE4J`; `offlineDemoDebug` assembled successfully.
+- NOT RUN model-backed vector search on device because a verified retrieval-pack runtime remains unavailable for the full acceptance gate.

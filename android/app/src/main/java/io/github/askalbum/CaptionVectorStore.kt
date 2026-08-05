@@ -47,6 +47,17 @@ class CaptionVectorStore(
                 errorCode = null,
             )
         }
+        if (eligibleMediaCount <= 0) {
+            return CaptionVectorSearchReport(
+                status = ChannelStatus.NOT_REQUIRED,
+                eligibleChunkCount = 0,
+                indexedChunkCount = 0,
+                searchedChunkCount = 0,
+                hits = emptyList(),
+                modelVersion = null,
+                errorCode = null,
+            )
+        }
         val modelVersion = producerVersion()
             ?: return CaptionVectorSearchReport(
                 ChannelStatus.UNAVAILABLE,
