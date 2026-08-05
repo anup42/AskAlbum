@@ -38,6 +38,13 @@ class PersonalSemanticMemoryDatabaseTest {
             val progress = store.semanticMemoryProgress()
             assertEquals(2, progress.personalEligibleCount)
             assertEquals(2, progress.personalPendingCount)
+
+            assertEquals(2, store.queueEligiblePersonalSemanticMemoryJobs("fixture-gemma-v2", true))
+            val replacementProgress = store.semanticMemoryProgress()
+            assertEquals(2, replacementProgress.totalJobs)
+            assertEquals(2, replacementProgress.pendingJobs)
+            assertEquals(0, replacementProgress.completedJobs)
+
             assertTrue(store.personClusterSummaries(true).single { it.id == "person_me" }.includeInPersonalSemanticMemory)
             assertFalse(store.personClusterSummaries(true).single { it.id == "person_friend" }.includeInPersonalSemanticMemory)
 

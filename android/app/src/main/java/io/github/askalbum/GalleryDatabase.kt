@@ -3541,6 +3541,7 @@ class GalleryDatabase(
                    COALESCE(SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END),0),
                    COALESCE(SUM(CASE WHEN status='AUTH_REQUIRED' THEN 1 ELSE 0 END),0)
             FROM semantic_enrichment_job
+            WHERE COALESCE(model_version,'') NOT LIKE 'superseded:%'
             """.trimIndent(),
             emptyArray(),
         ).use { cursor ->

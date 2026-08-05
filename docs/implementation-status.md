@@ -609,3 +609,8 @@ media, databases, or logs.
 
 - A complete semantic predicate scan is no longer reported as exact when bounded visual verification is also required.
 - Added regression coverage for person-conditioned or other visual predicates that cannot be evaluated exhaustively by the semantic scan alone.
+
+### 2026-08-05 - Exclude superseded semantic jobs from visible totals
+
+- Semantic-memory global totals now exclude jobs explicitly marked `superseded`, matching the existing personal-job coverage query and preventing stale failures or skipped counts from appearing after a caption-policy/model refresh.
+- Added database coverage proving replacement personal jobs do not double-count the superseded generation.
