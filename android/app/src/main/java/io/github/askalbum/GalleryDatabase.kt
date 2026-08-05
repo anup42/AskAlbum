@@ -2569,7 +2569,7 @@ class GalleryDatabase(
                 SUM(CASE WHEN source_kind='DEMO_ASSET' OR index_state='READY' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN tags IS NOT NULL AND TRIM(tags) NOT IN ('', '[]') THEN 1 ELSE 0 END),
                 SUM(CASE WHEN index_state IN ('PENDING', 'INDEXING') THEN 1 ELSE 0 END),
-                SUM(CASE WHEN index_state IN ('FAILED_PERMANENT', 'FAILED_RETRYABLE') THEN 1 ELSE 0 END),
+                SUM(CASE WHEN index_state IN ('FAILED_PERMANENT', 'FAILED_RETRYABLE', 'FAILED_EXHAUSTED') THEN 1 ELSE 0 END),
                 SUM(CASE WHEN media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY' THEN 1 ELSE 0 END)
             FROM media_item
             """.trimIndent(),

@@ -594,3 +594,8 @@ media, databases, or logs.
 - Grounded-answer packets now merge ranked and deterministic hits by media ID, retaining OCR, aggregation, event, and ranked evidence together for the optional Gemma wording stage.
 - Deterministic answers remain authoritative when composition is unavailable or fails; no model, media, or database migration was required.
 - Added a regression proving same-media evidence is not dropped before composition.
+### 2026-08-05 - Report exhausted indexing items truthfully
+
+- Media-analysis and SigLIP2 progress now report quarantined item failures instead of hard-coded zero values.
+- Checkpoint progress no longer reports a full phantom batch as in-flight after the batch has returned.
+- `FAILED_EXHAUSTED` media rows now contribute to degraded pipeline status, so poison items cannot be mistaken for a complete healthy index.

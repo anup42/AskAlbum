@@ -29,6 +29,23 @@ class IndexingReliabilityPolicyTest {
     }
 
     @Test
+    fun exhaustedItemsKeepThePipelineInDegradedStateAfterPendingWorkEnds() {
+        assertEquals(
+            IndexingPipelineState.DEGRADED,
+            IndexingRuntimeStatePolicy.resolve(
+                enabled = true,
+                pending = 0,
+                failed = 1,
+                admissionAllowed = true,
+                workRunning = false,
+                workEnqueued = false,
+                runAttemptCount = 0,
+                foregroundActive = false,
+            ),
+        )
+    }
+
+    @Test
     fun expiredLeaseRecoveryIsScopedToTheOwningPipeline() {
         assertEquals(
             setOf(IndexStage.THUMBNAIL, IndexStage.OCR, IndexStage.EVENTS, IndexStage.ENRICHMENT),
