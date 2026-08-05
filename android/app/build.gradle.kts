@@ -163,6 +163,19 @@ tasks.configureEach {
     }
 }
 
+tasks.matching {
+    it.name in setOf("connectedConsumerDebugAndroidTest", "connectedOfflineDemoDebugAndroidTest")
+}.configureEach {
+    doFirst {
+        if (!project.hasProperty("allowProductionDeviceTests")) {
+            throw GradleException(
+                "Refusing connected instrumentation against the production package. " +
+                    "Use connectedFixtureCiDebugAndroidTest or pass -PallowProductionDeviceTests=true on a disposable device.",
+            )
+        }
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
