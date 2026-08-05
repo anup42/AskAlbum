@@ -19,6 +19,27 @@ The repository workflow is the authoritative build check. Device acceptance
 requires a configured Android device and locally available model packs, so it is
 not represented as a GitHub Actions pass.
 
+## 2026-08-05 - Connected-test safety correction
+
+- The model-backed planner executed on the primary consumer device after the
+  verified Gemma E2B pack finished downloading. The grounded-answer test
+  exposed an incorrect assertion: a zero incremental model-load time is valid
+  when the shared Gemma session was already initialized. The acceptance test
+  now checks reuse and generation instead of requiring a second initialization.
+- The Android Gradle configuration now refuses connected instrumentation against
+  the production `consumer` or `offlineDemo` package unless
+  `-PallowProductionDeviceTests=true` is explicitly supplied. Routine connected
+  tests must use the isolated `fixtureCi` application ID or a disposable device.
+- A connected consumer test run performed before this guard was added removed
+  the primary package during instrumentation cleanup. The APK was restored with
+  replacement-install semantics, but the old app-private database, indexes,
+  People data, and model files could not be recovered. Device gallery media was
+  not targeted. The primary consumer installation is therefore a fresh baseline
+  and must not be described as preserving the prior private state.
+- The complete `fixtureCi` JVM suite, both debug variant builds, and the
+  isolated fixture smoke test completed successfully. The full production
+  connected acceptance suite remains unverified on the restored primary device.
+
 ## Privacy boundary
 
 Media analysis, OCR, face indexing, embeddings, retrieval, Gemma planning,
