@@ -237,6 +237,57 @@ class SemanticEnrichmentDatabaseTest {
     }
 
     @Test
+    fun exactDuplicateCaptionCoverageIncludesEveryVerifiedMember() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "exact-caption-coverage-${UUID.randomUUID()}.db"
+        val database = GalleryDatabase(context, name)
+        try {
+            database.seedDemoIfEmpty()
+            val media = database.allItems().take(2)
+            assertEquals(2, media.size)
+            val group = VisualGroupPlan(
+                id = "exact:caption-coverage",
+                kind = "EXACT_DUPLICATE",
+                canonicalMediaId = media.first().id,
+                members = media.map(GalleryItem::id),
+                representatives = listOf(media.first().id),
+            )
+            val job = SemanticEnrichmentJobRecord(
+                id = UUID.randomUUID().toString(),
+                scope = SemanticFactScope.EXACT_DUPLICATE_GROUP,
+                subjectId = group.id,
+                representativeMediaId = media.first().id,
+                reason = "exact-caption",
+                status = SemanticEnrichmentStatus.PENDING,
+                attemptCount = 0,
+                userRequested = false,
+            )
+            database.replaceSemanticEnrichmentPlan(SemanticEnrichmentPlan(listOf(group), emptyList(), listOf(job)))
+            database.completeSemanticEnrichment(
+                requireNotNull(database.claimSemanticEnrichmentJob(owner = "exact-caption-owner")),
+                SemanticEnrichmentResult(
+                    facts = emptyList(),
+                    caption = SemanticCaptionRecord(
+                        scope = SemanticFactScope.EXACT_DUPLICATE_GROUP,
+                        subjectId = group.id,
+                        text = "A verified duplicate scene",
+                        confidence = 0.9f,
+                        evidenceMediaId = media.first().id,
+                        applicability = SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES,
+                        modelVersion = "fixture",
+                        promptVersion = "fixture-v1",
+                    ),
+                ),
+            )
+
+            assertEquals(2, database.semanticCaptionEvidenceCount(media.map(GalleryItem::id).toSet()))
+        } finally {
+            database.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
     fun representativeJobPreservesScopeAndSharesOnlyVerifiedExactDuplicates() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "semantic-facts-${UUID.randomUUID()}.db"

@@ -4468,27 +4468,52 @@ class GalleryDatabase(
 
     fun semanticCaptionEvidenceCount(mediaIds: Set<String>? = null): Int {
         if (mediaIds != null && mediaIds.isEmpty()) return 0
-        return if (mediaIds == null) {
-            readableDatabase.rawQuery(
-                "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption " +
-                    "WHERE (scope IN ('MEDIA','QUERY_VERIFICATION') OR " +
-                        "(scope='EXACT_DUPLICATE_GROUP' AND applicability='${SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES}')) " +
-                        "AND applicability<>'${SemanticProvenanceApplicability.STALE_PERSON_BINDING}'",
-                emptyArray(),
-            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
-        } else {
-            mediaIds.chunked(SQLITE_ID_CHUNK).sumOf { ids ->
-                val placeholders = ids.joinToString(",") { "?" }
-                readableDatabase.rawQuery(
-                    "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption " +
-                        "WHERE evidence_media_id IN ($placeholders) " +
-                        "AND (scope IN ('MEDIA','QUERY_VERIFICATION') OR " +
-                        "(scope='EXACT_DUPLICATE_GROUP' AND applicability='${SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES}')) " +
-                        "AND applicability<>'${SemanticProvenanceApplicability.STALE_PERSON_BINDING}'",
-                    ids.toTypedArray(),
-                ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        val db = readableDatabase
+        val covered = linkedSetOf<String>()
+
+        fun collect(sql: String, args: Array<String>) {
+            db.rawQuery(sql, args).use { cursor ->
+                while (cursor.moveToNext()) covered += cursor.getString(0)
             }
         }
+
+        if (mediaIds == null) {
+            collect(
+                "SELECT DISTINCT c.evidence_media_id FROM semantic_caption c " +
+                    "WHERE c.scope IN ('MEDIA','QUERY_VERIFICATION') " +
+                    "AND c.applicability<>'${SemanticProvenanceApplicability.STALE_PERSON_BINDING}'",
+                emptyArray(),
+            )
+            collect(
+                "SELECT DISTINCT gm.media_id FROM semantic_caption c " +
+                    "JOIN visual_group_member gm ON c.scope='EXACT_DUPLICATE_GROUP' AND c.subject_id=gm.group_id " +
+                    "JOIN visual_group g ON g.id=gm.group_id " +
+                    "WHERE g.kind='EXACT_DUPLICATE' AND " +
+                    "c.applicability='${SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES}'",
+                emptyArray(),
+            )
+        } else {
+            mediaIds.chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                val placeholders = ids.joinToString(",") { "?" }
+                collect(
+                    "SELECT DISTINCT c.evidence_media_id FROM semantic_caption c " +
+                        "WHERE c.scope IN ('MEDIA','QUERY_VERIFICATION') " +
+                        "AND c.applicability<>'${SemanticProvenanceApplicability.STALE_PERSON_BINDING}' " +
+                        "AND c.evidence_media_id IN ($placeholders)",
+                    ids.toTypedArray(),
+                )
+                collect(
+                    "SELECT DISTINCT gm.media_id FROM semantic_caption c " +
+                        "JOIN visual_group_member gm ON c.scope='EXACT_DUPLICATE_GROUP' AND c.subject_id=gm.group_id " +
+                        "JOIN visual_group g ON g.id=gm.group_id " +
+                        "WHERE g.kind='EXACT_DUPLICATE' AND " +
+                        "c.applicability='${SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES}' " +
+                        "AND gm.media_id IN ($placeholders)",
+                    ids.toTypedArray(),
+                )
+            }
+        }
+        return covered.size
     }
 
     fun hasAuthenticationProtectedOcr(mediaId: String): Boolean = readableDatabase.rawQuery(
