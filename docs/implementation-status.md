@@ -210,3 +210,8 @@ media, databases, or logs.
 - Replaced the ambiguous `COMPLETE_MODEL_SCAN` runtime exactness with `COMPLETE_PREDICATE_SCAN`.
 - Added a non-destructive Room 23-to-24 migration that rewrites only historical result-set exactness labels; media, indexes, People data, and models are untouched.
 - Added migration coverage for preserving the result set while renaming its exactness value.
+### 2026-08-05 - Fence caption-vector leases
+
+- Caption-vector completion and failure now require the current lease owner and producer version, preventing stale workers from overwriting reclaimed chunks.
+- Missing verified retrieval packs now produce explicit WorkManager retry state instead of a successful empty embedding run.
+- Added a temporary-database instrumentation regression for stale-owner completion and failure.

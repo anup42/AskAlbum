@@ -24,7 +24,15 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
 
         val services = application.services
         val producer = services.captionVectorStore.producerVersion()
-            ?: return@withContext Result.success()
+            ?: run {
+                setProgress(
+                    workDataOf(
+                        "status" to "UNAVAILABLE",
+                        "error_code" to "NO_VERIFIED_RETRIEVAL_PACK",
+                    ),
+                )
+                return@withContext Result.retry()
+            }
         val database = services.galleryDatabase
         database.recoverCaptionEmbeddingClaims()
         database.prepareCaptionEmbeddingVersion(producer)
@@ -41,12 +49,18 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
                 chunks.zip(vectors).forEach { (chunk, vector) ->
                     try {
                         services.captionVectorStore.upsert(chunk.id, vector)
-                        database.completeCaptionEmbedding(chunk.id, producer)
+                        database.completeCaptionEmbedding(chunk.id, producer, id.toString())
                         processed++
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Throwable) {
-                        database.failCaptionEmbedding(chunk.id, error.message ?: error::class.java.simpleName, retryable = true)
+                        database.failCaptionEmbedding(
+                            chunk.id,
+                            producer,
+                            id.toString(),
+                            error.message ?: error::class.java.simpleName,
+                            retryable = true,
+                        )
                         failures++
                     }
                 }
@@ -55,7 +69,13 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
                 throw cancelled
             } catch (error: Throwable) {
                 chunks.forEach {
-                    database.failCaptionEmbedding(it.id, error.message ?: error::class.java.simpleName, retryable = true)
+                    database.failCaptionEmbedding(
+                        it.id,
+                        producer,
+                        id.toString(),
+                        error.message ?: error::class.java.simpleName,
+                        retryable = true,
+                    )
                 }
                 failures += chunks.size
             }

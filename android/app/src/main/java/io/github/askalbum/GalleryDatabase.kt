@@ -3893,7 +3893,7 @@ class GalleryDatabase(
             ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
         }
 
-    fun completeCaptionEmbedding(chunkId: String, producerVersion: String) {
+    fun completeCaptionEmbedding(chunkId: String, producerVersion: String, owner: String): Boolean =
         writableDatabase.update("semantic_caption_chunk", ContentValues().apply {
             put("embedding_state", CaptionEmbeddingState.COMPLETE.name)
             put("embedding_model_version", producerVersion)
@@ -3903,13 +3903,26 @@ class GalleryDatabase(
             put("next_attempt_at", 0L)
             put("last_progress_at", System.currentTimeMillis())
             put("updated_at", System.currentTimeMillis())
-        }, "id=?", arrayOf(chunkId))
-    }
+        }, "id=? AND embedding_state=? AND lease_owner=? AND embedding_model_version=?", arrayOf(
+            chunkId,
+            CaptionEmbeddingState.RUNNING.name,
+            owner,
+            producerVersion,
+        )) == 1
 
-    fun failCaptionEmbedding(chunkId: String, error: String, retryable: Boolean) {
-        val db = writableDatabase
-        val attempt = db.rawQuery("SELECT attempt_count FROM semantic_caption_chunk WHERE id=?", arrayOf(chunkId))
-            .use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else IndexingRetryPolicy.MAX_ITEM_ATTEMPTS }
+    fun failCaptionEmbedding(
+        chunkId: String,
+        producerVersion: String,
+        owner: String,
+        error: String,
+        retryable: Boolean,
+    ): Boolean = writableDatabase.transaction { db ->
+        val attempt = db.rawQuery(
+            "SELECT attempt_count FROM semantic_caption_chunk " +
+                "WHERE id=? AND embedding_state=? AND lease_owner=? AND embedding_model_version=?",
+            arrayOf(chunkId, CaptionEmbeddingState.RUNNING.name, owner, producerVersion),
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else null }
+            ?: return@transaction false
         val state = when {
             !retryable -> CaptionEmbeddingState.FAILED_PERMANENT
             attempt >= IndexingRetryPolicy.MAX_ITEM_ATTEMPTS -> CaptionEmbeddingState.FAILED_EXHAUSTED
@@ -3930,7 +3943,12 @@ class GalleryDatabase(
             )
             put("last_progress_at", System.currentTimeMillis())
             put("updated_at", System.currentTimeMillis())
-        }, "id=?", arrayOf(chunkId))
+        }, "id=? AND embedding_state=? AND lease_owner=? AND embedding_model_version=?", arrayOf(
+            chunkId,
+            CaptionEmbeddingState.RUNNING.name,
+            owner,
+            producerVersion,
+        )) == 1
     }
 
     fun releaseCaptionEmbeddingClaims(owner: String, reason: String) {
