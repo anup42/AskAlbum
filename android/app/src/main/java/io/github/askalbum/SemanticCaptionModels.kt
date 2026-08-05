@@ -59,6 +59,7 @@ data class PersonVisualFactRecord(
     val targetClusterId: String? = null,
     val modelVersion: String,
     val promptVersion: String,
+    val bodyRegionVersion: String = PersonalSemanticMemoryPolicy.BODY_REGION_VERSION,
     val updatedAt: Long = 0L,
     val generationId: String? = null,
 )

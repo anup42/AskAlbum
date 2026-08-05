@@ -2268,6 +2268,7 @@ class GalleryDatabase(
             put("association_status", PersonAssociationStatus.CONFIDENT.name)
             put("verdict", PersonVisualVerdict.VERIFIED_TRUE.name)
             put("prompt_version", "query-visual-verification-v2")
+            put("body_region_version", PersonalSemanticMemoryPolicy.BODY_REGION_VERSION)
             put("updated_at", System.currentTimeMillis())
         }, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -3762,7 +3763,7 @@ class GalleryDatabase(
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
             result.personFacts.forEach { fact ->
-                val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}|${fact.generationId.orEmpty()}"
+                val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}|${fact.bodyRegionVersion}|${fact.generationId.orEmpty()}"
                 db.insertWithOnConflict("person_attribute_fact", null, ContentValues().apply {
                     put("id", UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString())
                     put("media_id", fact.mediaId)
@@ -3784,6 +3785,7 @@ class GalleryDatabase(
                     if (fact.targetClusterId == null) putNull("target_cluster_id") else put("target_cluster_id", fact.targetClusterId)
                     put("prompt_version", fact.promptVersion)
                     if (fact.generationId == null) putNull("generation_id") else put("generation_id", fact.generationId)
+                    put("body_region_version", fact.bodyRegionVersion)
                     put("updated_at", now)
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
@@ -4521,6 +4523,7 @@ class GalleryDatabase(
             targetClusterId = cursor.nullableText("target_cluster_id"),
             modelVersion = cursor.text("model_version"),
             promptVersion = cursor.text("prompt_version"),
+            bodyRegionVersion = cursor.text("body_region_version"),
             updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
             generationId = cursor.nullableText("generation_id"),
         )

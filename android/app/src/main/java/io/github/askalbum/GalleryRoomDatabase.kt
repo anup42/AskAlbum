@@ -296,6 +296,7 @@ data class PersonAttributeFactEntity(
     @ColumnInfo(name = "target_cluster_id") val targetClusterId: String? = null,
     @ColumnInfo(name = "prompt_version", defaultValue = "'legacy-person-attribute-v1'") val promptVersion: String = "legacy-person-attribute-v1",
     @ColumnInfo(name = "generation_id") val generationId: String? = null,
+    @ColumnInfo(name = "body_region_version", defaultValue = "'person-body-regions-v1'") val bodyRegionVersion: String = "person-body-regions-v1",
 )
 
 @Entity(tableName = "query_turn")
@@ -652,7 +653,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticPredicateScanHitEntity::class,
         SensitiveDataMigrationEntity::class,
     ],
-    version = 25,
+    version = 26,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -688,6 +689,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_22_23,
             MIGRATION_23_24,
             MIGRATION_24_25,
+            MIGRATION_25_26,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1293,6 +1295,14 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS video_keyframe_embedding_queue_idx " +
                         "ON video_keyframe(embedding_state,embedding_next_attempt_at)",
+                )
+            }
+        }
+
+        internal val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE person_attribute_fact ADD COLUMN body_region_version TEXT NOT NULL DEFAULT 'person-body-regions-v1'",
                 )
             }
         }

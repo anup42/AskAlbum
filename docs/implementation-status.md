@@ -405,3 +405,9 @@ media, databases, or logs.
 - Caption chunks now preserve fact-level applicability, so possible occasions remain uncertain candidate evidence instead of becoming direct media facts.
 - Pending semantic jobs now remain retryable when no verified multimodal Gemma pack is available; the worker reports `UNAVAILABLE` instead of completing successfully.
 - Person action and appearance facts now fail closed when required body regions are cropped, face-only, occluded, or ambiguously associated; only visible, confident facts can produce confirming chunks.
+### 2026-08-05 continuation correctness fixes
+
+- Caption-vector maintenance now completes truthfully when no verified retrieval pack exists and there is no pending backfill; pending work remains unavailable and retryable instead of being reported complete.
+- Caption chunk backfill now requires matching generation, scope, scope ID, evidence media, model, prompt, and body-region provenance. Legacy captions remain text-only, and contextual captions cannot inherit person facts.
+- Gemma scalar placeholder values such as `null`, `undefined`, and `unknown` are rejected before typed semantic facts or chunks are persisted.
+- Room v25-to-v26 adds body-region provenance to person visual facts with a data-preserving migration and migration coverage.

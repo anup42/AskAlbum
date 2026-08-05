@@ -25,13 +25,14 @@ class CaptionChunkProvenanceTest {
     @Test
     fun legacyAndContextCaptionsDoNotInheritPersonFacts() {
         val mediaFact = personFact("g1")
+        val staleBodyFact = personFact("g1", bodyRegionVersion = "person-body-regions-v0")
         val mediaCaption = caption()
         val legacyCaption = mediaCaption.copy(generationId = null)
         val eventCaption = mediaCaption.copy(scope = SemanticFactScope.EVENT, subjectId = "event-1")
 
         assertEquals(emptyList<PersonVisualFactRecord>(), CaptionChunkFactProvenancePolicy.matchingPersonFacts(legacyCaption, listOf(mediaFact)))
         assertEquals(emptyList<PersonVisualFactRecord>(), CaptionChunkFactProvenancePolicy.matchingPersonFacts(eventCaption, listOf(mediaFact)))
-        assertEquals(listOf(mediaFact), CaptionChunkFactProvenancePolicy.matchingPersonFacts(mediaCaption, listOf(mediaFact)))
+        assertEquals(listOf(mediaFact), CaptionChunkFactProvenancePolicy.matchingPersonFacts(mediaCaption, listOf(mediaFact, staleBodyFact)))
     }
 
     private fun caption() = SemanticCaptionRecord(
@@ -63,7 +64,10 @@ class CaptionChunkProvenanceTest {
         generationId = generationId,
     )
 
-    private fun personFact(generationId: String) = PersonVisualFactRecord(
+    private fun personFact(
+        generationId: String,
+        bodyRegionVersion: String = PersonalSemanticMemoryPolicy.BODY_REGION_VERSION,
+    ) = PersonVisualFactRecord(
         mediaId = "media-1",
         clusterId = "me-cluster",
         personRef = "P1",
@@ -74,6 +78,7 @@ class CaptionChunkProvenanceTest {
         faceRegion = listOf(.1f, .1f, .2f, .2f),
         modelVersion = "model-1",
         promptVersion = "prompt-1",
+        bodyRegionVersion = bodyRegionVersion,
         generationId = generationId,
     )
 }

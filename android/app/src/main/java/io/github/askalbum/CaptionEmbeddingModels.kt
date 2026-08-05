@@ -130,7 +130,8 @@ internal object CaptionChunkFactProvenancePolicy {
             fact.generationId == generationId &&
                 fact.mediaId == caption.evidenceMediaId &&
                 fact.modelVersion == caption.modelVersion &&
-                fact.promptVersion == caption.promptVersion
+                fact.promptVersion == caption.promptVersion &&
+                fact.bodyRegionVersion == caption.bodyRegionVersion
         }
     }
 }
@@ -161,7 +162,8 @@ internal object SemanticCaptionChunker {
             it.generationId == generationId &&
             it.mediaId == caption.evidenceMediaId &&
             it.modelVersion == caption.modelVersion &&
-            it.promptVersion == caption.promptVersion
+            it.promptVersion == caption.promptVersion &&
+            it.bodyRegionVersion == caption.bodyRegionVersion
         }
         val scopedFacts = facts.filter {
             generationId != null &&

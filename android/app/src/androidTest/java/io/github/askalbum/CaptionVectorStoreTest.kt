@@ -30,10 +30,10 @@ class CaptionVectorStoreTest {
                 },
             )
 
-            val emptyQuery = store.searchVariants(listOf("  ", ""), setOf("chunk-1"), 10)
+            val emptyQuery = store.searchVariants(listOf("  ", ""), setOf("chunk-1"), 1, 10)
             assertEquals(ChannelStatus.NOT_REQUIRED, emptyQuery.status)
 
-            val noEligibleChunks = store.searchVariants(listOf("birthday"), emptySet(), 10)
+            val noEligibleChunks = store.searchVariants(listOf("birthday"), emptySet(), 0, 10)
             assertEquals(ChannelStatus.UNAVAILABLE, noEligibleChunks.status)
             assertEquals("NO_VERIFIED_RETRIEVAL_PACK", noEligibleChunks.errorCode)
         } finally {
