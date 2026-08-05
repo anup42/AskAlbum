@@ -624,11 +624,12 @@ class GalleryRepository(context: Context) {
             .toList()
         val semanticQueries = SemanticQueryVariants.from(plan)
         val requiredPersonChunkClusters = PersonCaptionConstraintPolicy.requiredClusterIds(plan)
-        val captionRanked = database.searchSemanticCaptions(
+        val captionSearch = database.searchSemanticCaptions(
             semanticQueries + terms,
             eligibleIds,
             requiredPersonChunkClusters,
         )
+        val captionRanked = captionSearch.hits
         val captionProducer = captionVectors.producerVersion()
         val eligibleCaptionChunks = if (captionProducer == null) {
             emptyList()
@@ -805,17 +806,28 @@ class GalleryRepository(context: Context) {
             modelVersion = EventCompiler.PRODUCER_VERSION,
         )
         val captionCoverage = database.semanticCaptionEvidenceCount(eligibleIds)
+        val captionStatus = when {
+            captionSearch.status == ChannelStatus.NOT_REQUIRED -> ChannelStatus.NOT_REQUIRED
+            captionSearch.status != ChannelStatus.SUCCESS -> captionSearch.status
+            captionCoverage < eligibleIds.size -> ChannelStatus.PARTIAL
+            else -> ChannelStatus.SUCCESS
+        }
         val captionChannelReport = RetrievalChannelReport(
             RetrievalChannel.CAPTION,
-            if (captionCoverage < eligibleIds.size) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
-            eligibleIds.size,
-            captionCoverage,
-            captionRanked.size,
+            captionStatus,
+            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
+            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else captionCoverage,
+            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else captionCoverage,
             captionRanked.mapNotNull { match ->
                 itemById[match.mediaId]?.let { SearchHit(it, match.score, emptyList()) }
             },
             modelVersion = captionRanked.firstOrNull()?.caption?.modelVersion,
-            errorCode = if (captionCoverage < eligibleIds.size) "CAPTION_COVERAGE_PARTIAL" else null,
+            errorCode = captionSearch.errorCode
+                ?: if (captionCoverage < eligibleIds.size && captionStatus != ChannelStatus.NOT_REQUIRED) {
+                    "CAPTION_COVERAGE_PARTIAL"
+                } else {
+                    null
+                },
         )
         val captionEmbeddingSearchedMediaCount = eligibleCaptionChunks.asSequence()
             .filter {

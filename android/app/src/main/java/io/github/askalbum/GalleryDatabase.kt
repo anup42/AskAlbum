@@ -4079,12 +4079,18 @@ class GalleryDatabase(
         allowedIds: Set<String>,
         requiredPersonClusterIds: Set<String> = emptySet(),
         limit: Int = 500,
-    ): List<CaptionSearchHit> {
-        if (allowedIds.isEmpty()) return emptyList()
+    ): CaptionLexicalSearchResult {
+        if (allowedIds.isEmpty()) return CaptionLexicalSearchResult(emptyList(), ChannelStatus.NOT_REQUIRED)
         val variants = CaptionLexicalQueryBuilder.variants(queries)
-        val perVariant = variants.mapNotNull { query ->
-            val expression = CaptionLexicalQueryBuilder.ftsExpression(query) ?: return@mapNotNull null
-            val matches = runCatching {
+        val executableVariants = variants.mapNotNull { query ->
+            CaptionLexicalQueryBuilder.ftsExpression(query)?.let { expression -> query to expression }
+        }
+        if (executableVariants.isEmpty()) {
+            return CaptionLexicalSearchResult(emptyList(), ChannelStatus.NOT_REQUIRED)
+        }
+        var ftsFailed = false
+        val perVariant = executableVariants.mapNotNull { (query, expression) ->
+            val matchesResult = runCatching {
                 readableDatabase.rawQuery(
                     """
                     SELECT c.*,matchinfo(semantic_caption_chunk_fts,'pcnalx') AS fts_info
@@ -4128,16 +4134,43 @@ class GalleryDatabase(
                         }
                     }
                 }
-            }.getOrDefault(emptyList()).sortedByDescending(CaptionSearchHit::score).distinctBy(CaptionSearchHit::mediaId)
-            query to matches
+            }
+            if (matchesResult.isFailure) {
+                ftsFailed = true
+                null
+            } else {
+                query to matchesResult.getOrThrow()
+                    .sortedByDescending(CaptionSearchHit::score)
+                    .distinctBy(CaptionSearchHit::mediaId)
+            }
         }
-        if (perVariant.any { it.second.isNotEmpty() }) {
-            val fused = HybridRankFusion.fuse(perVariant.map { RankedChannel(1.0, it.second.map(CaptionSearchHit::mediaId)) })
-            val best = perVariant.flatMap { it.second }.groupBy(CaptionSearchHit::mediaId)
-                .mapValues { (_, hits) -> hits.maxBy(CaptionSearchHit::score) }
-            return fused.mapNotNull { (mediaId, score) -> best[mediaId]?.copy(score = score) }.take(limit)
+        val fused = fuseCaptionHits(perVariant, limit)
+        if (!ftsFailed) {
+            return CaptionLexicalSearchResult(fused, ChannelStatus.SUCCESS)
         }
-        return legacyCaptionSearch(variants, allowedIds, limit)
+        val fallbackResult = runCatching { legacyCaptionSearch(variants, allowedIds, limit) }
+        val fallback = fallbackResult.getOrDefault(emptyList())
+        val combined = (fused + fallback).distinctBy(CaptionSearchHit::mediaId).take(limit)
+        return CaptionLexicalSearchResult(
+            hits = combined,
+            status = if (fallbackResult.isFailure) ChannelStatus.FAILED else ChannelStatus.PARTIAL,
+            errorCode = if (fallbackResult.isFailure) {
+                "CAPTION_FTS_AND_LEGACY_SEARCH_FAILED"
+            } else {
+                "CAPTION_FTS_SEARCH_FAILED_LEGACY_FALLBACK"
+            },
+        )
+    }
+
+    private fun fuseCaptionHits(
+        perVariant: List<Pair<String, List<CaptionSearchHit>>>,
+        limit: Int,
+    ): List<CaptionSearchHit> {
+        if (perVariant.isEmpty()) return emptyList()
+        val fused = HybridRankFusion.fuse(perVariant.map { RankedChannel(1.0, it.second.map(CaptionSearchHit::mediaId)) })
+        val best = perVariant.flatMap { it.second }.groupBy(CaptionSearchHit::mediaId)
+            .mapValues { (_, hits) -> hits.maxBy(CaptionSearchHit::score) }
+        return fused.mapNotNull { (mediaId, score) -> best[mediaId]?.copy(score = score) }.take(limit)
     }
 
     private fun legacyCaptionSearch(

@@ -34,4 +34,29 @@ class LexicalSearchChannelDatabaseTest {
             context.deleteDatabase(name)
         }
     }
+
+    @Test
+    fun corruptCaptionFtsReportsPartialFallbackInsteadOfSuccess() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "caption-lexical-channel-${UUID.randomUUID()}.db"
+        val database = GalleryDatabase(context, name)
+        try {
+            database.seedDemoIfEmpty()
+            SQLiteDatabase.openDatabase(
+                context.getDatabasePath(name).path,
+                null,
+                SQLiteDatabase.OPEN_READWRITE,
+            ).use { raw -> raw.execSQL("DROP TABLE semantic_caption_chunk_fts") }
+
+            val result = database.searchSemanticCaptions(
+                queries = listOf("birthday"),
+                allowedIds = database.allItems().map(GalleryItem::id).toSet(),
+            )
+            assertEquals(ChannelStatus.PARTIAL, result.status)
+            assertEquals("CAPTION_FTS_SEARCH_FAILED_LEGACY_FALLBACK", result.errorCode)
+        } finally {
+            database.close()
+            context.deleteDatabase(name)
+        }
+    }
 }

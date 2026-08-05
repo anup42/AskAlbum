@@ -231,3 +231,8 @@ media, databases, or logs.
 
 - Caption-vector retrieval now short-circuits blank queries and empty eligible sets as `NOT_REQUIRED` before model loading.
 - Duplicate and whitespace-only query variants are removed before embedding; unavailable model packs are reported only for searches that actually require the channel.
+
+### 2026-08-05 - Surface caption FTS failures
+
+- Caption lexical retrieval now returns typed `SUCCESS`, `PARTIAL`, `FAILED`, or `NOT_REQUIRED` status.
+- FTS corruption or query failure is no longer reported as a successful empty channel; the legacy caption fallback is explicitly marked partial.

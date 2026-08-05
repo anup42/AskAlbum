@@ -79,6 +79,12 @@ data class CaptionSearchHit(
     val queryVariant: String? = null,
 )
 
+data class CaptionLexicalSearchResult(
+    val hits: List<CaptionSearchHit>,
+    val status: ChannelStatus,
+    val errorCode: String? = null,
+)
+
 internal object SemanticEnrichmentCodec {
     private const val MAX_CAPTION_LENGTH = 4_000
     private const val MAX_PEOPLE = 12
