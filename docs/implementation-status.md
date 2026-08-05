@@ -536,3 +536,8 @@ media, databases, or logs.
 - Partial or missing event indexing reports `PARTIAL` or `UNAVAILABLE`, prevents complete-scope wording, and leaves the answer on the bounded retrieval path.
 - Ordinary non-event queries no longer require event coverage when no event candidate was found.
 - Added policy tests for partial, unavailable, and not-required event coverage.
+## 2026-08-05 - Align protected-branch CI check with model-free variants
+
+- Named the Android workflow job `Fixture tests and offline build` to match the protected AskAlbum `main` required status check.
+- Updated CI to run `fixtureCiDebug` unit tests and assembly plus `offlineDemoDebug` assembly, and to verify both generated APK manifests for Internet permission.
+- This is a CI-only change; production model validation and app data are unchanged.

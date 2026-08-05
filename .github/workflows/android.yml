@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   build:
+    name: Fixture tests and offline build
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -23,12 +24,12 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
       - name: Run fixture unit tests and build
         working-directory: android
-        run: ./gradlew :app:testCiDebugUnitTest :app:assembleCiDebug --no-daemon
+        run: ./gradlew :app:testFixtureCiDebugUnitTest :app:assembleFixtureCiDebug :app:assembleOfflineDemoDebug --no-daemon
       - name: Verify offline manifest
         shell: bash
         run: |
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
-          for APK in android/app/build/outputs/apk/ci/debug/app-ci-debug.apk android/app/build/outputs/apk/offlineDemo/debug/app-offlineDemo-debug.apk; do
+          for APK in android/app/build/outputs/apk/fixtureCi/debug/app-fixtureCi-debug.apk android/app/build/outputs/apk/offlineDemo/debug/app-offlineDemo-debug.apk; do
             if "$AAPT" dump permissions "$APK" | grep -q "android.permission.INTERNET"; then
               echo "Internet permission found in $APK"
               exit 1
