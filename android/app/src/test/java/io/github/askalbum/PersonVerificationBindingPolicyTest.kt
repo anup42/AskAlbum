@@ -33,6 +33,24 @@ class PersonVerificationBindingPolicyTest {
         )
     }
 
+    @Test
+    fun identityBindingUsesUnicodeNormalization() {
+        val binding = binding("wife-cluster", setOf("Café", "Ｗｉｆｅ"))
+
+        assertTrue(
+            PersonVerificationBindingPolicy.matchesRequestedIdentity(
+                binding,
+                "Cafe\u0301",
+            ),
+        )
+        assertTrue(
+            PersonVerificationBindingPolicy.matchesRequestedIdentity(
+                binding,
+                "wife",
+            ),
+        )
+    }
+
     private fun binding(clusterId: String, terms: Set<String>) = PersonVerificationBinding(
         faceId = "$clusterId:face",
         clusterId = clusterId,

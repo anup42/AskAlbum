@@ -59,8 +59,10 @@ class LiteRtGemmaVisualVerifier(
                                     val everyRequestedIdentityBound = requiredGroups.all { alternatives ->
                                         alternatives.any { clause ->
                                             bindings.any { binding ->
-                                                binding.clusterId == clause.personId ||
-                                                    binding.identityTerms.any { it.equals(clause.personId, ignoreCase = true) }
+                                                PersonVerificationBindingPolicy.matchesRequestedIdentity(
+                                                    binding,
+                                                    clause.personId,
+                                                )
                                             }
                                         }
                                     }

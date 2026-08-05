@@ -570,3 +570,7 @@ media, databases, or logs.
 - Visual verification and video evidence playback now prioritize the semantic image-text keyframe timestamp, then lexical keyframe/OCR timestamps, instead of choosing the first or earliest unrelated timestamp in a fused hit.
 - Parent videos remain the returned media item while verification and playback use the matched frame time.
 - Added timestamp-priority regression coverage; no media, vector, or database data changed.
+### 2026-08-05 - Normalize verifier-side reviewed-person binding
+
+- Reused the Unicode-safe reviewed-person normalization contract in both Gemma visual-verification identity checks.
+- Added regression coverage for decomposed accents and full-width aliases so multilingual person conditions fail closed only on genuine ambiguity.
