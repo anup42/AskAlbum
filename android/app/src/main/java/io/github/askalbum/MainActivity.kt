@@ -914,7 +914,7 @@ private fun IndexManagerScreen(
         IndexMetric(
             "SigLIP2 image vectors",
             index.siglipVectorsReady,
-            index.discovered,
+            index.siglipVectorsEligible,
             when {
                 !retrievalPack.installed -> "Retrieval model unavailable"
                 !indexingJobControls.embeddingsEnabled -> "SigLIP2 ${retrievalPack.packVersion ?: "Base"} - stopped"

@@ -91,6 +91,24 @@ class IndexingWorkProgressTest {
     }
 
     @Test
+    fun vectorCoverageUsesTheEmbeddingStagePopulation() {
+        val summary = IndexSummary(
+            discovered = 20,
+            siglipVectorsReady = 7,
+            siglipVectorsEligible = 12,
+            siglipVectorsPending = 4,
+            siglipVectorsFailed = 1,
+        )
+
+        assertEquals(12, summary.siglipVectorsEligible)
+        assertEquals(
+            summary.siglipVectorsEligible,
+            summary.siglipVectorsReady + summary.siglipVectorsPending + summary.siglipVectorsFailed,
+        )
+        assertEquals(20, summary.discovered)
+    }
+
+    @Test
     fun foregroundIndexingIsRunningEvenWhenItsWorkManagerRecordWasCancelled() {
         assertEquals(
             IndexingPipelineState.RUNNING,

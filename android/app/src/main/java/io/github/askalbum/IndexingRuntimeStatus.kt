@@ -120,13 +120,13 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 summary.siglipVectorsPending,
                 summary.siglipVectorsFailed,
                 summary.siglipVectorsReady,
-                summary.discovered,
+                summary.siglipVectorsEligible,
                 embeddings,
                 admission,
                 foregroundActive = ForegroundIndexRuntime.active,
                 pausedByUser = controls.foregroundPaused,
-                unavailable = controls.embeddingsEnabled && !retrievalAvailable && summary.discovered > 0,
-                errorCode = if (controls.embeddingsEnabled && !retrievalAvailable && summary.discovered > 0) {
+                unavailable = controls.embeddingsEnabled && !retrievalAvailable && summary.siglipVectorsEligible > 0,
+                errorCode = if (controls.embeddingsEnabled && !retrievalAvailable && summary.siglipVectorsEligible > 0) {
                     "NO_VERIFIED_RETRIEVAL_PACK"
                 } else {
                     null

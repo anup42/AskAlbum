@@ -72,6 +72,7 @@ class InitialImportService : Service() {
                         onProgress = { progress ->
                             val summary = app.repository.indexSummary()
                             val discovered = summary.discovered
+                            val vectorEligible = summary.siglipVectorsEligible
                             val completed = (discovered - summary.pending - summary.failed)
                                 .coerceIn(0, discovered)
                             val processed = progress.galleryProcessed + progress.embeddingsProcessed
@@ -106,7 +107,7 @@ class InitialImportService : Service() {
                                 NOTIFICATION_ID,
                                 notification(
                                     "$pipeline | media $completed/$discovered; vectors " +
-                                        "${summary.siglipVectorsReady}/$discovered$vectorFailureText$rateText$etaText",
+                                        "${summary.siglipVectorsReady}/$vectorEligible$vectorFailureText$rateText$etaText",
                                     indeterminate = discovered <= 0,
                                     progress = completed,
                                     total = discovered,

@@ -861,3 +861,10 @@ Unexpected foreground-service destruction and the Android `mediaProcessing` time
 ### 2026-08-06 - Render the newest People photo without losing representatives
 
 People cluster summaries now expose both the user-selected representative face and the newest face derived from the existing capture-time ordering. The People list card renders the newest face, while the editor and representative controls continue to use the selected representative. Added a database acceptance assertion; no face assignments or corrections are changed.
+
+## 2026-08-06 - Truthful SigLIP2 coverage denominator
+
+- Corrected vector coverage to use the accessible `EMBEDDING` stage population instead of the gallery-wide media count.
+- Updated the Index Manager, runtime pipeline snapshot, unavailable-pack gate, and foreground notification to use the same eligible denominator.
+- No schema migration or data mutation; existing media, stages, vectors, People data, captions, and models are preserved.
+- Regression coverage added for separating discovered media from vector-stage eligibility.

@@ -2591,14 +2591,17 @@ class GalleryDatabase(
         val vectorStageCounts = readableDatabase.rawQuery(
             """
             SELECT
-                COALESCE(SUM(CASE WHEN status IN ('PENDING','RUNNING','FAILED_RETRYABLE') THEN 1 ELSE 0 END),0),
-                COALESCE(SUM(CASE WHEN status IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') THEN 1 ELSE 0 END),0)
-            FROM media_index_stage
-            WHERE stage='EMBEDDING'
+                COALESCE(SUM(CASE WHEN s.status='COMPLETE' THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN s.status IN ('PENDING','RUNNING','FAILED_RETRYABLE') THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN s.status IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') THEN 1 ELSE 0 END),0),
+                COUNT(*)
+            FROM media_index_stage s
+            JOIN media_item m ON m.id=s.media_id
+            WHERE s.stage='EMBEDDING' AND m.access_state='ACCESSIBLE'
             """.trimIndent(),
             null,
         ).use { cursor ->
-            if (!cursor.moveToFirst()) IntArray(2) else IntArray(2) { cursor.getInt(it) }
+            if (!cursor.moveToFirst()) IntArray(4) else IntArray(4) { cursor.getInt(it) }
         }
         return IndexSummary(
             discovered = mediaCounts[0],
@@ -2609,10 +2612,8 @@ class GalleryDatabase(
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
             ocrReady = mediaCounts[1],
             visualLabelsReady = mediaCounts[2],
-            siglipVectorsReady = readableDatabase.rawQuery(
-                "SELECT COUNT(*) FROM media_index_stage WHERE stage='EMBEDDING' AND status='COMPLETE'",
-                null,
-            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
+            siglipVectorsReady = vectorStageCounts[0],
+            siglipVectorsEligible = vectorStageCounts[3],
             videoKeyframesReady = readableDatabase.rawQuery(
                 "SELECT COUNT(*) FROM video_keyframe", null,
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
@@ -2627,8 +2628,8 @@ class GalleryDatabase(
             events = events().size,
             failed = mediaCounts[4],
             storageBytes = databaseBytes(),
-            siglipVectorsPending = vectorStageCounts[0],
-            siglipVectorsFailed = vectorStageCounts[1],
+            siglipVectorsPending = vectorStageCounts[1],
+            siglipVectorsFailed = vectorStageCounts[2],
         )
     }
 
