@@ -722,3 +722,10 @@ media, databases, or logs.
 - Fixture unit tests and `consumerDebug`/`offlineDemoDebug` assembly passed.
 - The fixture connected gate was run on the isolated secondary device and failed on pre-existing absent bundled model assets plus an existing empty-query status assertion; no production acceptance result is claimed.
 - Commit: `71c1f94` pushed to `anup42/AskAlbum`.
+
+## 2026-08-06 - Model-free fixture acceptance gate
+
+- Embedded SFace and SigLIP2 asset acceptance tests now skip only when `MODEL_INDEPENDENT` is true; production variants retain the full verification tests.
+- Empty caption-vector searches with zero eligible media are asserted as `NOT_REQUIRED`; unavailable remains reserved for required searches lacking verified retrieval coverage.
+- Fixture connected tests on `R3CY30QFWLP`, fixture unit tests, `consumerDebug`, and `offlineDemoDebug` passed.
+- Commit: `5ca6d95` pushed to `anup42/AskAlbum`.
