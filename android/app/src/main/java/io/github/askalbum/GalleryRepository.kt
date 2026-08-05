@@ -347,7 +347,7 @@ class GalleryRepository(context: Context) {
     fun completeEmbedding(id: String, producerVersion: String) = database.completeEmbedding(id, producerVersion)
     fun failEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean): StageStatus =
         database.failEmbedding(id, producerVersion, message, permanent)
-    fun recoverInterruptedJobs(pipeline: IndexingPipeline = IndexingPipeline.ALL) =
+    fun recoverInterruptedJobs(pipeline: IndexingPipeline) =
         database.recoverInterruptedJobs(pipeline)
     fun renewIndexingLeases(pipeline: IndexingPipeline, owner: String) =
         database.renewIndexingLeases(pipeline, owner)

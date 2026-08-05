@@ -816,7 +816,7 @@ class GalleryDatabase(
     }
 
     fun recoverInterruptedJobs(
-        pipeline: IndexingPipeline = IndexingPipeline.ALL,
+        pipeline: IndexingPipeline,
         reclaimOrphanedLeases: Boolean = false,
     ) {
         val db = writableDatabase

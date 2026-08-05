@@ -436,3 +436,7 @@ media, databases, or logs.
 ### 2026-08-05 non-exact count wording
 - FIXED: Every bounded COUNT result now says it is from the current retrieval pass unless coverage is EXACT or a complete predicate scan, including lexical and caption-vector counts.
 - PASS: regression coverage for non-semantic bounded counts; all debug variants and replacement install remain successful.
+### 2026-08-05 enforce scoped recovery API
+- FIXED: Debug seeder recovery now scopes Media Analysis and Embeddings independently; recovery verification scopes only Media Analysis.
+- HARDENED: Repository and database recovery APIs no longer default to `ALL`, preventing future callers from silently reclaiming unrelated pipeline leases.
+- PASS: repository-wide no-argument recovery scan; targeted recovery test; all debug assemblies; replacement install without data reset.
