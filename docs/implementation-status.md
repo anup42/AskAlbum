@@ -343,3 +343,10 @@ media, databases, or logs.
 - `LiteRtLmQueryPlanner` now requires the application-owned `GemmaSessionManager`; it no longer constructs a private session from an `InferenceResourceManager`.
 - The real Gemma planner acceptance test uses `context.services.gemmaSessions`, matching production planner, verifier, composer, and enrichment ownership.
 - This prevents accidental duplicate Gemma initialization while retaining model generation replacement and memory-pressure eviction behavior.
+
+## Typed follow-up planning
+
+- Follow-up planning now passes the active conversation state and previous validated plan summary into the on-device planner.
+- The validated planner schema accepts an app-checked boolean `followUp` decision; result-set IDs remain app-owned and are never emitted by Gemma.
+- Existing language/prefix heuristics remain the deterministic fallback when the model omits the field, while standalone requests can explicitly remain gallery-wide.
+- Added JVM coverage for contextual utterances without fixed prefixes and for standalone requests after an active result set.

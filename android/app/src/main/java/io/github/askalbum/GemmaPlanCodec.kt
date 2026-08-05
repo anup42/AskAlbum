@@ -9,7 +9,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
     fun decode(query: String, response: String, activeResultIds: Set<String>?): GalleryQueryPlan {
         val json = parseSingleObject(response)
         json.requireOnly(
-            "version", "intent", "mediaScope", "filter", "semanticClauses", "peopleClauses", "ocrClause",
+            "version", "intent", "followUp", "mediaScope", "filter", "semanticClauses", "peopleClauses", "ocrClause",
             "grouping", "aggregation", "sort", "verification", "answerMode", "limit", "terms", "place", "comparisonScopes",
         )
         val intent = enum<QueryIntent>(json, "intent")
@@ -43,7 +43,14 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
                 .map { it.lowercase(Locale.ROOT) }
                 .distinct()
         }
-        val followUp = FollowUpLanguage.isFollowUp(query, !activeResultIds.isNullOrEmpty())
+        val heuristicFollowUp = FollowUpLanguage.isFollowUp(query, !activeResultIds.isNullOrEmpty())
+        val followUp = if (!json.has("followUp") || json.isNull("followUp")) {
+            heuristicFollowUp
+        } else {
+            require(json.get("followUp") is Boolean) { "Planner followUp must be a boolean" }
+            json.getBoolean("followUp")
+        }
+        if (followUp) require(!activeResultIds.isNullOrEmpty()) { "Follow-up requires an active result set" }
         require(finalTerms.isNotEmpty() || structuralListSemantics.isNotEmpty() || followUp || intent in setOf(QueryIntent.COUNT, QueryIntent.LIST, QueryIntent.TIMELINE, QueryIntent.COMPARE)) {
             "Planner produced no searchable constraints"
         }

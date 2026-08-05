@@ -514,11 +514,20 @@ class GalleryRepository(context: Context) {
     ): Flow<QueryProgress> = flow {
         val started = SystemClock.elapsedRealtime()
         val conversation = sessionId?.let(database::conversationState)
-        val isFollowUp = FollowUpRefinementPolicy.isContextualFollowUp(query, conversation)
-        val scopedIds = if (conversation != null && isFollowUp) conversation.activeResultIds else activeResultIds
-        val parentResultSetId = if (conversation != null && isFollowUp) conversation.activeResultSetId else null
+        val hasActiveConversation = FollowUpRefinementPolicy.hasActiveResultSet(conversation)
+        val scopedIds = if (hasActiveConversation) conversation?.activeResultIds else activeResultIds
         emit(QueryProgress.Understanding)
-        val compiledPlan = planner.compile(query, scopedIds)
+        val compiledPlan = if (hasActiveConversation && conversation != null) {
+            planner.compileFollowUp(
+                query,
+                FollowUpPlanningContext(conversation, sessionId?.let(sessionPlans::get)),
+            )
+        } else {
+            planner.compile(query, scopedIds)
+        }
+        val isFollowUp = hasActiveConversation && conversation != null &&
+            compiledPlan.baseResultIds == conversation.activeResultIds
+        val parentResultSetId = if (isFollowUp) conversation?.activeResultSetId else null
         val (planPatch, patchedPlan) = if (conversation != null && isFollowUp) {
             planPatchResolver.createAndApply(
                 compiledPlan,

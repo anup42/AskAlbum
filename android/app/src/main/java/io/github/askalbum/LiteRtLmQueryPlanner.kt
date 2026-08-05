@@ -3,6 +3,7 @@ package io.github.anup42.askalbum
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
@@ -52,7 +53,16 @@ class LiteRtLmQueryPlanner(
     suspend fun compile(query: String, activeResultIds: Set<String>?): GalleryQueryPlan =
         compileWithTrace(query, activeResultIds).plan
 
-    suspend fun compileWithTrace(query: String, activeResultIds: Set<String>?): PlannerExecutionTrace {
+    suspend fun compileFollowUp(
+        query: String,
+        context: FollowUpPlanningContext,
+    ): GalleryQueryPlan = compileWithTrace(query, context.state.activeResultIds, context).plan
+
+    suspend fun compileWithTrace(
+        query: String,
+        activeResultIds: Set<String>?,
+        followUpContext: FollowUpPlanningContext? = null,
+    ): PlannerExecutionTrace {
         val started = android.os.SystemClock.elapsedRealtime()
         val status = modelPacks.status()
         val path = status.path ?: return fallbackTrace(query, activeResultIds, started, "No verified Gemma pack is active")
@@ -66,7 +76,7 @@ class LiteRtLmQueryPlanner(
                     var calls = 0
                     var generationMs = 0L
                     val generationStarted = android.os.SystemClock.elapsedRealtime()
-                    val compiledPlan = boundedCompiler.compile(query, activeResultIds, plannerPrompt(query)) { prompt ->
+                    val compiledPlan = boundedCompiler.compile(query, activeResultIds, plannerPrompt(query, followUpContext)) { prompt ->
                         calls++
                         initialized.engine.generateText(
                             prompt,
@@ -124,10 +134,10 @@ class LiteRtLmQueryPlanner(
         )
     }
 
-    private fun plannerPrompt(query: String) = """
+    private fun plannerPrompt(query: String, followUpContext: FollowUpPlanningContext?) = """
         Compile the personal-gallery request into exactly one JSON object. Return JSON only.
         Never emit SQL, code, file paths, content URIs, tool names, result IDs, or more than the declared bounds.
-        Allowed root fields: version,intent,mediaScope,filter,semanticClauses,peopleClauses,ocrClause,grouping,aggregation,sort,verification,answerMode,limit,terms,place,comparisonScopes.
+        Allowed root fields: version,intent,followUp,mediaScope,filter,semanticClauses,peopleClauses,ocrClause,grouping,aggregation,sort,verification,answerMode,limit,terms,place,comparisonScopes.
         Allowed intents: ${CapabilityRegistry.plannerIntentNames()}.
         Allowed mediaScope: ALL,IMAGES,VIDEOS,DOCUMENTS. limit is 1..100; terms and semanticClauses max 16; peopleClauses max 8.
         filter is {"op":"TRUE"}, {"op":"AND","clauses":[]}, {"op":"TIME_RANGE","startEpochMs":null,"endEpochMs":null}, {"op":"MEDIA_KIND","kind":"IMAGE"}, or {"op":"ALBUM","album":"name"}.
@@ -137,10 +147,43 @@ class LiteRtLmQueryPlanner(
         For wearing, carrying, holding, using, pose, or person-to-person conditions, use subject PERSON, set relationToPerson to the exact peopleClauses personId, keep the visible item and attributes in text/canonicalText, and require visual verification.
         A people clause has personId, mustBePresent, hardness. ocrClause has optional query,merchant,requestedField. For COMPARE, put each requested place or event name in comparisonScopes (maximum 4) and do not reduce the comparison to one place filter.
         verification is exactly one quoted scalar enum string: AUTO, REQUIRED, or NEVER. Never emit an array or object there.
+        Set followUp to true only when the current utterance modifies or narrows the active result set described below. Set it to false for a new gallery-wide request, even when a previous result set exists. Never emit or infer result-set IDs.
         Preserve the user's language in text and add a short English canonicalText when useful for retrieval.
         Set verification to REQUIRED only for relational, negative, comparative, or fine-grained visual conditions. Otherwise use AUTO. Do not relax HARD constraints.
+        Active conversation context: ${followUpContext?.let(::followUpContextJson) ?: "none"}
         Query: ${JSONObject.quote(query)}
     """.trimIndent()
+
+    private fun followUpContextJson(context: FollowUpPlanningContext): String {
+        val previous = context.previousPlan
+        return JSONObject().apply {
+            put("activeResultSetPresent", context.state.activeResultSetId != null)
+            put("activeItemCount", context.state.activeResultIds.size)
+            put("lastQueryAvailable", !context.state.lastQuery.isNullOrBlank())
+            put("currentGrouping", context.state.grouping.name)
+            put("currentPlaceScope", JSONArray(context.state.currentPlaceScope.take(8)))
+            context.state.currentTimeScope?.let { range ->
+                put("currentTimeScope", JSONObject().apply {
+                    put("startEpochMs", range.startEpochMs)
+                    put("endEpochMs", range.endEpochMs)
+                })
+            }
+            if (previous == null) {
+                put("previousPlan", JSONObject.NULL)
+            } else {
+                put("previousPlan", JSONObject().apply {
+                    put("intent", previous.intent.name)
+                    put("mediaScope", previous.mediaScope.name)
+                    put("terms", JSONArray(previous.terms.take(16)))
+                    put("place", previous.place ?: JSONObject.NULL)
+                    put("grouping", previous.grouping.name)
+                    put("sort", previous.sort.name)
+                    put("people", JSONArray(previous.peopleClauses.take(8).map { it.personId }))
+                    put("semanticClauses", JSONArray(previous.semanticClauses.take(8).map { it.text }))
+                })
+            }
+        }.toString()
+    }
 }
 
 class GemmaModelLoadFailure(message: String, cause: Throwable) : IllegalStateException(message, cause)

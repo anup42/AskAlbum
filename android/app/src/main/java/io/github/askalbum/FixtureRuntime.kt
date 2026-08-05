@@ -42,13 +42,28 @@ class FixtureFaceEngineProvider : ModelEngineProvider<FaceEngine> {
 
 interface GalleryPlanCompiler {
     suspend fun compile(query: String, activeResultIds: Set<String>?): GalleryQueryPlan
+
+    suspend fun compileFollowUp(
+        query: String,
+        context: FollowUpPlanningContext,
+    ): GalleryQueryPlan = compile(query, context.state.activeResultIds)
 }
+
+data class FollowUpPlanningContext(
+    val state: ConversationSearchState,
+    val previousPlan: GalleryQueryPlan?,
+)
 
 class ProductionGalleryPlanCompiler(
     private val planner: LiteRtLmQueryPlanner,
 ) : GalleryPlanCompiler {
     override suspend fun compile(query: String, activeResultIds: Set<String>?): GalleryQueryPlan =
         planner.compile(query, activeResultIds)
+
+    override suspend fun compileFollowUp(
+        query: String,
+        context: FollowUpPlanningContext,
+    ): GalleryQueryPlan = planner.compileFollowUp(query, context)
 }
 
 class FixtureGalleryPlanCompiler : GalleryPlanCompiler {

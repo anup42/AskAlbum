@@ -2,9 +2,11 @@ package io.github.anup42.askalbum
 
 /** Prevents a semantic follow-up from retaining every weak vector hit in its parent result set. */
 internal object FollowUpRefinementPolicy {
+    fun hasActiveResultSet(state: ConversationSearchState?): Boolean =
+        state?.activeResultSetId != null && state.activeResultIds.isNotEmpty()
+
     fun isContextualFollowUp(query: String, state: ConversationSearchState?): Boolean =
-        state?.activeResultSetId != null &&
-            state.activeResultIds.isNotEmpty() &&
+        hasActiveResultSet(state) &&
             FollowUpLanguage.isFollowUp(query, activeResultAvailable = true)
 
     fun corroboratedSemanticIds(
