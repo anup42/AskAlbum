@@ -17,9 +17,13 @@ object PeopleIndexScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.KEEP, request(context))
     }
 
-    fun scheduleContinuation(context: Context) {
+    fun scheduleContinuation(context: Context, initialDelayMillis: Long = 0L) {
         if (!IndexingJobControlsStore(context).load().peopleEnabled) return
-        WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, request(context))
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            UNIQUE_WORK,
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            request(context, initialDelayMillis),
+        )
     }
 
     fun restart(context: Context) {
@@ -36,9 +40,10 @@ object PeopleIndexScheduler {
 
     fun hasActiveWork(context: Context): Boolean = hasActiveIndexingWork(context, UNIQUE_WORK)
 
-    private fun request(context: Context) = OneTimeWorkRequestBuilder<PeopleIndexWorker>()
+    private fun request(context: Context, initialDelayMillis: Long = 0L) = OneTimeWorkRequestBuilder<PeopleIndexWorker>()
         .setConstraints(indexingWorkerConstraints(context))
         .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)
+        .setInitialDelay(initialDelayMillis.coerceAtLeast(0L), TimeUnit.MILLISECONDS)
         .addTag(UNIQUE_WORK)
         .build()
 }

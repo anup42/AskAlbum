@@ -921,6 +921,12 @@ class GalleryDatabase(
         arrayOf(IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(), IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString()),
     ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
 
+    fun nextPeopleRetryAt(): Long? = readableDatabase.rawQuery(
+        "SELECT MIN(next_attempt_at) FROM media_index_stage WHERE stage='FACES' " +
+            "AND status='FAILED_RETRYABLE' AND attempt_count<?",
+        arrayOf(IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString()),
+    ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
+
     private fun clearMediaIndexLeases(db: GallerySqlDatabase, id: String) {
         db.update("media_index_stage", ContentValues().apply {
             putNull("lease_owner")

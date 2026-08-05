@@ -376,6 +376,7 @@ class GalleryRepository(context: Context) {
         database.failIndex(id, message, permanent)
     fun nextMediaRetryAt(): Long? = database.nextMediaRetryAt()
     fun nextEmbeddingRetryAt(): Long? = database.nextEmbeddingRetryAt()
+    fun nextPeopleRetryAt(): Long? = database.nextPeopleRetryAt()
     fun rebuildEvents() {
         database.rebuildEvents()
         SemanticEnrichmentScheduler.schedule(appContext)

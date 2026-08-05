@@ -30,7 +30,6 @@ class PeopleIndexWorker(
         val embedder = faceLease?.engine
         val faceProducerVersion = faceLease?.descriptor?.producerVersion ?: MlKitFaceDetectionEngine.PRODUCER_VERSION
         val ownerId = id.toString()
-        var retryableFailure = false
         var retryableFailures = 0
         var quarantinedFailures = 0
         try {
@@ -85,7 +84,6 @@ class PeopleIndexWorker(
                         if (permanent) {
                             quarantinedFailures++
                         } else {
-                            retryableFailure = true
                             retryableFailures++
                         }
                     }
@@ -93,10 +91,31 @@ class PeopleIndexWorker(
                 processed = index + 1
                 publishProgress(processed, pendingItems.size, pendingItems.size - processed, retryableFailures, quarantinedFailures)
             }
-            if (repository.peopleIndexStatus().enabled && repository.facePendingItems(1).isNotEmpty()) {
+            val enabled = repository.peopleIndexStatus().enabled && jobControls.load().peopleEnabled
+            val hasMore = repository.facePendingItems(1).isNotEmpty()
+            val admission = workAdmission.evaluate()
+            val shouldRetry = IndexingWorkerResultPolicy.shouldRetryWorker(
+                processed = processed,
+                retryableFailures = retryableFailures,
+                stopped = isStopped,
+                admissionAllowed = admission.allowed,
+                hasImmediateWork = hasMore,
+            )
+            if (hasMore && enabled && !shouldRetry) {
                 PeopleIndexScheduler.scheduleContinuation(applicationContext)
+            } else if (!hasMore && enabled) {
+                repository.nextPeopleRetryAt()?.let { retryAt ->
+                    PeopleIndexScheduler.scheduleContinuation(
+                        applicationContext,
+                        (retryAt - System.currentTimeMillis()).coerceAtLeast(10_000L),
+                    )
+                }
             }
-            if (retryableFailure) Result.retry() else Result.success()
+            when {
+                !enabled -> Result.success()
+                shouldRetry -> Result.retry()
+                else -> Result.success()
+            }
         } finally {
             detector?.close()
             faceLease?.close()
