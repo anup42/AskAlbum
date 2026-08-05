@@ -32,6 +32,7 @@ class DocumentFactExtractorTest {
             block("Date: 12 MAR 2024", .45f),
             block("help@example.test https://example.test", .55f),
             block("Password: mango-tree-2048", .65f),
+            block("Line amount INR 249.50", .75f),
         ))
 
         assertTrue(entities.any { it.type == OcrEntityType.ORDER_ID && it.normalizedValue == "TEST-1842" })
@@ -40,6 +41,7 @@ class DocumentFactExtractorTest {
         assertTrue(entities.any { it.type == OcrEntityType.EMAIL && it.normalizedValue == "help@example.test" })
         assertTrue(entities.any { it.type == OcrEntityType.URL && it.normalizedValue == "https://example.test" })
         assertTrue(entities.any { it.type == OcrEntityType.PASSWORD && it.normalizedValue == "mango-tree-2048" })
+        assertTrue(entities.any { it.type == OcrEntityType.AMOUNT && it.normalizedValue == "249.50" })
     }
 
     private fun block(text: String, top: Float, left: Float = .1f, right: Float = .9f) = OcrBlockRecord(

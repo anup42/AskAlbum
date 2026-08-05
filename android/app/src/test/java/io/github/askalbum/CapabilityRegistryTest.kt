@@ -19,9 +19,11 @@ class CapabilityRegistryTest {
     @Test
     fun documentAllowlistContainsEveryRequiredField() {
         assertEquals(
-            setOf("total", "password", "flight_number", "flight_time", "order_id", "email", "phone", "date", "url", "merchant"),
+            setOf("total", "amount", "password", "flight_number", "flight_time", "order_id", "email", "phone", "date", "url", "merchant"),
             OcrFactAllowlist.fields.mapTo(mutableSetOf()) { it.key },
         )
+        assertEquals(OcrEntityType.RECEIPT_TOTAL, OcrFactAllowlist.resolve("amount paid")?.type)
+        assertEquals(OcrEntityType.AMOUNT, OcrFactAllowlist.resolve("amount")?.type)
     }
 
     @Test
@@ -184,6 +186,16 @@ class CapabilityRegistryTest {
         assertEquals(QueryIntent.COMPARE, QueryCompiler().compile("Compare Goa versus Singapore").intent)
         assertEquals(QueryIntent.TIMELINE, QueryCompiler().compile("Timeline of Singapore photos").intent)
         assertEquals(QueryIntent.LIST, QueryCompiler().compile("List places in recent photos").intent)
+    }
+
+    @Test
+    fun compilerDistinguishesGenericAmountFromReceiptTotal() {
+        val amount = QueryCompiler().compile("What is the amount on my latest receipt?")
+        val total = QueryCompiler().compile("What was the total on my latest receipt?")
+
+        assertEquals(QueryIntent.ANSWER_FACT, amount.intent)
+        assertEquals("amount", amount.ocrClause?.requestedField)
+        assertEquals("total", total.ocrClause?.requestedField)
     }
 
     @Test

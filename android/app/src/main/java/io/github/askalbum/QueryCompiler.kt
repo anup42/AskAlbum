@@ -51,6 +51,9 @@ class QueryCompiler(
         val asksReceiptTotal = Regex(
             "\\b(amount paid|grand total|receipt total|total (?:on|of|for|from) .{0,40}\\b(?:receipt|invoice)|(?:receipt|invoice).{0,40}\\btotal)\\b",
         ).containsMatchIn(normalized)
+        val asksDocumentAmount = Regex(
+            "\\b(?:amount|line amount|item amount|amount due|amount charged|amount payable)\\b",
+        ).containsMatchIn(normalized)
         val asksAllowlistedDocumentFact = Regex(
             "\\b(flight number|flight time|departure time|boarding time|order id|booking id|email address|phone number|mobile number|date|url|website)\\b",
         ).containsMatchIn(normalized) || Regex("\\b(what|which)\\s+(?:was\\s+)?(?:the\\s+)?merchant\\b").containsMatchIn(normalized)
@@ -61,7 +64,7 @@ class QueryCompiler(
             Regex("\\b(compare|comparison|versus|vs)\\b").containsMatchIn(normalized) -> QueryIntent.COMPARE
             Regex("\\b(timeline|chronological|chronology)\\b").containsMatchIn(normalized) -> QueryIntent.TIMELINE
             Regex("\\b(list|which places|which merchants|which people)\\b").containsMatchIn(normalized) -> QueryIntent.LIST
-            asksReceiptTotal || asksAllowlistedDocumentFact ||
+            asksReceiptTotal || asksDocumentAmount || asksAllowlistedDocumentFact ||
                 Regex("\\b(wifi password|wi fi password)\\b").containsMatchIn(normalized) -> QueryIntent.ANSWER_FACT
             Regex("\\b(receipt|invoice|document)\\b").containsMatchIn(normalized) -> QueryIntent.DOCUMENT_QA
             Regex("\\b(when|where|kab|kahan)\\b").containsMatchIn(normalized) || "कब" in normalized || "कहाँ" in normalized -> QueryIntent.EVENT_SUMMARY
@@ -104,6 +107,7 @@ class QueryCompiler(
         }
         val requestedField = when {
             asksReceiptTotal -> "total"
+            asksDocumentAmount -> "amount"
             Regex("\\b(wifi password|wi fi password)\\b").containsMatchIn(normalized) -> "password"
             Regex("\\b(flight time|departure time|boarding time)\\b").containsMatchIn(normalized) -> "flight_time"
             Regex("\\bflight number\\b").containsMatchIn(normalized) -> "flight_number"

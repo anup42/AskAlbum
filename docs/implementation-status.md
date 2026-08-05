@@ -584,3 +584,8 @@ media, databases, or logs.
 - Grounded evidence now retains scope, subject, evidence-media, cluster, and applicability provenance.
 - Person-conditioned answer composition accepts only same-media visual-verification evidence; event/context evidence is limited to event capabilities.
 - Possible-inference claims must preserve uncertainty wording, with regression coverage for cross-media and contextual leakage.
+### 2026-08-05 - Separate deterministic OCR amounts from receipt totals
+
+- The existing generic `AMOUNT` OCR entities are now exposed through a distinct allowlisted `amount` field and `document_amount` evidence source.
+- `amount paid` remains mapped to the receipt `total` field; generic amount queries now compile to the correct deterministic executor path.
+- Added extraction, compiler, allowlist, and deterministic answer regressions. No migration or data rewrite was required.

@@ -6,6 +6,43 @@ import org.junit.Test
 
 class DocumentFactDeterministicTest {
     @Test
+    fun documentAnswerResolvesGenericAmountEvidence() {
+        val amount = SearchHit(
+            item = hit("amount-document", "Receipt amount", emptyList()).item,
+            score = 0.0,
+            evidence = listOf(
+                EvidenceRecord(
+                    id = "amount-document:amount",
+                    mediaId = "amount-document",
+                    sourceField = "document_amount",
+                    text = "INR 249.50",
+                    confidence = .95f,
+                ),
+            ),
+        )
+        val answer = CapabilityAnswerExecutor.execute(
+            CapabilityAnswerContext(
+                plan = GalleryQueryPlan(
+                    originalQuery = "what is the amount on my receipt",
+                    intent = QueryIntent.DOCUMENT_QA,
+                    ocrClause = OcrClause(requestedField = "amount"),
+                ),
+                hits = listOf(amount),
+                matchCount = 1,
+                exactness = ResultExactness.EXACT,
+                indexedEligibleCount = 1,
+                totalEligibleCount = 1,
+                warnings = emptyList(),
+                channelReports = emptyList(),
+                deterministicHits = listOf(amount),
+            ),
+        )
+
+        assertEquals("INR 249.50", answer.headline)
+        assertTrue(answer.evidenceIds.contains("amount-document:amount"))
+    }
+
+    @Test
     fun documentFactUsesCompleteSourceWhenRankedHitsMissTheFact() {
         val ranked = hit("ranked", "Recent photo", emptyList())
         val deterministic = hit(
