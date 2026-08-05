@@ -1,5 +1,8 @@
 package io.github.anup42.askalbum
 
+import java.io.IOException
+import java.util.concurrent.CancellationException
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,5 +19,22 @@ class CaptionEmbeddingWorkerTest {
     fun unavailablePackRetriesOnlyWhenCaptionWorkIsPending() {
         assertTrue(CaptionEmbeddingAvailabilityPolicy.shouldRetryForUnavailablePack(hasPendingWork = true))
         assertFalse(CaptionEmbeddingAvailabilityPolicy.shouldRetryForUnavailablePack(hasPendingWork = false))
+    }
+
+    @Test
+    fun missingCaptionVectorsAreRequeuedWithoutTouchingIndexedIds() {
+        assertEquals(
+            setOf("chunk-b"),
+            CaptionVectorRepairPolicy.missingVectorIds(
+                expectedCompleteIds = setOf("chunk-a", "chunk-b"),
+                indexedIds = setOf("chunk-a", "stale-chunk"),
+            ),
+        )
+    }
+
+    @Test
+    fun captionSearchCancellationIsPropagated() {
+        assertTrue(CaptionVectorSearchFailurePolicy.shouldPropagate(CancellationException("cancelled")))
+        assertFalse(CaptionVectorSearchFailurePolicy.shouldPropagate(IOException("embedding failed")))
     }
 }

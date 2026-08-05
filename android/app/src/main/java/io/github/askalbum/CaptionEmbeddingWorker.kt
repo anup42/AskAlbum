@@ -42,9 +42,27 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
                 } else {
                     Result.success()
                 }
-            }
+        }
         database.prepareCaptionEmbeddingVersion(producer)
         database.materializeCaptionChunkBackfill(BACKFILL_CAPTIONS_PER_RUN)
+        val missingVectorRepairCount = try {
+            val expectedCompleteIds = database.currentCaptionEmbeddingChunkIds(producer)
+            val indexedIds = services.captionVectorStore.indexedChunkIds()
+            val missingIds = CaptionVectorRepairPolicy.missingVectorIds(expectedCompleteIds, indexedIds)
+            database.requeueMissingCaptionEmbeddings(missingIds, producer)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.e(TAG, "Caption vector coverage check failed", error)
+            setProgress(
+                workDataOf(
+                    "status" to "FAILED",
+                    "error_code" to "CAPTION_VECTOR_INDEX_READ_FAILED",
+                    "last_progress_at" to System.currentTimeMillis(),
+                ),
+            )
+            return@withContext Result.retry()
+        }
         val initialCaptionProgress = database.captionEmbeddingProgress()
         if (!database.hasCaptionEmbeddingWork(producer)) {
             try {
@@ -72,6 +90,7 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
                     "next_attempt_at" to 0L,
                     "delayed_retries" to initialCaptionProgress.delayedRetryCount,
                     "quarantined" to initialCaptionProgress.failedChunkCount,
+                    "repaired_missing_vectors" to missingVectorRepairCount,
                 ),
             )
             return@withContext Result.success()
@@ -156,6 +175,7 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
                 "next_attempt_at" to 0L,
                 "delayed_retries" to captionProgress.delayedRetryCount,
                 "quarantined" to captionProgress.failedChunkCount,
+                "repaired_missing_vectors" to missingVectorRepairCount,
                 "rate_per_minute" to (estimate.ratePerMinute ?: 0.0),
                 "eta_millis" to (estimate.etaMillis ?: 0L),
             ),

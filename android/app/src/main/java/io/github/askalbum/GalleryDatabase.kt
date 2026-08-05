@@ -4322,9 +4322,38 @@ class GalleryDatabase(
         ).use(android.database.Cursor::moveToFirst)
 
     fun currentCaptionEmbeddingChunkIds(producerVersion: String): Set<String> = readableDatabase.rawQuery(
-        "SELECT id FROM semantic_caption_chunk WHERE embedding_state='COMPLETE' AND embedding_model_version=?",
-        arrayOf(producerVersion),
+        """
+        SELECT id FROM semantic_caption_chunk
+        WHERE embedding_state='COMPLETE' AND embedding_model_version=?
+          AND chunk_policy_version=? AND applicability<>'STALE_PERSON_BINDING'
+        """.trimIndent(),
+        arrayOf(producerVersion, SemanticCaptionChunker.POLICY_VERSION),
     ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    fun requeueMissingCaptionEmbeddings(chunkIds: Set<String>, producerVersion: String): Int =
+        writableDatabase.transaction { db ->
+            var repaired = 0
+            chunkIds.chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                if (ids.isEmpty()) return@forEach
+                val placeholders = ids.joinToString(",") { "?" }
+                repaired += db.update(
+                    "semantic_caption_chunk",
+                    ContentValues().apply {
+                        put("embedding_state", CaptionEmbeddingState.PENDING.name)
+                        putNull("embedding_model_version")
+                        put("attempt_count", 0)
+                        putNull("error")
+                        putNull("lease_owner")
+                        putNull("lease_expires_at")
+                        put("next_attempt_at", 0L)
+                        put("updated_at", System.currentTimeMillis())
+                    },
+                    "id IN ($placeholders) AND embedding_state='COMPLETE' AND embedding_model_version=?",
+                    arrayOf(*ids.toTypedArray(), producerVersion),
+                )
+            }
+            repaired
+        }
 
     fun eligibleCaptionChunksForSearch(
         allowedMediaIds: Set<String>,

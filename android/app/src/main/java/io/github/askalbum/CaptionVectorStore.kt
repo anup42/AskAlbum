@@ -2,6 +2,7 @@ package io.github.anup42.askalbum
 
 import android.content.Context
 import java.io.File
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -84,7 +85,7 @@ class CaptionVectorStore(
                 errorCode = if (eligibleMediaCount > 0) "NO_ELIGIBLE_CAPTION_CHUNKS" else null,
             )
         }
-        return runCatching {
+        return try {
             val current = currentIndex()
             val indexed = current.index.ids() intersect eligibleChunkIds
             val perVariant = normalizedQueries.map { query ->
@@ -112,7 +113,8 @@ class CaptionVectorStore(
                 modelVersion = modelVersion,
                 errorCode = if (indexed.size < eligibleChunkIds.size) "PARTIAL_CAPTION_VECTOR_COVERAGE" else null,
             )
-        }.getOrElse {
+        } catch (error: Throwable) {
+            if (CaptionVectorSearchFailurePolicy.shouldPropagate(error)) throw error
             CaptionVectorSearchReport(
                 ChannelStatus.FAILED,
                 eligibleChunkIds.size,
@@ -129,6 +131,8 @@ class CaptionVectorStore(
         val index = currentIndex().index
         (index.ids() - validChunkIds).forEach { index.delete(it) }
     }
+
+    suspend fun indexedChunkIds(): Set<String> = currentIndex().index.ids()
 
     private suspend fun currentIndex(): Loaded = loadMutex.withLock {
         val pack = packs.current() ?: error("No verified retrieval model pack is installed")
@@ -148,4 +152,13 @@ class CaptionVectorStore(
         val pack: InstalledRetrievalPack,
         val index: MmapFp16VectorIndex,
     )
+}
+
+internal object CaptionVectorSearchFailurePolicy {
+    fun shouldPropagate(error: Throwable): Boolean = error is CancellationException
+}
+
+internal object CaptionVectorRepairPolicy {
+    fun missingVectorIds(expectedCompleteIds: Set<String>, indexedIds: Set<String>): Set<String> =
+        expectedCompleteIds - indexedIds
 }
