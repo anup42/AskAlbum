@@ -127,6 +127,47 @@ class CapabilityRegistryTest {
         assertEquals(QueryIntent.LIST, QueryCompiler().compile("List places in recent photos").intent)
     }
 
+    @Test
+    fun compareExecutorUsesBothExplicitScopes() {
+        val base = context(QueryIntent.COMPARE)
+        val goa = hit("goa", "Goa", "INR 10.00", 1_700_000_000_000).let {
+            it.copy(item = it.item.copy(location = "Goa"))
+        }
+        val singapore = hit("singapore", "Singapore", "INR 20.00", 1_710_000_000_000).let {
+            it.copy(item = it.item.copy(location = "Singapore"))
+        }
+
+        val answer = CapabilityAnswerExecutor.execute(
+            base.copy(
+                hits = listOf(goa, singapore),
+                deterministicHits = listOf(goa, singapore),
+                comparisonScopes = listOf("goa", "singapore"),
+            ),
+        )
+
+        assertTrue(answer.headline.contains("goa", ignoreCase = true))
+        assertTrue(answer.headline.contains("singapore", ignoreCase = true))
+        assertTrue(answer.detail.contains("Goa: 1"))
+        assertTrue(answer.detail.contains("Singapore: 1"))
+    }
+
+    @Test
+    fun listPersonUsesReviewedLabelsOnly() {
+        val base = context(QueryIntent.LIST)
+        val answer = CapabilityAnswerExecutor.execute(
+            base.copy(
+                plan = base.plan.copy(grouping = Grouping.PERSON),
+                peopleByMedia = mapOf(
+                    "one" to listOf(
+                        IndexedPersonMetadata("person_dad", "Dad", "father", emptyList(), true, false, 2),
+                    ),
+                ),
+            ),
+        )
+
+        assertTrue(answer.detail.contains("Dad"))
+    }
+
     private fun context(intent: QueryIntent): CapabilityAnswerContext {
         val hits = listOf(
             hit("one", "Trip A", "INR 10.00", 1_700_000_000_000),

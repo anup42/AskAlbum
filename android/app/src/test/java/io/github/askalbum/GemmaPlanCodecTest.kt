@@ -85,4 +85,15 @@ class GemmaPlanCodecTest {
         assertTrue(prompt.contains("quoted scalar string"))
         assertTrue(prompt.contains("never be an array or object"))
     }
+
+    @Test
+    fun decodesBoundedComparisonScopes() {
+        val plan = codec.decode(
+            "Compare Goa and Singapore",
+            """{"intent":"COMPARE","comparisonScopes":["goa","singapore"],"terms":["goa","singapore"],"grouping":"NONE"}""",
+            null,
+        )
+
+        assertEquals(listOf("goa", "singapore"), plan.comparisonScopes)
+    }
 }

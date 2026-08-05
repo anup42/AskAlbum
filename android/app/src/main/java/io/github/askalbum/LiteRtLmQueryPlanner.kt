@@ -131,7 +131,7 @@ class LiteRtLmQueryPlanner(
     private fun plannerPrompt(query: String) = """
         Compile the personal-gallery request into exactly one JSON object. Return JSON only.
         Never emit SQL, code, file paths, content URIs, tool names, result IDs, or more than the declared bounds.
-        Allowed root fields: version,intent,mediaScope,filter,semanticClauses,peopleClauses,ocrClause,grouping,aggregation,sort,verification,answerMode,limit,terms,place.
+        Allowed root fields: version,intent,mediaScope,filter,semanticClauses,peopleClauses,ocrClause,grouping,aggregation,sort,verification,answerMode,limit,terms,place,comparisonScopes.
         Allowed intents: ${CapabilityRegistry.plannerIntentNames()}.
         Allowed mediaScope: ALL,IMAGES,VIDEOS,DOCUMENTS. limit is 1..100; terms and semanticClauses max 16; peopleClauses max 8.
         filter is {"op":"TRUE"}, {"op":"AND","clauses":[]}, {"op":"TIME_RANGE","startEpochMs":null,"endEpochMs":null}, {"op":"MEDIA_KIND","kind":"IMAGE"}, or {"op":"ALBUM","album":"name"}.
@@ -139,7 +139,7 @@ class LiteRtLmQueryPlanner(
         Use semanticClauses only for relational, negative, comparative, or fine-grained visual conditions that terms cannot express.
         A semantic clause has text, optional canonicalText, polarity POSITIVE|NEGATIVE, hardness HARD|SOFT, subject WHOLE_MEDIA|PERSON|EVENT|DOCUMENT, optional relationToPerson. Subject is the evidence carrier, not the search category: put family, pet, trip, food, clothing, and similar concepts in text/canonicalText and use WHOLE_MEDIA.
         For wearing, carrying, holding, using, pose, or person-to-person conditions, use subject PERSON, set relationToPerson to the exact peopleClauses personId, keep the visible item and attributes in text/canonicalText, and require visual verification.
-        A people clause has personId, mustBePresent, hardness. ocrClause has optional query,merchant,requestedField.
+        A people clause has personId, mustBePresent, hardness. ocrClause has optional query,merchant,requestedField. For COMPARE, put each requested place or event name in comparisonScopes (maximum 4) and do not reduce the comparison to one place filter.
         verification is exactly one quoted scalar enum string: AUTO, REQUIRED, or NEVER. Never emit an array or object there.
         Preserve the user's language in text and add a short English canonicalText when useful for retrieval.
         Set verification to REQUIRED only for relational, negative, comparative, or fine-grained visual conditions. Otherwise use AUTO. Do not relax HARD constraints.

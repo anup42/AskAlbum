@@ -115,4 +115,22 @@ class QueryCompilerTest {
         assertTrue(plan.semanticClauses.isEmpty())
         assertEquals(setOf("sg-1", "sg-2"), plan.baseResultIds)
     }
+
+    @Test
+    fun comparisonQueryRetainsBothKnownScopesInsteadOfSelectingOnePlaceFilter() {
+        val plan = compiler.compile("Compare my Goa and Singapore trips")
+
+        assertEquals(QueryIntent.COMPARE, plan.intent)
+        assertEquals(listOf("goa", "singapore"), plan.comparisonScopes)
+        assertEquals(null, plan.place)
+    }
+
+    @Test
+    fun listPlacesUsesCompletePlaceGrouping() {
+        val plan = compiler.compile("List places in my recent photos")
+
+        assertEquals(QueryIntent.LIST, plan.intent)
+        assertEquals(Grouping.PLACE, plan.grouping)
+        assertTrue(plan.terms.isEmpty())
+    }
 }

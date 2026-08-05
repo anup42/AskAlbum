@@ -25,6 +25,8 @@ class GalleryQueryPlanValidator(
         if (plan.terms.size > 16) errors += "Too many retrieval terms"
         plan.terms.forEach { validateText("term", it, errors, 80) }
         plan.place?.let { validateText("place", it, errors, 120) }
+        if (plan.comparisonScopes.size > 4) errors += "Too many comparison scopes"
+        plan.comparisonScopes.forEach { validateText("comparison scope", it, errors, 120) }
         if (plan.semanticClauses.size > 16) errors += "Too many semantic clauses"
         plan.semanticClauses.forEach {
             validateText("semantic clause", it.text, errors, 240)

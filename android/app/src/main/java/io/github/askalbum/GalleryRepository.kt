@@ -570,6 +570,7 @@ class GalleryRepository(context: Context) {
         } else {
             (requiredAllowed ?: databaseItems.mapTo(mutableSetOf(), GalleryItem::id)) - peopleScope.excludedIds
         }
+        val hasExplicitComparisonScopes = plan.intent == QueryIntent.COMPARE && plan.comparisonScopes.size >= 2
         val terms = RetrievalConceptExpansion.evidenceTerms(
             RetrievalTerms.forExecution(
                 plan.terms,
@@ -585,7 +586,7 @@ class GalleryRepository(context: Context) {
             }
             inScope && (baseAllowed == null || item.id in baseAllowed) &&
                 GalleryFilterEvaluator.matches(item, plan.filter) &&
-                item.matchesRequiredPlace(plan.place) &&
+                item.matchesRequiredPlace(if (hasExplicitComparisonScopes) null else plan.place) &&
                 item.matchesRequiredMerchant(plan.ocrClause?.merchant)
         }
         val allItems = prePeopleItems.filter { allowed == null || it.id in allowed }
@@ -768,6 +769,11 @@ class GalleryRepository(context: Context) {
         val deterministicCapabilityHits = when {
             plan.intent == QueryIntent.LIST && terms.isEmpty() && semanticQueries.isEmpty() ->
                 allItems.map(deterministicScopeHit)
+            hasExplicitComparisonScopes ->
+                plan.comparisonScopes.flatMap { scope ->
+                    allItems.filter { item -> item.matchesComparisonScope(scope, eventByMedia[item.id]) }
+                        .map(deterministicScopeHit)
+                }
             plan.intent in setOf(QueryIntent.EVENT_SUMMARY, QueryIntent.TIMELINE, QueryIntent.COMPARE) && eventMediaRank.isNotEmpty() ->
                 eventMediaRank.mapNotNull { itemById[it] }.map(deterministicScopeHit)
             else -> emptyList()
@@ -1275,6 +1281,10 @@ class GalleryRepository(context: Context) {
                 channelReports = channelReports,
                 eventsByMedia = database.eventsForMedia((hits + deterministicAnswerHits).map { it.item.id }),
                 deterministicHits = deterministicAnswerHits,
+                comparisonScopes = plan.comparisonScopes,
+                peopleByMedia = database.indexedPeopleForMediaIds(
+                    (hits + deterministicAnswerHits).mapTo(mutableSetOf()) { it.item.id },
+                ),
             ),
         )
 
@@ -1325,6 +1335,20 @@ class GalleryRepository(context: Context) {
         val required = place?.trim()?.lowercase(Locale.ROOT)?.takeIf(String::isNotEmpty) ?: return true
         return listOf(location, album, title, filename).plus(tags)
             .any { required in it.lowercase(Locale.ROOT) }
+    }
+
+    private fun GalleryItem.matchesComparisonScope(scope: String, event: EventRecord?): Boolean {
+        val needle = scope.trim().lowercase(Locale.ROOT).takeIf(String::isNotBlank) ?: return false
+        return listOf(
+            location,
+            album,
+            title,
+            filename,
+            description,
+            event?.title.orEmpty(),
+            event?.locationName.orEmpty(),
+            event?.searchText.orEmpty(),
+        ).plus(tags).any { needle in it.lowercase(Locale.ROOT) }
     }
 
     private fun addDeterministicFactEvidence(hit: SearchHit, plan: GalleryQueryPlan): SearchHit {

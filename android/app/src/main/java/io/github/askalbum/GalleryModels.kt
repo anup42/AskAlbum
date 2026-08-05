@@ -87,6 +87,7 @@ data class GalleryQueryPlan(
     // hybrid channel executors replace its current term scorer.
     val terms: List<String> = emptyList(),
     val place: String? = null,
+    val comparisonScopes: List<String> = emptyList(),
     val baseResultIds: Set<String>? = null,
     val limit: Int = 100,
 )

@@ -313,3 +313,8 @@ media, databases, or logs.
 - `GalleryRepository` now builds the People coverage universe before the People filter and reports `PARTIAL` until every query-eligible image has a terminal face-stage result.
 - Deterministic People answers now inherit partial exactness during an incomplete face scan instead of treating known reviewed-cluster hits as complete coverage.
 - Added database coverage regression assertions without changing the schema or existing derived People data.
+### Deterministic comparison and list scopes
+
+- Added typed `comparisonScopes` to the validated planner contract so `Goa` and `Singapore` are retained together instead of one becoming a hard filter.
+- Compare now builds complete per-scope deterministic evidence; offline LIST plans now support complete place, day, merchant, and reviewed-person value extraction without relying on ranked top-K.
+- Added codec, compiler, and executor regression tests; no schema or media-data migration was introduced.

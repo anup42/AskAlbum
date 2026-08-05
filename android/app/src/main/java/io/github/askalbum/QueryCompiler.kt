@@ -14,6 +14,8 @@ class QueryCompiler(
         "amount", "have", "in", "is", "latest", "me", "my", "of", "on", "only", "image", "images", "photo", "photos",
         "pic", "pics", "picture", "pictures",
         "please", "show", "take", "took", "the", "this", "to", "was", "were", "what", "where", "with",
+        "which", "list", "place", "places", "location", "locations", "merchant", "merchants", "people", "persons",
+        "recent", "day", "days", "date", "dates", "month", "months", "year", "years", "compare", "comparison", "versus", "vs",
         "bas", "dikhao", "dikhाओ", "ke", "ki", "ka", "pichle", "saal", "sirf", "wali", "wala",
         "दिखाओ", "फोटो", "फोटोस", "के", "की", "का", "पिछले", "साल", "वाली", "वाला", "सिर्फ", "सिर्फ़", "केवल",
     )
@@ -86,8 +88,15 @@ class QueryCompiler(
             candidateTerms.filterNot { term -> explicitYear != null && term == explicitYear.toString() }
         }
         val terms = originalTerms.map { aliases[it] ?: it }.distinct()
-        val place = listOf("singapore", "goa", "amsterdam", "netherlands", "california", "francisco", "marshall", "rockaway")
-            .firstOrNull { candidate -> candidate in terms }
+        val knownPlaces = listOf("singapore", "goa", "amsterdam", "netherlands", "california", "francisco", "marshall", "rockaway")
+        val place = knownPlaces.firstOrNull { candidate -> candidate in terms }
+        val comparisonScopes = if (intent == QueryIntent.COMPARE) {
+            terms.filter { it in knownPlaces }.distinct()
+        } else {
+            emptyList()
+        }
+        val listMerchant = intent == QueryIntent.LIST &&
+            Regex("\\b(list|which)\\s+merchants?\\b").containsMatchIn(normalized)
         val requestedField = when {
             asksReceiptTotal -> "total"
             Regex("\\b(wifi password|wi fi password)\\b").containsMatchIn(normalized) -> "password"
@@ -98,7 +107,7 @@ class QueryCompiler(
             Regex("\\b(phone|phone number|mobile number)\\b").containsMatchIn(normalized) -> "phone"
             Regex("\\bdate\\b").containsMatchIn(normalized) -> "date"
             Regex("\\b(url|website|link)\\b").containsMatchIn(normalized) -> "url"
-            Regex("\\b(what|which)\\s+(?:was\\s+)?(?:the\\s+)?merchant\\b").containsMatchIn(normalized) -> "merchant"
+            Regex("\\b(what|which)\\s+(?:was\\s+)?(?:the\\s+)?merchant\\b").containsMatchIn(normalized) || listMerchant -> "merchant"
             else -> null
         }
         val merchantAfterFrom = Regex("\\breceipt\\s+from\\s+(.+)$").find(normalized)?.groupValues?.get(1)?.trim()
@@ -113,7 +122,7 @@ class QueryCompiler(
             intent = intent,
             mediaScope = when {
                 "video" in terms || "videos" in terms -> MediaScope.VIDEOS
-                "pdf" in terms || "receipt" in terms || "document" in terms -> MediaScope.DOCUMENTS
+                "pdf" in terms || "receipt" in terms || "document" in terms || (intent == QueryIntent.LIST && requestedField == "merchant") -> MediaScope.DOCUMENTS
                 normalized.split(' ').any { it in setOf("photo", "photos", "picture", "pictures", "image", "images") } -> MediaScope.IMAGES
                 else -> MediaScope.ALL
             },
@@ -124,7 +133,13 @@ class QueryCompiler(
                 merchant = merchant,
                 requestedField = requestedField,
             ) else null,
-            grouping = if ("travel" in terms || place in setOf("goa", "singapore")) Grouping.EVENT else Grouping.NONE,
+            grouping = when {
+                intent == QueryIntent.LIST && Regex("\\b(place|places|location|locations)\\b").containsMatchIn(normalized) -> Grouping.PLACE
+                intent == QueryIntent.LIST && Regex("\\b(people|persons)\\b").containsMatchIn(normalized) -> Grouping.PERSON
+                intent == QueryIntent.LIST && Regex("\\b(day|days|date|dates)\\b").containsMatchIn(normalized) -> Grouping.DAY
+                "travel" in terms || place in setOf("goa", "singapore") -> Grouping.EVENT
+                else -> Grouping.NONE
+            },
             aggregation = when (intent) {
                 QueryIntent.COUNT -> AggregationSpec(AggregationOperation.COUNT)
                 QueryIntent.SUM -> AggregationSpec(AggregationOperation.SUM, requestedField ?: "total")
@@ -137,7 +152,8 @@ class QueryCompiler(
                 else -> SortSpec.RELEVANCE
             },
             terms = terms,
-            place = place,
+            place = if (comparisonScopes.size >= 2) null else place,
+            comparisonScopes = comparisonScopes,
             baseResultIds = if (isFollowUp) activeResultIds else null,
         )
         return validator.requireValid(plan, if (isFollowUp) activeResultIds else null)

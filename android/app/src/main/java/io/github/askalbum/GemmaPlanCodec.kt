@@ -10,7 +10,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         val json = parseSingleObject(response)
         json.requireOnly(
             "version", "intent", "mediaScope", "filter", "semanticClauses", "peopleClauses", "ocrClause",
-            "grouping", "aggregation", "sort", "verification", "answerMode", "limit", "terms", "place",
+            "grouping", "aggregation", "sort", "verification", "answerMode", "limit", "terms", "place", "comparisonScopes",
         )
         val intent = enum<QueryIntent>(json, "intent")
         val semantic = json.optJSONArray("semanticClauses")?.objects(MAX_SEMANTIC_CLAUSES) { item ->
@@ -27,9 +27,10 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         val terms = json.optJSONArray("terms")?.strings(MAX_TERMS).orEmpty().map { it.lowercase(Locale.ROOT) }.distinct()
         val finalTerms = if (terms.isNotEmpty()) terms else semantic.mapNotNull { it.canonicalText ?: it.text }.map { it.lowercase(Locale.ROOT) }.distinct()
         val followUp = FollowUpLanguage.isFollowUp(query, !activeResultIds.isNullOrEmpty())
-        require(finalTerms.isNotEmpty() || followUp || intent in setOf(QueryIntent.COUNT, QueryIntent.LIST, QueryIntent.TIMELINE)) {
+        require(finalTerms.isNotEmpty() || followUp || intent in setOf(QueryIntent.COUNT, QueryIntent.LIST, QueryIntent.TIMELINE, QueryIntent.COMPARE)) {
             "Planner produced no searchable constraints"
         }
+        val comparisonScopes = json.optJSONArray("comparisonScopes")?.strings(MAX_COMPARISON_SCOPES).orEmpty()
         val people = json.optJSONArray("peopleClauses")?.objects(MAX_PEOPLE_CLAUSES) { item ->
             item.requireOnly("personId", "mustBePresent", "hardness")
             PersonClause(
@@ -62,6 +63,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
             answerMode = json.optEnum("answerMode", AnswerMode.RESULTS_AND_SUMMARY),
             terms = finalTerms,
             place = json.optNullableString("place"),
+            comparisonScopes = comparisonScopes,
             baseResultIds = if (followUp) activeResultIds else null,
             limit = json.optInt("limit", 100),
         )
@@ -136,6 +138,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         const val MAX_TERMS = 16
         const val MAX_SEMANTIC_CLAUSES = 16
         const val MAX_PEOPLE_CLAUSES = 8
+        const val MAX_COMPARISON_SCOPES = 4
         const val MAX_FILTER_CLAUSES = 12
     }
 }

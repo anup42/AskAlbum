@@ -1395,6 +1395,37 @@ class GalleryDatabase(
         }
     }
 
+    fun indexedPeopleForMediaIds(mediaIds: Set<String>): Map<String, List<IndexedPersonMetadata>> {
+        if (mediaIds.isEmpty()) return emptyMap()
+        return mediaIds.toList().chunked(SQLITE_ID_CHUNK).flatMap { ids ->
+            val placeholders = ids.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT f.media_id,c.id,c.label,c.relationship,c.aliases,c.reviewed,c.hidden,COUNT(f.id) " +
+                    "FROM face_instance f JOIN person_cluster c ON c.id=f.cluster_id " +
+                    "WHERE f.media_id IN ($placeholders) AND c.reviewed=1 AND c.hidden=0 " +
+                    "GROUP BY f.media_id,c.id,c.label,c.relationship,c.aliases,c.reviewed,c.hidden " +
+                    "ORDER BY f.media_id,COALESCE(c.label,c.relationship,c.id) COLLATE NOCASE",
+                ids.toTypedArray(),
+            ).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) {
+                        add(
+                            cursor.getString(0) to IndexedPersonMetadata(
+                                clusterId = cursor.getString(1),
+                                label = if (cursor.isNull(2)) null else sensitiveDataAtRest.reveal(cursor.getString(2)),
+                                relationship = if (cursor.isNull(3)) null else sensitiveDataAtRest.reveal(cursor.getString(3)),
+                                aliases = decodeStrings(sensitiveDataAtRest.reveal(cursor.getString(4))).sorted(),
+                                reviewed = cursor.getInt(5) != 0,
+                                hidden = cursor.getInt(6) != 0,
+                                faceCount = cursor.getInt(7),
+                            ),
+                        )
+                    }
+                }
+            }
+        }.groupBy({ it.first }, { it.second })
+    }
+
     fun allEmbeddedFaceIds(): Set<String> = readableDatabase.rawQuery(
         "SELECT id FROM face_instance WHERE embedding_dimension=? AND embedding_offset IS NOT NULL",
         arrayOf(FaceModelCatalog.sface.embeddingDimension.toString()),

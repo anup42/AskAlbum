@@ -77,6 +77,8 @@ data class CapabilityAnswerContext(
     val channelReports: List<RetrievalChannelReport<SearchHit>>,
     val eventsByMedia: Map<String, EventRecord> = emptyMap(),
     val deterministicHits: List<SearchHit> = emptyList(),
+    val comparisonScopes: List<String> = emptyList(),
+    val peopleByMedia: Map<String, List<IndexedPersonMetadata>> = emptyMap(),
 )
 
 object CapabilityAnswerExecutor {
@@ -133,6 +135,11 @@ object CapabilityAnswerExecutor {
         val sourceHits = context.deterministicHits.ifEmpty { context.hits }
         val values = when (context.plan.grouping) {
             Grouping.PLACE -> sourceHits.map { it.item.location }.filter(String::isNotBlank)
+            Grouping.PERSON -> sourceHits.flatMap { hit ->
+                context.peopleByMedia[hit.item.id].orEmpty().mapNotNull { person ->
+                    person.label?.takeIf(String::isNotBlank) ?: person.relationship?.takeIf(String::isNotBlank)
+                }
+            }
             Grouping.EVENT -> sourceHits.mapNotNull { context.eventsByMedia[it.item.id]?.title }
             Grouping.DAY, Grouping.MONTH, Grouping.YEAR -> sourceHits.mapNotNull { it.item.capturedAt }.map(::formatDate)
             else -> {
@@ -281,6 +288,7 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
+        if (context.comparisonScopes.size >= 2) return compareExplicitScopes(context, base)
         val sourceHits = context.deterministicHits.ifEmpty { context.hits }
         val grouped = sourceHits.groupBy { hit ->
             when (context.plan.grouping) {
@@ -303,6 +311,46 @@ object CapabilityAnswerExecutor {
                 " Comparison is based on the current ranked retrieval pass."
             },
             grouped.flatMap { it.value }.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+        )
+    }
+
+    private fun compareExplicitScopes(
+        context: CapabilityAnswerContext,
+        base: (String, String, List<String>) -> SearchAnswer,
+    ): SearchAnswer {
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val grouped = context.comparisonScopes.mapNotNull { scope ->
+            val needle = scope.trim().lowercase(Locale.ROOT).takeIf(String::isNotBlank) ?: return@mapNotNull null
+            val scopedHits = sourceHits.filter { hit ->
+                listOf(
+                    hit.item.location,
+                    hit.item.album,
+                    hit.item.title,
+                    hit.item.filename,
+                    hit.item.description,
+                    context.eventsByMedia[hit.item.id]?.title.orEmpty(),
+                    context.eventsByMedia[hit.item.id]?.locationName.orEmpty(),
+                    context.eventsByMedia[hit.item.id]?.searchText.orEmpty(),
+                ).plus(hit.item.tags).any { needle in it.lowercase(Locale.ROOT) }
+            }.distinctBy { it.item.id }
+            scope.trim().replaceFirstChar { it.uppercase(Locale.ROOT) } to scopedHits
+        }.filter { it.second.isNotEmpty() }.take(2)
+        if (grouped.size < 2) {
+            return base(
+                "Two comparison scopes were not resolved",
+                "Refine the query with two places, events, albums, or result sets.",
+                emptyList(),
+            )
+        }
+        val detail = grouped.joinToString("; ") { (name, hits) ->
+            val captures = hits.mapNotNull { it.item.capturedAt }
+            "$name: ${hits.size} item(s), ${captures.minOrNull()?.let(::formatDate) ?: "date unavailable"} to " +
+                (captures.maxOrNull()?.let(::formatDate) ?: "date unavailable")
+        }
+        return base(
+            "${grouped[0].first} compared with ${grouped[1].first}",
+            detail + " Complete eligible membership was used for the resolved comparison scopes.",
+            grouped.flatMap { it.second }.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
         )
     }
 

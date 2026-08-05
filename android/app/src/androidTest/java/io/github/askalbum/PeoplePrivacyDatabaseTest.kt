@@ -94,6 +94,8 @@ class PeoplePrivacyDatabaseTest {
         )
 
         store.saveReviewedPersonCluster("person_fixture", "Fixture Person", "friend", listOf("Friend", "Dost"))
+        val indexedPeople = store.indexedPeopleForMediaIds(setOf(media.id))[media.id].orEmpty()
+        assertEquals("Fixture Person", indexedPeople.single().label)
 
         val status = store.peopleIndexStatus()
         assertEquals(1, status.identityReadyFaceCount)
