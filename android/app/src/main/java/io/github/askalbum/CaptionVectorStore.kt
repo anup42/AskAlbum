@@ -35,7 +35,7 @@ class CaptionVectorStore(
             .map(String::trim)
             .filter(String::isNotEmpty)
             .distinct()
-        if (normalizedQueries.isEmpty() || eligibleChunkIds.isEmpty()) {
+        if (normalizedQueries.isEmpty()) {
             return CaptionVectorSearchReport(
                 status = ChannelStatus.NOT_REQUIRED,
                 eligibleChunkCount = eligibleChunkIds.size,
@@ -56,6 +56,17 @@ class CaptionVectorStore(
                 null,
                 "NO_VERIFIED_RETRIEVAL_PACK",
             )
+        if (eligibleChunkIds.isEmpty()) {
+            return CaptionVectorSearchReport(
+                status = ChannelStatus.NOT_REQUIRED,
+                eligibleChunkCount = 0,
+                indexedChunkCount = 0,
+                searchedChunkCount = 0,
+                hits = emptyList(),
+                modelVersion = modelVersion,
+                errorCode = null,
+            )
+        }
         return runCatching {
             val current = currentIndex()
             val indexed = current.index.ids() intersect eligibleChunkIds

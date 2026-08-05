@@ -229,7 +229,7 @@ media, databases, or logs.
 
 ### 2026-08-05 - Treat empty caption searches as not required
 
-- Caption-vector retrieval now short-circuits blank queries and empty eligible sets as `NOT_REQUIRED` before model loading.
+- Caption-vector retrieval now short-circuits blank queries as `NOT_REQUIRED` before model loading; real queries still expose a missing retrieval pack as `UNAVAILABLE`.
 - Duplicate and whitespace-only query variants are removed before embedding; unavailable model packs are reported only for searches that actually require the channel.
 
 ### 2026-08-05 - Surface caption FTS failures
