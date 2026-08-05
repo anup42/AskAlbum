@@ -82,9 +82,12 @@ data class CapabilityAnswerContext(
 )
 
 object CapabilityAnswerExecutor {
+    private fun collectEvidenceIds(hits: List<SearchHit>, limit: Int = 24): List<String> =
+        hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(limit)
+
     fun execute(context: CapabilityAnswerContext): SearchAnswer {
         CapabilityRegistry.requireExecutable(context.plan.intent)
-        val evidenceIds = context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24)
+        val evidenceIds = collectEvidenceIds(context.hits + context.deterministicHits)
         val base = { headline: String, detail: String, ids: List<String> ->
             SearchAnswer(
                 headline,
@@ -148,7 +151,7 @@ object CapabilityAnswerExecutor {
                 else sourceHits.flatMap(SearchHit::evidence).filter { it.sourceField == requested.sourceField }.map(EvidenceRecord::text)
             }
         }.map(String::trim).filter(String::isNotBlank).distinct()
-        val ids = context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24)
+        val ids = collectEvidenceIds(sourceHits)
         return base(
             "${values.size} distinct ${if (values.size == 1) "result" else "results"}",
             values.take(20).joinToString("; ").ifBlank { "No allowlisted value was present in the eligible evidence." },
@@ -162,13 +165,14 @@ object CapabilityAnswerExecutor {
     ): SearchAnswer {
         val field = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField)
             ?: OcrFactAllowlist.fields.first()
-        val selection = DocumentAnswerSelector.select(context.hits, setOf(field.sourceField))
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val selection = DocumentAnswerSelector.select(sourceHits, setOf(field.sourceField))
         val fact = selection?.fact
         return if (fact == null) {
             base(
                 "I found the document, but not a reliable ${field.key.replace('_', ' ')}",
                 "Open the OCR evidence to inspect the local document. The app will not invent the requested value.",
-                context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(12),
+                collectEvidenceIds(sourceHits, 12),
             )
         } else {
             base(
@@ -190,7 +194,7 @@ object CapabilityAnswerExecutor {
                 "Exact sum unavailable",
                 "The current retrieval pass covered ${context.indexedEligibleCount} of ${context.totalEligibleCount} eligible items. " +
                     "A partial pass cannot produce a trustworthy total.",
-                context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+                collectEvidenceIds(context.hits + context.deterministicHits),
             )
         }
         val values = numericFacts(context.deterministicHits.ifEmpty { context.hits }, field)
@@ -221,7 +225,7 @@ object CapabilityAnswerExecutor {
                 "Exact minimum or maximum unavailable",
                 "The current retrieval pass covered ${context.indexedEligibleCount} of ${context.totalEligibleCount} eligible items. " +
                     "A partial pass cannot establish a trustworthy minimum or maximum.",
-                context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+                collectEvidenceIds(context.hits + context.deterministicHits),
             )
         }
         val values = numericFacts(context.deterministicHits.ifEmpty { context.hits }, field)
@@ -275,7 +279,7 @@ object CapabilityAnswerExecutor {
                 } else {
                     "This summary uses the current ranked retrieval pass and may not include every event member."
                 },
-            sourceHits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+            collectEvidenceIds(sourceHits),
         )
     }
 
@@ -296,7 +300,7 @@ object CapabilityAnswerExecutor {
                 } else {
                     " Dates are limited to the current retrieval pass."
                 },
-            sourceHits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+            collectEvidenceIds(sourceHits),
         )
     }
 
@@ -326,7 +330,7 @@ object CapabilityAnswerExecutor {
             } else {
                 " Comparison is based on the current ranked retrieval pass."
             },
-            grouped.flatMap { it.value }.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+            collectEvidenceIds(grouped.flatMap { it.value }),
         )
     }
 
@@ -366,7 +370,7 @@ object CapabilityAnswerExecutor {
         return base(
             "${grouped[0].first} compared with ${grouped[1].first}",
             detail + " Complete eligible membership was used for the resolved comparison scopes.",
-            grouped.flatMap { it.second }.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+            collectEvidenceIds(grouped.flatMap { it.second }),
         )
     }
 

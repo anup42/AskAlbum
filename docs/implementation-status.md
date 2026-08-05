@@ -493,3 +493,12 @@ media, databases, or logs.
 - `IndexingLeaseRecoveryPolicyTest` PASS; `consumerDebug` and `fixtureCiDebug` compilation PASS.
 - Both APKs assembled PASS; consumer replacement install and launch smoke PASS on `SM-F731U`; fixture INTERNET permission ABSENT.
 - Process-death, screen-off/Doze, foreground-service-timeout, 5k/20k workload, E4B, and full acceptance-query gates remain unverified.
+
+## 2026-08-05 - Deterministic answer evidence closure
+
+- Fixed capability answers so deterministic hits used for LIST, OCR fact selection, aggregation, event/timeline summaries, and comparison also supply the returned evidence IDs.
+- Added `CapabilityEvidenceClosureTest` to prevent answers from being computed from one hit set while exposing evidence from another.
+- Tests: focused evidence-closure test PASS; full `consumerDebug` unit suite PASS; `git diff --check` PASS.
+- Builds: `consumerDebug` PASS; `fixtureCiDebug` PASS. Fixture APK declares no `INTERNET` permission.
+- Device: replacement-installed `consumerDebug` with `adb install -r -d`; package `firstInstallTime` unchanged; `MainActivity` resumed; no recent fatal/ANR match.
+- Remaining: complete device acceptance queries, process-death/Doze/FGS-timeout tests, and 5k/20k workload gates remain NOT RUN.
