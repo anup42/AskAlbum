@@ -3356,7 +3356,16 @@ class GalleryDatabase(
 
     fun semanticMemoryProgress(activeModelVersion: String? = null): SemanticMemoryProgress {
         val db = readableDatabase
-        val personalReason = PersonalSemanticMemoryPolicy.jobReason(activeModelVersion)
+        val personalJobSelection = if (activeModelVersion == null) {
+            "reason LIKE ? AND COALESCE(model_version,'') NOT LIKE 'superseded:%'"
+        } else {
+            "reason=? AND COALESCE(model_version,'') NOT LIKE 'superseded:%'"
+        }
+        val personalJobArgs = if (activeModelVersion == null) {
+            arrayOf("${PersonalSemanticMemoryPolicy.JOB_PREFIX}%")
+        } else {
+            arrayOf(PersonalSemanticMemoryPolicy.jobReason(activeModelVersion))
+        }
         val counts = db.rawQuery(
             """
             SELECT COUNT(*),
@@ -3394,9 +3403,9 @@ class GalleryDatabase(
                 COALESCE(SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END),0),
                 COALESCE(SUM(CASE WHEN status='AUTH_REQUIRED' THEN 1 ELSE 0 END),0)
             FROM semantic_enrichment_job
-            WHERE reason=?
+            WHERE $personalJobSelection
             """.trimIndent(),
-            arrayOf(personalReason),
+            personalJobArgs,
         ).use { cursor ->
             if (!cursor.moveToFirst()) IntArray(4) else IntArray(4) { cursor.getInt(it) }
         }

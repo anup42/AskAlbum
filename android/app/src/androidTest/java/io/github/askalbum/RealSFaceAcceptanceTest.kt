@@ -25,6 +25,11 @@ class RealSFaceAcceptanceTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val application = instrumentation.targetContext.applicationContext as AskAlbumApplication
         val services = application.services
+        val retainedFixture = application.repository.allItems().firstOrNull {
+            it.filename == "children_football_01_v0.jpg"
+        }
+        assumeTrue("Licensed children-football fixture is not retained on the device", retainedFixture != null)
+        val fixture = requireNotNull(retainedFixture)
         if (!services.faceModelPackManager.status().installed) {
             services.faceModelDownloader.enqueue()
             withTimeout(5 * 60_000L) {
@@ -40,9 +45,6 @@ class RealSFaceAcceptanceTest {
         assertEquals(FaceModelCatalog.sface.sizeBytes, installed.file.length())
         assertEquals(FaceModelCatalog.sface.producerVersion, installed.spec.producerVersion)
 
-        val fixture = requireNotNull(application.repository.allItems().firstOrNull { it.filename == "children_football_01_v0.jpg" }) {
-            "Licensed children-football fixture is not retained on the device"
-        }
         val modelImage = application.contentResolver.loadThumbnail(
             Uri.parse(requireNotNull(fixture.contentUri)),
             Size(1024, 1024),

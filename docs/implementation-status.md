@@ -267,7 +267,23 @@ media, databases, or logs.
 - Consumer release now enables R8 and resource shrinking.
 - JNI vector scanning and typed local model entry points have explicit keep rules; release assembly is required to validate the configuration.
 
+### 2026-08-05 - Correct personal semantic progress coverage
+
+- Progress without an active model version now counts current personal jobs by their durable prefix and excludes superseded generations instead of reporting zero pending work.
+- Connected UI tests now wait for asynchronous navigation and assert that debug seeder services remain non-exported and signature-protected.
+
 ### 2026-08-05 - Use explicit foreground indexing service types
 
 - Initial gallery indexing now calls the platform typed `startForeground` API, using `mediaProcessing` on Android 15+ and `dataSync` on older supported releases.
 - The instrumentation contract now verifies the active service type on the connected API 36 device.
+
+### 2026-08-05 - Make model acceptance prerequisites explicit
+
+- SFace, PaddleOCR, and SigLIP2 connected acceptance tests now skip before expensive model work when their licensed/CC0 fixtures or verified packs are not retained on the device.
+- The SFace settings test now verifies automatic model provisioning and guards against removed replacement controls instead of requiring obsolete UI.
+
+### 2026-08-05 - Connected validation after acceptance-test fix
+
+- Consumer debug and its instrumentation APK were replacement-installed with `adb install -r -d` without clearing app data.
+- The focused settings, personal-progress, and smoke tests passed; the full connected suite completed 73 tests with no assertion failures.
+- Tests requiring `galleryRunId` or device-retained OCR/face/SigLIP2 fixtures were reported as explicit skips, not passes.

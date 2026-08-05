@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -21,6 +22,13 @@ class SFaceSettingsUiTest {
         rule.onNodeWithText("Settings").performClick()
         rule.onNodeWithText("Face identity model").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("OpenCV SFace 2021dec-fp32-v1").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("Replace pinned ONNX").performScrollTo().assertIsDisplayed()
+        assertTrue(
+            "Obsolete SFace replacement control is still exposed",
+            runCatching { rule.onNodeWithText("Replace pinned ONNX").fetchSemanticsNode() }.isFailure,
+        )
+        assertTrue(
+            "Obsolete signed-pack replacement control is still exposed",
+            runCatching { rule.onNodeWithText("Replace signed pack").fetchSemanticsNode() }.isFailure,
+        )
     }
 }
