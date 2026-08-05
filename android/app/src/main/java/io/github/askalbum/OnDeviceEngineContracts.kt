@@ -2,7 +2,8 @@ package io.github.anup42.askalbum
 
 /**
  * Stable seams for production model packs. Implementations must never send image data off-device.
- * The bundled MVP uses [QueryCompiler] and curated sample facts, so it makes no false model claim.
+ * Production uses the verified on-device model graph. QueryCompiler and fixture engines are
+ * retained only for model-independent test builds.
  */
 interface GenerativeEngine {
     suspend fun compilePlan(input: PlannerInput): GalleryQueryPlan
