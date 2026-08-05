@@ -922,7 +922,7 @@ private fun IndexManagerScreen(
             enabled = retrievalPack.installed,
             inProgress = indexingActive &&
                 indexingJobControls.embeddingsEnabled &&
-                index.siglipVectorsReady < index.discovered,
+                index.siglipVectorsPending > 0,
         )
         IndexMetric("Video keyframes", index.videoKeyframesReady, index.videoKeyframesReady, VideoKeyframePolicy.PRODUCER_VERSION)
         IndexMetric(

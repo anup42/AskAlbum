@@ -42,6 +42,7 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
             }
         database.prepareCaptionEmbeddingVersion(producer)
         database.materializeCaptionChunkBackfill(BACKFILL_CAPTIONS_PER_RUN)
+        val initialCaptionProgress = database.captionEmbeddingProgress()
         if (!database.hasCaptionEmbeddingWork(producer)) {
             try {
                 services.captionVectorStore.reconcile(database.currentCaptionEmbeddingChunkIds(producer))
@@ -60,14 +61,14 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
             }
             setProgress(
                 workDataOf(
-                    "status" to "COMPLETE",
+                    "status" to if (initialCaptionProgress.failedChunkCount > 0) "DEGRADED" else "COMPLETE",
                     "processed" to 0,
-                    "failed" to 0,
+                    "failed" to initialCaptionProgress.failedChunkCount,
                     "in_flight" to 0,
                     "last_progress_at" to System.currentTimeMillis(),
                     "next_attempt_at" to 0L,
-                    "delayed_retries" to 0,
-                    "quarantined" to 0,
+                    "delayed_retries" to initialCaptionProgress.delayedRetryCount,
+                    "quarantined" to initialCaptionProgress.failedChunkCount,
                 ),
             )
             return@withContext Result.success()
@@ -128,12 +129,12 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
         setProgress(
             workDataOf(
                 "processed" to processed,
-                "failed" to failures,
+                "failed" to captionProgress.failedChunkCount,
                 "in_flight" to 0,
                 "last_progress_at" to System.currentTimeMillis(),
                 "next_attempt_at" to 0L,
-                "delayed_retries" to failures,
-                "quarantined" to 0,
+                "delayed_retries" to captionProgress.delayedRetryCount,
+                "quarantined" to captionProgress.failedChunkCount,
                 "rate_per_minute" to (estimate.ratePerMinute ?: 0.0),
                 "eta_millis" to (estimate.etaMillis ?: 0L),
             ),

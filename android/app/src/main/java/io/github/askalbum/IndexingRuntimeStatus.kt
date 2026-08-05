@@ -112,8 +112,8 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             IndexingJob.EMBEDDINGS to snapshot(
                 IndexingJob.EMBEDDINGS,
                 controls.embeddingsEnabled,
-                (summary.discovered - summary.siglipVectorsReady).coerceAtLeast(0),
-                0,
+                summary.siglipVectorsPending,
+                summary.siglipVectorsFailed,
                 summary.siglipVectorsReady,
                 summary.discovered,
                 embeddings,
@@ -284,7 +284,7 @@ internal object IndexingSupervisor {
             if (
                 controls.embeddingsEnabled &&
                 retrievalAvailable &&
-                summary.siglipVectorsReady < summary.discovered
+                summary.siglipVectorsPending > 0
             ) {
                 EmbeddingIndexScheduler.schedule(context)
             }

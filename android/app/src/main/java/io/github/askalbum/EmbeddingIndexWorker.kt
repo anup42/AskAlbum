@@ -72,7 +72,7 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
             val summary = repository.indexSummary()
             val estimate = IndexingProgressEstimate.calculate(
                 processed = processed,
-                remaining = (summary.discovered - summary.siglipVectorsReady).coerceAtLeast(0),
+                remaining = summary.siglipVectorsPending,
                 startedAtMillis = progressStartedAt,
             )
             setProgress(

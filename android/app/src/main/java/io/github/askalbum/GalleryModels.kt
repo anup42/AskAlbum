@@ -279,6 +279,8 @@ data class IndexSummary(
     val events: Int = 0,
     val failed: Int = 0,
     val storageBytes: Long = 0,
+    val siglipVectorsPending: Int = 0,
+    val siglipVectorsFailed: Int = 0,
 )
 
 data class ScopedIndexCoverage(

@@ -2577,6 +2577,18 @@ class GalleryDatabase(
         ).use { cursor ->
             if (!cursor.moveToFirst()) IntArray(6) else IntArray(6) { cursor.getInt(it) }
         }
+        val vectorStageCounts = readableDatabase.rawQuery(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN status IN ('PENDING','RUNNING','FAILED_RETRYABLE') THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN status IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') THEN 1 ELSE 0 END),0)
+            FROM media_index_stage
+            WHERE stage='EMBEDDING'
+            """.trimIndent(),
+            null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) IntArray(2) else IntArray(2) { cursor.getInt(it) }
+        }
         return IndexSummary(
             discovered = mediaCounts[0],
             metadataReady = mediaCounts[0],
@@ -2604,6 +2616,8 @@ class GalleryDatabase(
             events = events().size,
             failed = mediaCounts[4],
             storageBytes = databaseBytes(),
+            siglipVectorsPending = vectorStageCounts[0],
+            siglipVectorsFailed = vectorStageCounts[1],
         )
     }
 

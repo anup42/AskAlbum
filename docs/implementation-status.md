@@ -599,3 +599,8 @@ media, databases, or logs.
 - Media-analysis and SigLIP2 progress now report quarantined item failures instead of hard-coded zero values.
 - Checkpoint progress no longer reports a full phantom batch as in-flight after the batch has returned.
 - `FAILED_EXHAUSTED` media rows now contribute to degraded pipeline status, so poison items cannot be mistaken for a complete healthy index.
+### 2026-08-05 - Stop re-enqueuing exhausted SigLIP2 work
+
+- Index summaries now distinguish SigLIP2 stages that are pending/retryable from stages that are exhausted or permanently failed.
+- Runtime status, supervisor scheduling, ViewModel activity, foreground notifications, and worker ETA use that durable coverage instead of `discovered - ready`.
+- Caption-vector progress now exposes durable delayed-retry and quarantined counts when its queue is otherwise exhausted.

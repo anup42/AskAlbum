@@ -1252,7 +1252,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             (
                 retrievalPackInstalled &&
                     controls.embeddingsEnabled &&
-                    summary.siglipVectorsReady < summary.discovered
+                    summary.siglipVectorsPending > 0
             ) || (
                 retrievalPackInstalled &&
                     controls.captionEmbeddingsEnabled &&

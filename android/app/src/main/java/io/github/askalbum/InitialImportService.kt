@@ -65,7 +65,7 @@ class InitialImportService : Service() {
                             val elapsedMs = (SystemClock.elapsedRealtime() - progressStartedAt).coerceAtLeast(1L)
                             val ratePerMinute = processed * 60_000.0 / elapsedMs
                             val remaining = (summary.pending +
-                                (summary.discovered - summary.siglipVectorsReady).coerceAtLeast(0))
+                                summary.siglipVectorsPending)
                                 .coerceAtLeast(0)
                             val etaMillis = if (ratePerMinute > 0.0 && remaining > 0) {
                                 (remaining * 60_000.0 / ratePerMinute).toLong()
@@ -84,11 +84,16 @@ class InitialImportService : Service() {
                                 ""
                             }
                             val etaText = etaMillis?.let { " | ETA ${formatDuration(it)}" } ?: ""
+                            val vectorFailureText = if (summary.siglipVectorsFailed > 0) {
+                                " (${summary.siglipVectorsFailed} quarantined)"
+                            } else {
+                                ""
+                            }
                             getSystemService(NotificationManager::class.java).notify(
                                 NOTIFICATION_ID,
                                 notification(
                                     "$pipeline | media $completed/$discovered; vectors " +
-                                        "${summary.siglipVectorsReady}/$discovered$rateText$etaText",
+                                        "${summary.siglipVectorsReady}/$discovered$vectorFailureText$rateText$etaText",
                                     indeterminate = discovered <= 0,
                                     progress = completed,
                                     total = discovered,
