@@ -62,6 +62,31 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun eventSummaryAndTimelineUseCompleteResolvedScope() {
+        val base = context(QueryIntent.EVENT_SUMMARY)
+        val complete = hit("three", "Trip C", "INR 30.00", 1_720_000_000_000)
+        val completeEvent = event(3, "Trip C")
+        val summary = CapabilityAnswerExecutor.execute(
+            base.copy(
+                hits = base.hits.take(1),
+                deterministicHits = listOf(complete),
+                eventsByMedia = mapOf("three" to completeEvent),
+            ),
+        )
+        val timeline = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.TIMELINE).copy(
+                hits = base.hits.take(1),
+                deterministicHits = listOf(complete),
+            ),
+        )
+
+        assertEquals("Trip C", summary.headline)
+        assertTrue(summary.detail.contains("complete", ignoreCase = true))
+        assertTrue(timeline.detail.contains("2024-07-03"))
+        assertTrue(timeline.detail.contains("Complete dates", ignoreCase = true))
+    }
+
+    @Test
     fun minAndMaxRespectTheRequestedOperation() {
         val base = context(QueryIntent.MIN_MAX)
         val minimum = CapabilityAnswerExecutor.execute(

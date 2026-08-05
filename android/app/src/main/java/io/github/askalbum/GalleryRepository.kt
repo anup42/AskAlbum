@@ -681,6 +681,48 @@ class GalleryRepository(context: Context) {
             rawEventMediaRank.filter(itemPredicateIds::contains)
         }
         val itemById = allItems.associateBy { it.id }
+        val deterministicScopeHit: (GalleryItem) -> SearchHit = { item ->
+            val event = eventByMedia[item.id]
+            SearchHit(
+                item = item,
+                score = 0.0,
+                evidence = buildList {
+                    add(
+                        EvidenceRecord(
+                            id = "${item.id}:deterministic_scope",
+                            mediaId = item.id,
+                            sourceField = "deterministic_scope",
+                            text = listOf(item.title, item.location, item.album)
+                                .filter(String::isNotBlank)
+                                .distinct()
+                                .joinToString(" | "),
+                            confidence = 1f,
+                            producerVersion = "gallery-deterministic-v1",
+                        ),
+                    )
+                    event?.let {
+                        add(
+                            EvidenceRecord(
+                                id = "${item.id}:event:${it.id}",
+                                mediaId = item.id,
+                                sourceField = "event",
+                                text = "${it.title} (${it.startTime}..${it.endTime})",
+                                confidence = it.confidence,
+                                producerVersion = it.producerVersion,
+                            ),
+                        )
+                    }
+                },
+            )
+        }
+        val deterministicCapabilityHits = when {
+            plan.intent == QueryIntent.LIST && terms.isEmpty() && semanticQueries.isEmpty() ->
+                allItems.map(deterministicScopeHit)
+            plan.intent in setOf(QueryIntent.EVENT_SUMMARY, QueryIntent.TIMELINE, QueryIntent.COMPARE) && eventMediaRank.isNotEmpty() ->
+                eventMediaRank.mapNotNull { itemById[it] }.map(deterministicScopeHit)
+            else -> emptyList()
+        }
+        val deterministicAnswerHits = deterministicCapabilityHits.ifEmpty { deterministicAggregationHits }
         val resolvedSemanticBySourceId = resolvedSemanticHits.associateBy(ResolvedSemanticHit::sourceVectorId)
         val semanticChannelReport = RetrievalChannelReport<SearchHit>(
             channel = semanticVectorReport.channel,
@@ -949,7 +991,7 @@ class GalleryRepository(context: Context) {
             matchCount,
             verification,
             channelReports,
-            deterministicAggregationHits,
+            deterministicAnswerHits,
             completePredicateScan = exactPredicateScan?.completeCoverage == true,
         )
         val requiresAuthentication = hits.any(SensitiveEvidencePolicy::requiresAuthentication)
@@ -1079,7 +1121,7 @@ class GalleryRepository(context: Context) {
         matchCount: Int,
         verification: VerificationResult,
         channelReports: List<RetrievalChannelReport<SearchHit>>,
-        deterministicAggregationHits: List<SearchHit>,
+        deterministicAnswerHits: List<SearchHit>,
         completePredicateScan: Boolean = false,
     ): SearchAnswer {
         val totalItems = eligibleIds.size
@@ -1146,8 +1188,8 @@ class GalleryRepository(context: Context) {
                 totalEligibleCount = totalItems,
                 warnings = warnings,
                 channelReports = channelReports,
-                eventsByMedia = database.eventsForMedia(hits.map { it.item.id }),
-                deterministicHits = deterministicAggregationHits,
+                eventsByMedia = database.eventsForMedia((hits + deterministicAnswerHits).map { it.item.id }),
+                deterministicHits = deterministicAnswerHits,
             ),
         )
 

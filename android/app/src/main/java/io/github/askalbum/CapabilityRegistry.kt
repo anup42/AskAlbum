@@ -236,17 +236,23 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
-        val events = context.hits.mapNotNull { context.eventsByMedia[it.item.id] }.distinctBy(EventRecord::id)
-        val captures = context.hits.mapNotNull { it.item.capturedAt }
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val events = sourceHits.mapNotNull { context.eventsByMedia[it.item.id] }.distinctBy(EventRecord::id)
+        val captures = sourceHits.mapNotNull { it.item.capturedAt }
         val range = if (captures.isEmpty()) "date unavailable" else "${formatDate(captures.min())} to ${formatDate(captures.max())}"
-        val places = context.hits.map { it.item.location }.filter(String::isNotBlank).distinct().take(4)
+        val places = sourceHits.map { it.item.location }.filter(String::isNotBlank).distinct().take(4)
         val people = context.plan.peopleClauses.filter(PersonClause::mustBePresent).map(PersonClause::personId).distinct()
         return base(
             events.firstOrNull()?.title ?: "Event summary",
             "Date range: $range. Places: ${places.joinToString().ifBlank { "not recorded" }}. " +
                 "Reviewed people: ${people.joinToString().ifBlank { "none requested" }}. " +
-                "Representative media: ${context.hits.take(4).joinToString { it.item.title }}.",
-            context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+                "Representative media: ${sourceHits.take(4).joinToString { it.item.title }}. " +
+                if (context.deterministicHits.isNotEmpty()) {
+                    "The matched event membership was evaluated completely over eligible local media."
+                } else {
+                    "This summary uses the current ranked retrieval pass and may not include every event member."
+                },
+            sourceHits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
         )
     }
 
@@ -254,14 +260,20 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
-        val buckets = context.hits.filter { it.item.capturedAt != null }
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val buckets = sourceHits.filter { it.item.capturedAt != null }
             .groupBy { formatDate(requireNotNull(it.item.capturedAt)) }
             .toSortedMap()
         return base(
             "${buckets.size} chronological ${if (buckets.size == 1) "date" else "dates"}",
             buckets.entries.take(20).joinToString(" • ") { (date, hits) -> "$date: ${hits.size}" }
-                .ifBlank { "No deterministic capture dates were available." },
-            context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+                .ifBlank { "No deterministic capture dates were available." } +
+                if (context.deterministicHits.isNotEmpty()) {
+                    " Complete dates are shown for the resolved event scope."
+                } else {
+                    " Dates are limited to the current retrieval pass."
+                },
+            sourceHits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
         )
     }
 
@@ -269,7 +281,8 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
-        val grouped = context.hits.groupBy { hit ->
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val grouped = sourceHits.groupBy { hit ->
             when (context.plan.grouping) {
                 Grouping.EVENT -> context.eventsByMedia[hit.item.id]?.title
                 Grouping.PLACE -> hit.item.location
@@ -284,7 +297,11 @@ object CapabilityAnswerExecutor {
         }
         return base(
             "${grouped[0].key} compared with ${grouped[1].key}",
-            detail,
+            detail + if (context.deterministicHits.isNotEmpty()) {
+                " Complete eligible membership was used for the resolved comparison scopes."
+            } else {
+                " Comparison is based on the current ranked retrieval pass."
+            },
             grouped.flatMap { it.value }.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
         )
     }
