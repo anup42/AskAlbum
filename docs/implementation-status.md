@@ -511,3 +511,12 @@ media, databases, or logs.
 - Builds: `consumerDebug`, `offlineDemoDebug`, and `fixtureCiDebug` PASS. Offline variant has no `INTERNET` permission.
 - Device: replacement-installed consumer APK with unchanged `firstInstallTime`; `MainActivity` resumed; no recent fatal/ANR match. A model-backed OCR query was not run.
 - Remaining: process-death/Doze/FGS-timeout, 5k/20k workload, and full acceptance-query gates remain NOT RUN.
+
+## 2026-08-05 - Deterministic OCR fact answers
+
+- `ANSWER_FACT` and `DOCUMENT_QA` now build candidates from the complete hard-filtered eligible OCR entity set, so a valid field below ranked top-K is not silently missed.
+- `SUM` and `MIN_MAX` exactness now also depends on complete OCR-stage coverage; selected document facts retain media-bound evidence and existing sensitive-evidence authentication.
+- Tests: focused document-fact and evidence-closure tests PASS; full `testConsumerDebugUnitTest` PASS; consumer lint PASS; `git diff --check` PASS.
+- Builds: `consumerDebug`, `offlineDemoDebug`, and `fixtureCiDebug` PASS. No migration or destructive data change was introduced.
+- Device: replacement-installed consumer APK; `firstInstallTime` unchanged; `MainActivity` resumed; no recent fatal/ANR match. A real OCR query remains unverified on-device.
+- Remaining: process-death/Doze/FGS-timeout, 5k/20k workload, and full acceptance-query gates remain NOT RUN.

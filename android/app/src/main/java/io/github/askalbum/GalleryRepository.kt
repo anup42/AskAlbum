@@ -657,6 +657,31 @@ class GalleryRepository(context: Context) {
         } else {
             emptyList()
         }
+        val deterministicDocumentHits = if (plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA)) {
+            val field = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField) ?: OcrFactAllowlist.fields.first()
+            val entities = database.ocrEntitiesForMediaIds(eligibleIds, field.type)
+            allItems.mapNotNull { item ->
+                entities[item.id]?.let { entity ->
+                    SearchHit(
+                        item = item,
+                        score = 0.0,
+                        evidence = listOf(
+                            EvidenceRecord(
+                                id = "${item.id}:${field.sourceField}:${StableDerivedId.sha256(entity.normalizedValue)}",
+                                mediaId = item.id,
+                                sourceField = field.sourceField,
+                                text = entity.rawText,
+                                confidence = entity.confidence,
+                                producerVersion = entity.producerVersion,
+                                region = listOf(entity.left, entity.top, entity.right, entity.bottom),
+                            ),
+                        ),
+                    )
+                }
+            }
+        } else {
+            emptyList()
+        }
         val lexicalSearch = database.fullTextMatches(terms)
         val fullTextIds = lexicalSearch.ids
         val lexicalRanked = allItems
@@ -819,7 +844,9 @@ class GalleryRepository(context: Context) {
                 eventMediaRank.mapNotNull { itemById[it] }.map(deterministicScopeHit)
             else -> emptyList()
         }
-        val deterministicAnswerHits = deterministicCapabilityHits.ifEmpty { deterministicAggregationHits }
+        val deterministicAnswerHits = deterministicCapabilityHits.ifEmpty {
+            deterministicAggregationHits.ifEmpty { deterministicDocumentHits }
+        }
         val resolvedSemanticBySourceId = resolvedSemanticHits.associateBy(ResolvedSemanticHit::sourceVectorId)
         val semanticChannelReport = RetrievalChannelReport<SearchHit>(
             channel = semanticVectorReport.channel,
@@ -1267,7 +1294,13 @@ class GalleryRepository(context: Context) {
         val readyItems = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
         val semanticReport = channelReports.first { it.channel == RetrievalChannel.SEMANTIC }
         val peopleReport = channelReports.first { it.channel == RetrievalChannel.PEOPLE }
+        val ocrReport = channelReports.first { it.channel == RetrievalChannel.OCR }
         val peopleCoverageComplete = peopleReport.status !in setOf(
+            ChannelStatus.PARTIAL,
+            ChannelStatus.UNAVAILABLE,
+            ChannelStatus.FAILED,
+        )
+        val ocrCoverageComplete = ocrReport.status !in setOf(
             ChannelStatus.PARTIAL,
             ChannelStatus.UNAVAILABLE,
             ChannelStatus.FAILED,
@@ -1283,12 +1316,18 @@ class GalleryRepository(context: Context) {
         val deterministicComparison = plan.intent == QueryIntent.COMPARE &&
             plan.comparisonScopes.size >= 2 && !verification.applied
         val requestedDocumentField = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)
+            ?: if (plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA)) {
+                OcrFactAllowlist.fields.first()
+            } else {
+                null
+            }
         val deterministicDocumentFact = plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) &&
             requestedDocumentField != null &&
-            DocumentAnswerSelector.select(hits, setOf(requestedDocumentField.sourceField))?.fact != null &&
+            ocrCoverageComplete &&
+            DocumentAnswerSelector.select(deterministicAnswerHits, setOf(requestedDocumentField.sourceField))?.fact != null &&
             !verification.applied
         val exactness = RetrievalExactnessPolicy.resolve(
-            allEligibleIndexed = readyItems == totalItems && peopleCoverageComplete,
+            allEligibleIndexed = readyItems == totalItems && peopleCoverageComplete && ocrCoverageComplete,
             deterministicOperation = deterministicAggregation || deterministicResultSetFilter || deterministicDocumentFact ||
                 deterministicList || deterministicComparison,
             semanticReport = semanticReport,
