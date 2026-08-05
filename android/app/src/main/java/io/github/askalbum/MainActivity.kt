@@ -3038,7 +3038,7 @@ private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
                 reports.forEach { report ->
                     Text(
                         "${report.channel.name.replace('_', ' ').lowercase()}: ${report.status.name.lowercase()} - " +
-                            "${report.searchedCount}/${report.eligibleCount} searched",
+                            RetrievalCoverageWording.uiText(report),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                     )

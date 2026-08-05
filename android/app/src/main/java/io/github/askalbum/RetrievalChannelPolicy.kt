@@ -153,6 +153,21 @@ internal object RetrievalAnswerWording {
     }
 }
 
+internal object RetrievalCoverageWording {
+    private val boundedChannels = setOf(RetrievalChannel.SEMANTIC, RetrievalChannel.CAPTION_EMBEDDING)
+
+    fun boundedSemanticNoResult(report: RetrievalChannelReport<*>): String =
+        "The semantic channel was ${report.status.name.lowercase()} with indexed coverage " +
+            "${report.indexedCount} of ${report.eligibleCount} eligible local items. " +
+            "Its bounded top-K retrieval pass found no supported matches; this is not a complete gallery predicate scan."
+
+    fun uiText(report: RetrievalChannelReport<*>): String = if (report.channel in boundedChannels) {
+        "indexed ${report.indexedCount}/${report.eligibleCount}; bounded top-K"
+    } else {
+        "${report.searchedCount}/${report.eligibleCount} searched"
+    }
+}
+
 internal fun <T, R> RetrievalChannelReport<T>.mapHits(transform: (T) -> R?): RetrievalChannelReport<R> =
     RetrievalChannelReport(
         channel,

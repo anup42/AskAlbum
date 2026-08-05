@@ -1380,9 +1380,7 @@ class GalleryRepository(context: Context) {
                     "An exhaustive semantic scan evaluated ${semanticReport.searchedCount} of " +
                         "${semanticReport.eligibleCount} eligible local items and found no supported matches."
                 } else if (usedSemanticRetrieval) {
-                    "The semantic channel was ${semanticReport.status.name.lowercase()} and searched " +
-                        "${semanticReport.searchedCount} of ${semanticReport.eligibleCount} eligible local items. " +
-                        "This is not a complete gallery predicate scan."
+                    RetrievalCoverageWording.boundedSemanticNoResult(semanticReport)
                 } else {
                     "All $totalItems eligible local items were checked. " +
                         if (readyItems < totalItems) "Some items are still indexing." else "Try a place, object, OCR word, or scene."

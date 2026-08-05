@@ -574,3 +574,8 @@ media, databases, or logs.
 
 - Reused the Unicode-safe reviewed-person normalization contract in both Gemma visual-verification identity checks.
 - Added regression coverage for decomposed accents and full-width aliases so multilingual person conditions fail closed only on genuine ambiguity.
+### 2026-08-05 - Make bounded retrieval coverage explicit
+
+- Semantic no-result wording now distinguishes indexed coverage from bounded top-K retrieval.
+- Retrieval coverage UI labels vector channels as indexed and bounded instead of implying exhaustive evaluation.
+- Added regression coverage for truthful bounded semantic wording.
