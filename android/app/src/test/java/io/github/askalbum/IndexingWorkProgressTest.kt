@@ -83,4 +83,22 @@ class IndexingWorkProgressTest {
             ),
         )
     }
+
+    @Test
+    fun userPauseIsReportedInsteadOfAWorkerFailure() {
+        assertEquals(
+            IndexingPipelineState.PAUSED_BY_USER,
+            IndexingRuntimeStatePolicy.resolve(
+                enabled = true,
+                pending = 12,
+                failed = 0,
+                admissionAllowed = true,
+                workRunning = false,
+                workEnqueued = false,
+                runAttemptCount = 0,
+                foregroundActive = false,
+                pausedByUser = true,
+            ),
+        )
+    }
 }

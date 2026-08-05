@@ -237,7 +237,8 @@ object SemanticEnrichmentScheduler {
     private const val CONTINUATION_COOLING_DELAY_SECONDS = 5L
 
     fun schedule(context: Context, userRequested: Boolean = false) {
-        if (!IndexingJobControlsStore(context).load().semanticMemoryEnabled) return
+        val controls = IndexingJobControlsStore(context).load()
+        if (!controls.semanticMemoryEnabled || controls.foregroundPaused) return
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.KEEP,
@@ -249,7 +250,8 @@ object SemanticEnrichmentScheduler {
         context: Context,
         initialDelayMillis: Long = CONTINUATION_COOLING_DELAY_SECONDS * 1_000L,
     ) {
-        if (!IndexingJobControlsStore(context).load().semanticMemoryEnabled) return
+        val controls = IndexingJobControlsStore(context).load()
+        if (!controls.semanticMemoryEnabled || controls.foregroundPaused) return
         val initialDelaySeconds = ((initialDelayMillis + 999L) / 1_000L).coerceAtLeast(1L)
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
@@ -261,7 +263,8 @@ object SemanticEnrichmentScheduler {
     fun restart(context: Context, userRequested: Boolean = false) {
         val workManager = WorkManager.getInstance(context)
         workManager.cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
-        if (IndexingJobControlsStore(context).load().semanticMemoryEnabled) {
+        val controls = IndexingJobControlsStore(context).load()
+        if (controls.semanticMemoryEnabled && !controls.foregroundPaused) {
             workManager.enqueueUniqueWork(
                 UNIQUE_WORK,
                 ExistingWorkPolicy.REPLACE,

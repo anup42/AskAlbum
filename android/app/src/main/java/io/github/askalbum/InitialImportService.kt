@@ -31,22 +31,28 @@ class InitialImportService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        val action = intent?.action
+        if (action == ACTION_STOP) {
             importJob?.cancel()
             stopForegroundAndSelf()
             return START_NOT_STICKY
         }
-        if (intent?.action != ACTION_IMPORT && intent?.action != ACTION_INDEX) {
+        if (action == ACTION_PAUSE) {
+            pauseIndexing()
+            return START_NOT_STICKY
+        }
+        if (action != ACTION_IMPORT && action != ACTION_INDEX && action != ACTION_RESUME) {
             stopSelf(startId)
             return START_NOT_STICKY
         }
+        IndexingJobControlsStore(this).setForegroundPaused(false)
         startIndexingForeground(notification("Reading your permitted gallery", indeterminate = true))
         if (importJob?.isActive != true) {
             ForegroundIndexRuntime.started()
             importJob = scope.launch {
                 val app = application as AskAlbumApplication
                 val result = runCatching {
-                    val imported = if (intent.action == ACTION_IMPORT) app.repository.scanAccessibleGallery() else 0
+                    val imported = if (action == ACTION_IMPORT) app.repository.scanAccessibleGallery() else 0
                     val indexed = ForegroundIndexCoordinator(this@InitialImportService).run(
                         onProgress = { progress ->
                             val summary = app.repository.indexSummary()
@@ -145,6 +151,7 @@ class InitialImportService : Service() {
         indeterminate: Boolean,
         progress: Int? = null,
         total: Int? = null,
+        paused: Boolean = false,
     ): Notification {
         val openApp = PendingIntent.getActivity(
             this,
@@ -152,35 +159,53 @@ class InitialImportService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("AskAlbum local import")
-            .setContentText(message)
-            .setContentIntent(openApp)
-            .addAction(
-                android.R.drawable.ic_media_pause,
-                "Stop",
-                PendingIntent.getService(
-                    this,
-                    1,
-                    Intent(this, InitialImportService::class.java).setAction(ACTION_STOP),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                ),
-            )
-            .setOnlyAlertOnce(true)
-            .setOngoing(indeterminate)
-            .setProgress(
+        return NotificationCompat.Builder(this, CHANNEL_ID).apply {
+            setSmallIcon(android.R.drawable.stat_sys_download)
+            setContentTitle("AskAlbum local import")
+            setContentText(message)
+            setContentIntent(openApp)
+            if (paused) {
+                addAction(
+                    android.R.drawable.ic_media_play,
+                    "Resume",
+                    serviceAction(ACTION_RESUME, 3),
+                )
+            } else {
+                addAction(
+                    android.R.drawable.ic_media_pause,
+                    "Pause",
+                    serviceAction(ACTION_PAUSE, 2),
+                )
+                addAction(
+                    android.R.drawable.ic_menu_close_clear_cancel,
+                    "Stop",
+                    serviceAction(ACTION_STOP, 1),
+                )
+            }
+            setOnlyAlertOnce(true)
+            setOngoing(indeterminate && !paused)
+            setProgress(
                 total?.takeIf { it > 0 } ?: 0,
                 progress?.coerceIn(0, total?.coerceAtLeast(0) ?: 0) ?: 0,
                 indeterminate || total == null || total <= 0,
             )
-            .build()
+        }.build()
     }
+
+    private fun serviceAction(action: String, requestCode: Int): PendingIntent =
+        PendingIntent.getService(
+            this,
+            requestCode,
+            Intent(this, InitialImportService::class.java).setAction(action),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
 
     companion object {
         private const val ACTION_IMPORT = "io.github.anup42.askalbum.action.INITIAL_IMPORT"
         private const val ACTION_INDEX = "io.github.anup42.askalbum.action.INDEX"
         private const val ACTION_STOP = "io.github.anup42.askalbum.action.STOP_INDEX"
+        private const val ACTION_PAUSE = "io.github.anup42.askalbum.action.PAUSE_INDEX"
+        private const val ACTION_RESUME = "io.github.anup42.askalbum.action.RESUME_INDEX"
         private const val CHANNEL_ID = "gallery_initial_import"
         private const val NOTIFICATION_ID = 4102
 
@@ -196,6 +221,25 @@ class InitialImportService : Service() {
                 context,
                 Intent(context, InitialImportService::class.java).setAction(ACTION_INDEX),
             )
+        }
+    }
+
+    private fun pauseIndexing() {
+        IndexingJobControlsStore(this).setForegroundPaused(true)
+        importJob?.cancel()
+        scope.launch {
+            runCatching {
+                IndexScheduler.cancelAndWait(this@InitialImportService)
+                EmbeddingIndexScheduler.cancelAndWait(this@InitialImportService)
+                CaptionEmbeddingScheduler.cancelAndWait(this@InitialImportService)
+                PeopleIndexScheduler.cancelAndWait(this@InitialImportService)
+                SemanticEnrichmentScheduler.cancelAndWait(this@InitialImportService)
+            }
+            getSystemService(NotificationManager::class.java).notify(
+                NOTIFICATION_ID,
+                notification("Indexing paused. Your completed data is preserved.", indeterminate = false, paused = true),
+            )
+            stopForegroundAndSelf()
         }
     }
 

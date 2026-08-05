@@ -16,6 +16,7 @@ data class IndexingJobControls(
     val captionEmbeddingsEnabled: Boolean = true,
     val peopleEnabled: Boolean = true,
     val semanticMemoryEnabled: Boolean = true,
+    val foregroundPaused: Boolean = false,
 ) {
     fun isEnabled(job: IndexingJob): Boolean = when (job) {
         IndexingJob.MEDIA_ANALYSIS -> mediaAnalysisEnabled
@@ -43,6 +44,7 @@ class IndexingJobControlsStore(context: Context) {
         captionEmbeddingsEnabled = preferences.getBoolean(IndexingJob.CAPTION_EMBEDDINGS.name, true),
         peopleEnabled = preferences.getBoolean(IndexingJob.PEOPLE.name, true),
         semanticMemoryEnabled = preferences.getBoolean(IndexingJob.SEMANTIC_MEMORY.name, true),
+        foregroundPaused = preferences.getBoolean(FOREGROUND_PAUSED, false),
     )
 
     fun setEnabled(job: IndexingJob, enabled: Boolean): IndexingJobControls {
@@ -52,7 +54,15 @@ class IndexingJobControlsStore(context: Context) {
         return load()
     }
 
+    fun setForegroundPaused(paused: Boolean): IndexingJobControls {
+        check(preferences.edit().putBoolean(FOREGROUND_PAUSED, paused).commit()) {
+            "Could not save foreground indexing pause state"
+        }
+        return load()
+    }
+
     private companion object {
         const val PREFERENCES = "indexing-job-controls-v1"
+        const val FOREGROUND_PAUSED = "foreground_paused"
     }
 }

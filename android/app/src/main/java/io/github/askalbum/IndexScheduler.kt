@@ -14,12 +14,14 @@ object IndexScheduler {
     private const val UNIQUE_WORK = "gallery-index"
 
     fun schedule(context: Context) {
-        if (!IndexingJobControlsStore(context).load().mediaAnalysisEnabled) return
+        val controls = IndexingJobControlsStore(context).load()
+        if (!controls.mediaAnalysisEnabled || controls.foregroundPaused) return
         WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.KEEP, request(context))
     }
 
     fun scheduleContinuation(context: Context, initialDelayMillis: Long = 0L) {
-        if (!IndexingJobControlsStore(context).load().mediaAnalysisEnabled) return
+        val controls = IndexingJobControlsStore(context).load()
+        if (!controls.mediaAnalysisEnabled || controls.foregroundPaused) return
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
@@ -30,7 +32,8 @@ object IndexScheduler {
     fun restart(context: Context) {
         val workManager = WorkManager.getInstance(context)
         workManager.cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
-        if (IndexingJobControlsStore(context).load().mediaAnalysisEnabled) {
+        val controls = IndexingJobControlsStore(context).load()
+        if (controls.mediaAnalysisEnabled && !controls.foregroundPaused) {
             workManager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.REPLACE, request(context))
         }
     }

@@ -133,12 +133,14 @@ object EmbeddingIndexScheduler {
     private const val UNIQUE_WORK = "gallery-image-embeddings"
 
     fun schedule(context: Context) {
-        if (!IndexingJobControlsStore(context).load().embeddingsEnabled) return
+        val controls = IndexingJobControlsStore(context).load()
+        if (!controls.embeddingsEnabled || controls.foregroundPaused) return
         WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.KEEP, request(context))
     }
 
     fun scheduleContinuation(context: Context, initialDelayMillis: Long = 0L) {
-        if (!IndexingJobControlsStore(context).load().embeddingsEnabled) return
+        val controls = IndexingJobControlsStore(context).load()
+        if (!controls.embeddingsEnabled || controls.foregroundPaused) return
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
@@ -149,7 +151,8 @@ object EmbeddingIndexScheduler {
     fun restart(context: Context) {
         val workManager = WorkManager.getInstance(context)
         workManager.cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
-        if (IndexingJobControlsStore(context).load().embeddingsEnabled) {
+        val controls = IndexingJobControlsStore(context).load()
+        if (controls.embeddingsEnabled && !controls.foregroundPaused) {
             workManager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.REPLACE, request(context))
         }
     }

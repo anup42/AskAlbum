@@ -10,6 +10,7 @@ enum class IndexingPipelineState {
     WAITING_CONSTRAINTS,
     BACKOFF,
     STOPPED_BY_USER,
+    PAUSED_BY_USER,
     COMPLETE,
     DEGRADED,
     FAILED,
@@ -100,6 +101,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 media,
                 admission,
                 foregroundActive = ForegroundIndexRuntime.active,
+                pausedByUser = controls.foregroundPaused,
             ),
             IndexingJob.EMBEDDINGS to snapshot(
                 IndexingJob.EMBEDDINGS,
@@ -111,6 +113,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 embeddings,
                 admission,
                 foregroundActive = ForegroundIndexRuntime.active,
+                pausedByUser = controls.foregroundPaused,
             ),
             IndexingJob.CAPTION_EMBEDDINGS to snapshot(
                 IndexingJob.CAPTION_EMBEDDINGS,
@@ -121,6 +124,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 captionEligible,
                 captionEmbeddings,
                 admission,
+                pausedByUser = controls.foregroundPaused,
             ),
             IndexingJob.PEOPLE to snapshot(
                 IndexingJob.PEOPLE,
@@ -131,6 +135,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 summary.faceEligible,
                 peopleWork,
                 admission,
+                pausedByUser = controls.foregroundPaused,
             ),
             IndexingJob.SEMANTIC_MEMORY to snapshot(
                 IndexingJob.SEMANTIC_MEMORY,
@@ -141,6 +146,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 semantic.totalJobs,
                 semanticWork,
                 admission,
+                pausedByUser = controls.foregroundPaused,
             ),
         )
     }
@@ -155,6 +161,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
         work: WorkState,
         admission: BackgroundWorkAdmission,
         foregroundActive: Boolean = false,
+        pausedByUser: Boolean = false,
     ): IndexingPipelineSnapshot {
         val state = IndexingRuntimeStatePolicy.resolve(
             enabled = enabled,
@@ -165,12 +172,14 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             workEnqueued = work.enqueued,
             runAttemptCount = work.runAttemptCount,
             foregroundActive = foregroundActive,
+            pausedByUser = pausedByUser,
         )
         val message = when (state) {
             IndexingPipelineState.RUNNING -> "$completed / $eligible indexed"
             IndexingPipelineState.WAITING_CONSTRAINTS -> admission.reason ?: "Queued for the next available run"
             IndexingPipelineState.BACKOFF -> "Retry backoff after ${work.runAttemptCount} worker attempts"
             IndexingPipelineState.STOPPED_BY_USER -> "Stopped"
+            IndexingPipelineState.PAUSED_BY_USER -> "Paused by user"
             IndexingPipelineState.COMPLETE -> "$completed / $eligible complete"
             IndexingPipelineState.DEGRADED -> "$completed complete; $failed quarantined"
             IndexingPipelineState.FAILED -> "$pending pending with no active worker"
@@ -235,8 +244,10 @@ internal object IndexingRuntimeStatePolicy {
         workEnqueued: Boolean,
         runAttemptCount: Int,
         foregroundActive: Boolean,
+        pausedByUser: Boolean = false,
     ): IndexingPipelineState = when {
         !enabled -> IndexingPipelineState.STOPPED_BY_USER
+        pausedByUser && pending > 0 -> IndexingPipelineState.PAUSED_BY_USER
         foregroundActive && pending > 0 -> IndexingPipelineState.RUNNING
         workRunning -> IndexingPipelineState.RUNNING
         pending == 0 && failed > 0 -> IndexingPipelineState.DEGRADED
@@ -257,6 +268,7 @@ internal object IndexingSupervisor {
         controls: IndexingJobControls,
         retrievalAvailable: Boolean,
     ) {
+        if (controls.foregroundPaused) return
         if (!ForegroundIndexRuntime.active) {
             if (controls.mediaAnalysisEnabled && summary.pending > 0) IndexScheduler.schedule(context)
             if (

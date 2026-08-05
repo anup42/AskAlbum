@@ -446,3 +446,11 @@ media, databases, or logs.
 - User cancellation no longer gets converted into a failure that silently re-enqueues background indexing.
 - Foreground notifications show media/vector count progress after gallery discovery instead of remaining indeterminate.
 - Verified with `IndexingWorkProgressTest` and `consumerDebug` assembly; replacement device install and launch smoke check passed without changing app data.
+
+## 2026-08-05 - Durable foreground pause and resume
+
+- Added a persisted foreground pause control that blocks all indexing scheduler admission without changing completed media, vectors, People data, semantic facts, or model state.
+- Added `PAUSED_BY_USER` runtime reporting, notification Pause/Resume/Stop actions, and cancellation of all background indexing work before publishing the paused notification.
+- Added focused state coverage for user pause; `consumerDebug`, `offlineDemoDebug`, and `fixtureCiDebug` assemble successfully; consumer lint passes; offlineDemo has no INTERNET permission.
+- Replacement-installed consumerDebug on the connected device with `adb install -r -d`; first-install time remained unchanged and the demo index remained 14/14.
+- Direct shell service-action validation was not available because the service is intentionally non-exported and the device had no pending indexing work; app-owned notification action execution remains unverified on-device.

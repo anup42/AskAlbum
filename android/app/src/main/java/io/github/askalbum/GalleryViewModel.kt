@@ -337,6 +337,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
+                    repository.setForegroundIndexingPaused(false)
                     repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
                     IndexScheduler.restart(getApplication())
                     if (retrievalPacks.status().installed) {
@@ -375,6 +376,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 withContext(Dispatchers.IO) {
                     val saved = repository.saveIndexingRunCriteria(criteria)
+                    repository.setForegroundIndexingPaused(false)
                     repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
                     IndexScheduler.restart(getApplication())
                     if (retrievalPacks.status().installed) {
@@ -1185,6 +1187,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         IndexingPipelineState.COMPLETE,
                         IndexingPipelineState.DEGRADED,
                         IndexingPipelineState.STOPPED_BY_USER,
+                        IndexingPipelineState.PAUSED_BY_USER,
                     )
                 }
                 if (!hasPending) {
@@ -1242,8 +1245,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         semanticMemory: SemanticMemoryProgress,
         controls: IndexingJobControls,
         retrievalPackInstalled: Boolean,
-    ): Boolean =
-        (summary.pending > 0 && controls.mediaAnalysisEnabled) ||
+    ): Boolean {
+        if (controls.foregroundPaused) return false
+        return (summary.pending > 0 && controls.mediaAnalysisEnabled) ||
             (peopleIndex.pendingMediaCount > 0 && controls.peopleEnabled) ||
             (
                 retrievalPackInstalled &&
@@ -1258,6 +1262,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                             semanticMemory.runningCaptionChunkCount > 0
                         )
                 )
+    }
 
     private fun indexingJobLabel(job: IndexingJob): String = when (job) {
         IndexingJob.MEDIA_ANALYSIS -> "Media analysis"

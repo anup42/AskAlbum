@@ -140,6 +140,8 @@ class GalleryRepository(context: Context) {
     fun indexingJobControls(): IndexingJobControls = indexingJobControlsStore.load()
     fun setIndexingJobEnabled(job: IndexingJob, enabled: Boolean): IndexingJobControls =
         indexingJobControlsStore.setEnabled(job, enabled)
+    fun setForegroundIndexingPaused(paused: Boolean): IndexingJobControls =
+        indexingJobControlsStore.setForegroundPaused(paused)
     fun indexCoverageForContentUris(contentUris: Collection<String>): ScopedIndexCoverage =
         database.indexCoverageForContentUris(contentUris)
 
