@@ -27,19 +27,22 @@ class PeopleIndexWorker(
         val faceLease = services.faceEngines.acquireOrNull()
         val detector = if (faceLease == null) MlKitFaceDetectionEngine() else null
         val embedder = faceLease?.engine
+        val faceProducerVersion = faceLease?.descriptor?.producerVersion ?: MlKitFaceDetectionEngine.PRODUCER_VERSION
+        val ownerId = id.toString()
         var retryableFailure = false
         try {
+            repository.recoverInterruptedJobs(IndexingPipeline.PEOPLE)
             if (embedder != null) services.faceVectorStore.reconcile(repository.allEmbeddedFaceIds())
             repository.facePendingItems(BATCH_SIZE).forEach { item ->
                 if (isStopped || !repository.peopleIndexStatus().enabled || !jobControls.load().peopleEnabled) {
                     return@withContext Result.success()
                 }
                 if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
-                repository.markFaces(item.id)
+                if (!repository.markFaces(item.id, faceProducerVersion, ownerId)) return@forEach
                 runCatching {
                     val jpeg = imageLoader.loadJpeg(item)
                     if (embedder == null) {
-                        repository.completeFaces(item.id, requireNotNull(detector).detect(jpeg), MlKitFaceDetectionEngine.PRODUCER_VERSION)
+                        repository.completeFaces(item.id, requireNotNull(detector).detect(jpeg), faceProducerVersion, ownerId)
                     } else {
                         val oldFaceIds = repository.faceIdsForMedia(item.id)
                         // Only match against faces compiled before this media item. Two different people
@@ -61,14 +64,14 @@ class PeopleIndexWorker(
                             repository.ensureAutomaticPersonCluster(clusterId)
                             clusterId
                         }
-                        repository.completeEmbeddedFaces(item.id, faces, clusters, requireNotNull(faceLease).descriptor.producerVersion)
+                        repository.completeEmbeddedFaces(item.id, faces, clusters, faceProducerVersion, ownerId)
                         oldFaceIds.forEach { services.faceVectorStore.delete(it) }
                         faces.forEachIndexed { index, face -> services.faceVectorStore.upsert("${item.id}:$index", face.embedding) }
                     }
                 }.onFailure { error ->
                     if (repository.peopleIndexStatus().enabled) {
                         val permanent = error is SecurityException || error is java.io.FileNotFoundException
-                        repository.failFaces(item.id, error::class.java.simpleName, permanent)
+                        repository.failFaces(item.id, error::class.java.simpleName, permanent, faceProducerVersion, ownerId)
                         retryableFailure = retryableFailure || !permanent
                     }
                 }

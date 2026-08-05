@@ -151,3 +151,11 @@ media, databases, or logs.
 - Tests: focused JVM People/provenance tests PASS; connected People identity, People privacy, and sensitive-data tests PASS (3/3); consumerDebug, offlineDemoDebug, and fixtureCiDebug assembly PASS; consumer lint PASS.
 - Device: replacement-installed consumerDebug with `adb install -r -d` semantics; app launched on `R3CY30QFWLP`, process alive, no recent fatal exception or ANR observed.
 - Remaining: broader model-backed 5k/20k acceptance and other historical semantic identity surfaces remain unverified.
+
+## 2026-08-05 - People indexing lease recovery
+
+- Added an explicit `PEOPLE` recovery pipeline and included only expired `FACES` leases in its recovery scope; global startup recovery now also covers expired People claims without reclaiming live embedding claims.
+- Face indexing now uses atomic owner leases, delayed retry eligibility, three-attempt exhaustion behavior, completion fencing, and lease cleanup on success/failure.
+- Process-death recovery preserves the existing reviewed People assignments, vectors, gallery rows, and consent; no Room schema or destructive migration was introduced.
+- Focused JVM reliability test: PASS. Connected `PeopleIndexRecoveryDatabaseTest` on `SM-F966B`: PASS; expired People lease returned to `PENDING` while the live embedding lease remained `RUNNING`.
+- Remaining: broader model-backed 5k/20k throughput and long screen-off recovery observation remain unverified.

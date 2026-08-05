@@ -26,10 +26,11 @@ internal object IndexingRecoveryPolicy {
     fun stagesFor(pipeline: IndexingPipeline): Set<IndexStage> = when (pipeline) {
         IndexingPipeline.MEDIA_ANALYSIS -> setOf(IndexStage.THUMBNAIL)
         IndexingPipeline.EMBEDDINGS -> setOf(IndexStage.EMBEDDING)
+        IndexingPipeline.PEOPLE -> setOf(IndexStage.FACES)
         IndexingPipeline.SEMANTIC_MEMORY,
         IndexingPipeline.CAPTION_EMBEDDINGS,
         -> emptySet()
-        IndexingPipeline.ALL -> setOf(IndexStage.THUMBNAIL, IndexStage.EMBEDDING)
+        IndexingPipeline.ALL -> setOf(IndexStage.THUMBNAIL, IndexStage.EMBEDDING, IndexStage.FACES)
     }
 
     fun recoversSemanticMemory(pipeline: IndexingPipeline): Boolean =

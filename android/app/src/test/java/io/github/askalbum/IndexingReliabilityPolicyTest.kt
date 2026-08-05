@@ -38,6 +38,11 @@ class IndexingReliabilityPolicyTest {
             setOf(IndexStage.EMBEDDING),
             IndexingRecoveryPolicy.stagesFor(IndexingPipeline.EMBEDDINGS),
         )
+        assertEquals(
+            setOf(IndexStage.FACES),
+            IndexingRecoveryPolicy.stagesFor(IndexingPipeline.PEOPLE),
+        )
+        assertTrue(IndexStage.FACES in IndexingRecoveryPolicy.stagesFor(IndexingPipeline.ALL))
         assertTrue(IndexingRecoveryPolicy.recoversSemanticMemory(IndexingPipeline.SEMANTIC_MEMORY))
         assertFalse(IndexingRecoveryPolicy.recoversSemanticMemory(IndexingPipeline.EMBEDDINGS))
         assertTrue(IndexingRecoveryPolicy.recoversCaptionEmbeddings(IndexingPipeline.CAPTION_EMBEDDINGS))

@@ -818,6 +818,17 @@ class GalleryDatabase(
         }, "media_id=? AND stage=?", arrayOf(id, stage.name))
     }
 
+    private fun stageClaimOwned(
+        db: GallerySqlDatabase,
+        mediaId: String,
+        stage: IndexStage,
+        owner: String,
+    ): Boolean = db.rawQuery(
+        "SELECT 1 FROM media_index_stage WHERE media_id=? AND stage=? AND status='RUNNING' AND lease_owner=? " +
+            "AND (lease_expires_at IS NULL OR lease_expires_at>?)",
+        arrayOf(mediaId, stage.name, owner, System.currentTimeMillis().toString()),
+    ).use { cursor -> cursor.moveToFirst() }
+
     fun allItems(): List<GalleryItem> = allItems(readableDatabase)
 
     fun mediaStoreItemsIncludingInaccessible(): List<GalleryItem> = queryItems(
@@ -1061,26 +1072,75 @@ class GalleryDatabase(
 
     fun facePendingItems(limit: Int): List<GalleryItem> {
         if (!peopleIndexStatus().enabled) return emptyList()
+        val now = System.currentTimeMillis()
         return queryItems(
             "media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY' AND id IN " +
-                "(SELECT media_id FROM media_index_stage WHERE stage='FACES' AND status IN ('PENDING','FAILED_RETRYABLE'))",
-            null,
+                "(SELECT media_id FROM media_index_stage WHERE stage='FACES' AND " +
+                "(status='PENDING' OR (status='FAILED_RETRYABLE' AND attempt_count<? AND next_attempt_at<=?)) " +
+                "AND (lease_expires_at IS NULL OR lease_expires_at<=?))",
+            arrayOf(
+                IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
+                now.toString(),
+                now.toString(),
+            ),
             "COALESCE(captured_at,0) DESC",
             limit.coerceIn(1, 100).toString(),
         )
     }
 
-    fun markFaces(mediaId: String) {
-        if (!peopleIndexStatus().enabled) return
-        updateStage(writableDatabase, mediaId, IndexStage.FACES, StageStatus.RUNNING, "mlkit-face-detection-v1", incrementAttempt = true)
+    fun markFaces(
+        mediaId: String,
+        producerVersion: String = "mlkit-face-detection-v1",
+        owner: String = "people-direct",
+    ): Boolean {
+        if (!peopleIndexStatus().enabled) return false
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        val changed = db.update(
+            "media_index_stage",
+            ContentValues().apply {
+                put("status", StageStatus.RUNNING.name)
+                put("producer_version", producerVersion)
+                put("updated_at", now)
+                put("last_progress_at", now)
+                put("lease_owner", owner)
+                put("lease_expires_at", now + IndexingRetryPolicy.LEASE_MILLIS)
+                putNull("error")
+            },
+            "media_id=? AND stage=? AND (" +
+                "status='PENDING' OR (status='FAILED_RETRYABLE' AND attempt_count<? AND next_attempt_at<=?)" +
+                ") AND (lease_expires_at IS NULL OR lease_expires_at<=?)",
+            arrayOf(
+                mediaId,
+                IndexStage.FACES.name,
+                IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
+                now.toString(),
+                now.toString(),
+            ),
+        )
+        if (changed > 0) {
+            db.execSQL(
+                "UPDATE media_index_stage SET attempt_count=attempt_count+1 WHERE media_id=? AND stage=?",
+                arrayOf(mediaId, IndexStage.FACES.name),
+            )
+        }
+        return changed > 0
     }
 
-    fun completeFaces(mediaId: String, detections: List<FaceDetectionRecord>, producerVersion: String) {
+    fun completeFaces(
+        mediaId: String,
+        detections: List<FaceDetectionRecord>,
+        producerVersion: String,
+        owner: String? = null,
+    ) {
         require(detections.size <= MAX_FACES_PER_MEDIA) { "Too many face detections" }
         val db = writableDatabase
         db.beginTransaction()
         try {
             check(peopleIndexEnabled(db)) { "People indexing was disabled" }
+            check(owner == null || stageClaimOwned(db, mediaId, IndexStage.FACES, owner)) {
+                "People face lease was lost before completion"
+            }
             db.delete("face_instance", "media_id=?", arrayOf(mediaId))
             val now = System.currentTimeMillis()
             detections.forEachIndexed { index, face ->
@@ -1105,6 +1165,7 @@ class GalleryDatabase(
             }
             db.update("media_item", ContentValues().apply { put("face_count", detections.size) }, "id=?", arrayOf(mediaId))
             updateStage(db, mediaId, IndexStage.FACES, StageStatus.COMPLETE, producerVersion)
+            clearStageLease(db, mediaId, IndexStage.FACES)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -1116,12 +1177,16 @@ class GalleryDatabase(
         faces: List<FaceInstance>,
         clusterIds: List<String>,
         producerVersion: String,
+        owner: String? = null,
     ) {
         require(faces.size == clusterIds.size && faces.size <= MAX_FACES_PER_MEDIA) { "Invalid embedded face batch" }
         val db = writableDatabase
         db.beginTransaction()
         try {
             check(peopleIndexEnabled(db)) { "People indexing was disabled" }
+            check(owner == null || stageClaimOwned(db, mediaId, IndexStage.FACES, owner)) {
+                "People face lease was lost before completion"
+            }
             val correctedAssignments = db.rawQuery(
                 "SELECT id,cluster_id FROM face_instance WHERE media_id=? AND user_corrected=1",
                 arrayOf(mediaId),
@@ -1165,6 +1230,7 @@ class GalleryDatabase(
             }
             db.update("media_item", ContentValues().apply { put("face_count", faces.size) }, "id=?", arrayOf(mediaId))
             updateStage(db, mediaId, IndexStage.FACES, StageStatus.COMPLETE, producerVersion)
+            clearStageLease(db, mediaId, IndexStage.FACES)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -1997,15 +2063,37 @@ class GalleryDatabase(
         }, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    fun failFaces(mediaId: String, message: String, permanent: Boolean) {
+    fun failFaces(
+        mediaId: String,
+        message: String,
+        permanent: Boolean,
+        producerVersion: String = "mlkit-face-detection-v1",
+        owner: String? = null,
+    ) {
         if (!peopleIndexStatus().enabled) return
-        updateStage(
-            writableDatabase,
-            mediaId,
-            IndexStage.FACES,
-            if (permanent) StageStatus.FAILED_PERMANENT else StageStatus.FAILED_RETRYABLE,
-            "mlkit-face-detection-v1",
-            error = message,
+        val db = writableDatabase
+        if (owner != null && !stageClaimOwned(db, mediaId, IndexStage.FACES, owner)) return
+        val attempts = stageAttemptCount(db, mediaId, IndexStage.FACES)
+        val status = IndexingRetryPolicy.failedStatus(permanent, attempts)
+        updateStage(db, mediaId, IndexStage.FACES, status, producerVersion, error = message)
+        db.update(
+            "media_index_stage",
+            ContentValues().apply {
+                putNull("lease_owner")
+                putNull("lease_expires_at")
+                put("last_progress_at", System.currentTimeMillis())
+                put(
+                    "next_attempt_at",
+                    if (status == StageStatus.FAILED_RETRYABLE) {
+                        IndexingRetryPolicy.nextAttemptAt(System.currentTimeMillis(), attempts)
+                    } else {
+                        0L
+                    },
+                )
+                if (status == StageStatus.FAILED_EXHAUSTED) put("error", "retry_exhausted:${message.take(220)}")
+            },
+            "media_id=? AND stage=?",
+            arrayOf(mediaId, IndexStage.FACES.name),
         )
     }
 

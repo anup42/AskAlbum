@@ -241,11 +241,22 @@ class GalleryRepository(context: Context) {
     fun requestGalleryReindex(mediaIds: Set<String>) = database.requestGalleryReindex(mediaIds)
     fun ocrBlocks(mediaId: String): List<OcrBlockRecord> = database.ocrBlocks(mediaId)
     fun facePendingItems(limit: Int): List<GalleryItem> = database.facePendingItems(limit)
-    fun markFaces(mediaId: String) = database.markFaces(mediaId)
-    fun completeFaces(mediaId: String, detections: List<FaceDetectionRecord>, producerVersion: String) =
-        database.completeFaces(mediaId, detections, producerVersion)
-    fun completeEmbeddedFaces(mediaId: String, faces: List<FaceInstance>, clusterIds: List<String>, producerVersion: String) {
-        database.completeEmbeddedFaces(mediaId, faces, clusterIds, producerVersion)
+    fun markFaces(mediaId: String, producerVersion: String = "mlkit-face-detection-v1", owner: String = "people-direct"): Boolean =
+        database.markFaces(mediaId, producerVersion, owner)
+    fun completeFaces(
+        mediaId: String,
+        detections: List<FaceDetectionRecord>,
+        producerVersion: String,
+        owner: String? = null,
+    ) = database.completeFaces(mediaId, detections, producerVersion, owner)
+    fun completeEmbeddedFaces(
+        mediaId: String,
+        faces: List<FaceInstance>,
+        clusterIds: List<String>,
+        producerVersion: String,
+        owner: String? = null,
+    ) {
+        database.completeEmbeddedFaces(mediaId, faces, clusterIds, producerVersion, owner)
         queuePersonalSemanticMemory(mediaIds = setOf(mediaId))
     }
     fun faceIdsForMedia(mediaId: String): List<String> = database.faceIdsForMedia(mediaId)
@@ -263,7 +274,13 @@ class GalleryRepository(context: Context) {
         database.refineReviewedPersonCluster(clusterId, representativeFaceId, rejectedFaceIds)
             .also { if (it > 0) queuePersonalSemanticMemory(userRequested = true) }
     fun ensureAutomaticPersonCluster(id: String) = database.ensureAutomaticPersonCluster(id)
-    fun failFaces(mediaId: String, message: String, permanent: Boolean) = database.failFaces(mediaId, message, permanent)
+    fun failFaces(
+        mediaId: String,
+        message: String,
+        permanent: Boolean,
+        producerVersion: String = "mlkit-face-detection-v1",
+        owner: String? = null,
+    ) = database.failFaces(mediaId, message, permanent, producerVersion, owner)
     fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> =
         database.embeddingPendingItems(producerVersion, limit)
     fun embeddingPendingItemsForIds(producerVersion: String, mediaIds: Set<String>, limit: Int): List<GalleryItem> =
