@@ -107,7 +107,7 @@ object CapabilityAnswerExecutor {
             QueryIntent.COUNT -> base(
                 RetrievalAnswerWording.countHeadline(
                     context.matchCount,
-                    context.channelReports.any { it.channel == RetrievalChannel.SEMANTIC && it.status != ChannelStatus.NOT_REQUIRED } &&
+                    context.exactness != ResultExactness.EXACT &&
                         context.exactness != ResultExactness.COMPLETE_PREDICATE_SCAN,
                 ),
                 if (context.exactness == ResultExactness.COMPLETE_PREDICATE_SCAN) {

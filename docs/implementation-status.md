@@ -433,3 +433,6 @@ media, databases, or logs.
 - FIXED: SUM and MIN_MAX now refuse exact-looking answers when the eligible scope was only partially evaluated; bounded ranked hits cannot be used as a complete arithmetic source.
 - PASS: CapabilityRegistryTest coverage for complete deterministic aggregation and bounded partial aggregation.
 - PASS: full consumer unit suite and consumerDebug, offlineDemoDebug, fixtureCiDebug assemblies; replacement-installed consumerDebug without data reset.
+### 2026-08-05 non-exact count wording
+- FIXED: Every bounded COUNT result now says it is from the current retrieval pass unless coverage is EXACT or a complete predicate scan, including lexical and caption-vector counts.
+- PASS: regression coverage for non-semantic bounded counts; all debug variants and replacement install remain successful.

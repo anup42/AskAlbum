@@ -226,6 +226,17 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun everyNonCompleteCountUsesRetrievalPassWording() {
+        val bounded = context(QueryIntent.COUNT).copy(
+            exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+            channelReports = emptyList(),
+        )
+        val answer = CapabilityAnswerExecutor.execute(bounded)
+
+        assertTrue(answer.headline.contains("current retrieval pass", ignoreCase = true))
+    }
+
+    @Test
     fun listPersonUsesReviewedLabelsOnly() {
         val base = context(QueryIntent.LIST)
         val answer = CapabilityAnswerExecutor.execute(
