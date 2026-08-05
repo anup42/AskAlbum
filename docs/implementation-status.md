@@ -618,3 +618,6 @@ media, databases, or logs.
 - Foreground media and SigLIP2 indexing no longer cancel their durable WorkManager fallback when the explicit foreground service starts. Background workers yield while the foreground lane is active, then resume through their existing lease/checkpoint path if the service is killed or reaches its platform timeout.
 - Service destruction and media-processing timeout now hand off recovery, while explicit pause/stop actions cancel the fallback as requested by the user.
 - Added policy coverage for foreground lane exclusion and explicit-stop recovery behavior. Long-running process-death and six-hour device tests remain unverified.
+### 2026-08-05 - Seed recovery work before foreground indexing
+- Settings-driven foreground indexing now creates the media/vector WorkManager recovery requests immediately after the foreground lane claims ownership, covering starts that had no pre-existing queued worker.
+- Added connected coverage proving `startIndexing` leaves a durable `gallery-index` request without clearing app data.

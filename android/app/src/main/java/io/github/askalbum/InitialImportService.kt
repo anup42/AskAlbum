@@ -62,6 +62,7 @@ class InitialImportService : Service() {
         startIndexingForeground(notification("Reading your permitted gallery", indeterminate = true))
         if (importJob?.isActive != true) {
             ForegroundIndexRuntime.started()
+            ensureWorkManagerRecovery()
             importJob = scope.launch {
                 val app = application as AskAlbumApplication
                 val result = runCatching {
@@ -304,6 +305,11 @@ class InitialImportService : Service() {
     private fun scheduleWorkManagerRecovery() {
         if (recoveryHandoffScheduled) return
         recoveryHandoffScheduled = true
+        IndexScheduler.schedule(this)
+        EmbeddingIndexScheduler.schedule(this)
+    }
+
+    private fun ensureWorkManagerRecovery() {
         IndexScheduler.schedule(this)
         EmbeddingIndexScheduler.schedule(this)
     }

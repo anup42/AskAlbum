@@ -4,6 +4,7 @@ import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.pm.ServiceInfo
 import android.os.Build
+import androidx.work.WorkManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertFalse
@@ -36,5 +37,19 @@ class InitialImportServiceTest {
             Thread.sleep(50)
         }
         assertNotNull(notifications.getNotificationChannel("gallery_initial_import"))
+    }
+
+    @Test
+    fun foregroundIndexStartLeavesAWorkManagerRecoveryRequest() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        InitialImportService.startIndexing(context)
+        val workManager = WorkManager.getInstance(context)
+        val deadline = System.currentTimeMillis() + 5_000
+        var workFound = false
+        while (!workFound && System.currentTimeMillis() < deadline) {
+            workFound = workManager.getWorkInfosForUniqueWork("gallery-index").get().isNotEmpty()
+            if (!workFound) Thread.sleep(50)
+        }
+        assertTrue(workFound)
     }
 }
