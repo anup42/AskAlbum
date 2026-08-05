@@ -151,7 +151,7 @@ object CapabilityAnswerExecutor {
         val ids = context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24)
         return base(
             "${values.size} distinct ${if (values.size == 1) "result" else "results"}",
-            values.take(20).joinToString(" • ").ifBlank { "No allowlisted value was present in the eligible evidence." },
+            values.take(20).joinToString("; ").ifBlank { "No allowlisted value was present in the eligible evidence." },
             ids,
         )
     }
@@ -191,7 +191,7 @@ object CapabilityAnswerExecutor {
         if (currencies.size > 1) {
             return base(
                 "Mixed currencies were not summed",
-                currencies.joinToString(" • ") { currency -> "$currency: ${values.count { it.currency == currency }} document(s)" },
+                currencies.joinToString("; ") { currency -> "$currency: ${values.count { it.currency == currency }} document(s)" },
                 values.map { it.evidence.id },
             )
         }
@@ -273,7 +273,7 @@ object CapabilityAnswerExecutor {
             .toSortedMap()
         return base(
             "${buckets.size} chronological ${if (buckets.size == 1) "date" else "dates"}",
-            buckets.entries.take(20).joinToString(" • ") { (date, hits) -> "$date: ${hits.size}" }
+            buckets.entries.take(20).joinToString("; ") { (date, hits) -> "$date: ${hits.size}" }
                 .ifBlank { "No deterministic capture dates were available." } +
                 if (context.deterministicHits.isNotEmpty()) {
                     " Complete dates are shown for the resolved event scope."
@@ -369,7 +369,7 @@ object CapabilityAnswerExecutor {
     }
 
     private fun currency(text: String): String = when {
-        Regex("(?i)(₹|\\binr\\b|\\brs\\.?)").containsMatchIn(text) -> "INR"
+        Regex("(?i)(\\u20B9|\\binr\\b|\\brs\\.?)").containsMatchIn(text) -> "INR"
         Regex("(?i)(\\busd\\b|\\$)").containsMatchIn(text) -> "USD"
         else -> "UNSPECIFIED"
     }

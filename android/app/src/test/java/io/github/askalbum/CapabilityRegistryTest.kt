@@ -43,6 +43,28 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun asciiCurrencyFormsAndSeparatorsRemainReadable() {
+        val rupee = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.SUM).copy(
+                hits = listOf(hit("rupee", "Trip", "Rs. 10.00", 1_700_000_000_000)),
+                deterministicHits = listOf(hit("rupee", "Trip", "Rs. 10.00", 1_700_000_000_000)),
+            ),
+        )
+        val mixed = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.SUM).copy(
+                hits = listOf(
+                    hit("inr", "Trip A", "INR 10.00", 1_700_000_000_000),
+                    hit("usd", "Trip B", "USD 20.00", 1_710_000_000_000),
+                ),
+            ),
+        )
+
+        assertEquals("INR 10", rupee.headline)
+        assertTrue(mixed.detail.contains("; "))
+        assertFalse(mixed.detail.contains("•"))
+    }
+
+    @Test
     fun aggregationUsesCompleteDeterministicEvidenceInsteadOfRankedTopK() {
         val complete = hit("three", "Trip C", "INR 30.00", 1_720_000_000_000)
         val context = context(QueryIntent.SUM).copy(deterministicHits = context(QueryIntent.SUM).hits + complete)
