@@ -72,7 +72,15 @@ class LiteRtLmQueryPlanner(
                     val generationStarted = android.os.SystemClock.elapsedRealtime()
                     val compiledPlan = boundedCompiler.compile(query, activeResultIds, plannerPrompt(query)) { prompt ->
                         calls++
-                        initialized.engine.generateText(prompt, seed = 17)
+                        initialized.engine.generateText(
+                            prompt,
+                            GemmaGenerationOptions(
+                                seed = 17,
+                                maximumOutputTokens = GemmaOutputBudget.PLANNER,
+                                temperature = 0f,
+                                structuredOutput = true,
+                            ),
+                        )
                     }
                     generationMs = android.os.SystemClock.elapsedRealtime() - generationStarted
                     val overlay = deterministicOverlay.apply(query, requireNotNull(compiledPlan), activeResultIds)

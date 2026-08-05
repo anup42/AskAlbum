@@ -52,7 +52,15 @@ class LiteRtGemmaGroundedAnswerComposer(
                     var generationMs = 0L
                     val generationStarted = SystemClock.elapsedRealtime()
                     val result = compiler.compile(packet, prompt(packet)) {
-                        initialized.engine.generateText(it, seed = 29)
+                        initialized.engine.generateText(
+                            it,
+                            GemmaGenerationOptions(
+                                seed = 29,
+                                maximumOutputTokens = GemmaOutputBudget.GROUNDED_ANSWER,
+                                temperature = 0f,
+                                structuredOutput = true,
+                            ),
+                        )
                     }
                     generationMs = SystemClock.elapsedRealtime() - generationStarted
                     GroundedAnswerCompositionResult(

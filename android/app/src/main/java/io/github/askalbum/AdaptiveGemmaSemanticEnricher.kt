@@ -37,7 +37,16 @@ class AdaptiveGemmaSemanticEnricher(
             createdAt = System.currentTimeMillis(),
         )
         val response = sessions.withEngine(path, multimodal = true) { lease ->
-            lease.engine.generateVision(imageBytes, prompt(job, bindings, repairReason), seed = 31)
+            lease.engine.generateVision(
+                imageBytes,
+                prompt(job, bindings, repairReason),
+                GemmaGenerationOptions(
+                    seed = 31,
+                    maximumOutputTokens = GemmaOutputBudget.CAPTION,
+                    temperature = 0f,
+                    structuredOutput = true,
+                ),
+            )
         }
         return SemanticEnrichmentCodec.decode(job, response, modelVersion, bindings, generation)
     }

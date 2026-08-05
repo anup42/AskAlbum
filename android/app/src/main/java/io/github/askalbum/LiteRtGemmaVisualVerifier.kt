@@ -72,7 +72,16 @@ class LiteRtGemmaVisualVerifier(
                                 val bytes = PersonVerificationImageComposer.compose(loaded.bytes, bindings)
                                 val generationStarted = SystemClock.elapsedRealtime()
                                 val decoded = compiler.compile(boundConditions, prompt(plan, boundConditions, bindings)) { prompt ->
-                                    initialized.engine.generateVision(bytes, prompt, seed = 23)
+                                    initialized.engine.generateVision(
+                                        bytes,
+                                        prompt,
+                                        GemmaGenerationOptions(
+                                            seed = 23,
+                                            maximumOutputTokens = GemmaOutputBudget.VISUAL_VERIFIER,
+                                            temperature = 0f,
+                                            structuredOutput = true,
+                                        ),
+                                    )
                                 }
                                 generationMs += SystemClock.elapsedRealtime() - generationStarted
                                 generationCalls += decoded.generationCalls
