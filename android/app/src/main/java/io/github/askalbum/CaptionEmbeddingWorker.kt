@@ -29,6 +29,7 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
                     workDataOf(
                         "status" to "UNAVAILABLE",
                         "error_code" to "NO_VERIFIED_RETRIEVAL_PACK",
+                        "last_progress_at" to System.currentTimeMillis(),
                     ),
                 )
                 return@withContext Result.retry()
@@ -81,7 +82,17 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
             }
         }
 
-        setProgress(workDataOf("processed" to processed, "failed" to failures, "in_flight" to chunks.size))
+        setProgress(
+            workDataOf(
+                "processed" to processed,
+                "failed" to failures,
+                "in_flight" to 0,
+                "last_progress_at" to System.currentTimeMillis(),
+                "next_attempt_at" to 0L,
+                "delayed_retries" to failures,
+                "quarantined" to 0,
+            ),
+        )
         val hasMore = database.hasCaptionEmbeddingWork(producer)
         if (hasMore && controls.load().embeddingsEnabled) {
             CaptionEmbeddingScheduler.scheduleContinuation(applicationContext)

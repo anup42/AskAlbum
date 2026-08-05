@@ -15,6 +15,28 @@ enum class IndexingPipelineState {
     FAILED,
 }
 
+internal data class IndexingWorkProgress(
+    val lastProgressAt: Long?,
+    val nextAttemptAt: Long?,
+    val delayedRetryCount: Int,
+    val quarantinedCount: Int,
+) {
+    companion object {
+        fun from(data: androidx.work.Data?): IndexingWorkProgress {
+            val lastProgressAt = data?.getLong("last_progress_at", 0L)?.takeIf { it > 0L }
+            val nextAttemptAt = data?.getLong("next_attempt_at", 0L)?.takeIf { it > 0L }
+            val retryableFailures = data?.getInt("retryable_failures", 0) ?: 0
+            val delayedRetryCount = data?.getInt("delayed_retries", retryableFailures) ?: retryableFailures
+            return IndexingWorkProgress(
+                lastProgressAt = lastProgressAt,
+                nextAttemptAt = nextAttemptAt,
+                delayedRetryCount = delayedRetryCount,
+                quarantinedCount = data?.getInt("quarantined", 0) ?: 0,
+            )
+        }
+    }
+}
+
 data class IndexingPipelineSnapshot(
     val job: IndexingJob,
     val state: IndexingPipelineState,
@@ -123,8 +145,10 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             completedCount = completed,
             eligibleCount = eligible,
             inFlightCount = if (work.running) work.progressInFlight else 0,
-            delayedRetryCount = if (state == IndexingPipelineState.BACKOFF) pending else 0,
-            quarantinedCount = failed,
+            delayedRetryCount = work.delayedRetryCount,
+            quarantinedCount = work.quarantinedCount,
+            lastProgressAt = work.lastProgressAt,
+            nextAttemptAt = work.nextAttemptAt,
             stopReason = work.stopReason,
             message = message,
         )
@@ -142,6 +166,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             runAttemptCount = current.runAttemptCount,
             stopReason = current.stopReason.takeIf { it != WorkInfo.STOP_REASON_NOT_STOPPED },
             progressInFlight = current.progress.getInt("in_flight", 0),
+            progress = IndexingWorkProgress.from(current.progress),
         )
     }.getOrDefault(WorkState.EMPTY)
 
@@ -151,10 +176,16 @@ internal class IndexingRuntimeStatusReader(context: Context) {
         val runAttemptCount: Int,
         val stopReason: Int?,
         val progressInFlight: Int,
+        val progress: IndexingWorkProgress,
     ) {
         companion object {
-            val EMPTY = WorkState(false, false, 0, null, 0)
+            val EMPTY = WorkState(false, false, 0, null, 0, IndexingWorkProgress(null, null, 0, 0))
         }
+
+        val lastProgressAt: Long? get() = progress.lastProgressAt
+        val nextAttemptAt: Long? get() = progress.nextAttemptAt
+        val delayedRetryCount: Int get() = progress.delayedRetryCount
+        val quarantinedCount: Int get() = progress.quarantinedCount
     }
 }
 

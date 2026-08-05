@@ -57,7 +57,11 @@ class GalleryIndexWorker(
                         "processed" to processed,
                         "batches" to batches,
                         "in_flight" to if (hasMore) GalleryIndexBatchProcessor.DEFAULT_BATCH_SIZE else 0,
-                        "retryable_failures" to retryableFailures,
+                    "retryable_failures" to retryableFailures,
+                    "last_progress_at" to System.currentTimeMillis(),
+                    "next_attempt_at" to (batch.nextAttemptAtMillis ?: 0L),
+                    "delayed_retries" to retryableFailures,
+                    "quarantined" to 0,
                     ),
                 )
                 if (batch.stopped) break

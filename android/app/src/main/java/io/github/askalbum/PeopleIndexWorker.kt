@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -30,15 +31,24 @@ class PeopleIndexWorker(
         val faceProducerVersion = faceLease?.descriptor?.producerVersion ?: MlKitFaceDetectionEngine.PRODUCER_VERSION
         val ownerId = id.toString()
         var retryableFailure = false
+        var retryableFailures = 0
+        var quarantinedFailures = 0
         try {
             repository.recoverInterruptedJobs(IndexingPipeline.PEOPLE)
             if (embedder != null) services.faceVectorStore.reconcile(repository.allEmbeddedFaceIds())
-            repository.facePendingItems(BATCH_SIZE).forEach { item ->
+            val pendingItems = repository.facePendingItems(BATCH_SIZE)
+            var processed = 0
+            publishProgress(processed, pendingItems.size, pendingItems.size, retryableFailures, quarantinedFailures)
+            for ((index, item) in pendingItems.withIndex()) {
                 if (isStopped || !repository.peopleIndexStatus().enabled || !jobControls.load().peopleEnabled) {
                     return@withContext Result.success()
                 }
                 if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
-                if (!repository.markFaces(item.id, faceProducerVersion, ownerId)) return@forEach
+                if (!repository.markFaces(item.id, faceProducerVersion, ownerId)) {
+                    processed = index + 1
+                    publishProgress(processed, pendingItems.size, pendingItems.size - processed, retryableFailures, quarantinedFailures)
+                    continue
+                }
                 runCatching {
                     val jpeg = imageLoader.loadJpeg(item)
                     if (embedder == null) {
@@ -72,9 +82,16 @@ class PeopleIndexWorker(
                     if (repository.peopleIndexStatus().enabled) {
                         val permanent = error is SecurityException || error is java.io.FileNotFoundException
                         repository.failFaces(item.id, error::class.java.simpleName, permanent, faceProducerVersion, ownerId)
-                        retryableFailure = retryableFailure || !permanent
+                        if (permanent) {
+                            quarantinedFailures++
+                        } else {
+                            retryableFailure = true
+                            retryableFailures++
+                        }
                     }
                 }
+                processed = index + 1
+                publishProgress(processed, pendingItems.size, pendingItems.size - processed, retryableFailures, quarantinedFailures)
             }
             if (repository.peopleIndexStatus().enabled && repository.facePendingItems(1).isNotEmpty()) {
                 PeopleIndexScheduler.scheduleContinuation(applicationContext)
@@ -84,6 +101,26 @@ class PeopleIndexWorker(
             detector?.close()
             faceLease?.close()
         }
+    }
+
+    private suspend fun publishProgress(
+        processed: Int,
+        eligible: Int,
+        inFlight: Int,
+        delayedRetries: Int,
+        quarantined: Int,
+    ) {
+        setProgress(
+            workDataOf(
+                "processed" to processed,
+                "eligible" to eligible,
+                "in_flight" to inFlight.coerceAtLeast(0),
+                "last_progress_at" to System.currentTimeMillis(),
+                "next_attempt_at" to 0L,
+                "delayed_retries" to delayedRetries,
+                "quarantined" to quarantined,
+            ),
+        )
     }
 
     private companion object {

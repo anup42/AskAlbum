@@ -74,6 +74,10 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
                     "batches" to batches,
                     "in_flight" to if (hasMore) processor.batchSize else 0,
                     "retryable_failures" to retryableFailures,
+                    "last_progress_at" to System.currentTimeMillis(),
+                    "next_attempt_at" to (batch.nextAttemptAtMillis ?: 0L),
+                    "delayed_retries" to retryableFailures,
+                    "quarantined" to 0,
                 ),
             )
             if (batch.stopped) break

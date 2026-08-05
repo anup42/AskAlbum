@@ -10,6 +10,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 
@@ -59,6 +60,21 @@ class SemanticEnrichmentWorker(
         }
         var processed = 0
         var retryableFailures = 0
+        var quarantinedFailures = 0
+        suspend fun publishProgress(inFlight: Int) {
+            setProgress(
+                workDataOf(
+                    "processed" to processed,
+                    "failed" to retryableFailures + quarantinedFailures,
+                    "in_flight" to inFlight.coerceAtLeast(0),
+                    "last_progress_at" to System.currentTimeMillis(),
+                    "next_attempt_at" to (database.nextSemanticEnrichmentRetryAt() ?: 0L),
+                    "delayed_retries" to retryableFailures,
+                    "quarantined" to quarantinedFailures,
+                ),
+            )
+        }
+        publishProgress(1)
         while (job != null && processed < MAX_JOBS_PER_RUN) {
             val currentJob = job
             if (database.hasAuthenticationProtectedOcr(currentJob.representativeMediaId)) {
@@ -70,6 +86,7 @@ class SemanticEnrichmentWorker(
                 )
                 processed += 1
                 job = database.claimSemanticEnrichmentJob(owner = id.toString())
+                publishProgress(if (job != null) 1 else 0)
                 continue
             }
             val item = database.itemById(currentJob.representativeMediaId)
@@ -81,6 +98,7 @@ class SemanticEnrichmentWorker(
                 )
                 processed += 1
                 job = database.claimSemanticEnrichmentJob(owner = id.toString())
+                publishProgress(if (job != null) 1 else 0)
                 continue
             }
             try {
@@ -107,6 +125,7 @@ class SemanticEnrichmentWorker(
                         Log.i(TAG, "Reused exact-duplicate personal caption for media=${item.id}")
                         processed += 1
                         job = database.claimSemanticEnrichmentJob(owner = id.toString())
+                        publishProgress(if (job != null) 1 else 0)
                         continue
                     }
                 }
@@ -153,9 +172,11 @@ class SemanticEnrichmentWorker(
                 )
                 Log.e(TAG, "Semantic enrichment failed job=${currentJob.id} retryable=$retryable", error)
                 if (retryable) retryableFailures += 1
+                if (!retryable) quarantinedFailures += 1
             }
             processed += 1
             job = database.claimSemanticEnrichmentJob(owner = id.toString())
+            publishProgress(if (job != null) 1 else 0)
         }
         val hasPending = database.hasPendingSemanticEnrichmentJobs()
         if (hasPending) {

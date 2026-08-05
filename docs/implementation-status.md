@@ -381,3 +381,10 @@ media, databases, or logs.
 
 - Stored comprehensive captions now use the same Keystore envelope through migration version 8; caption chunks remain the separate searchable projection.
 - Caption retrieval, evidence display, and deterministic chunk generation continue to receive plaintext only after the repository read boundary.
+
+### Runtime indexing snapshot progress
+
+- WorkManager-backed pipeline snapshots now consume durable worker progress for last progress time, next retry time, delayed retries, quarantined items, and in-flight counts.
+- Media analysis, image embeddings, People, semantic memory, and caption-vector workers publish the common progress fields without changing their lease or retry policies.
+- Missing legacy progress remains unknown rather than being presented as a complete or delayed scan.
+- The model-free fixture build and real-model paths retain the same production validation boundaries.
