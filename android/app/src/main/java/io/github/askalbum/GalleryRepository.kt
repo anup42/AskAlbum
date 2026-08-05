@@ -689,15 +689,21 @@ class GalleryRepository(context: Context) {
         val eventByMedia = eventRanked.flatMap { hit -> hit.mediaIds.map { it to hit.event } }.toMap()
         val lexicalById = lexicalRanked.associateBy { it.item.id }
         val semanticById = semanticRanked.associateBy { it.mediaId }
-        val itemPredicateIds = (lexicalById.keys + semanticById.keys + captionById.keys + captionEmbeddingById.keys).toSet()
-        val eventMediaRank = if (
+        val itemPredicateIds = EventExpansionPolicy.itemPredicateIds(
+            terms = terms,
+            lexicalIds = lexicalById.keys,
+            semanticIds = semanticById.keys,
+            captionIds = captionById.keys,
+            captionEmbeddingIds = captionEmbeddingById.keys,
+        )
+        val allowContextualEventExpansion =
             plan.intent == QueryIntent.EVENT_SUMMARY || plan.grouping == Grouping.EVENT ||
-            (terms.isEmpty() && semanticQueries.isEmpty())
-        ) {
-            rawEventMediaRank
-        } else {
-            rawEventMediaRank.filter(itemPredicateIds::contains)
-        }
+                (terms.isEmpty() && semanticQueries.isEmpty())
+        val eventMediaRank = EventExpansionPolicy.mediaIdsForSearch(
+            rawEventMediaIds = rawEventMediaRank,
+            itemPredicateIds = itemPredicateIds,
+            allowContextualExpansion = allowContextualEventExpansion,
+        )
         val itemById = allItems.associateBy { it.id }
         val deterministicScopeHit: (GalleryItem) -> SearchHit = { item ->
             val event = eventByMedia[item.id]
@@ -830,7 +836,7 @@ class GalleryRepository(context: Context) {
             scoped = plan.baseResultIds != null,
             semanticIds = semanticRanked.map { it.mediaId },
             lexicalIds = lexicalById.keys,
-            eventIds = eventByMedia.keys,
+            eventIds = eventMediaRank.toSet(),
         )
         val fused = HybridRankFusion.fuse(
             listOf(

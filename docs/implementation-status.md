@@ -172,3 +172,10 @@ media, databases, or logs.
 - Wrapped People face failure ownership checks and stage updates in one SQLite transaction, preventing an expired worker from overwriting a reclaimed lease.
 - Added `PeopleIndexLeaseFenceDatabaseTest`: PASS on `SM-F966B`; recovered and newly claimed face work remained `RUNNING` after the stale owner reported failure.
 - No migration or destructive data operation was introduced.
+
+## 2026-08-05 - Keep event context out of item predicates
+
+- Semantic-only searches no longer treat every event member as a lexical predicate hit when no lexical terms exist.
+- Event expansion is filtered to media with item-level lexical, image-semantic, caption, or caption-embedding evidence; event summary/grouped event queries retain intentional contextual expansion.
+- Follow-up refinement now uses the same filtered event member set.
+- Added `EventExpansionPolicyTest`: PASS for semantic-only filtering and event-summary expansion.
