@@ -20,14 +20,6 @@ class SemanticVectorStore(
         currentIndex().index.upsert(mediaId, vector)
     }
 
-    suspend fun searchText(query: String, topK: Int, allowedIds: Set<String>? = null): List<VectorHit> {
-        if (query.isBlank() || packs.current() == null) return emptyList()
-        val current = currentIndex()
-        val vector = embeddings.embedTextInteractive(query)
-        return current.index.search(vector, topK, allowedIds)
-            .filter { it.score >= current.pack.manifest.minimumSimilarity }
-    }
-
     suspend fun scanTextBatchReport(
         query: String,
         allowedIds: Set<String>,

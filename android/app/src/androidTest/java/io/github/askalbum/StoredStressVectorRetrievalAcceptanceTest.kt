@@ -65,8 +65,15 @@ class StoredStressVectorRetrievalAcceptanceTest {
         withTimeout(2 * 60_000L) {
             cases.forEach { case ->
                 val started = SystemClock.elapsedRealtime()
-                val hits = application.services.semanticVectorStore.searchText(case.query, TOP_K, allowedIds)
+                val report = application.services.semanticVectorStore.searchTextReport(
+                    query = case.query,
+                    topK = TOP_K,
+                    eligibleCount = allowedIds.size,
+                    allowedIds = allowedIds,
+                )
                 val elapsedMs = SystemClock.elapsedRealtime() - started
+                assertEquals("${case.query} retrieval status", ChannelStatus.SUCCESS, report.status)
+                val hits = report.hits
                 assertTrue("${case.query} returned no stored-vector matches", hits.isNotEmpty())
                 val expectedHits = hits.count { hit ->
                     val item = requireNotNull(itemsById[hit.mediaId]) { "Vector hit escaped the run scope" }
@@ -85,8 +92,15 @@ class StoredStressVectorRetrievalAcceptanceTest {
         val warmLatencies = mutableListOf<Long>()
         repeat(LATENCY_ITERATIONS) {
             val started = SystemClock.elapsedRealtime()
-            val hits = application.services.semanticVectorStore.searchText(cases[2].query, TOP_K, allowedIds)
+            val report = application.services.semanticVectorStore.searchTextReport(
+                query = cases[2].query,
+                topK = TOP_K,
+                eligibleCount = allowedIds.size,
+                allowedIds = allowedIds,
+            )
             warmLatencies += SystemClock.elapsedRealtime() - started
+            assertEquals("Warm retrieval status", ChannelStatus.SUCCESS, report.status)
+            val hits = report.hits
             assertTrue(hits.isNotEmpty() && cases[2].matches(requireNotNull(itemsById[hits.first().mediaId]).filename))
         }
         val p95Ms = percentile95(warmLatencies)
