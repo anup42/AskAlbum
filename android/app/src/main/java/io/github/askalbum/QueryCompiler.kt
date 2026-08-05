@@ -57,6 +57,7 @@ class QueryCompiler(
         val asksAllowlistedDocumentFact = Regex(
             "\\b(flight number|flight time|departure time|boarding time|order id|booking id|email address|phone number|mobile number|date|url|website)\\b",
         ).containsMatchIn(normalized) || Regex("\\b(what|which)\\s+(?:was\\s+)?(?:the\\s+)?merchant\\b").containsMatchIn(normalized)
+        val asksPassword = Regex("\\b(password|passcode)\\b").containsMatchIn(normalized)
         val intent = when {
             Regex("\\b(how many|count|number of|kitne|kitni)\\b").containsMatchIn(normalized) || "कितने" in normalized || "कितनी" in normalized -> QueryIntent.COUNT
             Regex("\\b(sum|add up|combined total)\\b").containsMatchIn(normalized) -> QueryIntent.SUM
@@ -64,8 +65,7 @@ class QueryCompiler(
             Regex("\\b(compare|comparison|versus|vs)\\b").containsMatchIn(normalized) -> QueryIntent.COMPARE
             Regex("\\b(timeline|chronological|chronology)\\b").containsMatchIn(normalized) -> QueryIntent.TIMELINE
             Regex("\\b(list|which places|which merchants|which people)\\b").containsMatchIn(normalized) -> QueryIntent.LIST
-            asksReceiptTotal || asksDocumentAmount || asksAllowlistedDocumentFact ||
-                Regex("\\b(wifi password|wi fi password)\\b").containsMatchIn(normalized) -> QueryIntent.ANSWER_FACT
+            asksReceiptTotal || asksDocumentAmount || asksAllowlistedDocumentFact || asksPassword -> QueryIntent.ANSWER_FACT
             Regex("\\b(receipt|invoice|document)\\b").containsMatchIn(normalized) -> QueryIntent.DOCUMENT_QA
             Regex("\\b(when|where|kab|kahan)\\b").containsMatchIn(normalized) || "कब" in normalized || "कहाँ" in normalized -> QueryIntent.EVENT_SUMMARY
             else -> QueryIntent.FIND_MEDIA
@@ -108,7 +108,7 @@ class QueryCompiler(
         val requestedField = when {
             asksReceiptTotal -> "total"
             asksDocumentAmount -> "amount"
-            Regex("\\b(wifi password|wi fi password)\\b").containsMatchIn(normalized) -> "password"
+            asksPassword -> "password"
             Regex("\\b(flight time|departure time|boarding time)\\b").containsMatchIn(normalized) -> "flight_time"
             Regex("\\bflight number\\b").containsMatchIn(normalized) -> "flight_number"
             Regex("\\b(order id|booking id)\\b").containsMatchIn(normalized) -> "order_id"

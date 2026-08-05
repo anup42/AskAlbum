@@ -23,6 +23,16 @@ Last reviewed: 2026-08-06
 - The production device was not launched or modified; its private app state
   remains outside this fixture validation.
 
+## 2026-08-06 - Generic protected OCR field resolution
+
+- Generic `password` and `passcode` questions now resolve to the protected
+  password OCR field, not only queries containing the phrase `Wi-Fi password`.
+- Missing OCR field selection no longer falls back to the first allowlisted
+  field for document QA, preventing an unrelated receipt total from becoming a
+  candidate or exact answer.
+- Focused query-planner and semantic-count regressions plus consumer,
+  offlineDemo, and fixtureCi assemblies completed with zero reported failures.
+
 AskAlbum is an early open-source Android implementation of private, on-device
 photo search. The public source snapshot contains the Android application,
 fixture CI path, tests, model-pack validation code, sample-gallery tooling, and

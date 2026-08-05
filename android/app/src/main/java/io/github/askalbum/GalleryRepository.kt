@@ -672,27 +672,28 @@ class GalleryRepository(context: Context) {
             emptyList()
         }
         val deterministicDocumentHits = if (plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA)) {
-            val field = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField) ?: OcrFactAllowlist.fields.first()
-            val entities = database.ocrEntitiesForMediaIds(eligibleIds, field.type)
-            allItems.mapNotNull { item ->
-                entities[item.id]?.let { entity ->
-                    SearchHit(
-                        item = item,
-                        score = 0.0,
-                        evidence = listOf(
-                            EvidenceRecord(
-                                id = "${item.id}:${field.sourceField}:${StableDerivedId.sha256(entity.normalizedValue)}",
-                                mediaId = item.id,
-                                sourceField = field.sourceField,
-                                text = entity.rawText,
-                                confidence = entity.confidence,
-                                producerVersion = entity.producerVersion,
-                                region = listOf(entity.left, entity.top, entity.right, entity.bottom),
+            OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)?.let { field ->
+                val entities = database.ocrEntitiesForMediaIds(eligibleIds, field.type)
+                allItems.mapNotNull { item ->
+                    entities[item.id]?.let { entity ->
+                        SearchHit(
+                            item = item,
+                            score = 0.0,
+                            evidence = listOf(
+                                EvidenceRecord(
+                                    id = "${item.id}:${field.sourceField}:${StableDerivedId.sha256(entity.normalizedValue)}",
+                                    mediaId = item.id,
+                                    sourceField = field.sourceField,
+                                    text = entity.rawText,
+                                    confidence = entity.confidence,
+                                    producerVersion = entity.producerVersion,
+                                    region = listOf(entity.left, entity.top, entity.right, entity.bottom),
+                                ),
                             ),
-                        ),
-                    )
+                        )
+                    }
                 }
-            }
+            }.orEmpty()
         } else {
             emptyList()
         }
@@ -1377,11 +1378,6 @@ class GalleryRepository(context: Context) {
         val deterministicComparison = plan.intent == QueryIntent.COMPARE &&
             plan.comparisonScopes.size >= 2 && !verification.applied
         val requestedDocumentField = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)
-            ?: if (plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA)) {
-                OcrFactAllowlist.fields.first()
-            } else {
-                null
-            }
         val deterministicDocumentFact = plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) &&
             requestedDocumentField != null &&
             ocrCoverageComplete &&
@@ -1527,6 +1523,7 @@ class GalleryRepository(context: Context) {
         val fields = when {
             requested != null -> listOf(requested)
             plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX) -> listOf(OcrFactAllowlist.fields.first())
+            plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) -> emptyList()
             else -> OcrFactAllowlist.fields
         }
         val evidence = fields.mapNotNull { field ->
