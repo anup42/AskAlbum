@@ -13,4 +13,15 @@ class SensitiveDataAtRestTest {
         assertFalse(OcrEntityType.DATE.isHighRiskAtRest())
         assertFalse(OcrEntityType.RECEIPT_TOTAL.isHighRiskAtRest())
     }
+
+    @Test
+    fun searchableOcrProjectionKeepsSafeTermsAndRemovesPrivateValues() {
+        val projection = SensitiveContentClassifier.redactForSearch(
+            "Wi-Fi password: mango-tree-2048. Receipt total Rs 1,248.",
+        )
+
+        assertTrue(projection.contains("password", ignoreCase = true))
+        assertTrue(projection.contains("receipt total", ignoreCase = true))
+        assertFalse(projection.contains("mango-tree-2048"))
+    }
 }

@@ -186,3 +186,9 @@ media, databases, or logs.
 - Recovered stale `RUNNING` rows even when legacy claim metadata was missing; live WorkManager chains remain protected by progress heartbeats.
 - Marked allowlisted OCR document answers exact only when the selected deterministic fact and complete eligible coverage support it.
 - Validation: `IndexingReliabilityPolicyTest`, `RetrievalExactnessPolicyTest`, `consumerDebug`, `offlineDemoDebug`, and `fixtureCiDebug` passed; preserved 83-item device corpus passed 11/11 executable Q01-Q13 cases, with 2 People cases honestly skipped because face consent/model coverage was disabled.
+
+## 2026-08-05 - Restore redacted OCR search projection
+
+- Fixed the post-encryption FTS regression: media OCR search now indexes the classifier-redacted projection instead of the Keystore ciphertext.
+- Advanced the idempotent sensitive-data backfill marker to version 5 and rebuilt `media_fts` once for existing rows; raw OCR remains protected in the database.
+- Added a regression test proving searchable labels remain while credential values are excluded.

@@ -10,7 +10,7 @@ object SensitiveContentClassifier {
     private val labeledContactCandidate = Regex("(?i)\\b(email|e-mail|phone|mobile|tel)\\b\\s*[:=]?\\s*[^\\r\\n,;]+")
     private val credentialValueCandidate = Regex(
         "(?i)\\b(password|passcode|pin|cvv|account number|aadhaar|passport|social security|ssn)\\b" +
-            "\\s*[:=]?\\s*[^\\r\\n,;]+",
+            "\\s*[:=]?\\s*[^\\r\\n,;]*?(?=(?:[.!?](?:\\s|$)|$))",
     )
 
     fun isSensitive(text: String): Boolean =

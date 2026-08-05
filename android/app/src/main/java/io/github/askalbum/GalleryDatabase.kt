@@ -48,8 +48,11 @@ class GalleryDatabase(
             migrateSensitiveColumn(db, "person_cluster", "id", "aliases")
             migrateSensitiveColumn(db, "person_attribute_fact", "id", "value")
             migrateSensitiveColumn(db, "person_attribute_fact", "id", "attributes")
-            val mediaOcrChanged = migrateSensitiveColumn(db, "media_item", "id", "ocr_text")
-            if (mediaOcrChanged > 0) rebuildRedactedFts(db)
+            migrateSensitiveColumn(db, "media_item", "id", "ocr_text")
+            // The encrypted OCR migration previously rebuilt FTS with ciphertext.
+            // Rebuild once for this migration version using only the safe searchable
+            // projection while the media row remains protected at rest.
+            rebuildRedactedFts(db)
             db.insertWithOnConflict(
                 "sensitive_data_migration",
                 null,
@@ -2600,7 +2603,7 @@ class GalleryDatabase(
             put("location", item.location)
             put("tags", item.tags.joinToString(" "))
             put("description", item.description)
-            put("ocr_text", sensitiveDataAtRest.protect(item.ocrText))
+            put("ocr_text", SensitiveContentClassifier.redactForSearch(item.ocrText))
         })
     }
 
