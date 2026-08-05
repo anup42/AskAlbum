@@ -861,90 +861,6 @@ class GalleryRepository(context: Context) {
         val deterministicAnswerHits = deterministicCapabilityHits.ifEmpty {
             deterministicAggregationHits.ifEmpty { deterministicDocumentHits }
         }
-        val resolvedSemanticBySourceId = resolvedSemanticHits.associateBy(ResolvedSemanticHit::sourceVectorId)
-        val semanticChannelReport = RetrievalChannelReport<SearchHit>(
-            channel = semanticVectorReport.channel,
-            status = semanticVectorReport.status,
-            eligibleCount = semanticVectorReport.eligibleCount,
-            indexedCount = semanticVectorReport.indexedCount,
-            searchedCount = semanticVectorReport.searchedCount,
-            hits = semanticVectorReport.hits.mapNotNull { vectorHit ->
-                val resolved = resolvedSemanticBySourceId[vectorHit.mediaId] ?: return@mapNotNull null
-                val item = itemById[resolved.hit.mediaId] ?: return@mapNotNull null
-                SearchHit(item, resolved.hit.score.toDouble(), emptyList())
-            },
-            modelVersion = semanticVectorReport.modelVersion,
-            errorCode = semanticVectorReport.errorCode,
-        )
-        val readyEligibleCount = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
-        val lexicalChannelReport = RetrievalChannelReport(
-            RetrievalChannel.LEXICAL,
-            lexicalSearch.status,
-            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
-            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else readyEligibleCount,
-            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
-            lexicalRanked,
-            modelVersion = "sqlite-fts+metadata-v2",
-            errorCode = lexicalSearch.errorCode,
-        )
-        val eventChannelReport = RetrievalChannelReport(
-            RetrievalChannel.EVENT,
-            eventStatus,
-            eventStageCoverage.eligibleCount,
-            eventStageCoverage.coveredCount,
-            eventRanked.size,
-            eventMediaRank.mapNotNull { id -> itemById[id]?.let { SearchHit(it, 1.0, emptyList()) } },
-            modelVersion = EventCompiler.PRODUCER_VERSION,
-            errorCode = when (eventStatus) {
-                ChannelStatus.PARTIAL -> "EVENT_COVERAGE_PARTIAL"
-                ChannelStatus.UNAVAILABLE -> "EVENT_INDEX_UNAVAILABLE"
-                else -> null
-            },
-        )
-        val captionCoverage = database.semanticCaptionEvidenceCount(eligibleIds)
-        val captionStatus = when {
-            captionSearch.status == ChannelStatus.NOT_REQUIRED -> ChannelStatus.NOT_REQUIRED
-            captionSearch.status != ChannelStatus.SUCCESS -> captionSearch.status
-            captionCoverage < eligibleIds.size -> ChannelStatus.PARTIAL
-            else -> ChannelStatus.SUCCESS
-        }
-        val captionChannelReport = RetrievalChannelReport(
-            RetrievalChannel.CAPTION,
-            captionStatus,
-            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
-            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else captionCoverage,
-            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else captionCoverage,
-            captionRanked.mapNotNull { match ->
-                itemById[match.mediaId]?.let { SearchHit(it, match.score, emptyList()) }
-            },
-            modelVersion = captionRanked.firstOrNull()?.caption?.modelVersion,
-            errorCode = captionSearch.errorCode
-                ?: if (captionCoverage < eligibleIds.size && captionStatus != ChannelStatus.NOT_REQUIRED) {
-                    "CAPTION_COVERAGE_PARTIAL"
-                } else {
-                    null
-                },
-        )
-        val captionEmbeddingSearchedMediaCount = eligibleCaptionChunks.asSequence()
-            .filter {
-                it.embeddingState == CaptionEmbeddingState.COMPLETE &&
-                    it.embeddingModelVersion == captionVectorSearch.modelVersion
-            }
-            .map(SemanticCaptionChunkRecord::mediaId)
-            .distinct()
-            .count()
-        val captionEmbeddingChannelReport = RetrievalChannelReport(
-            RetrievalChannel.CAPTION_EMBEDDING,
-            captionVectorSearch.status,
-            eligibleIds.size,
-            captionEmbeddingSearchedMediaCount,
-            captionEmbeddingSearchedMediaCount,
-            captionEmbeddingRanked.mapNotNull { match ->
-                itemById[match.mediaId]?.let { SearchHit(it, match.score, emptyList()) }
-            },
-            modelVersion = captionVectorSearch.modelVersion,
-            errorCode = captionVectorSearch.errorCode,
-        )
         val peopleCoverage = if (plan.peopleClauses.isEmpty()) {
             PeopleCoverage()
         } else {
@@ -1082,6 +998,93 @@ class GalleryRepository(context: Context) {
                 ),
             )
         }
+        val fusedHitsById = fusedHits.associateBy { it.item.id }
+        val channelHit: (String, Double, RetrievalChannel) -> SearchHit? = { mediaId, score, channel ->
+            fusedHitsById[mediaId]?.let { hit ->
+                RetrievalChannelEvidence.project(hit, channel)?.copy(score = score)
+            }
+        }
+        val readyEligibleCount = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
+        val lexicalChannelReport = RetrievalChannelReport(
+            RetrievalChannel.LEXICAL,
+            lexicalSearch.status,
+            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
+            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else readyEligibleCount,
+            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
+            lexicalRanked,
+            modelVersion = "sqlite-fts+metadata-v2",
+            errorCode = lexicalSearch.errorCode,
+        )
+        val semanticChannelReport = RetrievalChannelReport<SearchHit>(
+            channel = semanticVectorReport.channel,
+            status = semanticVectorReport.status,
+            eligibleCount = semanticVectorReport.eligibleCount,
+            indexedCount = semanticVectorReport.indexedCount,
+            searchedCount = semanticVectorReport.searchedCount,
+            hits = semanticRanked.mapNotNull { vectorHit ->
+                channelHit(vectorHit.mediaId, vectorHit.score.toDouble(), RetrievalChannel.SEMANTIC)
+            },
+            modelVersion = semanticVectorReport.modelVersion,
+            errorCode = semanticVectorReport.errorCode,
+        )
+        val eventChannelReport = RetrievalChannelReport(
+            RetrievalChannel.EVENT,
+            eventStatus,
+            eventStageCoverage.eligibleCount,
+            eventStageCoverage.coveredCount,
+            eventRanked.size,
+            eventMediaRank.mapNotNull { id -> channelHit(id, 1.0, RetrievalChannel.EVENT) },
+            modelVersion = EventCompiler.PRODUCER_VERSION,
+            errorCode = when (eventStatus) {
+                ChannelStatus.PARTIAL -> "EVENT_COVERAGE_PARTIAL"
+                ChannelStatus.UNAVAILABLE -> "EVENT_INDEX_UNAVAILABLE"
+                else -> null
+            },
+        )
+        val captionCoverage = database.semanticCaptionEvidenceCount(eligibleIds)
+        val captionStatus = when {
+            captionSearch.status == ChannelStatus.NOT_REQUIRED -> ChannelStatus.NOT_REQUIRED
+            captionSearch.status != ChannelStatus.SUCCESS -> captionSearch.status
+            captionCoverage < eligibleIds.size -> ChannelStatus.PARTIAL
+            else -> ChannelStatus.SUCCESS
+        }
+        val captionChannelReport = RetrievalChannelReport(
+            RetrievalChannel.CAPTION,
+            captionStatus,
+            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
+            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else captionCoverage,
+            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else captionCoverage,
+            captionRanked.mapNotNull { match ->
+                channelHit(match.mediaId, match.score, RetrievalChannel.CAPTION)
+            },
+            modelVersion = captionRanked.firstOrNull()?.caption?.modelVersion,
+            errorCode = captionSearch.errorCode
+                ?: if (captionCoverage < eligibleIds.size && captionStatus != ChannelStatus.NOT_REQUIRED) {
+                    "CAPTION_COVERAGE_PARTIAL"
+                } else {
+                    null
+                },
+        )
+        val captionEmbeddingSearchedMediaCount = eligibleCaptionChunks.asSequence()
+            .filter {
+                it.embeddingState == CaptionEmbeddingState.COMPLETE &&
+                    it.embeddingModelVersion == captionVectorSearch.modelVersion
+            }
+            .map(SemanticCaptionChunkRecord::mediaId)
+            .distinct()
+            .count()
+        val captionEmbeddingChannelReport = RetrievalChannelReport(
+            RetrievalChannel.CAPTION_EMBEDDING,
+            captionVectorSearch.status,
+            eligibleIds.size,
+            captionEmbeddingSearchedMediaCount,
+            captionEmbeddingSearchedMediaCount,
+            captionEmbeddingRanked.mapNotNull { match ->
+                channelHit(match.mediaId, match.score, RetrievalChannel.CAPTION_EMBEDDING)
+            },
+            modelVersion = captionVectorSearch.modelVersion,
+            errorCode = captionVectorSearch.errorCode,
+        )
         val ranked = when (plan.sort) {
             SortSpec.CAPTURE_TIME_DESC -> fusedHits.sortedWith(compareByDescending<SearchHit> { it.item.capturedAt ?: Long.MIN_VALUE }.thenByDescending { it.score })
             SortSpec.CAPTURE_TIME_ASC -> fusedHits.sortedWith(compareBy<SearchHit> { it.item.capturedAt ?: Long.MAX_VALUE }.thenByDescending { it.score })
