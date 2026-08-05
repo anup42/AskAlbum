@@ -755,7 +755,7 @@ class GalleryRepository(context: Context) {
                                 id = "${item.id}:event:${it.id}",
                                 mediaId = item.id,
                                 sourceField = "event",
-                                text = "${it.title} (${it.startTime}..${it.endTime})",
+                                text = "${it.title} (${formatEventRange(it.startTime, it.endTime)})",
                                 confidence = it.confidence,
                                 producerVersion = it.producerVersion,
                             ),
@@ -907,7 +907,7 @@ class GalleryRepository(context: Context) {
                     id = "${item.id}:event:${event.id}",
                     mediaId = item.id,
                     sourceField = "event",
-                    text = "${event.title} (${event.startTime}..${event.endTime})",
+                    text = "${event.title} (${formatEventRange(event.startTime, event.endTime)})",
                     confidence = event.confidence,
                     producerVersion = event.producerVersion,
                 )
@@ -1262,6 +1262,14 @@ class GalleryRepository(context: Context) {
     private fun formatTimestamp(timestampMs: Long): String {
         val totalSeconds = timestampMs.coerceAtLeast(0L) / 1_000L
         return "%d:%02d".format(Locale.ROOT, totalSeconds / 60L, totalSeconds % 60L)
+    }
+
+    private fun formatEventRange(startTime: Long, endTime: Long): String {
+        val formatter = java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.MEDIUM)
+            .withZone(java.time.ZoneId.systemDefault())
+        return listOf(startTime, endTime)
+            .map { formatter.format(java.time.Instant.ofEpochMilli(it)) }
+            .joinToString(" - ")
     }
 
     private fun shouldComposeGroundedAnswer(

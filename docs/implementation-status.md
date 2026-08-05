@@ -293,3 +293,8 @@ media, databases, or logs.
 - Room v24-to-v25 adds per-keyframe embedding state, attempt count, retry time, and bounded error text; existing completed keyframe embeddings migrate to `COMPLETE`.
 - Keyframe embedding now isolates decode, encoder, and vector-write failures per frame, quarantines exhausted frames, and includes delayed frame retries in truthful scheduling.
 - Migration, app-launch/search, and bundled SigLIP2 validation passed on the connected device; the seeded video acceptance remained an explicit `galleryRunId` skip.
+
+### 2026-08-05 - Format event evidence dates
+
+- Repository event evidence now renders localized date-time ranges instead of exposing raw epoch milliseconds in search evidence.
+- Consumer unit tests, replacement installation, and grounded local-search smoke validation completed successfully.
