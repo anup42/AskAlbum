@@ -75,6 +75,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
     ): Map<IndexingJob, IndexingPipelineSnapshot> {
         val media = workState("gallery-index")
         val embeddings = workState("gallery-image-embeddings")
+        val captionEmbeddings = workState("gallery-caption-embeddings")
         val peopleWork = workState("gallery-people-index")
         val semanticWork = workState("semantic-enrichment")
         val mediaCompleted = (summary.discovered - summary.pending - summary.failed).coerceAtLeast(0)
@@ -85,6 +86,9 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             people.pendingMediaCount,
             summary.faceEligible,
         )
+        val captionBackfillPending = (semantic.captionCount - semantic.captionChunkCount).coerceAtLeast(0)
+        val captionPending = semantic.pendingCaptionChunkCount + semantic.runningCaptionChunkCount + captionBackfillPending
+        val captionEligible = semantic.captionChunkCount + captionBackfillPending
         return mapOf(
             IndexingJob.MEDIA_ANALYSIS to snapshot(
                 IndexingJob.MEDIA_ANALYSIS,
@@ -104,6 +108,16 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 summary.siglipVectorsReady,
                 summary.discovered,
                 embeddings,
+                admission,
+            ),
+            IndexingJob.CAPTION_EMBEDDINGS to snapshot(
+                IndexingJob.CAPTION_EMBEDDINGS,
+                controls.captionEmbeddingsEnabled,
+                captionPending,
+                semantic.failedCaptionChunkCount,
+                semantic.embeddedCaptionChunkCount,
+                captionEligible,
+                captionEmbeddings,
                 admission,
             ),
             IndexingJob.PEOPLE to snapshot(
@@ -225,6 +239,18 @@ internal object IndexingSupervisor {
                 summary.siglipVectorsReady < summary.discovered
             ) {
                 EmbeddingIndexScheduler.schedule(context)
+            }
+            val captionBackfillPending = (semantic.captionCount - semantic.captionChunkCount).coerceAtLeast(0)
+            if (
+                controls.captionEmbeddingsEnabled &&
+                retrievalAvailable &&
+                (
+                    captionBackfillPending > 0 ||
+                        semantic.pendingCaptionChunkCount > 0 ||
+                        semantic.runningCaptionChunkCount > 0
+                    )
+            ) {
+                CaptionEmbeddingScheduler.schedule(context)
             }
         }
         if (controls.peopleEnabled && people.enabled && people.pendingMediaCount > 0) {

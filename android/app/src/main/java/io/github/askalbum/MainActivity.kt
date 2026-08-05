@@ -1349,6 +1349,16 @@ private fun IndexingJobsCard(
             )
             HorizontalDivider()
             IndexingJobControlRow(
+                title = "Caption vectors",
+                description = "Chunk embeddings for comprehensive-caption and paraphrase search",
+                enabled = controls.captionEmbeddingsEnabled,
+                available = embeddingsAvailable,
+                unavailableReason = "Retrieval model required",
+                snapshot = snapshots[IndexingJob.CAPTION_EMBEDDINGS],
+                onToggle = { onSetEnabled(IndexingJob.CAPTION_EMBEDDINGS, it) },
+            )
+            HorizontalDivider()
+            IndexingJobControlRow(
                 title = "People indexing",
                 description = "Opt-in face detection, embeddings, and local clusters",
                 enabled = controls.peopleEnabled,

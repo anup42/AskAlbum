@@ -5,6 +5,7 @@ import android.content.Context
 enum class IndexingJob {
     MEDIA_ANALYSIS,
     EMBEDDINGS,
+    CAPTION_EMBEDDINGS,
     PEOPLE,
     SEMANTIC_MEMORY,
 }
@@ -12,12 +13,14 @@ enum class IndexingJob {
 data class IndexingJobControls(
     val mediaAnalysisEnabled: Boolean = true,
     val embeddingsEnabled: Boolean = true,
+    val captionEmbeddingsEnabled: Boolean = true,
     val peopleEnabled: Boolean = true,
     val semanticMemoryEnabled: Boolean = true,
 ) {
     fun isEnabled(job: IndexingJob): Boolean = when (job) {
         IndexingJob.MEDIA_ANALYSIS -> mediaAnalysisEnabled
         IndexingJob.EMBEDDINGS -> embeddingsEnabled
+        IndexingJob.CAPTION_EMBEDDINGS -> captionEmbeddingsEnabled
         IndexingJob.PEOPLE -> peopleEnabled
         IndexingJob.SEMANTIC_MEMORY -> semanticMemoryEnabled
     }
@@ -25,6 +28,7 @@ data class IndexingJobControls(
     fun withJob(job: IndexingJob, enabled: Boolean): IndexingJobControls = when (job) {
         IndexingJob.MEDIA_ANALYSIS -> copy(mediaAnalysisEnabled = enabled)
         IndexingJob.EMBEDDINGS -> copy(embeddingsEnabled = enabled)
+        IndexingJob.CAPTION_EMBEDDINGS -> copy(captionEmbeddingsEnabled = enabled)
         IndexingJob.PEOPLE -> copy(peopleEnabled = enabled)
         IndexingJob.SEMANTIC_MEMORY -> copy(semanticMemoryEnabled = enabled)
     }
@@ -36,6 +40,7 @@ class IndexingJobControlsStore(context: Context) {
     fun load(): IndexingJobControls = IndexingJobControls(
         mediaAnalysisEnabled = preferences.getBoolean(IndexingJob.MEDIA_ANALYSIS.name, true),
         embeddingsEnabled = preferences.getBoolean(IndexingJob.EMBEDDINGS.name, true),
+        captionEmbeddingsEnabled = preferences.getBoolean(IndexingJob.CAPTION_EMBEDDINGS.name, true),
         peopleEnabled = preferences.getBoolean(IndexingJob.PEOPLE.name, true),
         semanticMemoryEnabled = preferences.getBoolean(IndexingJob.SEMANTIC_MEMORY.name, true),
     )

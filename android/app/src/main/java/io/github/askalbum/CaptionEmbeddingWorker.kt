@@ -18,7 +18,7 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val application = applicationContext as AskAlbumApplication
         val controls = IndexingJobControlsStore(applicationContext)
-        if (!controls.load().embeddingsEnabled) return@withContext Result.success()
+        if (!controls.load().captionEmbeddingsEnabled) return@withContext Result.success()
         val admission = BackgroundWorkAdmissionPolicy(applicationContext).evaluate()
         if (!admission.allowed) return@withContext Result.retry()
 
@@ -94,7 +94,7 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
             ),
         )
         val hasMore = database.hasCaptionEmbeddingWork(producer)
-        if (hasMore && controls.load().embeddingsEnabled) {
+        if (hasMore && controls.load().captionEmbeddingsEnabled) {
             CaptionEmbeddingScheduler.scheduleContinuation(applicationContext)
         } else if (!hasMore) {
             runCatching {
@@ -116,12 +116,12 @@ object CaptionEmbeddingScheduler {
     private const val UNIQUE_WORK = "gallery-caption-embeddings"
 
     fun schedule(context: Context) {
-        if (!IndexingJobControlsStore(context).load().embeddingsEnabled) return
+        if (!IndexingJobControlsStore(context).load().captionEmbeddingsEnabled) return
         WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.KEEP, request(context))
     }
 
     fun scheduleContinuation(context: Context, delayMillis: Long = 2_000L) {
-        if (!IndexingJobControlsStore(context).load().embeddingsEnabled) return
+        if (!IndexingJobControlsStore(context).load().captionEmbeddingsEnabled) return
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
@@ -132,7 +132,7 @@ object CaptionEmbeddingScheduler {
     fun restart(context: Context) {
         val manager = WorkManager.getInstance(context)
         manager.cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
-        if (IndexingJobControlsStore(context).load().embeddingsEnabled) {
+        if (IndexingJobControlsStore(context).load().captionEmbeddingsEnabled) {
             manager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.REPLACE, request(context))
         }
     }

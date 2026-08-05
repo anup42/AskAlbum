@@ -394,3 +394,9 @@ media, databases, or logs.
 - People runtime status now uses the complete accessible-ready image universe and completed FACES stages, rather than all discovered media.
 - Pending face work is clamped to that eligible universe, and the remaining eligible face-stage rows are reported as failures instead of being presented as completed.
 - No Room migration or destructive data operation was introduced.
+
+### Caption-vector pipeline control
+
+- Caption-chunk embedding is now exposed as an independent indexing job with its own persisted toggle, runtime snapshot, retry/in-flight status, supervisor scheduling, and UI row.
+- Existing installs default the new control to enabled; image-vector and caption-vector workers can now be stopped independently.
+- Caption-vector availability still requires the verified SigLIP2 retrieval pack, and no caption, image vector, Gemma fact, or Room data is deleted by the control change.

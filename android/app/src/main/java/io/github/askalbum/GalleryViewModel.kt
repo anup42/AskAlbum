@@ -383,6 +383,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     indexingActive = admission.allowed && hasRunnableIndexing(
                         summary,
                         state.peopleIndex,
+                        state.semanticMemory,
                         state.indexingJobControls,
                         state.retrievalPack.installed,
                     ),
@@ -408,6 +409,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             state = state.copy(operationMessage = "The verified retrieval model is required before starting embeddings")
             return
         }
+        if (job == IndexingJob.CAPTION_EMBEDDINGS && enabled && !state.retrievalPack.installed) {
+            state = state.copy(operationMessage = "The verified retrieval model is required before starting caption vectors")
+            return
+        }
         if (job == IndexingJob.SEMANTIC_MEMORY && enabled && (!state.modelPack.installed || !state.modelPack.multimodal)) {
             state = state.copy(operationMessage = "A verified multimodal Gemma model is required before starting semantic memory")
             return
@@ -423,11 +428,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                             else IndexScheduler.cancelAndWait(getApplication())
                         }
                         IndexingJob.EMBEDDINGS -> {
-                            if (enabled) InitialImportService.startIndexing(getApplication())
+                            if (enabled) {
+                                InitialImportService.startIndexing(getApplication())
+                                if (controls.captionEmbeddingsEnabled) CaptionEmbeddingScheduler.schedule(getApplication())
+                            }
                             else {
                                 EmbeddingIndexScheduler.cancelAndWait(getApplication())
-                                CaptionEmbeddingScheduler.cancelAndWait(getApplication())
                             }
+                        }
+                        IndexingJob.CAPTION_EMBEDDINGS -> {
+                            if (enabled) CaptionEmbeddingScheduler.schedule(getApplication())
+                            else CaptionEmbeddingScheduler.cancelAndWait(getApplication())
                         }
                         IndexingJob.PEOPLE -> {
                             if (enabled) PeopleIndexScheduler.schedule(getApplication())
@@ -447,7 +458,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     index = summary,
                     semanticMemory = semanticMemory,
                     indexingActive = state.indexingAdmission.allowed &&
-                        hasRunnableIndexing(summary, state.peopleIndex, controls, state.retrievalPack.installed),
+                        hasRunnableIndexing(summary, state.peopleIndex, semanticMemory, controls, state.retrievalPack.installed),
                     operationMessage = "${indexingJobLabel(job)} ${if (enabled) "started" else "stopped"}. Completed index data was kept.",
                 )
                 monitorIndexing()
@@ -1216,6 +1227,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private fun hasRunnableIndexing(
         summary: IndexSummary,
         peopleIndex: PeopleIndexStatus,
+        semanticMemory: SemanticMemoryProgress,
         controls: IndexingJobControls,
         retrievalPackInstalled: Boolean,
     ): Boolean =
@@ -1225,11 +1237,20 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 retrievalPackInstalled &&
                     controls.embeddingsEnabled &&
                     summary.siglipVectorsReady < summary.discovered
-            )
+            ) || (
+                retrievalPackInstalled &&
+                    controls.captionEmbeddingsEnabled &&
+                    (
+                        semanticMemory.captionCount > semanticMemory.captionChunkCount ||
+                            semanticMemory.pendingCaptionChunkCount > 0 ||
+                            semanticMemory.runningCaptionChunkCount > 0
+                        )
+                )
 
     private fun indexingJobLabel(job: IndexingJob): String = when (job) {
         IndexingJob.MEDIA_ANALYSIS -> "Media analysis"
         IndexingJob.EMBEDDINGS -> "SigLIP2 vectors"
+        IndexingJob.CAPTION_EMBEDDINGS -> "Caption vectors"
         IndexingJob.PEOPLE -> "People indexing"
         IndexingJob.SEMANTIC_MEMORY -> "Gemma semantic memory"
     }
