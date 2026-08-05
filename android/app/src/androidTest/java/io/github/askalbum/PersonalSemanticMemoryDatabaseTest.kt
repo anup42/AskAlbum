@@ -56,6 +56,50 @@ class PersonalSemanticMemoryDatabaseTest {
         }
     }
 
+    @Test
+    fun policyReplacementPreservesLiveLeaseAndRejectsStaleCompletion() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "personal-semantic-live-${UUID.randomUUID()}.db"
+        val store = GalleryDatabase(context, name)
+        try {
+            store.seedDemoIfEmpty()
+            val media = store.allItems().first()
+            store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+            store.ensureAutomaticPersonCluster("person_me")
+            store.completeEmbeddedFaces(media.id, listOf(face()), listOf("person_me"), "fixture-face")
+            store.saveReviewedPersonCluster("person_me", "Me", "Me", emptyList())
+
+            assertEquals(1, store.queueEligiblePersonalSemanticMemoryJobs("fixture-gemma", true))
+            val oldJob = requireNotNull(store.claimSemanticEnrichmentJob(owner = "old-owner"))
+            assertEquals(1, store.queueEligiblePersonalSemanticMemoryJobs("fixture-gemma-v2", true))
+
+            val progress = store.semanticMemoryProgress()
+            assertEquals(1, progress.personalPendingCount)
+            assertEquals(0, progress.personalCompletedCount)
+            assertEquals("personal_media:fixture-gemma-v2:${PersonalSemanticMemoryPolicy.PROMPT_VERSION}:${PersonalSemanticMemoryPolicy.BODY_REGION_VERSION}:${PersonalSemanticMemoryPolicy.CAPTION_POLICY_VERSION}", requireNotNull(store.claimSemanticEnrichmentJob(owner = "new-owner")).reason)
+
+            store.completeSemanticEnrichment(
+                oldJob,
+                listOf(
+                    SemanticFactRecord(
+                        scope = SemanticFactScope.MEDIA,
+                        subjectId = media.id,
+                        predicate = "stale",
+                        value = "must not persist",
+                        confidence = .9f,
+                        evidenceMediaId = media.id,
+                        modelVersion = "old-model",
+                        promptVersion = "old-prompt",
+                    ),
+                ),
+            )
+            assertTrue(store.semanticFacts(listOf(media.id)).none { it.predicate == "stale" })
+        } finally {
+            store.close()
+            context.deleteDatabase(name)
+        }
+    }
+
     private fun face() = FaceInstance(
         bounds = listOf(.1f, .1f, .4f, .5f),
         embedding = FloatArray(FaceModelCatalog.sface.embeddingDimension).also { it[0] = 1f },

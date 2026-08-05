@@ -3058,23 +3058,38 @@ class GalleryDatabase(
         mediaIds: Set<String>? = null,
     ): Int = writableDatabase.transaction { db ->
         val reason = PersonalSemanticMemoryPolicy.jobReason(modelVersion)
+        val supersededModelVersion = "superseded:$reason"
         val now = System.currentTimeMillis()
         db.update(
             "semantic_enrichment_job",
             ContentValues().apply {
                 put("status", SemanticEnrichmentStatus.COMPLETE.name)
-                put("model_version", "superseded:${PersonalSemanticMemoryPolicy.PROMPT_VERSION}")
+                put("model_version", supersededModelVersion)
                 putNull("lease_owner")
                 putNull("lease_expires_at")
                 put("next_attempt_at", 0L)
                 put("last_progress_at", now)
                 put("updated_at", now)
             },
-            "reason LIKE ? AND reason<>? AND status<>?",
+            "reason LIKE ? AND reason<>? AND COALESCE(model_version,'') NOT LIKE 'superseded:%' " +
+                "AND NOT (status=? AND lease_expires_at>?)",
             arrayOf(
                 "${PersonalSemanticMemoryPolicy.JOB_PREFIX}%",
                 reason,
-                SemanticEnrichmentStatus.COMPLETE.name,
+                SemanticEnrichmentStatus.RUNNING.name,
+                now.toString(),
+            ),
+        )
+        db.update(
+            "semantic_enrichment_job",
+            ContentValues().apply { put("model_version", supersededModelVersion) },
+            "reason LIKE ? AND reason<>? AND COALESCE(model_version,'') NOT LIKE 'superseded:%' " +
+                "AND status=? AND lease_expires_at>?",
+            arrayOf(
+                "${PersonalSemanticMemoryPolicy.JOB_PREFIX}%",
+                reason,
+                SemanticEnrichmentStatus.RUNNING.name,
+                now.toString(),
             ),
         )
         db.update(
@@ -3649,6 +3664,20 @@ class GalleryDatabase(
             val now = System.currentTimeMillis()
             val facts = result.facts
             val leaseOwner = job.leaseOwner ?: return@transaction
+            val superseded = db.update(
+                "semantic_enrichment_job",
+                ContentValues().apply {
+                    put("status", SemanticEnrichmentStatus.COMPLETE.name)
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("next_attempt_at", 0L)
+                    put("last_progress_at", now)
+                    put("updated_at", now)
+                },
+                "id=? AND status=? AND lease_owner=? AND lease_expires_at>? AND model_version LIKE 'superseded:%'",
+                arrayOf(job.id, SemanticEnrichmentStatus.RUNNING.name, leaseOwner, now.toString()),
+            )
+            if (superseded == 1) return@transaction
             val producer = result.caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
             val completionModel = producer?.let { "caption-v4:$it" } ?: "caption-v4:no-accepted-output"
             // Claim completion before writing derived records. The enclosing transaction
@@ -3666,7 +3695,7 @@ class GalleryDatabase(
                     put("last_progress_at", now)
                     put("updated_at", now)
                 },
-                "id=? AND status=? AND lease_owner=? AND lease_expires_at>?",
+                "id=? AND status=? AND lease_owner=? AND lease_expires_at>? AND COALESCE(model_version,'') NOT LIKE 'superseded:%'",
                 arrayOf(job.id, SemanticEnrichmentStatus.RUNNING.name, leaseOwner, now.toString()),
             )
             if (claimed != 1) return@transaction
@@ -3826,6 +3855,20 @@ class GalleryDatabase(
         writableDatabase.transaction { db ->
             val leaseOwner = job.leaseOwner ?: return@transaction
             val now = System.currentTimeMillis()
+            val superseded = db.update(
+                "semantic_enrichment_job",
+                ContentValues().apply {
+                    put("status", SemanticEnrichmentStatus.COMPLETE.name)
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("next_attempt_at", 0L)
+                    put("last_progress_at", now)
+                    put("updated_at", now)
+                },
+                "id=? AND status=? AND lease_owner=? AND lease_expires_at>? AND model_version LIKE 'superseded:%'",
+                arrayOf(job.id, SemanticEnrichmentStatus.RUNNING.name, leaseOwner, now.toString()),
+            )
+            if (superseded == 1) return@transaction
             val status = when {
                 authenticationRequired -> SemanticEnrichmentStatus.AUTH_REQUIRED
                 retryable && job.attemptCount < 3 -> SemanticEnrichmentStatus.PENDING
@@ -3846,7 +3889,7 @@ class GalleryDatabase(
                     },
                 )
                 put("updated_at", now)
-            }, "id=? AND status=? AND lease_owner=?", arrayOf(job.id, SemanticEnrichmentStatus.RUNNING.name, leaseOwner))
+            }, "id=? AND status=? AND lease_owner=? AND COALESCE(model_version,'') NOT LIKE 'superseded:%'", arrayOf(job.id, SemanticEnrichmentStatus.RUNNING.name, leaseOwner))
             if (updated == 1 && status == SemanticEnrichmentStatus.FAILED) {
                 updateStage(
                     db,
