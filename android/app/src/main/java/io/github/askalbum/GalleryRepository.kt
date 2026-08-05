@@ -13,6 +13,21 @@ import kotlinx.coroutines.withContext
 import kotlin.math.max
 import java.util.concurrent.ConcurrentHashMap
 
+internal fun shouldExecuteCapabilityWithoutMediaHits(
+    intent: QueryIntent,
+    verificationApplied: Boolean,
+): Boolean = !verificationApplied && intent in setOf(
+    QueryIntent.LIST,
+    QueryIntent.COUNT,
+    QueryIntent.ANSWER_FACT,
+    QueryIntent.DOCUMENT_QA,
+    QueryIntent.SUM,
+    QueryIntent.MIN_MAX,
+    QueryIntent.EVENT_SUMMARY,
+    QueryIntent.TIMELINE,
+    QueryIntent.COMPARE,
+)
+
 class GalleryRepository(context: Context) {
     private val appContext = context.applicationContext
     private val services = (context.applicationContext as AskAlbumApplication).services
@@ -1249,7 +1264,7 @@ class GalleryRepository(context: Context) {
                 }
         }.distinct()
         val evidenceIds = hits.flatMap { it.evidence }.map { it.id }.distinct().take(12)
-        if (hits.isEmpty()) {
+        if (hits.isEmpty() && !shouldExecuteCapabilityWithoutMediaHits(plan.intent, verification.applied)) {
             return SearchAnswer(
                 headline = "No supported matches found",
                 detail = if (verification.applied) {

@@ -325,3 +325,7 @@ media, databases, or logs.
 - Kept the pinned OpenCV SFace model name and version visible when the verified pack is not installed; installation state is shown separately.
 - Validation: `SFaceSettingsUiTest` PASS on SM-F731U; consumer unit suite and `assembleConsumerDebug` PASS; replacement install PASS.
 - The broad connected CI report remains limited by missing private SFace/SigLIP2 artifacts; those acceptance cases are not marked PASS.
+
+### 2026-08-05 - Empty capability executor routing
+- Empty non-visual capability results now reach their typed executor; visual search and post-verification failures remain fail-closed.
+- Validation: focused capability/exactness tests PASS; full `testConsumerDebugUnitTest` PASS; `assembleConsumerDebug` PASS.

@@ -152,6 +152,20 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun emptyCapabilityResultsUseTypedExecutorsButVisualSearchRemainsNoResult() {
+        assertTrue(shouldExecuteCapabilityWithoutMediaHits(QueryIntent.COUNT, false))
+        assertTrue(shouldExecuteCapabilityWithoutMediaHits(QueryIntent.SUM, false))
+        assertTrue(shouldExecuteCapabilityWithoutMediaHits(QueryIntent.DOCUMENT_QA, false))
+        assertFalse(shouldExecuteCapabilityWithoutMediaHits(QueryIntent.FIND_MEDIA, false))
+        assertFalse(shouldExecuteCapabilityWithoutMediaHits(QueryIntent.COUNT, true))
+
+        val emptySum = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.SUM).copy(hits = emptyList(), deterministicHits = emptyList(), matchCount = 0),
+        )
+        assertEquals("No compatible numeric facts", emptySum.headline)
+    }
+
+    @Test
     fun listPersonUsesReviewedLabelsOnly() {
         val base = context(QueryIntent.LIST)
         val answer = CapabilityAnswerExecutor.execute(
