@@ -52,6 +52,20 @@ class RetrievalChannelPolicyTest {
     }
 
     @Test
+    fun fullyIndexedVideoKeyframesDoNotMakeMediaCoverageLookPartial() = runBlocking {
+        val report = SemanticChannelReporter.execute(
+            "video", "siglip@test", 1, setOf("video", "video-keyframe-1"), 100,
+            indexedIds = { setOf("video", "video-keyframe-1") },
+            search = { _, _, _ -> emptyList() },
+        )
+
+        assertEquals(ChannelStatus.SUCCESS, report.status)
+        assertEquals(1, report.eligibleCount)
+        assertEquals(1, report.indexedCount)
+        assertEquals(1, report.searchedCount)
+    }
+
+    @Test
     fun eligibleMediaWithoutAnyVectorIdsIsPartialAndDoesNotSearch() = runBlocking {
         var searched = false
         val report = SemanticChannelReporter.execute(

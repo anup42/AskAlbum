@@ -868,3 +868,9 @@ People cluster summaries now expose both the user-selected representative face a
 - Updated the Index Manager, runtime pipeline snapshot, unavailable-pack gate, and foreground notification to use the same eligible denominator.
 - No schema migration or data mutation; existing media, stages, vectors, People data, captions, and models are preserved.
 - Regression coverage added for separating discovered media from vector-stage eligibility.
+
+## 2026-08-06 - Correct video-keyframe semantic coverage
+
+- Semantic completeness now tolerates the additional keyframe vector entries associated with an eligible video.
+- Missing vector coverage relative to the eligible media scope remains partial, and displayed counts stay in media units.
+- Added a regression test for a fully indexed parent video plus keyframe vector.

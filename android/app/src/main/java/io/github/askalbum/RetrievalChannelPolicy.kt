@@ -72,14 +72,18 @@ internal object SemanticChannelReporter {
                 )
             }
             val hits = search(query, topK, eligibleVectorIds)
-            val completeCoverage = eligibleVectorIds.size == eligibleCount &&
+            // Video searches include the parent media vector plus zero or more
+            // keyframe vectors. Those extra vector entries must not make a
+            // fully indexed media scope look partial, while a vector set
+            // smaller than the eligible media scope still proves a gap.
+            val completeCoverage = eligibleVectorIds.size >= eligibleCount &&
                 indexedEligibleIds.size == eligibleVectorIds.size
             RetrievalChannelReport(
                 channel = RetrievalChannel.SEMANTIC,
                 status = if (completeCoverage) ChannelStatus.SUCCESS else ChannelStatus.PARTIAL,
                 eligibleCount = eligibleCount,
-                indexedCount = indexedEligibleIds.size,
-                searchedCount = indexedEligibleIds.size,
+                indexedCount = indexedEligibleIds.size.coerceAtMost(eligibleCount),
+                searchedCount = indexedEligibleIds.size.coerceAtMost(eligibleCount),
                 hits = hits,
                 modelVersion = modelVersion,
                 errorCode = if (completeCoverage) null else "VECTOR_COVERAGE_PARTIAL",
