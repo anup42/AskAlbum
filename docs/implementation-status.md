@@ -318,3 +318,4 @@ media, databases, or logs.
 - Added typed `comparisonScopes` to the validated planner contract so `Goa` and `Singapore` are retained together instead of one becoming a hard filter.
 - Compare now builds complete per-scope deterministic evidence; offline LIST plans now support complete place, day, merchant, and reviewed-person value extraction without relying on ranked top-K.
 - Added codec, compiler, and executor regression tests; no schema or media-data migration was introduced.
+- Complete term-free LIST and explicit two-scope COMPARE answers now report `EXACT` only when the eligible local coverage is complete; bounded semantic retrieval remains estimated.

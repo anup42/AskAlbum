@@ -1218,6 +1218,10 @@ class GalleryRepository(context: Context) {
             plan.semanticClauses.isEmpty() && plan.filter != FilterExpression.True && !verification.applied
         val deterministicAggregation = plan.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
             plan.aggregation != null && plan.semanticClauses.isEmpty() && !usedSemanticRetrieval && !verification.applied
+        val deterministicList = plan.intent == QueryIntent.LIST &&
+            plan.terms.isEmpty() && plan.semanticClauses.isEmpty() && !verification.applied
+        val deterministicComparison = plan.intent == QueryIntent.COMPARE &&
+            plan.comparisonScopes.size >= 2 && !verification.applied
         val requestedDocumentField = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)
         val deterministicDocumentFact = plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) &&
             requestedDocumentField != null &&
@@ -1225,7 +1229,8 @@ class GalleryRepository(context: Context) {
             !verification.applied
         val exactness = RetrievalExactnessPolicy.resolve(
             allEligibleIndexed = readyItems == totalItems && peopleCoverageComplete,
-            deterministicOperation = deterministicAggregation || deterministicResultSetFilter || deterministicDocumentFact,
+            deterministicOperation = deterministicAggregation || deterministicResultSetFilter || deterministicDocumentFact ||
+                deterministicList || deterministicComparison,
             semanticReport = semanticReport,
             verificationApplied = verification.applied,
             completePredicateScan = completePredicateScan,
