@@ -39,6 +39,11 @@ internal fun isDeterministicMetadataCount(
     semanticQueries.isEmpty() &&
     !verificationApplied
 
+internal fun requiresAuthenticationForAnswer(
+    rankedHits: List<SearchHit>,
+    deterministicAnswerHits: List<SearchHit>,
+): Boolean = (rankedHits + deterministicAnswerHits).any(SensitiveEvidencePolicy::requiresAuthentication)
+
 class GalleryRepository(context: Context) {
     private val appContext = context.applicationContext
     private val services = (context.applicationContext as AskAlbumApplication).services
@@ -1159,7 +1164,7 @@ class GalleryRepository(context: Context) {
             completePredicateScan = exactPredicateScan?.completeCoverage == true,
             deterministicMetadataCount = deterministicMetadataCount,
         )
-        val requiresAuthentication = hits.any(SensitiveEvidencePolicy::requiresAuthentication)
+        val requiresAuthentication = requiresAuthenticationForAnswer(hits, deterministicAnswerHits)
         val answer = if (requiresAuthentication) {
             SensitiveEvidencePolicy.lock(deterministicAnswer)
         } else if (shouldComposeGroundedAnswer(plan, hits, verification)) {

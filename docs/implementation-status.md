@@ -525,3 +525,8 @@ media, databases, or logs.
 - Fixed the runtime verification policy so a semantic clause with `PERSON` subject or a reviewed-person binding always requires targeted visual verification, even if planner output requests `VerificationPolicy.NEVER`.
 - Preserved `NEVER` for ordinary non-person searches and added regression coverage for both cases.
 - This closes a fail-open path where face presence or caption retrieval could otherwise confirm a person-specific clothing, action, or relation predicate without body association verification.
+## 2026-08-05 - Deterministic answer evidence remains authentication-protected
+
+- Fixed answer-level sensitive-evidence detection to inspect both ranked hits and the complete deterministic evidence set used for OCR facts and aggregations.
+- Added regression coverage proving a password present only in deterministic answer evidence still requires authentication before the answer is returned.
+- No database migration or data rewrite was required.

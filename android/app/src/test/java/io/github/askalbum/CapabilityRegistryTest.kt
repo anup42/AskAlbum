@@ -151,6 +151,15 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun deterministicAnswerEvidenceAlsoRequiresAuthentication() {
+        val password = hit("secret", "Wi-Fi", "INR 10.00", 1_700_000_000_000).copy(
+            evidence = listOf(EvidenceRecord("secret:password", "secret", "document_password", "mango-tree-2048", .95f)),
+        )
+
+        assertTrue(requiresAuthenticationForAnswer(emptyList(), listOf(password)))
+    }
+
+    @Test
     fun financialEvidenceAlwaysRequiresAuthentication() {
         val receipt = hit("receipt", "Swiggy", "INR 1,248.00", 1_700_000_000_000).copy(
             evidence = listOf(EvidenceRecord("receipt:total", "receipt", "document_total", "INR 1,248.00", .95f)),
