@@ -729,3 +729,10 @@ media, databases, or logs.
 - Empty caption-vector searches with zero eligible media are asserted as `NOT_REQUIRED`; unavailable remains reserved for required searches lacking verified retrieval coverage.
 - Fixture connected tests on `R3CY30QFWLP`, fixture unit tests, `consumerDebug`, and `offlineDemoDebug` passed.
 - Commit: `5ca6d95` pushed to `anup42/AskAlbum`.
+
+### 2026-08-06 - Fingerprint exhaustive semantic-scan coverage
+
+- Added the non-destructive Room v26-to-v27 migration with an exact eligible-media vector-coverage fingerprint for durable semantic predicate scans.
+- A completed scan is no longer reusable as exhaustive when vectors were removed or replaced, even if the covered-item count is unchanged; dormant scans reset and re-evaluate, while live leases are preserved.
+- Validation: fixture unit tests, `consumerDebug`, `offlineDemoDebug`, and the isolated v26-to-v27 migration test on `SM-F966` passed. Existing app data and media were not modified.
+- Commit `f0e83ad` was pushed to `anup42/AskAlbum`.
