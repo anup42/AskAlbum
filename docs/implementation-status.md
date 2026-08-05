@@ -256,3 +256,8 @@ media, databases, or logs.
 
 - People cluster sample media and supporting thumbnails now use capture/modified timestamps instead of media-ID ordering or face quality.
 - Explicitly selected representatives remain visible without displacing the latest thumbnail ordering.
+
+### 2026-08-05 - Use explicit foreground indexing service types
+
+- Initial gallery indexing now calls the platform typed `startForeground` API, using `mediaProcessing` on Android 15+ and `dataSync` on older supported releases.
+- The instrumentation contract now verifies the active service type on the connected API 36 device.

@@ -39,14 +39,7 @@ class InitialImportService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            notification("Reading your permitted gallery", indeterminate = true),
-            if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
-            else if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            else 0,
-        )
+        startIndexingForeground(notification("Reading your permitted gallery", indeterminate = true))
         if (importJob?.isActive != true) {
             ForegroundIndexRuntime.started()
             importJob = scope.launch {
@@ -120,6 +113,22 @@ class InitialImportService : Service() {
                     setShowBadge(false)
                 },
             )
+        }
+    }
+
+    private fun startIndexingForeground(notification: Notification) {
+        when {
+            Build.VERSION.SDK_INT >= 35 -> startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING,
+            )
+            Build.VERSION.SDK_INT >= 29 -> startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+            else -> startForeground(NOTIFICATION_ID, notification)
         }
     }
 
