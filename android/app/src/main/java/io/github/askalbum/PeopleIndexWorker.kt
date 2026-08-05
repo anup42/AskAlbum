@@ -6,6 +6,7 @@ import android.graphics.Color
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -79,6 +80,7 @@ class PeopleIndexWorker(
                         faces.forEachIndexed { index, face -> services.faceVectorStore.upsert("${item.id}:$index", face.embedding) }
                     }
                 }.onFailure { error ->
+                    if (PeopleIndexFailurePolicy.shouldPropagate(error)) throw error
                     if (repository.peopleIndexStatus().enabled) {
                         val permanent = error is SecurityException || error is java.io.FileNotFoundException
                         repository.failFaces(item.id, error::class.java.simpleName, permanent, faceProducerVersion, ownerId)
@@ -184,4 +186,8 @@ class PeopleIndexWorker(
             bitmap.recycle()
         }
     }
+}
+
+internal object PeopleIndexFailurePolicy {
+    fun shouldPropagate(error: Throwable): Boolean = error is CancellationException
 }
