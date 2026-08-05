@@ -279,6 +279,7 @@ object CapabilityAnswerExecutor {
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
         val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val completeCoverage = context.hasCompleteEligibleCoverage()
         val events = sourceHits.mapNotNull { context.eventsByMedia[it.item.id] }.distinctBy(EventRecord::id)
         val captures = sourceHits.mapNotNull { it.item.capturedAt }
         val range = if (captures.isEmpty()) "date unavailable" else "${formatDate(captures.min())} to ${formatDate(captures.max())}"
@@ -289,7 +290,7 @@ object CapabilityAnswerExecutor {
             "Date range: $range. Places: ${places.joinToString().ifBlank { "not recorded" }}. " +
                 "Reviewed people: ${people.joinToString().ifBlank { "none requested" }}. " +
                 "Representative media: ${sourceHits.take(4).joinToString { it.item.title }}. " +
-                if (context.deterministicHits.isNotEmpty()) {
+                if (completeCoverage) {
                     "The matched event membership was evaluated completely over eligible local media."
                 } else {
                     "This summary uses the current ranked retrieval pass and may not include every event member."
@@ -303,6 +304,7 @@ object CapabilityAnswerExecutor {
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
         val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val completeCoverage = context.hasCompleteEligibleCoverage()
         val buckets = sourceHits.filter { it.item.capturedAt != null }
             .groupBy { formatDate(requireNotNull(it.item.capturedAt)) }
             .toSortedMap()
@@ -310,7 +312,7 @@ object CapabilityAnswerExecutor {
             "${buckets.size} chronological ${if (buckets.size == 1) "date" else "dates"}",
             buckets.entries.take(20).joinToString("; ") { (date, hits) -> "$date: ${hits.size}" }
                 .ifBlank { "No deterministic capture dates were available." } +
-                if (context.deterministicHits.isNotEmpty()) {
+                if (completeCoverage) {
                     " Complete dates are shown for the resolved event scope."
                 } else {
                     " Dates are limited to the current retrieval pass."
@@ -333,14 +335,14 @@ object CapabilityAnswerExecutor {
             }.orEmpty().ifBlank { hit.item.title }
         }.entries.sortedByDescending { it.value.size }.take(2)
         if (grouped.size < 2) return base("Two comparison scopes were not resolved", "Refine the query with two places, events, albums, or result sets.", emptyList())
-        val detail = grouped.joinToString(" • ") { (name, hits) ->
+        val detail = grouped.joinToString(" | ") { (name, hits) ->
             val captures = hits.mapNotNull { it.item.capturedAt }
             "$name: ${hits.size} item(s), ${captures.minOrNull()?.let(::formatDate) ?: "date unavailable"} to " +
                 (captures.maxOrNull()?.let(::formatDate) ?: "date unavailable")
         }
         return base(
             "${grouped[0].key} compared with ${grouped[1].key}",
-            detail + if (context.deterministicHits.isNotEmpty()) {
+            detail + if (context.hasCompleteEligibleCoverage()) {
                 " Complete eligible membership was used for the resolved comparison scopes."
             } else {
                 " Comparison is based on the current ranked retrieval pass."
@@ -384,7 +386,11 @@ object CapabilityAnswerExecutor {
         }
         return base(
             "${grouped[0].first} compared with ${grouped[1].first}",
-            detail + " Complete eligible membership was used for the resolved comparison scopes.",
+            detail + if (context.hasCompleteEligibleCoverage()) {
+                " Complete eligible membership was used for the resolved comparison scopes."
+            } else {
+                " Comparison is based on the current ranked retrieval pass."
+            },
             collectEvidenceIds(grouped.flatMap { it.second }),
         )
     }

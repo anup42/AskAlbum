@@ -130,6 +130,34 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun boundedEventAnswersDoNotClaimCompleteMembership() {
+        val boundedSummary = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.EVENT_SUMMARY).copy(
+                exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+                deterministicHits = listOf(context(QueryIntent.EVENT_SUMMARY).hits.first()),
+            ),
+        )
+        val boundedTimeline = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.TIMELINE).copy(
+                exactness = ResultExactness.PARTIAL_INDEX,
+                deterministicHits = listOf(context(QueryIntent.TIMELINE).hits.first()),
+            ),
+        )
+        val boundedCompare = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.COMPARE).copy(
+                exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+                deterministicHits = context(QueryIntent.COMPARE).hits,
+                comparisonScopes = listOf("Trip A", "Trip B"),
+            ),
+        )
+
+        assertTrue(boundedSummary.detail.contains("current ranked retrieval pass", ignoreCase = true))
+        assertFalse(boundedSummary.detail.contains("evaluated completely", ignoreCase = true))
+        assertTrue(boundedTimeline.detail.contains("limited to the current retrieval pass", ignoreCase = true))
+        assertFalse(boundedCompare.detail.contains("Complete eligible membership", ignoreCase = true))
+    }
+
+    @Test
     fun minAndMaxRespectTheRequestedOperation() {
         val base = context(QueryIntent.MIN_MAX)
         val minimum = CapabilityAnswerExecutor.execute(
