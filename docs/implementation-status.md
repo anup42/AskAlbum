@@ -703,3 +703,9 @@ media, databases, or logs.
 - Negative visual predicates therefore cannot become positive person evidence during later retrieval.
 - Added an isolated device regression test for the stored verdict.
 - Validation: `PeopleIdentityProtectionDeviceTest` PASS on the secondary fixture device; fixture unit tests PASS; `consumerDebug` and `offlineDemoDebug` builds PASS.
+
+## 2026-08-06 - Exclude stale captions from coverage
+
+- Fixed direct caption coverage accounting to exclude `STALE_PERSON_BINDING` captions, matching the existing search, chunk-backfill, and personal-queue behavior.
+- Added an isolated database regression proving stale media captions do not count as current caption coverage.
+- Validation: `SemanticEnrichmentDatabaseTest` PASS on the secondary fixture device; fixture unit tests PASS; `consumerDebug` and `offlineDemoDebug` builds PASS.
