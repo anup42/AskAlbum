@@ -3288,38 +3288,54 @@ class GalleryDatabase(
             val now = System.currentTimeMillis()
             val facts = result.facts
             var storedCaption: SemanticCaptionRecord? = null
+
+            fun storeFact(fact: SemanticFactRecord) {
+                val stable = listOf(
+                    fact.scope.name,
+                    fact.subjectId,
+                    fact.predicate,
+                    fact.value,
+                    fact.evidenceMediaId,
+                    fact.applicability,
+                    fact.modelVersion,
+                    fact.promptVersion,
+                ).joinToString("|")
+                val id = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
+                db.insertWithOnConflict("semantic_fact", null, ContentValues().apply {
+                    put("id", id)
+                    put("scope", fact.scope.name)
+                    put("subject_id", fact.subjectId)
+                    put("predicate", fact.predicate)
+                    put("value", fact.value)
+                    put("confidence", fact.confidence)
+                    put("evidence_media_id", fact.evidenceMediaId)
+                    if (fact.region == null) putNull("region") else put("region", JSONArray(fact.region).toString())
+                    put("applicability", fact.applicability)
+                    put("model_version", fact.modelVersion)
+                    put("prompt_version", fact.promptVersion)
+                    put("updated_at", now)
+                }, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+
             facts.forEach { fact ->
-                val targets = if (fact.applicability == "SAFE_FOR_EXACT_DUPLICATES") {
+                // Preserve the generated fact exactly as scoped. Propagation is a second,
+                // explicit write and is allowed only for media or exact-duplicate-group facts.
+                storeFact(fact)
+                if (
+                    fact.applicability == "SAFE_FOR_EXACT_DUPLICATES" &&
+                    fact.scope in setOf(SemanticFactScope.MEDIA, SemanticFactScope.EXACT_DUPLICATE_GROUP)
+                ) {
                     exactDuplicateMediaIds(db, fact.evidenceMediaId)
-                } else {
-                    setOf(fact.subjectId)
-                }
-                targets.forEach { subjectId ->
-                    val stable = "${fact.scope}|$subjectId|${fact.predicate}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}"
-                    val id = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
-                    db.insertWithOnConflict("semantic_fact", null, ContentValues().apply {
-                        put("id", id)
-                    put(
-                        "scope",
-                        if (fact.applicability == "SAFE_FOR_EXACT_DUPLICATES") {
-                            SemanticFactScope.MEDIA.name
-                        } else if (subjectId == fact.evidenceMediaId) {
-                            fact.scope.name
-                        } else {
-                            SemanticFactScope.MEDIA.name
-                        },
-                    )
-                        put("subject_id", subjectId)
-                        put("predicate", fact.predicate)
-                        put("value", fact.value)
-                        put("confidence", fact.confidence)
-                        put("evidence_media_id", fact.evidenceMediaId)
-                        if (fact.region == null) putNull("region") else put("region", JSONArray(fact.region).toString())
-                        put("applicability", if (subjectId == fact.evidenceMediaId) fact.applicability else "EXACT_DUPLICATE_SHARED")
-                        put("model_version", fact.modelVersion)
-                        put("prompt_version", fact.promptVersion)
-                        put("updated_at", now)
-                    }, SQLiteDatabase.CONFLICT_REPLACE)
+                        .forEach { targetMediaId ->
+                            storeFact(
+                                fact.copy(
+                                    scope = SemanticFactScope.MEDIA,
+                                    subjectId = targetMediaId,
+                                    evidenceMediaId = targetMediaId,
+                                    applicability = "EXACT_DUPLICATE_SHARED",
+                                ),
+                            )
+                        }
                 }
             }
             result.caption?.let { caption ->
