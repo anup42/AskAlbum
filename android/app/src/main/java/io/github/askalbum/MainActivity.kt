@@ -390,6 +390,7 @@ private fun AskAlbumApp(viewModel: GalleryViewModel) {
             metadata = state.selectedEvidenceMetadata,
             metadataLoading = state.selectedEvidenceMetadataLoading,
             metadataError = state.selectedEvidenceMetadataError,
+            sensitiveEvidenceUnlocked = state.selectedEvidenceMetadataUnlocked,
             onDismiss = viewModel::dismissEvidence,
             onSelect = viewModel::showEvidence,
             onLoadMetadata = { viewModel.loadSelectedEvidenceMetadata() },
@@ -2813,7 +2814,11 @@ private fun OnboardingScreen(onContinue: () -> Unit) {
 }
 
 @Composable
-internal fun LegacyEvidenceDialog(hit: SearchHit, onDismiss: () -> Unit) {
+internal fun LegacyEvidenceDialog(
+    hit: SearchHit,
+    onDismiss: () -> Unit,
+    sensitiveEvidenceUnlocked: Boolean = false,
+) {
     val playbackTimestamp = VideoKeyframeSelectionPolicy.selectEvidenceTimestamp(hit.evidence)
     var playing by remember(hit.item.id, playbackTimestamp) { mutableStateOf(false) }
     AlertDialog(
@@ -2862,7 +2867,7 @@ internal fun LegacyEvidenceDialog(hit: SearchHit, onDismiss: () -> Unit) {
                     hit.evidence.forEachIndexed { index, evidence ->
                         if (index > 0) HorizontalDivider(Modifier.padding(vertical = 9.dp))
                         Text(evidence.sourceField.replace('_', ' ').uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(evidence.text, fontWeight = FontWeight.SemiBold)
+                        Text(displayEvidenceText(evidence, sensitiveEvidenceUnlocked), fontWeight = FontWeight.SemiBold)
                         evidence.pageIndex?.let { Text("PDF page ${it + 1}", fontSize = 11.sp, color = Forest) }
                         Text("Confidence ${(evidence.confidence * 100).toInt()}% • ${evidence.producerVersion}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         evidence.region?.let { region ->
@@ -3309,6 +3314,7 @@ internal fun EvidenceDialog(
     metadata: IndexedMediaMetadata? = null,
     metadataLoading: Boolean = false,
     metadataError: String? = null,
+    sensitiveEvidenceUnlocked: Boolean = false,
     onDismiss: () -> Unit,
     onSelect: (SearchHit) -> Unit = {},
     onLoadMetadata: () -> Unit = {},
@@ -3434,7 +3440,7 @@ internal fun EvidenceDialog(
                                 "Why this item matched",
                                 currentHit.evidence.map {
                                     it.sourceField.replace('_', ' ') to
-                                        "${it.text} (${(it.confidence * 100).toInt()}% confidence)"
+                                        "${displayEvidenceText(it, sensitiveEvidenceUnlocked)} (${(it.confidence * 100).toInt()}% confidence)"
                                 },
                             )
                         }
@@ -3445,7 +3451,12 @@ internal fun EvidenceDialog(
     }
 }
 
-@Composable
+private fun displayEvidenceText(evidence: EvidenceRecord, unlocked: Boolean): String =
+    if (!unlocked && SensitiveEvidencePolicy.requiresAuthentication(evidence)) {
+        "Hidden until device authentication"
+    } else {
+        evidence.text
+    }@Composable
 private fun ZoomableViewerMedia(item: GalleryItem, onToggleControls: () -> Unit) {
     var scale by remember(item.id) { mutableFloatStateOf(1f) }
     var offsetX by remember(item.id) { mutableFloatStateOf(0f) }

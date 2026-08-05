@@ -25,4 +25,10 @@ class SensitiveContentClassifierTest {
         assertTrue(projected.contains("[REDACTED_AMOUNT]"))
         assertFalse(projected.contains("1,248.50"))
     }
-}
+    @Test
+    fun allowlistedSensitiveEvidenceRequiresAuthenticationEvenWhenTextLooksBenign() {
+        val password = EvidenceRecord("password", "media-1", "document_password", "private-value", .9f)
+        val metadata = EvidenceRecord("metadata", "media-1", "metadata", "holiday photo", .9f)
+        assertTrue(SensitiveEvidencePolicy.requiresAuthentication(password))
+        assertFalse(SensitiveEvidencePolicy.requiresAuthentication(metadata))
+    }}

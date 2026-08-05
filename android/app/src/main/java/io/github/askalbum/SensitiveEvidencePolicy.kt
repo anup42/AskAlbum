@@ -97,14 +97,12 @@ object SensitiveEvidencePolicy {
     const val LOCKED_DETAIL = "Authenticate on this device to view the matching private OCR evidence."
     const val LOCKED_WARNING = "Sensitive OCR was withheld from Gemma and the answer card."
 
+    fun requiresAuthentication(evidence: EvidenceRecord): Boolean =
+        OcrFactAllowlist.fromSource(evidence.sourceField)?.sensitive == true ||
+            evidence.sourceField == "document_password" ||
+            SensitiveContentClassifier.isSensitive(evidence.text)
     fun requiresAuthentication(hit: SearchHit): Boolean =
-        hit.evidence.any {
-            OcrFactAllowlist.fromSource(it.sourceField)?.sensitive == true ||
-                it.sourceField == "document_password"
-        } ||
-            hit.evidence.any { SensitiveContentClassifier.isSensitive(it.text) }
-
-    fun lock(answer: SearchAnswer): SearchAnswer = answer.copy(
+        hit.evidence.any { evidence -> requiresAuthentication(evidence) }    fun lock(answer: SearchAnswer): SearchAnswer = answer.copy(
         headline = LOCKED_HEADLINE,
         detail = LOCKED_DETAIL,
         evidenceIds = emptyList(),

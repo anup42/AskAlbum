@@ -845,4 +845,7 @@ media, databases, or logs.
 2026-08-06 - Broadened bounded OCR fact extraction
 - Receipt totals now accept a labeled currencyless amount without treating arbitrary numbers as totals.
 - ISO dates and common `Wi-Fi password is ...` wording are extracted into the existing allowlisted entity types.
-- Added extractor regressions; sensitive values remain protected and no OCR value is sent to Gemma before authentication.
+- Added extractor regressions; sensitive values remain protected and no OCR value is sent to Gemma before authentication.### 2026-08-06 - Protect raw sensitive evidence in the viewer
+- Search-hit evidence now uses the same allowlist and content classifier as answer gating.
+- Sensitive OCR evidence is masked in the evidence viewer until the existing biometric/device-credential unlock completes; non-sensitive metadata remains visible.
+- Added a regression for allowlisted password evidence.
