@@ -502,3 +502,12 @@ media, databases, or logs.
 - Builds: `consumerDebug` PASS; `fixtureCiDebug` PASS. Fixture APK declares no `INTERNET` permission.
 - Device: replacement-installed `consumerDebug` with `adb install -r -d`; package `firstInstallTime` unchanged; `MainActivity` resumed; no recent fatal/ANR match.
 - Remaining: complete device acceptance queries, process-death/Doze/FGS-timeout tests, and 5k/20k workload gates remain NOT RUN.
+
+## 2026-08-05 - OCR channel coverage truthfulness
+
+- OCR retrieval coverage now comes from durable `media_index_stage` OCR states, not generic media readiness. `COMPLETE` and `SKIPPED` are covered; pending, running, and failed stages remain uncovered.
+- `ANSWER_FACT`, `DOCUMENT_QA`, `SUM`, and `MIN_MAX` now require the OCR channel. Missing model coverage reports `UNAVAILABLE`; incomplete stage coverage reports `PARTIAL` with an explicit error code.
+- Tests: `OcrChannelCoveragePolicyTest` PASS; full `testConsumerDebugUnitTest` PASS; consumer lint PASS; `git diff --check` pending final staging check.
+- Builds: `consumerDebug`, `offlineDemoDebug`, and `fixtureCiDebug` PASS. Offline variant has no `INTERNET` permission.
+- Device: replacement-installed consumer APK with unchanged `firstInstallTime`; `MainActivity` resumed; no recent fatal/ANR match. A model-backed OCR query was not run.
+- Remaining: process-death/Doze/FGS-timeout, 5k/20k workload, and full acceptance-query gates remain NOT RUN.

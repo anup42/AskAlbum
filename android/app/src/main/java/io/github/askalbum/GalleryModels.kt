@@ -282,6 +282,17 @@ data class ScopedIndexCoverage(
     val stageStatuses: Map<IndexStage, Map<StageStatus, Int>>,
 )
 
+data class IndexStageCoverage(
+    val eligibleCount: Int,
+    val statusCounts: Map<StageStatus, Int> = emptyMap(),
+) {
+    val coveredCount: Int
+        get() = (statusCounts[StageStatus.COMPLETE] ?: 0) + (statusCounts[StageStatus.SKIPPED] ?: 0)
+
+    val isComplete: Boolean
+        get() = coveredCount >= eligibleCount
+}
+
 data class VideoKeyframeRecord(
     val id: String,
     val mediaId: String,

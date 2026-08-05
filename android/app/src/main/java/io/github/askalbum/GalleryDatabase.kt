@@ -1101,6 +1101,24 @@ class GalleryDatabase(
         }
     }
 
+    fun indexStageCoverage(mediaIds: Set<String>, stage: IndexStage): IndexStageCoverage {
+        if (mediaIds.isEmpty()) return IndexStageCoverage(eligibleCount = 0)
+        val counts = linkedMapOf<StageStatus, Int>()
+        mediaIds.toList().chunked(SQLITE_ID_CHUNK).forEach { ids ->
+            val placeholders = ids.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT status,COUNT(*) FROM media_index_stage WHERE stage=? AND media_id IN ($placeholders) GROUP BY status",
+                arrayOf(stage.name, *ids.toTypedArray()),
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val status = enumOrNull<StageStatus>(cursor.getString(0)) ?: continue
+                    counts[status] = (counts[status] ?: 0) + cursor.getInt(1)
+                }
+            }
+        }
+        return IndexStageCoverage(mediaIds.size, counts)
+    }
+
     fun enablePeopleIndexing(consentVersion: Int): PeopleIndexStatus {
         require(consentVersion == PEOPLE_CONSENT_VERSION) { "Unsupported people-consent version" }
         val db = writableDatabase

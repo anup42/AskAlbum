@@ -924,14 +924,28 @@ class GalleryRepository(context: Context) {
                 null
             },
         )
+        val ocrRequired = plan.ocrClause != null || plan.intent in setOf(
+            QueryIntent.ANSWER_FACT,
+            QueryIntent.DOCUMENT_QA,
+            QueryIntent.SUM,
+            QueryIntent.MIN_MAX,
+        )
+        val ocrStageCoverage = if (ocrRequired) {
+            database.indexStageCoverage(eligibleIds, IndexStage.OCR)
+        } else {
+            IndexStageCoverage(eligibleCount = 0)
+        }
+        val ocrModelAvailable = services.ocrEngines.activeDescriptor() != null
+        val ocrStatus = OcrChannelCoveragePolicy.status(ocrRequired, ocrStageCoverage, ocrModelAvailable)
         val ocrChannelReport = RetrievalChannelReport<SearchHit>(
-            RetrievalChannel.OCR,
-            if (plan.ocrClause == null) ChannelStatus.NOT_REQUIRED else if (readyEligibleCount < eligibleIds.size) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
-            eligibleIds.size,
-            readyEligibleCount,
-            if (plan.ocrClause == null) 0 else eligibleIds.size,
-            emptyList(),
+            channel = RetrievalChannel.OCR,
+            status = ocrStatus,
+            eligibleCount = ocrStageCoverage.eligibleCount,
+            indexedCount = ocrStageCoverage.coveredCount,
+            searchedCount = if (ocrRequired) ocrStageCoverage.coveredCount else 0,
+            hits = emptyList(),
             modelVersion = services.ocrEngines.activeDescriptor()?.producerVersion,
+            errorCode = OcrChannelCoveragePolicy.errorCode(ocrStatus),
         )
         val refinementIds = FollowUpRefinementPolicy.corroboratedSemanticIds(
             scoped = plan.baseResultIds != null,
