@@ -4005,8 +4005,14 @@ class GalleryDatabase(
             replaceCaptionChunks(
                 db,
                 caption,
-                semanticFactsForMedia(caption.evidenceMediaId),
-                personVisualFactsForMedia(caption.evidenceMediaId),
+                CaptionChunkFactProvenancePolicy.matchingFacts(
+                    caption,
+                    semanticFactsForMedia(caption.evidenceMediaId),
+                ),
+                CaptionChunkFactProvenancePolicy.matchingPersonFacts(
+                    caption,
+                    personVisualFactsForMedia(caption.evidenceMediaId),
+                ),
             )
         }
         captions.size

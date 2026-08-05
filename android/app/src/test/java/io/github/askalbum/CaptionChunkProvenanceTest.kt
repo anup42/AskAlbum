@@ -1,0 +1,79 @@
+package io.github.anup42.askalbum
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class CaptionChunkProvenanceTest {
+    @Test
+    fun onlyMatchingMediaGenerationFactsAreUsed() {
+        val caption = caption()
+        val valid = fact(generationId = "g1")
+        val wrongGeneration = fact(generationId = "g2", value = "wrong generation")
+        val wrongScope = fact(generationId = "g1", scope = SemanticFactScope.EVENT, value = "wrong scope")
+        val wrongModel = fact(generationId = "g1", modelVersion = "model-2", value = "wrong model")
+
+        assertEquals(
+            listOf(valid),
+            CaptionChunkFactProvenancePolicy.matchingFacts(
+                caption,
+                listOf(valid, wrongGeneration, wrongScope, wrongModel),
+            ),
+        )
+    }
+
+    @Test
+    fun legacyAndContextCaptionsDoNotInheritPersonFacts() {
+        val mediaFact = personFact("g1")
+        val mediaCaption = caption()
+        val legacyCaption = mediaCaption.copy(generationId = null)
+        val eventCaption = mediaCaption.copy(scope = SemanticFactScope.EVENT, subjectId = "event-1")
+
+        assertEquals(emptyList<PersonVisualFactRecord>(), CaptionChunkFactProvenancePolicy.matchingPersonFacts(legacyCaption, listOf(mediaFact)))
+        assertEquals(emptyList<PersonVisualFactRecord>(), CaptionChunkFactProvenancePolicy.matchingPersonFacts(eventCaption, listOf(mediaFact)))
+        assertEquals(listOf(mediaFact), CaptionChunkFactProvenancePolicy.matchingPersonFacts(mediaCaption, listOf(mediaFact)))
+    }
+
+    private fun caption() = SemanticCaptionRecord(
+        id = "caption-1",
+        scope = SemanticFactScope.MEDIA,
+        subjectId = "media-1",
+        text = "A person is holding a gift.",
+        confidence = .9f,
+        evidenceMediaId = "media-1",
+        modelVersion = "model-1",
+        promptVersion = "prompt-1",
+        generationId = "g1",
+    )
+
+    private fun fact(
+        generationId: String,
+        scope: SemanticFactScope = SemanticFactScope.MEDIA,
+        modelVersion: String = "model-1",
+        value: String = "holding a gift",
+    ) = SemanticFactRecord(
+        scope = scope,
+        subjectId = "media-1",
+        predicate = "activity",
+        value = value,
+        confidence = .9f,
+        evidenceMediaId = "media-1",
+        modelVersion = modelVersion,
+        promptVersion = "prompt-1",
+        generationId = generationId,
+    )
+
+    private fun personFact(generationId: String) = PersonVisualFactRecord(
+        mediaId = "media-1",
+        clusterId = "me-cluster",
+        personRef = "P1",
+        relation = PersonVisualRelation.HOLDING,
+        itemType = "gift",
+        value = "holding gift",
+        confidence = .9f,
+        faceRegion = listOf(.1f, .1f, .2f, .2f),
+        modelVersion = "model-1",
+        promptVersion = "prompt-1",
+        generationId = generationId,
+    )
+}

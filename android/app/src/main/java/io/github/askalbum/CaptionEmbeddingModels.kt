@@ -104,6 +104,37 @@ internal object CaptionVectorCoveragePolicy {
     }
 }
 
+internal object CaptionChunkFactProvenancePolicy {
+    fun matchingFacts(
+        caption: SemanticCaptionRecord,
+        facts: List<SemanticFactRecord>,
+    ): List<SemanticFactRecord> {
+        val generationId = caption.generationId ?: return emptyList()
+        return facts.filter { fact ->
+            fact.generationId == generationId &&
+                fact.scope == caption.scope &&
+                fact.subjectId == caption.subjectId &&
+                fact.evidenceMediaId == caption.evidenceMediaId &&
+                fact.modelVersion == caption.modelVersion &&
+                fact.promptVersion == caption.promptVersion
+        }
+    }
+
+    fun matchingPersonFacts(
+        caption: SemanticCaptionRecord,
+        personFacts: List<PersonVisualFactRecord>,
+    ): List<PersonVisualFactRecord> {
+        val generationId = caption.generationId ?: return emptyList()
+        if (caption.scope != SemanticFactScope.MEDIA) return emptyList()
+        return personFacts.filter { fact ->
+            fact.generationId == generationId &&
+                fact.mediaId == caption.evidenceMediaId &&
+                fact.modelVersion == caption.modelVersion &&
+                fact.promptVersion == caption.promptVersion
+        }
+    }
+}
+
 internal object SemanticCaptionChunker {
     const val POLICY_VERSION = "caption-chunks-v3"
     const val MAX_CHUNKS_PER_CAPTION = 24
