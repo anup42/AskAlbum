@@ -63,7 +63,7 @@ internal class SensitiveDataAtRest {
     }
 
     companion object {
-        const val MIGRATION_VERSION = 5
+        const val MIGRATION_VERSION = 6
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "askalbum_sensitive_ocr_v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
@@ -76,6 +76,8 @@ internal class SensitiveDataAtRest {
 }
 
 internal fun OcrEntityType.isHighRiskAtRest(): Boolean = this in setOf(
+    OcrEntityType.AMOUNT,
+    OcrEntityType.RECEIPT_TOTAL,
     OcrEntityType.PASSWORD,
     OcrEntityType.EMAIL,
     OcrEntityType.PHONE,

@@ -110,6 +110,15 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun financialEvidenceAlwaysRequiresAuthentication() {
+        val receipt = hit("receipt", "Swiggy", "INR 1,248.00", 1_700_000_000_000).copy(
+            evidence = listOf(EvidenceRecord("receipt:total", "receipt", "document_total", "INR 1,248.00", .95f)),
+        )
+
+        assertTrue(SensitiveEvidencePolicy.requiresAuthentication(receipt))
+    }
+
+    @Test
     fun flightTimeExtractionIsAllowlisted() {
         val entities = DocumentFactExtractor.extract(
             listOf(OcrBlockRecord("Departure time: 10:45 PM", confidence = .95f, left = 0f, top = .2f, right = 1f, bottom = .3f)),

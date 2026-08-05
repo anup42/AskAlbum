@@ -68,10 +68,10 @@ class QueryCompilerTest {
     }
 
     @Test
-    fun sensitiveContentClassifierFindsPasswordsAndCards() {
+    fun sensitiveContentClassifierFindsPasswordsCardsAndFinancialFacts() {
         assertTrue(SensitiveContentClassifier.isSensitive("Wi-Fi password: mango-tree"))
         assertTrue(SensitiveContentClassifier.isSensitive("4111 1111 1111 1111"))
-        assertTrue(!SensitiveContentClassifier.isSensitive("Grand total Rs 1,248"))
+        assertTrue(SensitiveContentClassifier.isSensitive("Grand total Rs 1,248"))
     }
 
     @Test

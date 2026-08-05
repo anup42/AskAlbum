@@ -49,6 +49,7 @@ class GalleryDatabase(
             migrateSensitiveColumn(db, "person_attribute_fact", "id", "value")
             migrateSensitiveColumn(db, "person_attribute_fact", "id", "attributes")
             migrateSensitiveColumn(db, "media_item", "id", "ocr_text")
+            migrateSensitiveOcrEntities(db)
             // The encrypted OCR migration previously rebuilt FTS with ciphertext.
             // Rebuild once for this migration version using only the safe searchable
             // projection while the media row remains protected at rest.
@@ -104,6 +105,38 @@ class GalleryDatabase(
                 arrayOf(id),
             )
             changed++
+        }
+        return changed
+    }
+
+    private fun migrateSensitiveOcrEntities(db: GallerySqlDatabase): Int {
+        val sensitiveTypes = OcrEntityType.entries.filter { it.isHighRiskAtRest() }
+        if (sensitiveTypes.isEmpty()) return 0
+        val placeholders = sensitiveTypes.joinToString(",") { "?" }
+        var changed = 0
+        db.query(
+            "ocr_entity",
+            arrayOf("id", "raw_text", "normalized_value"),
+            "entity_type IN ($placeholders)",
+            sensitiveTypes.map(OcrEntityType::name).toTypedArray(),
+            null,
+            null,
+            null,
+            null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(0).toString()
+                val raw = cursor.getString(1)
+                val normalized = cursor.getString(2)
+                val protectedRaw = sensitiveDataAtRest.protect(raw)
+                val protectedNormalized = sensitiveDataAtRest.protect(normalized)
+                if (protectedRaw == raw && protectedNormalized == normalized) continue
+                db.update("ocr_entity", ContentValues().apply {
+                    put("raw_text", protectedRaw)
+                    put("normalized_value", protectedNormalized)
+                }, "id=?", arrayOf(id))
+                changed++
+            }
         }
         return changed
     }
@@ -4361,7 +4394,7 @@ class GalleryDatabase(
     }
 
     fun hasAuthenticationProtectedOcr(mediaId: String): Boolean = readableDatabase.rawQuery(
-        "SELECT 1 FROM ocr_entity WHERE media_id=? AND entity_type IN ('PASSWORD','EMAIL','PHONE','ORDER_ID') LIMIT 1",
+        "SELECT 1 FROM ocr_entity WHERE media_id=? AND entity_type IN ('AMOUNT','RECEIPT_TOTAL','PASSWORD','EMAIL','PHONE','ORDER_ID') LIMIT 1",
         arrayOf(mediaId),
     ).use(android.database.Cursor::moveToFirst)
 

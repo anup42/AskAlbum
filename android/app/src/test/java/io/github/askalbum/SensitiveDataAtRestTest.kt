@@ -8,10 +8,11 @@ class SensitiveDataAtRestTest {
     @Test
     fun onlyHighRiskOcrFieldsUseTheProtectedEnvelope() {
         assertTrue(OcrEntityType.PASSWORD.isHighRiskAtRest())
+        assertTrue(OcrEntityType.AMOUNT.isHighRiskAtRest())
+        assertTrue(OcrEntityType.RECEIPT_TOTAL.isHighRiskAtRest())
         assertTrue(OcrEntityType.EMAIL.isHighRiskAtRest())
         assertTrue(OcrEntityType.ORDER_ID.isHighRiskAtRest())
         assertFalse(OcrEntityType.DATE.isHighRiskAtRest())
-        assertFalse(OcrEntityType.RECEIPT_TOTAL.isHighRiskAtRest())
     }
 
     @Test
@@ -23,5 +24,6 @@ class SensitiveDataAtRestTest {
         assertTrue(projection.contains("password", ignoreCase = true))
         assertTrue(projection.contains("receipt total", ignoreCase = true))
         assertFalse(projection.contains("mango-tree-2048"))
+        assertFalse(projection.contains("1,248"))
     }
 }

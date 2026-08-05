@@ -9,10 +9,20 @@ class SensitiveContentClassifierTest {
     fun protectsSensitiveValuesWithoutTreatingEventEpochsAsCards() {
         assertTrue(SensitiveContentClassifier.isSensitive("Wi-Fi password: mango-tree"))
         assertTrue(SensitiveContentClassifier.isSensitive("Card 4111 1111 1111 1111"))
+        assertTrue(SensitiveContentClassifier.isSensitive("Receipt total Rs 1,248"))
         assertFalse(
             SensitiveContentClassifier.isSensitive(
                 "Gallery memory (1752225783000..1752238975000)",
             ),
         )
+    }
+
+    @Test
+    fun redactsFinancialAmountsWhileKeepingTheLabelSearchable() {
+        val projected = SensitiveContentClassifier.redactForSearch("Grand total: ₹1,248.50")
+
+        assertTrue(projected.contains("grand total", ignoreCase = true))
+        assertTrue(projected.contains("[REDACTED_AMOUNT]"))
+        assertFalse(projected.contains("1,248.50"))
     }
 }

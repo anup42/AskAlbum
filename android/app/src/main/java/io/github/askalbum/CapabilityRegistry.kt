@@ -45,13 +45,13 @@ data class OcrFactField(
 
 object OcrFactAllowlist {
     val fields = listOf(
-        OcrFactField("total", OcrEntityType.RECEIPT_TOTAL, "document_total", setOf("total", "receipt_total", "amount", "amount_paid"), numeric = true),
+        OcrFactField("total", OcrEntityType.RECEIPT_TOTAL, "document_total", setOf("total", "receipt_total", "amount", "amount_paid"), numeric = true, sensitive = true),
         OcrFactField("password", OcrEntityType.PASSWORD, "document_password", setOf("password", "wifi_password", "passcode"), sensitive = true),
         OcrFactField("flight_number", OcrEntityType.FLIGHT_NUMBER, "document_flight_number", setOf("flight", "flight_number")),
         OcrFactField("flight_time", OcrEntityType.FLIGHT_TIME, "document_flight_time", setOf("flight_time", "departure_time", "boarding_time")),
-        OcrFactField("order_id", OcrEntityType.ORDER_ID, "document_order_id", setOf("order", "order_id", "booking_id")),
-        OcrFactField("email", OcrEntityType.EMAIL, "document_email", setOf("email", "email_address")),
-        OcrFactField("phone", OcrEntityType.PHONE, "document_phone", setOf("phone", "phone_number", "mobile")),
+        OcrFactField("order_id", OcrEntityType.ORDER_ID, "document_order_id", setOf("order", "order_id", "booking_id"), sensitive = true),
+        OcrFactField("email", OcrEntityType.EMAIL, "document_email", setOf("email", "email_address"), sensitive = true),
+        OcrFactField("phone", OcrEntityType.PHONE, "document_phone", setOf("phone", "phone_number", "mobile"), sensitive = true),
         OcrFactField("date", OcrEntityType.DATE, "document_date", setOf("date")),
         OcrFactField("url", OcrEntityType.URL, "document_url", setOf("url", "website", "link")),
         OcrFactField("merchant", OcrEntityType.MERCHANT, "document_merchant", setOf("merchant", "store", "restaurant")),

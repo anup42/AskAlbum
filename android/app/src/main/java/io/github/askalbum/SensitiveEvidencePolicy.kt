@@ -12,13 +12,23 @@ object SensitiveContentClassifier {
         "(?i)\\b(password|passcode|pin|cvv|account number|aadhaar|passport|social security|ssn)\\b" +
             "\\s*[:=]?\\s*[^\\r\\n,;]*?(?=(?:[,;]|[.!?](?:\\s|$)|$))",
     )
+    private val currencyAmountCandidate = Regex(
+        "(?i)(?:₹|rs\\.?|inr|usd|eur|gbp|\\$|€|£)\\s*[0-9][0-9,]*(?:\\.[0-9]{1,2})?|" +
+            "[0-9][0-9,]*(?:\\.[0-9]{1,2})?\\s*(?:₹|rs\\.?|inr|usd|eur|gbp|\\$|€|£)",
+    )
+    private val labeledAmountCandidate = Regex(
+        "(?i)\\b(grand total|amount paid|net payable|balance due|receipt total|total)\\b" +
+            "\\s*[:=]?\\s*(?:₹|rs\\.?|inr|usd|eur|gbp|\\$|€|£)?\\s*[0-9][0-9,]*(?:\\.[0-9]{1,2})?",
+    )
 
     fun isSensitive(text: String): Boolean =
         text.isNotBlank() && (
             keywordPatterns.any { it.containsMatchIn(text) } ||
                 paymentCardCandidate.findAll(text).any { looksLikePaymentCard(it.value) } ||
                 emailCandidate.containsMatchIn(text) ||
-                labeledContactCandidate.containsMatchIn(text)
+                labeledContactCandidate.containsMatchIn(text) ||
+                currencyAmountCandidate.containsMatchIn(text) ||
+                labeledAmountCandidate.containsMatchIn(text)
             )
 
     /** Keeps searchable labels while ensuring raw credentials/contact values never enter FTS. */
@@ -36,6 +46,14 @@ object SensitiveContentClassifier {
         redacted = redacted.replace(emailCandidate) {
             changed = true
             "[REDACTED_EMAIL]"
+        }
+        redacted = redacted.replace(labeledAmountCandidate) { match ->
+            changed = true
+            "${match.groupValues[1]}: [REDACTED_AMOUNT]"
+        }
+        redacted = redacted.replace(currencyAmountCandidate) {
+            changed = true
+            "[REDACTED_AMOUNT]"
         }
         redacted = redacted.replace(paymentCardCandidate) { match ->
             if (looksLikePaymentCard(match.value)) {
@@ -80,7 +98,10 @@ object SensitiveEvidencePolicy {
     const val LOCKED_WARNING = "Sensitive OCR was withheld from Gemma and the answer card."
 
     fun requiresAuthentication(hit: SearchHit): Boolean =
-        hit.evidence.any { it.sourceField == "document_password" } ||
+        hit.evidence.any {
+            OcrFactAllowlist.fromSource(it.sourceField)?.sensitive == true ||
+                it.sourceField == "document_password"
+        } ||
             hit.evidence.any { SensitiveContentClassifier.isSensitive(it.text) }
 
     fun lock(answer: SearchAnswer): SearchAnswer = answer.copy(

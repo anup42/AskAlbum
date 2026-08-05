@@ -362,3 +362,9 @@ media, databases, or logs.
 - Grounded answer composition now also covers `ANSWER_FACT`, `DOCUMENT_QA`, `SUM`, and `MIN_MAX` plans when the verified model pack is installed.
 - Ordinary media search remains deterministic unless person/query verification is applied, avoiding an extra Gemma call for every image search.
 - Composer failure still falls back to the deterministic, evidence-backed answer rather than fabricating a result.
+
+## Gate financial OCR behind the existing sensitive-evidence boundary
+
+- Receipt totals and extracted amounts are now high-risk OCR fields, encrypted with the existing Keystore envelope and included in migration version 6 for existing rows.
+- FTS retains safe labels such as `receipt total` while redacting currency values; financial evidence requires device authentication before answer composition or display.
+- Deterministic sums and min/max remain available through the existing authenticated evidence path; no arithmetic is delegated to Gemma.
