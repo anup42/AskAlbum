@@ -755,3 +755,10 @@ media, databases, or logs.
 - Reviewed-person expansion now resumes when a cluster is unhidden.
 - Automatic face assignments re-queue personal semantic-memory work after database invalidation, closing the race where tagging completed before newly discovered media was captioned.
 - Validation: fixture unit tests and `consumerDebug`/`offlineDemoDebug` assembly PASS; `PeopleEditingDatabaseTest` and `PersonalSemanticMemoryDatabaseTest` PASS on secondary fixture device `R3CY30QFWLP`.
+
+## 2026-08-06 - Reject unsupported OCR capability fields
+
+- `ANSWER_FACT`, `DOCUMENT_QA`, `SUM`, and `MIN_MAX` no longer default an unknown or missing requested field to receipt `total`.
+- Unsupported fields now return an explicit non-answer, preserving truthful capability behavior.
+- Validation: `CapabilityRegistryTest` and `consumerDebug`/`offlineDemoDebug` assembly PASS.
+- Published to AskAlbum as commit `b4d8a93` on `codex/current-agentic-gallery-sync`.
