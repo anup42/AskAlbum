@@ -53,4 +53,34 @@ class IndexingWorkProgressTest {
         assertEquals(4, IndexingCoverageMath.peoplePending(pending = 8, faceEligible = 4))
         assertEquals(0, IndexingCoverageMath.peopleFailed(faceScanned = 9, pending = 8, faceEligible = 4))
     }
+
+    @Test
+    fun foregroundIndexingIsRunningEvenWhenItsWorkManagerRecordWasCancelled() {
+        assertEquals(
+            IndexingPipelineState.RUNNING,
+            IndexingRuntimeStatePolicy.resolve(
+                enabled = true,
+                pending = 12,
+                failed = 0,
+                admissionAllowed = true,
+                workRunning = false,
+                workEnqueued = false,
+                runAttemptCount = 0,
+                foregroundActive = true,
+            ),
+        )
+        assertEquals(
+            IndexingPipelineState.FAILED,
+            IndexingRuntimeStatePolicy.resolve(
+                enabled = true,
+                pending = 12,
+                failed = 0,
+                admissionAllowed = true,
+                workRunning = false,
+                workEnqueued = false,
+                runAttemptCount = 0,
+                foregroundActive = false,
+            ),
+        )
+    }
 }

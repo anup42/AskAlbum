@@ -440,3 +440,9 @@ media, databases, or logs.
 - FIXED: Debug seeder recovery now scopes Media Analysis and Embeddings independently; recovery verification scopes only Media Analysis.
 - HARDENED: Repository and database recovery APIs no longer default to `ALL`, preventing future callers from silently reclaiming unrelated pipeline leases.
 - PASS: repository-wide no-argument recovery scan; targeted recovery test; all debug assemblies; replacement install without data reset.
+
+### Foreground status/cancellation correction (2026-08-05)
+- Foreground media and embedding runs now remain visibly `RUNNING` even after their WorkManager records are cancelled for foreground ownership.
+- User cancellation no longer gets converted into a failure that silently re-enqueues background indexing.
+- Foreground notifications show media/vector count progress after gallery discovery instead of remaining indeterminate.
+- Verified with `IndexingWorkProgressTest` and `consumerDebug` assembly; replacement device install remains pending for this patch.

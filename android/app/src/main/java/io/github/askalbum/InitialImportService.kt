@@ -17,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
@@ -49,17 +50,24 @@ class InitialImportService : Service() {
                     val indexed = ForegroundIndexCoordinator(this@InitialImportService).run(
                         onProgress = { progress ->
                             val summary = app.repository.indexSummary()
+                            val discovered = summary.discovered
+                            val completed = (discovered - summary.pending - summary.failed)
+                                .coerceIn(0, discovered)
                             getSystemService(NotificationManager::class.java).notify(
                                 NOTIFICATION_ID,
                                 notification(
-                                    "Media ${summary.discovered - summary.pending}/${summary.discovered}; " +
-                                        "vectors ${summary.siglipVectorsReady}/${summary.discovered}",
-                                    indeterminate = true,
+                                    "Media $completed/$discovered; vectors " +
+                                        "${summary.siglipVectorsReady}/$discovered",
+                                    indeterminate = discovered <= 0,
+                                    progress = completed,
+                                    total = discovered,
                                 ),
                             )
                         },
                     )
                     imported to indexed
+                }.onFailure { error ->
+                    if (error is CancellationException) throw error
                 }
                 val message = result.fold(
                     onSuccess = { (imported, indexed) ->
@@ -132,7 +140,12 @@ class InitialImportService : Service() {
         }
     }
 
-    private fun notification(message: String, indeterminate: Boolean): Notification {
+    private fun notification(
+        message: String,
+        indeterminate: Boolean,
+        progress: Int? = null,
+        total: Int? = null,
+    ): Notification {
         val openApp = PendingIntent.getActivity(
             this,
             0,
@@ -156,7 +169,11 @@ class InitialImportService : Service() {
             )
             .setOnlyAlertOnce(true)
             .setOngoing(indeterminate)
-            .setProgress(if (indeterminate) 0 else 1, if (indeterminate) 0 else 1, indeterminate)
+            .setProgress(
+                total?.takeIf { it > 0 } ?: 0,
+                progress?.coerceIn(0, total?.coerceAtLeast(0) ?: 0) ?: 0,
+                indeterminate || total == null || total <= 0,
+            )
             .build()
     }
 

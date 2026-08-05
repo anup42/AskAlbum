@@ -99,6 +99,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 summary.discovered,
                 media,
                 admission,
+                foregroundActive = ForegroundIndexRuntime.active,
             ),
             IndexingJob.EMBEDDINGS to snapshot(
                 IndexingJob.EMBEDDINGS,
@@ -109,6 +110,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 summary.discovered,
                 embeddings,
                 admission,
+                foregroundActive = ForegroundIndexRuntime.active,
             ),
             IndexingJob.CAPTION_EMBEDDINGS to snapshot(
                 IndexingJob.CAPTION_EMBEDDINGS,
@@ -152,17 +154,18 @@ internal class IndexingRuntimeStatusReader(context: Context) {
         eligible: Int,
         work: WorkState,
         admission: BackgroundWorkAdmission,
+        foregroundActive: Boolean = false,
     ): IndexingPipelineSnapshot {
-        val state = when {
-            !enabled -> IndexingPipelineState.STOPPED_BY_USER
-            work.running -> IndexingPipelineState.RUNNING
-            pending == 0 && failed > 0 -> IndexingPipelineState.DEGRADED
-            pending == 0 -> IndexingPipelineState.COMPLETE
-            !admission.allowed -> IndexingPipelineState.WAITING_CONSTRAINTS
-            work.enqueued && work.runAttemptCount > 0 -> IndexingPipelineState.BACKOFF
-            work.enqueued -> IndexingPipelineState.WAITING_CONSTRAINTS
-            else -> IndexingPipelineState.FAILED
-        }
+        val state = IndexingRuntimeStatePolicy.resolve(
+            enabled = enabled,
+            pending = pending,
+            failed = failed,
+            admissionAllowed = admission.allowed,
+            workRunning = work.running,
+            workEnqueued = work.enqueued,
+            runAttemptCount = work.runAttemptCount,
+            foregroundActive = foregroundActive,
+        )
         val message = when (state) {
             IndexingPipelineState.RUNNING -> "$completed / $eligible indexed"
             IndexingPipelineState.WAITING_CONSTRAINTS -> admission.reason ?: "Queued for the next available run"
@@ -219,6 +222,29 @@ internal class IndexingRuntimeStatusReader(context: Context) {
         val nextAttemptAt: Long? get() = progress.nextAttemptAt
         val delayedRetryCount: Int get() = progress.delayedRetryCount
         val quarantinedCount: Int get() = progress.quarantinedCount
+    }
+}
+
+internal object IndexingRuntimeStatePolicy {
+    fun resolve(
+        enabled: Boolean,
+        pending: Int,
+        failed: Int,
+        admissionAllowed: Boolean,
+        workRunning: Boolean,
+        workEnqueued: Boolean,
+        runAttemptCount: Int,
+        foregroundActive: Boolean,
+    ): IndexingPipelineState = when {
+        !enabled -> IndexingPipelineState.STOPPED_BY_USER
+        foregroundActive && pending > 0 -> IndexingPipelineState.RUNNING
+        workRunning -> IndexingPipelineState.RUNNING
+        pending == 0 && failed > 0 -> IndexingPipelineState.DEGRADED
+        pending == 0 -> IndexingPipelineState.COMPLETE
+        !admissionAllowed -> IndexingPipelineState.WAITING_CONSTRAINTS
+        workEnqueued && runAttemptCount > 0 -> IndexingPipelineState.BACKOFF
+        workEnqueued -> IndexingPipelineState.WAITING_CONSTRAINTS
+        else -> IndexingPipelineState.FAILED
     }
 }
 
