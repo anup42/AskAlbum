@@ -28,12 +28,37 @@ class SemanticVectorStore(
             .filter { it.score >= current.pack.manifest.minimumSimilarity }
     }
 
-    suspend fun scanTextBatch(query: String, allowedIds: Set<String>): List<VectorHit> {
-        if (query.isBlank() || allowedIds.isEmpty() || packs.current() == null) return emptyList()
-        val current = currentIndex()
-        val vector = embeddings.embedTextInteractive(query)
-        return current.index.scan(vector, allowedIds)
-            .filter { it.score >= current.pack.manifest.minimumSimilarity }
+    suspend fun scanTextBatchReport(
+        query: String,
+        allowedIds: Set<String>,
+    ): RetrievalChannelReport<VectorHit> {
+        if (query.isBlank()) return SemanticChannelReporter.notRequired()
+        if (allowedIds.isEmpty()) {
+            return RetrievalChannelReport(
+                channel = RetrievalChannel.SEMANTIC,
+                status = ChannelStatus.PARTIAL,
+                eligibleCount = 1,
+                indexedCount = 0,
+                searchedCount = 0,
+                hits = emptyList(),
+                modelVersion = producerVersion(),
+                errorCode = "SCAN_BATCH_VECTOR_IDS_UNAVAILABLE",
+            )
+        }
+        return SemanticChannelReporter.execute(
+            query = query,
+            modelVersion = producerVersion(),
+            eligibleCount = allowedIds.size,
+            eligibleVectorIds = allowedIds,
+            topK = allowedIds.size,
+            indexedIds = { currentIndex().index.ids() },
+            search = { text, _, eligibleIds ->
+                val current = currentIndex()
+                val vector = embeddings.embedTextInteractive(text)
+                current.index.scan(vector, eligibleIds)
+                    .filter { it.score >= current.pack.manifest.minimumSimilarity }
+            },
+        )
     }
 
     suspend fun searchTextReport(

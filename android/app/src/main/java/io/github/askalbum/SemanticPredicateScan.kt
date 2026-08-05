@@ -144,6 +144,9 @@ internal object SemanticPredicateScanPolicy {
 
     fun queryText(plan: GalleryQueryPlan): String = plan.originalQuery.trim()
 
+    fun canCommitBatch(report: RetrievalChannelReport<*>): Boolean =
+        report.status == ChannelStatus.SUCCESS && report.errorCode == null
+
     fun scopeHash(mediaIds: Set<String>): String = digest(mediaIds.toList().sorted().joinToString("\n"))
 
     fun queryKey(query: String, modelVersion: String, scopeHash: String): String =
@@ -179,7 +182,17 @@ internal class SemanticPredicateScanRunner(
                 if (batch.mediaIds.isEmpty()) return database.semanticPredicateScan(scanId)
 
                 val vectorIds = database.vectorIdsForMedia(batch.mediaIds.toSet())
-                val rawHits = vectors.scanTextBatch(batch.queryText, vectorIds)
+                val scanReport = vectors.scanTextBatchReport(batch.queryText, vectorIds)
+                if (!SemanticPredicateScanPolicy.canCommitBatch(scanReport)) {
+                    database.failSemanticPredicateScan(
+                        scanId = scanId,
+                        owner = owner,
+                        error = scanReport.errorCode ?: "SEMANTIC_SCAN_BATCH_UNAVAILABLE",
+                        retryable = true,
+                    )
+                    return database.semanticPredicateScan(scanId)
+                }
+                val rawHits = scanReport.hits
                 val keyframes = database.videoKeyframesByIds(rawHits.mapTo(mutableSetOf(), VectorHit::mediaId))
                 val resolvedHits = rawHits
                     .groupBy { keyframes[it.mediaId]?.mediaId ?: it.mediaId }
