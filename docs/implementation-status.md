@@ -226,3 +226,8 @@ media, databases, or logs.
 
 - Direct caption coverage now excludes event and visual-group representative captions; only media, query-verification, and verified exact-duplicate scopes count.
 - Added connected database coverage proving an event caption cannot inflate an individual media caption count.
+
+### 2026-08-05 - Treat empty caption searches as not required
+
+- Caption-vector retrieval now short-circuits blank queries and empty eligible sets as `NOT_REQUIRED` before model loading.
+- Duplicate and whitespace-only query variants are removed before embedding; unavailable model packs are reported only for searches that actually require the channel.

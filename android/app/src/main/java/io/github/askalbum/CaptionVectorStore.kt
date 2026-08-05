@@ -31,6 +31,21 @@ class CaptionVectorStore(
         eligibleChunkIds: Set<String>,
         topK: Int,
     ): CaptionVectorSearchReport {
+        val normalizedQueries = queries
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+        if (normalizedQueries.isEmpty() || eligibleChunkIds.isEmpty()) {
+            return CaptionVectorSearchReport(
+                status = ChannelStatus.NOT_REQUIRED,
+                eligibleChunkCount = eligibleChunkIds.size,
+                indexedChunkCount = 0,
+                searchedChunkCount = 0,
+                hits = emptyList(),
+                modelVersion = null,
+                errorCode = null,
+            )
+        }
         val modelVersion = producerVersion()
             ?: return CaptionVectorSearchReport(
                 ChannelStatus.UNAVAILABLE,
@@ -41,20 +56,10 @@ class CaptionVectorStore(
                 null,
                 "NO_VERIFIED_RETRIEVAL_PACK",
             )
-        if (queries.isEmpty() || eligibleChunkIds.isEmpty()) {
-            return CaptionVectorSearchReport(
-                ChannelStatus.SUCCESS,
-                eligibleChunkIds.size,
-                0,
-                0,
-                emptyList(),
-                modelVersion,
-            )
-        }
         return runCatching {
             val current = currentIndex()
             val indexed = current.index.ids() intersect eligibleChunkIds
-            val perVariant = queries.map { query ->
+            val perVariant = normalizedQueries.map { query ->
                 val vector = embeddings.embedTextInteractive(query)
                 query to current.index.search(vector, topK.coerceIn(1, 100), indexed)
                     .filter { it.score >= current.pack.manifest.minimumSimilarity }
