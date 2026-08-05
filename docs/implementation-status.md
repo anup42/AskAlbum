@@ -319,3 +319,4 @@ media, databases, or logs.
 - Compare now builds complete per-scope deterministic evidence; offline LIST plans now support complete place, day, merchant, and reviewed-person value extraction without relying on ranked top-K.
 - Added codec, compiler, and executor regression tests; no schema or media-data migration was introduced.
 - Complete term-free LIST and explicit two-scope COMPARE answers now report `EXACT` only when the eligible local coverage is complete; bounded semantic retrieval remains estimated.
+- SUM and MIN/MAX fallback plans now use the complete allowlisted OCR fact set without a semantic predicate pass or top-K arithmetic.

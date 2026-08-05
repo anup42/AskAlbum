@@ -133,4 +133,13 @@ class QueryCompilerTest {
         assertEquals(Grouping.PLACE, plan.grouping)
         assertTrue(plan.terms.isEmpty())
     }
+
+    @Test
+    fun numericAggregationsUseOcrFactsInsteadOfSemanticPredicates() {
+        val sum = compiler.compile("Sum my receipt totals")
+        val maximum = compiler.compile("Which receipt has the highest total?")
+
+        assertTrue(sum.semanticClauses.isEmpty())
+        assertTrue(maximum.semanticClauses.isEmpty())
+    }
 }

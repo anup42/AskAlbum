@@ -1217,7 +1217,7 @@ class GalleryRepository(context: Context) {
         val deterministicResultSetFilter = plan.baseResultIds != null && plan.terms.isEmpty() &&
             plan.semanticClauses.isEmpty() && plan.filter != FilterExpression.True && !verification.applied
         val deterministicAggregation = plan.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
-            plan.aggregation != null && plan.semanticClauses.isEmpty() && !usedSemanticRetrieval && !verification.applied
+            plan.aggregation != null && plan.semanticClauses.isEmpty() && deterministicAnswerHits.isNotEmpty() && !verification.applied
         val deterministicList = plan.intent == QueryIntent.LIST &&
             plan.terms.isEmpty() && plan.semanticClauses.isEmpty() && !verification.applied
         val deterministicComparison = plan.intent == QueryIntent.COMPARE &&

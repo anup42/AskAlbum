@@ -6,6 +6,7 @@ internal object SemanticQueryVariants {
     private const val MAX_VARIANTS = 8
 
     fun from(plan: GalleryQueryPlan): List<String> {
+        if (plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX) && plan.semanticClauses.isEmpty()) return emptyList()
         if (plan.terms.isEmpty() && plan.semanticClauses.isEmpty()) return emptyList()
         val executionTerms = RetrievalTerms.forExecution(
             plan.terms,

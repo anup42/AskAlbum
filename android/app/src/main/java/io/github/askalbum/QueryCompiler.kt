@@ -97,6 +97,11 @@ class QueryCompiler(
         }
         val listMerchant = intent == QueryIntent.LIST &&
             Regex("\\b(list|which)\\s+merchants?\\b").containsMatchIn(normalized)
+        val semanticClauses = if (intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX)) {
+            emptyList()
+        } else {
+            originalTerms.map { SemanticClause(text = it, canonicalText = aliases[it] ?: it) }
+        }
         val requestedField = when {
             asksReceiptTotal -> "total"
             Regex("\\b(wifi password|wi fi password)\\b").containsMatchIn(normalized) -> "password"
@@ -127,7 +132,7 @@ class QueryCompiler(
                 else -> MediaScope.ALL
             },
             filter = timeFilter,
-            semanticClauses = originalTerms.map { SemanticClause(text = it, canonicalText = aliases[it] ?: it) },
+            semanticClauses = semanticClauses,
             ocrClause = if (intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA)) OcrClause(
                 query = terms.joinToString(" "),
                 merchant = merchant,
