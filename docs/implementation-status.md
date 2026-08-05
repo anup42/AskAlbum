@@ -298,3 +298,9 @@ media, databases, or logs.
 
 - Repository event evidence now renders localized date-time ranges instead of exposing raw epoch milliseconds in search evidence.
 - Consumer unit tests, replacement installation, and grounded local-search smoke validation completed successfully.
+
+### 2026-08-05 - Validate offline and release gates
+
+- `offlineDemoDebug` assembles successfully and its merged manifest contains no `android.permission.INTERNET`.
+- `consumerRelease` assembles with R8/resource shrinking enabled; existing Kotlin-metadata warnings remain non-fatal.
+- The supplied review’s remaining physical 5k/20k workload and external-fixture model tests remain unverified or explicitly skipped because no `galleryRunId`/retained fixtures were supplied.
