@@ -749,3 +749,9 @@ media, databases, or logs.
 - Updated the stored 5k retrieval acceptance test to consume `searchTextReport` and require `ChannelStatus.SUCCESS` before evaluating hits.
 - Validation: `:app:testFixtureCiDebugUnitTest`, `:app:assembleConsumerDebug`, `:app:assembleOfflineDemoDebug`, and `:app:compileFixtureCiDebugAndroidTestKotlin` PASS.
 - Published to AskAlbum branch `codex/current-agentic-gallery-sync` as commit `db511be`.
+
+## 2026-08-06 - Resume personal memory after identity expansion
+
+- Reviewed-person expansion now resumes when a cluster is unhidden.
+- Automatic face assignments re-queue personal semantic-memory work after database invalidation, closing the race where tagging completed before newly discovered media was captioned.
+- Validation: fixture unit tests and `consumerDebug`/`offlineDemoDebug` assembly PASS; `PeopleEditingDatabaseTest` and `PersonalSemanticMemoryDatabaseTest` PASS on secondary fixture device `R3CY30QFWLP`.
