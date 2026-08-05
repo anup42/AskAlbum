@@ -912,3 +912,8 @@ People cluster summaries now expose both the user-selected representative face a
 - Missing indexed vectors clear only the affected embedding metadata and requeue the owning media FACES stage.
 - Existing user-corrected cluster assignments, reviewed identities, media, and other indexes are preserved while SFace regenerates the affected embeddings.
 - Added model-free policy tests for missing-vector detection.
+
+## 2026-08-06 - Record typed follow-up removals
+
+- Follow-up patches now compare the previous and replacement plans so removed time, place, people, media, sort, grouping, and semantic constraints are represented as typed REMOVE operations.
+- Added coverage for removing a prior place scope while retaining the active result set.

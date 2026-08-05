@@ -50,4 +50,27 @@ class ResultSetPlanPatchResolverTest {
         assertTrue(resolved.semanticClauses.isEmpty())
         assertEquals(setOf("sort"), patch.changedFields)
     }
+
+    @Test
+    fun removingAnOldPlaceIsRecordedAsATypedRemoveOperation() {
+        val previous = GalleryQueryPlan(
+            originalQuery = "Singapore photos",
+            intent = QueryIntent.FIND_MEDIA,
+            place = "Singapore",
+            terms = listOf("singapore"),
+        )
+        val replacement = GalleryQueryPlan(
+            originalQuery = "Now 2024",
+            intent = QueryIntent.FIND_MEDIA,
+            filter = FilterExpression.TimeRange(1_704_067_200_000L, 1_735_689_599_999L),
+            terms = listOf("2024"),
+            baseResultIds = ids,
+        )
+
+        val (patch, resolved) = resolver.createAndApply(replacement, state, previous)
+
+        assertEquals(PlanPatchOperationType.REMOVE, patch.operations.single { it.field == PlanPatchField.PLACE }.type)
+        assertNull(resolved.place)
+        assertTrue("place" in patch.changedFields)
+    }
 }

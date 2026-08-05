@@ -14,7 +14,7 @@ class ResultSetPlanPatchResolver(
         require(compiledPlan.baseResultIds == state.activeResultIds) { "Planner used a stale follow-up scope" }
 
         val detached = normalizeDirectives(compiledPlan.copy(baseResultIds = null))
-        val fields = changedFields(detached)
+        val fields = changedFields(previousPlan, detached)
         val patch = PlanPatch(
             version = 2,
             baseResultSetId = resultSetId,
@@ -72,9 +72,11 @@ class ResultSetPlanPatchResolver(
         replacement: GalleryQueryPlan,
     ): List<PlanPatchOperation> = fields.map { field ->
         val typed = typedField(field, replacement)
+        val wasActive = previousPlan?.let { isActive(it, typed) } ?: false
+        val isNowActive = isActive(replacement, typed)
         val type = when {
-            REMOVE_DIRECTIVE.containsMatchIn(replacement.originalQuery) -> PlanPatchOperationType.REMOVE
-            previousPlan == null || !isActive(previousPlan, typed) -> PlanPatchOperationType.ADD
+            wasActive && !isNowActive -> PlanPatchOperationType.REMOVE
+            !wasActive && isNowActive -> PlanPatchOperationType.ADD
             else -> PlanPatchOperationType.REPLACE
         }
         PlanPatchOperation(type, typed)
@@ -129,21 +131,32 @@ class ResultSetPlanPatchResolver(
         else -> false
     }
 
-    private fun changedFields(plan: GalleryQueryPlan): Set<String> = buildSet {
-        if (plan.intent != QueryIntent.FIND_MEDIA) add("intent")
-        if (plan.mediaScope != MediaScope.ALL) add("mediaScope")
-        if (plan.filter != FilterExpression.True) add("filter")
-        if (plan.semanticClauses.isNotEmpty() || plan.terms.isNotEmpty()) add("semanticClauses")
-        if (plan.peopleClauses.isNotEmpty()) add("peopleClauses")
-        if (plan.ocrClause != null) add("ocrClause")
-        if (plan.grouping != Grouping.NONE) add("grouping")
-        if (plan.aggregation != null) add("aggregation")
-        if (plan.sort != SortSpec.RELEVANCE) add("sort")
-        if (plan.verification != VerificationPolicy.AUTO) add("verification")
-        if (plan.answerMode != AnswerMode.RESULTS_AND_SUMMARY) add("answerMode")
-        if (plan.place != null) add("place")
-        if (plan.limit != 100) add("limit")
+    private fun changedFields(previous: GalleryQueryPlan?, replacement: GalleryQueryPlan): Set<String> = buildSet {
+        if (fieldChanged(previous, replacement, QueryIntent.FIND_MEDIA) { it.intent }) add("intent")
+        if (fieldChanged(previous, replacement, MediaScope.ALL) { it.mediaScope }) add("mediaScope")
+        if (fieldChanged(previous, replacement, FilterExpression.True) { it.filter }) add("filter")
+        if (fieldChanged(previous, replacement, emptyList<SemanticClause>() to emptyList<String>()) { it.semanticClauses to it.terms }) add("semanticClauses")
+        if (fieldChanged(previous, replacement, emptyList<PersonClause>()) { it.peopleClauses }) add("peopleClauses")
+        if (fieldChanged(previous, replacement, null) { it.ocrClause }) add("ocrClause")
+        if (fieldChanged(previous, replacement, Grouping.NONE) { it.grouping }) add("grouping")
+        if (fieldChanged(previous, replacement, null) { it.aggregation }) add("aggregation")
+        if (fieldChanged(previous, replacement, SortSpec.RELEVANCE) { it.sort }) add("sort")
+        if (fieldChanged(previous, replacement, VerificationPolicy.AUTO) { it.verification }) add("verification")
+        if (fieldChanged(previous, replacement, AnswerMode.RESULTS_AND_SUMMARY) { it.answerMode }) add("answerMode")
+        if (fieldChanged(previous, replacement, null) { it.place }) add("place")
+        if (fieldChanged(previous, replacement, 100) { it.limit }) add("limit")
         if (isEmpty()) add("scope")
+    }
+
+    private fun <T> fieldChanged(
+        previous: GalleryQueryPlan?,
+        replacement: GalleryQueryPlan,
+        defaultValue: T,
+        selector: (GalleryQueryPlan) -> T,
+    ): Boolean {
+        val replacementValue = selector(replacement)
+        val previousValue = previous?.let(selector)
+        return if (previous == null) replacementValue != defaultValue else previousValue != replacementValue
     }
 
     private companion object {
@@ -155,10 +168,6 @@ class ResultSetPlanPatchResolver(
         )
         val EXCLUSION_DIRECTIVE = Regex(
             """^\s*(?:exclude|excluding|without|do\s+not\s+show|don't\s+show)\s+""",
-            RegexOption.IGNORE_CASE,
-        )
-        val REMOVE_DIRECTIVE = Regex(
-            """\b(?:remove|clear|reset|include\s+again)\b""",
             RegexOption.IGNORE_CASE,
         )
         val EXCLUSION_WORDS = setOf("exclude", "excluding", "without", "not", "show")
