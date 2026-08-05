@@ -2354,8 +2354,8 @@ class GalleryDatabase(
             discovered = mediaCounts[0],
             metadataReady = mediaCounts[0],
             semanticFactsReady = readableDatabase.rawQuery(
-                "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_fact",
-                null,
+                "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_fact WHERE scope=?",
+                arrayOf(SemanticFactScope.MEDIA.name),
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
             ocrReady = mediaCounts[1],
             visualLabelsReady = mediaCounts[2],

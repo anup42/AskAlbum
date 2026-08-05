@@ -13,6 +13,77 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SemanticEnrichmentDatabaseTest {
     @Test
+    fun contextualFactsDoNotInflateDirectMediaCoverage() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "semantic-coverage-${UUID.randomUUID()}.db"
+        val database = GalleryDatabase(context, name)
+        try {
+            database.seedDemoIfEmpty()
+            val mediaId = database.allItems().first().id
+            val eventJob = SemanticEnrichmentJobRecord(
+                id = UUID.randomUUID().toString(),
+                scope = SemanticFactScope.EVENT,
+                subjectId = "event:coverage",
+                representativeMediaId = mediaId,
+                reason = "event-context",
+                status = SemanticEnrichmentStatus.PENDING,
+                attemptCount = 0,
+                userRequested = false,
+            )
+            database.replaceSemanticEnrichmentPlan(SemanticEnrichmentPlan(emptyList(), emptyList(), listOf(eventJob)))
+            database.completeSemanticEnrichment(
+                requireNotNull(database.claimSemanticEnrichmentJob()),
+                listOf(
+                    SemanticFactRecord(
+                        scope = SemanticFactScope.EVENT,
+                        subjectId = "event:coverage",
+                        predicate = "occasion",
+                        value = "shared meal",
+                        confidence = 0.8f,
+                        evidenceMediaId = mediaId,
+                        applicability = "CONTEXT_ONLY",
+                        modelVersion = "fixture",
+                        promptVersion = "fixture-v1",
+                    ),
+                ),
+            )
+            assertEquals(0, database.summary().semanticFactsReady)
+
+            val mediaJob = SemanticEnrichmentJobRecord(
+                id = UUID.randomUUID().toString(),
+                scope = SemanticFactScope.MEDIA,
+                subjectId = mediaId,
+                representativeMediaId = mediaId,
+                reason = "media-fact",
+                status = SemanticEnrichmentStatus.PENDING,
+                attemptCount = 0,
+                userRequested = false,
+            )
+            database.replaceSemanticEnrichmentPlan(SemanticEnrichmentPlan(emptyList(), emptyList(), listOf(mediaJob)))
+            database.completeSemanticEnrichment(
+                requireNotNull(database.claimSemanticEnrichmentJob()),
+                listOf(
+                    SemanticFactRecord(
+                        scope = SemanticFactScope.MEDIA,
+                        subjectId = mediaId,
+                        predicate = "scene",
+                        value = "living room",
+                        confidence = 0.9f,
+                        evidenceMediaId = mediaId,
+                        applicability = "EVIDENCE_MEDIA_ONLY",
+                        modelVersion = "fixture",
+                        promptVersion = "fixture-v1",
+                    ),
+                ),
+            )
+            assertEquals(1, database.summary().semanticFactsReady)
+        } finally {
+            database.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
     fun representativeJobPreservesScopeAndSharesOnlyVerifiedExactDuplicates() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "semantic-facts-${UUID.randomUUID()}.db"

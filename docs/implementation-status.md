@@ -159,3 +159,10 @@ media, databases, or logs.
 - Process-death recovery preserves the existing reviewed People assignments, vectors, gallery rows, and consent; no Room schema or destructive migration was introduced.
 - Focused JVM reliability test: PASS. Connected `PeopleIndexRecoveryDatabaseTest` on `SM-F966B`: PASS; expired People lease returned to `PENDING` while the live embedding lease remained `RUNNING`.
 - Remaining: broader model-backed 5k/20k throughput and long screen-off recovery observation remain unverified.
+
+## 2026-08-05 - Scope direct Gemma coverage correctly
+
+- Corrected the home coverage metric to count only `MEDIA`-scoped semantic facts; event, visual-group, and other contextual records no longer inflate direct image coverage.
+- Renamed the metric to `Direct Gemma fact coverage` and labels it as media-scoped evidence.
+- Connected `SemanticEnrichmentDatabaseTest`: PASS, including event-only coverage `0` and media-scoped coverage `1`.
+- No records were deleted or migrated; this changes reporting only.

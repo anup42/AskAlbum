@@ -847,10 +847,13 @@ private fun IndexManagerScreen(
         IndexMetric("Media discovered", index.discovered, index.discovered, "Asset manifest")
         IndexMetric("Metadata ready", index.metadataReady, index.discovered, "demo-metadata-v1", inProgress = indexingActive && index.metadataReady < index.discovered)
         IndexMetric(
-            "Cached Gemma fact coverage",
+            "Direct Gemma fact coverage",
             index.semanticFactsReady,
             index.discovered,
-            modelPack.packVersion ?: "No verified Gemma facts",
+            buildString {
+                append(modelPack.packVersion ?: "No verified Gemma facts")
+                append(" | media-scoped facts only")
+            },
             enabled = modelPack.installed && modelPack.multimodal,
             onClick = onOpenSemanticMemory,
         )
