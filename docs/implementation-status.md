@@ -166,3 +166,9 @@ media, databases, or logs.
 - Renamed the metric to `Direct Gemma fact coverage` and labels it as media-scoped evidence.
 - Connected `SemanticEnrichmentDatabaseTest`: PASS, including event-only coverage `0` and media-scoped coverage `1`.
 - No records were deleted or migrated; this changes reporting only.
+
+## 2026-08-05 - Fence stale People failure updates
+
+- Wrapped People face failure ownership checks and stage updates in one SQLite transaction, preventing an expired worker from overwriting a reclaimed lease.
+- Added `PeopleIndexLeaseFenceDatabaseTest`: PASS on `SM-F966B`; recovered and newly claimed face work remained `RUNNING` after the stale owner reported failure.
+- No migration or destructive data operation was introduced.

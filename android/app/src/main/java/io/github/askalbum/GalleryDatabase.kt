@@ -2070,31 +2070,37 @@ class GalleryDatabase(
         producerVersion: String = "mlkit-face-detection-v1",
         owner: String? = null,
     ) {
-        if (!peopleIndexStatus().enabled) return
         val db = writableDatabase
-        if (owner != null && !stageClaimOwned(db, mediaId, IndexStage.FACES, owner)) return
-        val attempts = stageAttemptCount(db, mediaId, IndexStage.FACES)
-        val status = IndexingRetryPolicy.failedStatus(permanent, attempts)
-        updateStage(db, mediaId, IndexStage.FACES, status, producerVersion, error = message)
-        db.update(
-            "media_index_stage",
-            ContentValues().apply {
-                putNull("lease_owner")
-                putNull("lease_expires_at")
-                put("last_progress_at", System.currentTimeMillis())
-                put(
-                    "next_attempt_at",
-                    if (status == StageStatus.FAILED_RETRYABLE) {
-                        IndexingRetryPolicy.nextAttemptAt(System.currentTimeMillis(), attempts)
-                    } else {
-                        0L
-                    },
-                )
-                if (status == StageStatus.FAILED_EXHAUSTED) put("error", "retry_exhausted:${message.take(220)}")
-            },
-            "media_id=? AND stage=?",
-            arrayOf(mediaId, IndexStage.FACES.name),
-        )
+        db.beginTransaction()
+        try {
+            if (!peopleIndexEnabled(db)) return
+            if (owner != null && !stageClaimOwned(db, mediaId, IndexStage.FACES, owner)) return
+            val attempts = stageAttemptCount(db, mediaId, IndexStage.FACES)
+            val status = IndexingRetryPolicy.failedStatus(permanent, attempts)
+            updateStage(db, mediaId, IndexStage.FACES, status, producerVersion, error = message)
+            db.update(
+                "media_index_stage",
+                ContentValues().apply {
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("last_progress_at", System.currentTimeMillis())
+                    put(
+                        "next_attempt_at",
+                        if (status == StageStatus.FAILED_RETRYABLE) {
+                            IndexingRetryPolicy.nextAttemptAt(System.currentTimeMillis(), attempts)
+                        } else {
+                            0L
+                        },
+                    )
+                    if (status == StageStatus.FAILED_EXHAUSTED) put("error", "retry_exhausted:${message.take(220)}")
+                },
+                "media_id=? AND stage=?",
+                arrayOf(mediaId, IndexStage.FACES.name),
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
     }
 
     fun stageRecords(mediaId: String): List<MediaIndexStageRecord> = readableDatabase.query(
