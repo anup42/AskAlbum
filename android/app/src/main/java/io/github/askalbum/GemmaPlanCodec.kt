@@ -83,7 +83,10 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
             filter = filterJson?.let { filterObject ->
                 if (filterObject.isEmptyUnfilteredObject() || filterObject.isTermsOnlyObject()) FilterExpression.True else parseFilter(filterObject)
             } ?: FilterExpression.True,
-            semanticClauses = structuralListSemantics.ifEmpty { finalTerms.map { SemanticClause(it, it) } },
+            // Terms already drive lexical, concept, and original-query retrieval.
+            // Do not turn ordinary terms into semantic predicates: doing so makes
+            // deterministic OCR and aggregation plans look like bounded visual work.
+            semanticClauses = structuralListSemantics,
             peopleClauses = people,
             ocrClause = ocr,
             grouping = json.optEnum("grouping", Grouping.NONE),

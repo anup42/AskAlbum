@@ -75,6 +75,31 @@ class GemmaPlanCodecTest {
     }
 
     @Test
+    fun ordinaryTermsRemainLexicalInsteadOfBecomingSemanticPredicates() {
+        val plan = codec.decode(
+            "Show beach sunset photos",
+            """{"intent":"FIND_MEDIA","mediaScope":"IMAGES","terms":["beach","sunset"],"verification":"AUTO"}""",
+            null,
+        )
+
+        assertEquals(listOf("beach", "sunset"), plan.terms)
+        assertTrue(plan.semanticClauses.isEmpty())
+        assertTrue(SemanticQueryVariants.from(plan).contains(plan.originalQuery))
+    }
+
+    @Test
+    fun numericAggregationTermsDoNotCreateSemanticPredicates() {
+        val plan = codec.decode(
+            "Sum my receipt totals",
+            """{"intent":"SUM","terms":["receipt","total"],"aggregation":{"operation":"SUM","field":"total"}}""",
+            null,
+        )
+
+        assertTrue(plan.semanticClauses.isEmpty())
+        assertEquals("total", plan.aggregation?.field)
+    }
+
+    @Test
     fun repairPromptRestatesBoundedSchemaAndNumericRules() {
         val prompt = codec.repairPrompt("photos from 2024", "{broken", "unterminated")
 
