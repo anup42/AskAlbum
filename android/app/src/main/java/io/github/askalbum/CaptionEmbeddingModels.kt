@@ -107,6 +107,11 @@ internal object SemanticCaptionChunker {
         val candidates = mutableListOf<Candidate>()
         val generationId = caption.generationId
         val scopedPersonFacts = personFacts.filter {
+            caption.scope in setOf(
+                SemanticFactScope.MEDIA,
+                SemanticFactScope.QUERY_VERIFICATION,
+                SemanticFactScope.EXACT_DUPLICATE_GROUP,
+            ) &&
             generationId != null &&
             it.generationId == generationId &&
             it.mediaId == caption.evidenceMediaId &&

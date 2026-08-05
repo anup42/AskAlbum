@@ -117,6 +117,38 @@ class CaptionEmbeddingRetrievalTest {
         assertTrue(chunks.all { it.applicability == "CONTEXT_ONLY" })
     }
 
+    @Test
+    fun eventCaptionCannotReceivePersonBoundChunks() {
+        val chunks = SemanticCaptionChunker.generate(
+            caption.copy(
+                id = "event-person-caption",
+                scope = SemanticFactScope.EVENT,
+                subjectId = "event-8",
+                applicability = "CONTEXT_ONLY",
+            ),
+            emptyList(),
+            listOf(
+                PersonVisualFactRecord(
+                    id = "event-person-fact",
+                    mediaId = "media-1",
+                    clusterId = "me-cluster",
+                    personRef = "P1",
+                    relation = PersonVisualRelation.ACTION,
+                    value = "holding a gift",
+                    bodyRegion = BodyRegion.HAND,
+                    confidence = 0.9f,
+                    faceRegion = listOf(0.1f, 0.1f, 0.3f, 0.3f),
+                    modelVersion = "gemma-e2b",
+                    promptVersion = "caption-v3",
+                    generationId = "generation-1",
+                ),
+            ),
+        )
+
+        assertTrue(chunks.isNotEmpty())
+        assertTrue(chunks.none { it.clusterId != null })
+    }
+
     private fun semanticFact(predicate: String, value: String) = SemanticFactRecord(
         scope = SemanticFactScope.MEDIA,
         subjectId = "media-1",

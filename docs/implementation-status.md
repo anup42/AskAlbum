@@ -198,3 +198,9 @@ media, databases, or logs.
 - Semantic enrichment completion and failure updates are now bound to the claimed lease owner and an unexpired lease.
 - Completion changes the job state and derived evidence in one transaction, so a reclaimed worker cannot overwrite a newer attempt.
 - Added connected database coverage for stale-owner completion/failure rejection; no migration or data deletion was introduced.
+
+## 2026-08-05 - Keep person chunks out of contextual captions
+
+- Caption chunk generation now rejects person-bound facts for event and visual-group captions even when generation, model, and evidence IDs match.
+- Media, query-verification, and verified exact-duplicate scopes retain cluster-bound chunks; contextual captions remain candidate-only.
+- Added a regression test covering event captions with a same-generation person action.
