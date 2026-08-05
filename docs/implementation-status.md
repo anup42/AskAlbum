@@ -287,3 +287,9 @@ media, databases, or logs.
 - Consumer debug and its instrumentation APK were replacement-installed with `adb install -r -d` without clearing app data.
 - The focused settings, personal-progress, and smoke tests passed; the full connected suite completed 73 tests with no assertion failures.
 - Tests requiring `galleryRunId` or device-retained OCR/face/SigLIP2 fixtures were reported as explicit skips, not passes.
+
+### 2026-08-05 - Persist video-keyframe embedding failures
+
+- Room v24-to-v25 adds per-keyframe embedding state, attempt count, retry time, and bounded error text; existing completed keyframe embeddings migrate to `COMPLETE`.
+- Keyframe embedding now isolates decode, encoder, and vector-write failures per frame, quarantines exhausted frames, and includes delayed frame retries in truthful scheduling.
+- Migration, app-launch/search, and bundled SigLIP2 validation passed on the connected device; the seeded video acceptance remained an explicit `galleryRunId` skip.

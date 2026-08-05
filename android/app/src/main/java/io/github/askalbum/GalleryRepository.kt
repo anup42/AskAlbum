@@ -314,6 +314,8 @@ class GalleryRepository(context: Context) {
         limit: Int,
     ): List<VideoKeyframeRecord> = database.keyframeEmbeddingPendingItemsForIds(producerVersion, mediaIds, limit)
     fun completeKeyframeEmbedding(id: String, producerVersion: String) = database.completeKeyframeEmbedding(id, producerVersion)
+    fun failKeyframeEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean): StageStatus =
+        database.failKeyframeEmbedding(id, producerVersion, message, permanent)
     fun markEmbedding(id: String, producerVersion: String, owner: String = "repository-direct"): Boolean =
         database.markEmbedding(id, producerVersion, owner)
     fun completeEmbedding(id: String, producerVersion: String) = database.completeEmbedding(id, producerVersion)

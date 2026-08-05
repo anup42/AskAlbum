@@ -292,6 +292,10 @@ data class VideoKeyframeRecord(
     val qualityScore: Float,
     val producerVersion: String,
     val embeddingVersion: String? = null,
+    val embeddingState: String = "PENDING",
+    val embeddingAttemptCount: Int = 0,
+    val embeddingError: String? = null,
+    val embeddingNextAttemptAt: Long = 0L,
 )
 
 data class PeopleIndexStatus(

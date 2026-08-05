@@ -445,8 +445,12 @@ class GalleryDatabase(
     }
 
     fun keyframeEmbeddingPendingItems(producerVersion: String, limit: Int): List<VideoKeyframeRecord> = readableDatabase.rawQuery(
-        "SELECT v.* FROM video_keyframe v JOIN media_item m ON m.id=v.media_id WHERE m.access_state='ACCESSIBLE' AND (v.embedding_version IS NULL OR v.embedding_version!=?) ORDER BY COALESCE(m.captured_at,0) DESC,v.timestamp_ms LIMIT ?",
-        arrayOf(producerVersion, limit.toString()),
+        "SELECT v.* FROM video_keyframe v JOIN media_item m ON m.id=v.media_id " +
+            "WHERE m.access_state='ACCESSIBLE' AND v.embedding_state NOT IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') " +
+            "AND (v.embedding_state IN ('PENDING','FAILED_RETRYABLE') OR v.embedding_version IS NULL OR v.embedding_version!=?) " +
+            "AND v.embedding_next_attempt_at<=? " +
+            "ORDER BY COALESCE(m.captured_at,0) DESC,v.timestamp_ms LIMIT ?",
+        arrayOf(producerVersion, System.currentTimeMillis().toString(), limit.toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorVideoKeyframe(cursor)) } }
 
     fun keyframeEmbeddingPendingItemsForIds(
@@ -457,9 +461,11 @@ class GalleryDatabase(
         readableDatabase.rawQuery(
             "SELECT v.* FROM video_keyframe v JOIN media_item m ON m.id=v.media_id " +
                 "WHERE m.access_state='ACCESSIBLE' AND m.id IN (${ids.joinToString(",") { "?" }}) " +
-                "AND (v.embedding_version IS NULL OR v.embedding_version!=?) " +
+                "AND v.embedding_state NOT IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') " +
+                "AND (v.embedding_state IN ('PENDING','FAILED_RETRYABLE') OR v.embedding_version IS NULL OR v.embedding_version!=?) " +
+                "AND v.embedding_next_attempt_at<=? " +
                 "ORDER BY COALESCE(m.captured_at,0) DESC,v.timestamp_ms LIMIT ?",
-            (ids + producerVersion + remaining.toString()).toTypedArray(),
+            (ids + producerVersion + System.currentTimeMillis().toString() + remaining.toString()).toTypedArray(),
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorVideoKeyframe(cursor)) } }
     }
 
@@ -475,7 +481,43 @@ class GalleryDatabase(
     }
 
     fun completeKeyframeEmbedding(id: String, producerVersion: String) {
-        writableDatabase.update("video_keyframe", ContentValues().apply { put("embedding_version", producerVersion) }, "id=?", arrayOf(id))
+        writableDatabase.update(
+            "video_keyframe",
+            ContentValues().apply {
+                put("embedding_version", producerVersion)
+                put("embedding_state", "COMPLETE")
+                put("embedding_attempt_count", 0)
+                putNull("embedding_error")
+                put("embedding_next_attempt_at", 0L)
+            },
+            "id=? AND embedding_state NOT IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') AND " +
+                "(embedding_state IN ('PENDING','FAILED_RETRYABLE') OR embedding_version IS NULL OR embedding_version!=?)",
+            arrayOf(id, producerVersion),
+        )
+    }
+
+    fun failKeyframeEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean): StageStatus {
+        val db = writableDatabase
+        val attempts = db.query(
+            "video_keyframe", arrayOf("embedding_attempt_count"), "id=?", arrayOf(id),
+            null, null, null, "1",
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else return StageStatus.COMPLETE }
+        val nextAttempt = attempts + 1
+        val status = IndexingRetryPolicy.failedStatus(permanent, nextAttempt)
+        val now = System.currentTimeMillis()
+        val changed = db.update(
+            "video_keyframe",
+            ContentValues().apply {
+                put("embedding_state", status.name)
+                put("embedding_attempt_count", nextAttempt)
+                put("embedding_error", if (status == StageStatus.FAILED_EXHAUSTED) "retry_exhausted:${message.take(220)}" else message.take(300))
+                put("embedding_next_attempt_at", if (status == StageStatus.FAILED_RETRYABLE) IndexingRetryPolicy.nextAttemptAt(now, nextAttempt) else 0L)
+            },
+            "id=? AND embedding_state NOT IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') AND " +
+                "(embedding_state IN ('PENDING','FAILED_RETRYABLE') OR embedding_version IS NULL OR embedding_version!=?)",
+            arrayOf(id, producerVersion),
+        )
+        return if (changed > 0) status else StageStatus.COMPLETE
     }
 
     fun videoKeyframes(mediaId: String): List<VideoKeyframeRecord> = readableDatabase.rawQuery(
@@ -667,6 +709,10 @@ class GalleryDatabase(
                     put("quality_score", keyframe.qualityScore)
                     put("producer_version", keyframe.producerVersion)
                     if (keyframe.embeddingVersion == null) putNull("embedding_version") else put("embedding_version", keyframe.embeddingVersion)
+                    put("embedding_state", keyframe.embeddingState)
+                    put("embedding_attempt_count", keyframe.embeddingAttemptCount)
+                    if (keyframe.embeddingError == null) putNull("embedding_error") else put("embedding_error", keyframe.embeddingError.take(300))
+                    put("embedding_next_attempt_at", keyframe.embeddingNextAttemptAt)
                 })
             }
             itemById(db, id)?.let { refreshFts(db, it) }
@@ -832,9 +878,12 @@ class GalleryDatabase(
     ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
 
     fun nextEmbeddingRetryAt(): Long? = readableDatabase.rawQuery(
-        "SELECT MIN(next_attempt_at) FROM media_index_stage WHERE stage='EMBEDDING' " +
-            "AND status='FAILED_RETRYABLE' AND attempt_count<?",
-        arrayOf(IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString()),
+        "SELECT MIN(next_attempt_at) FROM (" +
+            "SELECT next_attempt_at FROM media_index_stage WHERE stage='EMBEDDING' AND status='FAILED_RETRYABLE' AND attempt_count<? " +
+            "UNION ALL " +
+            "SELECT embedding_next_attempt_at FROM video_keyframe WHERE embedding_state='FAILED_RETRYABLE' AND embedding_attempt_count<?" +
+            ")",
+        arrayOf(IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(), IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString()),
     ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
 
     private fun clearMediaIndexLeases(db: GallerySqlDatabase, id: String) {
@@ -2857,6 +2906,10 @@ class GalleryDatabase(
         qualityScore = cursor.getFloat(cursor.getColumnIndexOrThrow("quality_score")),
         producerVersion = cursor.text("producer_version"),
         embeddingVersion = cursor.nullableText("embedding_version"),
+        embeddingState = cursor.text("embedding_state"),
+        embeddingAttemptCount = cursor.getInt(cursor.getColumnIndexOrThrow("embedding_attempt_count")),
+        embeddingError = cursor.nullableText("embedding_error"),
+        embeddingNextAttemptAt = cursor.getLong(cursor.getColumnIndexOrThrow("embedding_next_attempt_at")),
     )
 
     private fun peopleIndexEnabled(db: GallerySqlDatabase): Boolean = db.rawQuery(

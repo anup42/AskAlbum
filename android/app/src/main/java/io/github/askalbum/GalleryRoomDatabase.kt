@@ -144,6 +144,7 @@ data class OcrEntityEntity(
     indices = [
         Index(name = "video_keyframe_media_time_idx", value = ["media_id", "timestamp_ms"], unique = true),
         Index(name = "video_keyframe_embedding_idx", value = ["embedding_version"]),
+        Index(name = "video_keyframe_embedding_queue_idx", value = ["embedding_state", "embedding_next_attempt_at"]),
     ],
 )
 data class VideoKeyframeEntity(
@@ -157,6 +158,10 @@ data class VideoKeyframeEntity(
     @ColumnInfo(name = "quality_score") val qualityScore: Float,
     @ColumnInfo(name = "producer_version") val producerVersion: String,
     @ColumnInfo(name = "embedding_version") val embeddingVersion: String?,
+    @ColumnInfo(name = "embedding_state", defaultValue = "'PENDING'") val embeddingState: String,
+    @ColumnInfo(name = "embedding_attempt_count", defaultValue = "0") val embeddingAttemptCount: Int,
+    @ColumnInfo(name = "embedding_error") val embeddingError: String?,
+    @ColumnInfo(name = "embedding_next_attempt_at", defaultValue = "0") val embeddingNextAttemptAt: Long,
 )
 
 @Entity(
@@ -647,7 +652,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticPredicateScanHitEntity::class,
         SensitiveDataMigrationEntity::class,
     ],
-    version = 24,
+    version = 25,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -682,6 +687,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_21_22,
             MIGRATION_22_23,
             MIGRATION_23_24,
+            MIGRATION_24_25,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1270,6 +1276,23 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL(
                     "UPDATE result_set SET exactness='COMPLETE_PREDICATE_SCAN' " +
                         "WHERE exactness='COMPLETE_MODEL_SCAN'",
+                )
+            }
+        }
+
+        internal val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE video_keyframe ADD COLUMN embedding_state TEXT NOT NULL DEFAULT 'PENDING'")
+                db.execSQL("ALTER TABLE video_keyframe ADD COLUMN embedding_attempt_count INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE video_keyframe ADD COLUMN embedding_error TEXT")
+                db.execSQL("ALTER TABLE video_keyframe ADD COLUMN embedding_next_attempt_at INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "UPDATE video_keyframe SET embedding_state=CASE WHEN embedding_version IS NULL THEN 'PENDING' ELSE 'COMPLETE' END " +
+                        "WHERE embedding_state='PENDING'",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS video_keyframe_embedding_queue_idx " +
+                        "ON video_keyframe(embedding_state,embedding_next_attempt_at)",
                 )
             }
         }
