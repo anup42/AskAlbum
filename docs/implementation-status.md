@@ -329,3 +329,7 @@ media, databases, or logs.
 ### 2026-08-05 - Empty capability executor routing
 - Empty non-visual capability results now reach their typed executor; visual search and post-verification failures remain fail-closed.
 - Validation: focused capability/exactness tests PASS; full `testConsumerDebugUnitTest` PASS; `assembleConsumerDebug` PASS.
+
+### 2026-08-05 - Deterministic Gemma list plans
+- Sanitized list-structural planner terms and hard-place duplicates so `LIST` scope queries remain deterministic; meaningful filters remain searchable.
+- Validation: Gemma plan, query compiler, capability tests, and consumer assemble PASS.

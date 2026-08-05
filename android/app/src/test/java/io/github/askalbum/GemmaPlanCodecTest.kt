@@ -96,4 +96,17 @@ class GemmaPlanCodecTest {
 
         assertEquals(listOf("goa", "singapore"), plan.comparisonScopes)
     }
+
+    @Test
+    fun listScopeWordsDoNotCreateAFalseSemanticPredicate() {
+        val plan = codec.decode(
+            "List places in Goa",
+            """{"intent":"LIST","grouping":"PLACE","place":"Goa","terms":["places","Goa"]}""",
+            null,
+        )
+
+        assertEquals(emptyList<String>(), plan.terms)
+        assertTrue(plan.semanticClauses.isEmpty())
+        assertEquals("Goa", plan.place)
+    }
 }

@@ -25,9 +25,26 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
             ))
         }.orEmpty()
         val terms = json.optJSONArray("terms")?.strings(MAX_TERMS).orEmpty().map { it.lowercase(Locale.ROOT) }.distinct()
-        val finalTerms = if (terms.isNotEmpty()) terms else semantic.mapNotNull { it.canonicalText ?: it.text }.map { it.lowercase(Locale.ROOT) }.distinct()
+        val place = json.optNullableString("place")
+        val normalizedPlace = place?.lowercase(Locale.ROOT)
+        val structuralListSemantics = semantic.filterNot { clause ->
+            intent == QueryIntent.LIST &&
+                clause.subject == SemanticSubject.WHOLE_MEDIA &&
+                clause.relationToPerson.isNullOrBlank() &&
+                (clause.canonicalText ?: clause.text).trim().lowercase(Locale.ROOT) in LIST_STRUCTURAL_TERMS
+        }
+        val filteredTerms = terms.filterNot { term ->
+            intent == QueryIntent.LIST && (term in LIST_STRUCTURAL_TERMS || term == normalizedPlace)
+        }
+        val finalTerms = if (filteredTerms.isNotEmpty()) {
+            filteredTerms
+        } else {
+            structuralListSemantics.mapNotNull { it.canonicalText ?: it.text }
+                .map { it.lowercase(Locale.ROOT) }
+                .distinct()
+        }
         val followUp = FollowUpLanguage.isFollowUp(query, !activeResultIds.isNullOrEmpty())
-        require(finalTerms.isNotEmpty() || followUp || intent in setOf(QueryIntent.COUNT, QueryIntent.LIST, QueryIntent.TIMELINE, QueryIntent.COMPARE)) {
+        require(finalTerms.isNotEmpty() || structuralListSemantics.isNotEmpty() || followUp || intent in setOf(QueryIntent.COUNT, QueryIntent.LIST, QueryIntent.TIMELINE, QueryIntent.COMPARE)) {
             "Planner produced no searchable constraints"
         }
         val comparisonScopes = json.optJSONArray("comparisonScopes")?.strings(MAX_COMPARISON_SCOPES).orEmpty()
@@ -53,7 +70,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
             intent = intent,
             mediaScope = json.optEnum("mediaScope", MediaScope.ALL),
             filter = json.optJSONObject("filter")?.let(::parseFilter) ?: FilterExpression.True,
-            semanticClauses = semantic.ifEmpty { finalTerms.map { SemanticClause(it, it) } },
+            semanticClauses = structuralListSemantics.ifEmpty { finalTerms.map { SemanticClause(it, it) } },
             peopleClauses = people,
             ocrClause = ocr,
             grouping = json.optEnum("grouping", Grouping.NONE),
@@ -62,7 +79,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
             verification = json.optEnum("verification", VerificationPolicy.AUTO),
             answerMode = json.optEnum("answerMode", AnswerMode.RESULTS_AND_SUMMARY),
             terms = finalTerms,
-            place = json.optNullableString("place"),
+            place = place,
             comparisonScopes = comparisonScopes,
             baseResultIds = if (followUp) activeResultIds else null,
             limit = json.optInt("limit", 100),
@@ -140,6 +157,11 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         const val MAX_PEOPLE_CLAUSES = 8
         const val MAX_COMPARISON_SCOPES = 4
         const val MAX_FILTER_CLAUSES = 12
+        val LIST_STRUCTURAL_TERMS = setOf(
+            "list", "show", "which", "place", "places", "location", "locations",
+            "people", "persons", "day", "days", "date", "dates", "merchant", "merchants",
+            "recent", "image", "images", "photo", "photos", "picture", "pictures",
+        )
     }
 }
 
