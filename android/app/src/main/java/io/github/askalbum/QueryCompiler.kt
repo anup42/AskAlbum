@@ -137,8 +137,11 @@ class QueryCompiler(
             },
             filter = timeFilter,
             semanticClauses = semanticClauses,
-            ocrClause = if (intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA)) OcrClause(
-                query = terms.joinToString(" "),
+            ocrClause = if (
+                intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) ||
+                intent == QueryIntent.LIST && requestedField != null
+            ) OcrClause(
+                query = terms.joinToString(" ").takeIf(String::isNotBlank),
                 merchant = merchant,
                 requestedField = requestedField,
             ) else null,

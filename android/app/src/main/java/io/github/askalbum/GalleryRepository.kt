@@ -671,7 +671,10 @@ class GalleryRepository(context: Context) {
         } else {
             emptyList()
         }
-        val deterministicDocumentHits = if (plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA)) {
+        val deterministicDocumentHits = if (
+            plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) ||
+            plan.intent == QueryIntent.LIST && plan.ocrClause?.requestedField != null
+        ) {
             OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)?.let { field ->
                 val entities = database.ocrEntitiesForMediaIds(eligibleIds, field.type)
                 allItems.mapNotNull { item ->

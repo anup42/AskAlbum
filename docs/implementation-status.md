@@ -33,6 +33,16 @@ Last reviewed: 2026-08-06
 - Focused query-planner and semantic-count regressions plus consumer,
   offlineDemo, and fixtureCi assemblies completed with zero reported failures.
 
+## 2026-08-06 - Merchant LIST OCR executor
+
+- `LIST` plans now preserve an allowlisted OCR field, allowing merchant lists
+  to return distinct merchant values with document evidence instead of media
+  titles.
+- Empty lexical OCR queries are represented as null and remain valid under the
+  typed plan validator.
+- Planner and executor regressions plus all three variant assemblies completed
+  with zero reported failures or skips.
+
 AskAlbum is an early open-source Android implementation of private, on-device
 photo search. The public source snapshot contains the Android application,
 fixture CI path, tests, model-pack validation code, sample-gallery tooling, and
