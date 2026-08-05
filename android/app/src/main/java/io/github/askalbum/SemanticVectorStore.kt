@@ -23,7 +23,7 @@ class SemanticVectorStore(
     suspend fun searchText(query: String, topK: Int, allowedIds: Set<String>? = null): List<VectorHit> {
         if (query.isBlank() || packs.current() == null) return emptyList()
         val current = currentIndex()
-        val vector = embeddings.embedText(query)
+        val vector = embeddings.embedTextInteractive(query)
         return current.index.search(vector, topK, allowedIds)
             .filter { it.score >= current.pack.manifest.minimumSimilarity }
     }
@@ -31,7 +31,7 @@ class SemanticVectorStore(
     suspend fun scanTextBatch(query: String, allowedIds: Set<String>): List<VectorHit> {
         if (query.isBlank() || allowedIds.isEmpty() || packs.current() == null) return emptyList()
         val current = currentIndex()
-        val vector = embeddings.embedText(query)
+        val vector = embeddings.embedTextInteractive(query)
         return current.index.scan(vector, allowedIds)
             .filter { it.score >= current.pack.manifest.minimumSimilarity }
     }
@@ -50,7 +50,7 @@ class SemanticVectorStore(
         indexedIds = { currentIndex().index.ids() },
         search = { text, limit, eligibleIds ->
             val current = currentIndex()
-            val vector = embeddings.embedText(text)
+            val vector = embeddings.embedTextInteractive(text)
             current.index.search(vector, limit, eligibleIds)
                 .filter { it.score >= current.pack.manifest.minimumSimilarity }
         },

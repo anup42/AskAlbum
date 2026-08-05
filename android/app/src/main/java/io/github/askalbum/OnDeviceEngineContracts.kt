@@ -13,6 +13,7 @@ interface GenerativeEngine {
 interface ImageTextEmbeddingEngine {
     suspend fun embedImage(image: ModelImage): FloatArray
     suspend fun embedText(text: String): FloatArray
+    suspend fun embedTextInteractive(text: String): FloatArray = embedText(text)
 }
 
 interface OcrEngine : AutoCloseable {
@@ -50,8 +51,15 @@ interface EvidenceRepository {
 
 enum class ModelCapability { GENERATIVE, IMAGE_EMBEDDING, TEXT_EMBEDDING, OCR, FACES }
 
+enum class InferencePriority(val rank: Int) { INTERACTIVE(0), BACKGROUND(1) }
+
 interface InferenceResourceManager {
     suspend fun <T> withModel(capability: ModelCapability, block: suspend () -> T): T
+    suspend fun <T> withModel(
+        capability: ModelCapability,
+        priority: InferencePriority,
+        block: suspend () -> T,
+    ): T = withModel(capability, block)
 }
 
 data class PlannerInput(

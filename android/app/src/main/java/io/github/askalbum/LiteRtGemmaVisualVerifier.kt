@@ -38,7 +38,7 @@ class LiteRtGemmaVisualVerifier(
         }
 
         return try {
-            sessions.withEngine(path, multimodal = true) { initialized ->
+            sessions.withEngine(path, multimodal = true, priority = InferencePriority.INTERACTIVE) { initialized ->
                 withContext(Dispatchers.IO) {
                     require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
                     val accepted = linkedSetOf<String>()

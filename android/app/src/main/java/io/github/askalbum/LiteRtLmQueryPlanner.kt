@@ -64,7 +64,7 @@ class LiteRtLmQueryPlanner(
             return fallbackTrace(query, activeResultIds, started, status.deviceAssessment.reason)
         }
         return try {
-            sessions.withEngine(path, status.multimodal) { initialized ->
+            sessions.withEngine(path, status.multimodal, priority = InferencePriority.INTERACTIVE) { initialized ->
                 withContext(Dispatchers.IO) {
                     require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
                     var calls = 0

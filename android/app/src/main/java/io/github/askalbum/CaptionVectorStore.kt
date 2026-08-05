@@ -55,7 +55,7 @@ class CaptionVectorStore(
             val current = currentIndex()
             val indexed = current.index.ids() intersect eligibleChunkIds
             val perVariant = queries.map { query ->
-                val vector = embeddings.embedText(query)
+                val vector = embeddings.embedTextInteractive(query)
                 query to current.index.search(vector, topK.coerceIn(1, 100), indexed)
                     .filter { it.score >= current.pack.manifest.minimumSimilarity }
             }

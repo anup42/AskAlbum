@@ -46,7 +46,7 @@ class LiteRtGemmaGroundedAnswerComposer(
         if (status.deviceAssessment?.supported == false) return fallback(baseline, started, status.deviceAssessment.reason)
 
         return try {
-            sessions.withEngine(path, status.multimodal) { initialized ->
+            sessions.withEngine(path, status.multimodal, priority = InferencePriority.INTERACTIVE) { initialized ->
                 withContext(Dispatchers.IO) {
                     require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
                     var generationMs = 0L

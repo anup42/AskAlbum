@@ -69,11 +69,12 @@ class GemmaSessionManager internal constructor(
     internal suspend fun <T> withEngine(
         modelPath: String,
         multimodal: Boolean,
+        priority: InferencePriority = InferencePriority.BACKGROUND,
         block: suspend (SharedGemmaLease) -> T,
     ): T {
         idleEviction?.cancel()
         return try {
-            resources.withModel(ModelCapability.GENERATIVE) {
+            resources.withModel(ModelCapability.GENERATIVE, priority) {
                 sessionLock.withLock {
                     val current = active
                     val reused = current != null &&
