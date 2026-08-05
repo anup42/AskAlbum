@@ -769,3 +769,10 @@ media, databases, or logs.
 - This closes the same-process gap where tagging occurred before model availability and captions remained at zero until the next app restart.
 - Validation: fixture unit tests and `consumerDebug`/`offlineDemoDebug` assembly PASS; live download/install behavior NOT RUN because no model download was performed.
 - Published to AskAlbum as commit `4acdafd`.
+
+## 2026-08-06 - Refresh semantic indexing status
+
+- Index-manager polling now refreshes semantic-memory progress together with media, People, and admission state before calculating pipeline snapshots.
+- This prevents stale or zero Gemma counts from being shown while durable semantic jobs are running.
+- Validation: fixture unit tests and `consumerDebug`/`offlineDemoDebug` assembly PASS; production device validation NOT RUN.
+- Published to AskAlbum as commit `acd3881`.
