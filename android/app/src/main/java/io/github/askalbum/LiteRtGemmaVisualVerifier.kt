@@ -51,7 +51,8 @@ class LiteRtGemmaVisualVerifier(
                     bounded.forEach { hit ->
                             runCatching {
                                 val requiredGroups = PeopleClauseResolver.requiredGroups(plan.peopleClauses)
-                                val requiredPeople = requiredGroups.flatten().map(PersonClause::personId).toSet()
+                                val conditionPeople = PersonVerificationBindingPolicy.conditionPersonIds(conditions)
+                                val requiredPeople = requiredGroups.flatten().map(PersonClause::personId).toSet() + conditionPeople
                                 val bindings = database.reviewedFaceBindings(hit.item.id, requiredPeople)
                                 if (requiredPeople.isNotEmpty()) {
                                     val grouped = bindings.groupBy(PersonVerificationBinding::clusterId)
@@ -66,6 +67,9 @@ class LiteRtGemmaVisualVerifier(
                                     require(everyRequestedIdentityBound && grouped.values.all { it.size == 1 }) {
                                         "Required reviewed identities could not be bound unambiguously to visible faces"
                                     }
+                                }
+                                require(PersonVerificationBindingPolicy.allConditionPeopleBound(conditionPeople, bindings)) {
+                                    "Person visual conditions could not be bound to exactly one reviewed visible face"
                                 }
                                 val boundConditions = PersonVerificationPromptBinding.bind(conditions, bindings)
                                 val loaded = imageLoader.loadForVerification(hit, database.videoKeyframes(hit.item.id))

@@ -541,3 +541,14 @@ media, databases, or logs.
 - Named the Android workflow job `Fixture tests and offline build` to match the protected AskAlbum `main` required status check.
 - Updated CI to run `fixtureCiDebug` unit tests and assembly plus `offlineDemoDebug` assembly, and to verify both generated APK manifests for Internet permission.
 - This is a CI-only change; production model validation and app data are unchanged.
+## 2026-08-05 - Bind every person visual condition to a reviewed visible face
+
+- Visual verification now includes all `relationToPerson` identities when loading candidate face bindings, even if the plan omitted a redundant `peopleClause`.
+- A person-specific condition fails closed unless its cluster ID or alias resolves to exactly one reviewed, visible face in that media item.
+- Added alias, missing-binding, and ambiguous-binding regression tests; no migration or media data was changed.
+## 2026-08-05 - Preserve the planner distinction between terms and predicates
+
+- `GemmaPlanCodec` no longer converts ordinary lexical `terms` into `semanticClauses` when the model correctly returns no structural predicates.
+- Original-query, lexical, concept, and caption retrieval remain available through `terms`; relational and fine-grained clauses remain model-supplied typed predicates.
+- Numeric OCR aggregation plans now retain deterministic execution semantics instead of being misclassified as bounded semantic work.
+- Added codec regressions for ordinary search and SUM plans.
