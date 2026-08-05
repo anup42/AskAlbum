@@ -696,3 +696,10 @@ media, databases, or logs.
 - Added a regression test covering live lease preservation and stale completion rejection.
 - Validation: fixture unit tests PASS; isolated `PersonalSemanticMemoryDatabaseTest` on secondary device PASS; `consumerDebug` and `offlineDemoDebug` builds PASS.
 - Primary production connected instrumentation remains intentionally unrun after the documented package/data cleanup incident; no further production-device test was performed.
+
+## 2026-08-06 - Preserve negative visual-verification verdicts
+
+- Fixed query-time person-attribute caching so the verifier's `VERIFIED_FALSE`, `AMBIGUOUS`, or `NOT_VISIBLE` verdict is persisted instead of being hardcoded to `VERIFIED_TRUE`.
+- Negative visual predicates therefore cannot become positive person evidence during later retrieval.
+- Added an isolated device regression test for the stored verdict.
+- Validation: `PeopleIdentityProtectionDeviceTest` PASS on the secondary fixture device; fixture unit tests PASS; `consumerDebug` and `offlineDemoDebug` builds PASS.
