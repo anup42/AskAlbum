@@ -621,3 +621,6 @@ media, databases, or logs.
 ### 2026-08-05 - Seed recovery work before foreground indexing
 - Settings-driven foreground indexing now creates the media/vector WorkManager recovery requests immediately after the foreground lane claims ownership, covering starts that had no pre-existing queued worker.
 - Added connected coverage proving `startIndexing` leaves a durable `gallery-index` request without clearing app data.
+### 2026-08-05 - Add controlled foreground process-death coverage
+- Added a connected instrumentation harness that starts the real foreground service, verifies the durable media recovery request, kills only the target app process, and confirms non-cancelled recovery work survives.
+- The test cleanup cancels only the two indexing work names and stops the service; it does not uninstall, clear data, reset indexes, or delete device media.
