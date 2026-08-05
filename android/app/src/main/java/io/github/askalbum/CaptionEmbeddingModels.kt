@@ -275,7 +275,7 @@ internal object SemanticCaptionChunker {
     }
 
     private fun classifyFact(fact: SemanticFactRecord): CaptionChunkType = when (fact.predicate) {
-        "scene_summary", "primary_activity", "activity", "activity_indicator" -> CaptionChunkType.SCENE_ACTIVITY
+        "scene_summary", "image_subject", "observed_activity", "activity_state", "primary_activity", "activity", "activity_indicator" -> CaptionChunkType.SCENE_ACTIVITY
         "possible_occasion", "occasion" -> CaptionChunkType.OCCASION
         "occasion_indicator" -> CaptionChunkType.OCCASION_INDICATOR
         else -> classify("${fact.predicate} ${fact.value}")

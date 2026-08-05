@@ -582,6 +582,7 @@ data class SemanticCaptionChunkFtsEntity(
         Index(name = "semantic_enrichment_status_idx", value = ["status", "updated_at"]),
         Index(name = "semantic_enrichment_media_idx", value = ["representative_media_id"]),
         Index(name = "semantic_enrichment_queue_idx", value = ["status", "next_attempt_at"]),
+        Index(name = "semantic_enrichment_priority_idx", value = ["status", "priority", "next_attempt_at", "updated_at"]),
         Index(
             name = "semantic_enrichment_unique_idx",
             value = ["scope", "subject_id", "representative_media_id", "reason"],
@@ -608,6 +609,7 @@ data class SemanticEnrichmentJobEntity(
     @ColumnInfo(name = "lease_expires_at") val leaseExpiresAt: Long?,
     @ColumnInfo(name = "next_attempt_at", defaultValue = "0") val nextAttemptAt: Long,
     @ColumnInfo(name = "last_progress_at") val lastProgressAt: Long?,
+    @ColumnInfo(name = "priority", defaultValue = "100") val priority: Int,
 )
 
 @Database(
@@ -645,7 +647,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticPredicateScanHitEntity::class,
         SensitiveDataMigrationEntity::class,
     ],
-    version = 21,
+    version = 22,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -677,6 +679,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_18_19,
             MIGRATION_19_20,
             MIGRATION_20_21,
+            MIGRATION_21_22,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1098,6 +1101,30 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_generation_idx ON semantic_caption(generation_id)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_generation_idx ON semantic_caption_chunk(generation_id)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS person_attribute_generation_idx ON person_attribute_fact(generation_id)")
+            }
+        }
+
+        internal val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE semantic_enrichment_job ADD COLUMN priority INTEGER NOT NULL DEFAULT 100")
+                db.execSQL(
+                    """
+                    UPDATE semantic_enrichment_job SET priority=CASE
+                        WHEN lower(reason) LIKE '%interactive%' OR lower(reason) LIKE '%query_verification%' THEN 1000
+                        WHEN lower(reason) LIKE 'personal_media:%' AND user_requested=1 THEN 900
+                        WHEN lower(reason) LIKE 'personal_media:%' THEN 800
+                        WHEN lower(reason) LIKE '%frequent%' THEN 600
+                        WHEN lower(reason) LIKE '%event%' THEN 500
+                        WHEN lower(reason) LIKE '%group%' OR lower(reason) LIKE '%burst%' OR lower(reason) LIKE '%duplicate%' THEN 400
+                        WHEN user_requested=1 THEN 700
+                        ELSE 100
+                    END
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS semantic_enrichment_priority_idx " +
+                        "ON semantic_enrichment_job(status,priority,next_attempt_at,updated_at)",
+                )
             }
         }
 

@@ -2734,6 +2734,7 @@ class GalleryDatabase(
             ContentValues().apply {
                 put("status", SemanticEnrichmentStatus.PENDING.name)
                 put("attempt_count", 0)
+                put("priority", SemanticEnrichmentPriority.forJob(reason, userRequested))
                 putNull("error")
                 putNull("lease_owner")
                 putNull("lease_expires_at")
@@ -2760,6 +2761,7 @@ class GalleryDatabase(
                 put("status", SemanticEnrichmentStatus.PENDING.name)
                 put("attempt_count", 0)
                 put("user_requested", userRequested)
+                put("priority", SemanticEnrichmentPriority.forJob(reason, userRequested))
                 putNull("model_version")
                 putNull("error")
                 putNull("lease_owner")
@@ -3064,6 +3066,7 @@ class GalleryDatabase(
                     put("status", job.status.name)
                     put("attempt_count", job.attemptCount)
                     put("user_requested", job.userRequested)
+                    put("priority", job.priority)
                     putNull("model_version")
                     putNull("error")
                     put("updated_at", now)
@@ -3073,6 +3076,7 @@ class GalleryDatabase(
                         put("status", SemanticEnrichmentStatus.PENDING.name)
                         put("attempt_count", 0)
                         put("user_requested", true)
+                        put("priority", SemanticEnrichmentPriority.forJob(job.reason, true))
                         putNull("error")
                         put("updated_at", now)
                     }, "id=? AND status IN (?,?)", arrayOf(
@@ -3094,9 +3098,7 @@ class GalleryDatabase(
             val where = if (userRequestedOnly) " AND user_requested=1" else ""
             selected = db.rawQuery(
                 "SELECT * FROM semantic_enrichment_job WHERE status=? AND next_attempt_at<=?$where " +
-                    "ORDER BY user_requested DESC," +
-                    "CASE WHEN reason LIKE '${PersonalSemanticMemoryPolicy.JOB_PREFIX}%' THEN 0 ELSE 1 END," +
-                    "updated_at LIMIT 1",
+                    "ORDER BY priority DESC,user_requested DESC,next_attempt_at,updated_at,id LIMIT 1",
                 arrayOf(SemanticEnrichmentStatus.PENDING.name, System.currentTimeMillis().toString()),
             ).use { cursor ->
                 if (!cursor.moveToFirst()) null else SemanticEnrichmentJobRecord(
@@ -3110,6 +3112,7 @@ class GalleryDatabase(
                     userRequested = cursor.getInt(cursor.getColumnIndexOrThrow("user_requested")) != 0,
                     modelVersion = cursor.nullableText("model_version"),
                     error = cursor.nullableText("error"),
+                    priority = cursor.getInt(cursor.getColumnIndexOrThrow("priority")),
                 )
             }
             selected?.let { job ->
@@ -3231,8 +3234,11 @@ class GalleryDatabase(
             emptyArray(),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
         val latestError = db.rawQuery(
-            "SELECT error FROM semantic_enrichment_job WHERE error IS NOT NULL AND error<>'' ORDER BY updated_at DESC LIMIT 1",
-            emptyArray(),
+            "SELECT error FROM semantic_enrichment_job " +
+                "WHERE error IS NOT NULL AND error<>'' AND status IN (?,?) " +
+                "AND COALESCE(model_version,'') NOT LIKE 'superseded:%' " +
+                "ORDER BY updated_at DESC,id DESC LIMIT 1",
+            arrayOf(SemanticEnrichmentStatus.FAILED.name, SemanticEnrichmentStatus.AUTH_REQUIRED.name),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
         return SemanticMemoryProgress(
             totalJobs = counts[0],

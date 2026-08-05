@@ -2,12 +2,38 @@ package io.github.anup42.askalbum
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.max
 
 enum class SemanticFactScope { MEDIA, EXACT_DUPLICATE_GROUP, VISUAL_GROUP, EVENT, QUERY_VERIFICATION }
 enum class SemanticEnrichmentStatus { PENDING, RUNNING, COMPLETE, FAILED, AUTH_REQUIRED }
+
+object SemanticEnrichmentPriority {
+    const val INTERACTIVE_QUERY = 1000
+    const val PERSONAL_USER_REQUESTED = 900
+    const val PERSONAL_BACKLOG = 800
+    const val USER_REQUESTED_BACKGROUND = 700
+    const val FREQUENTLY_RETRIEVED = 600
+    const val EVENT_REPRESENTATIVE = 500
+    const val GROUP_REPRESENTATIVE = 400
+    const val OTHER_BACKGROUND = 100
+
+    fun forJob(reason: String, userRequested: Boolean): Int {
+        val normalized = reason.lowercase(Locale.ROOT)
+        return when {
+            normalized.contains("interactive") || normalized.contains("query_verification") -> INTERACTIVE_QUERY
+            normalized.startsWith(PersonalSemanticMemoryPolicy.JOB_PREFIX) && userRequested -> PERSONAL_USER_REQUESTED
+            normalized.startsWith(PersonalSemanticMemoryPolicy.JOB_PREFIX) -> PERSONAL_BACKLOG
+            normalized.contains("frequent") -> FREQUENTLY_RETRIEVED
+            normalized.contains("event") -> EVENT_REPRESENTATIVE
+            normalized.contains("group") || normalized.contains("burst") || normalized.contains("duplicate") -> GROUP_REPRESENTATIVE
+            userRequested -> USER_REQUESTED_BACKGROUND
+            else -> OTHER_BACKGROUND
+        }
+    }
+}
 
 data class SemanticGenerationProvenance(
     val generationId: String,
@@ -47,6 +73,7 @@ data class SemanticEnrichmentJobRecord(
     val userRequested: Boolean,
     val modelVersion: String? = null,
     val error: String? = null,
+    val priority: Int = SemanticEnrichmentPriority.forJob(reason, userRequested),
 )
 
 data class SemanticMemoryProgress(
@@ -115,7 +142,7 @@ internal object PersonalSemanticMemoryPolicy {
     const val JOB_PREFIX = "personal_media:"
     const val CAPTION_POLICY_VERSION = "personal-caption-policy-v1"
     const val BODY_REGION_VERSION = "person-body-regions-v1"
-    const val PROMPT_VERSION = "adaptive-comprehensive-caption-v4"
+    const val PROMPT_VERSION = "adaptive-comprehensive-caption-v5"
 
     private val familyRelationships = setOf(
         "me", "mother", "mom", "mum", "father", "dad", "brother", "sister",

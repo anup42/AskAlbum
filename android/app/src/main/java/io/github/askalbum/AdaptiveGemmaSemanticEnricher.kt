@@ -54,8 +54,10 @@ class AdaptiveGemmaSemanticEnricher(
         }.orEmpty()}
         The top panel is the complete image. Lower panels are labelled conservative full-body and upper-body crops.
         Reviewed labels available: ${bindings.distinctBy(PersonVerificationBinding::clusterId).joinToString(",") { it.stableLabel }.ifBlank { "none" }}.
-        First determine the overall visible scene and primary activity. Explain what is happening, what each labelled person is
-        doing, how people are interacting, and which visible objects participate in the activity. If visible decorations, food,
+        First determine the overall visible scene and whether any activity is visibly occurring. Explain what is happening, what
+        each labelled person is doing, how people are interacting, and which visible objects participate in the activity. For a
+        static image, identify the imageSubject and set activityState to NONE_VISIBLE or NOT_APPLICABLE; do not invent a viewer,
+        writer, display, or other action. If the activity is unclear, use AMBIGUOUS. If visible decorations, food,
         clothing, signs, or other evidence suggest an occasion, report it only as a possibleOccasion with confidence and list
         the supporting occasionIndicators. Do not present an inferred occasion as confirmed. Begin detailedCaption with a natural
         scene-and-activity summary, then continue with all other grounded search-useful details.
@@ -68,6 +70,7 @@ class AdaptiveGemmaSemanticEnricher(
         or an event without visible cues. Never output sensitive OCR values, paths, filenames, URIs, tools, passwords, payment data,
         phone numbers, emails, account data, or identity numbers.
         Shape: {"sceneSummary":"Two people are posing beside and cutting a decorated cake in a living room.",
+        "imageSubject":"cake-cutting scene","observedActivity":"cutting a decorated cake","activityState":"OBSERVED",
         "primaryActivity":{"label":"posing beside and cutting a cake","confidence":0.95,
         "evidence":["P1 is holding a knife near the cake","P2 is standing beside P1"]},
         "actions":[{"subjectRef":"P1","action":"cutting","objectRef":"decorated cake","confidence":0.96,
@@ -88,11 +91,14 @@ class AdaptiveGemmaSemanticEnricher(
         bodyRegion: HEAD, NECK, UPPER_BODY, LOWER_BODY, FULL_BODY, FEET, HAND, or UNKNOWN.
         Include every visible worn item, not only shirts: dresses, sarees, suits, trousers, shoes, sandals, hats, glasses,
         jewelry, bags, and uncommon items using OTHER_WORN_ITEM with a safe itemType.
-        sceneSummary must describe the visible scene and main activity, not only list objects or clothing.
+        sceneSummary must describe the visible scene and activity when activityState is OBSERVED; for static images describe what
+        the image is about without inventing an action. activityState must be exactly OBSERVED, NONE_VISIBLE, AMBIGUOUS, or
+        NOT_APPLICABLE. observedActivity must be null or empty unless activityState is OBSERVED.
         primaryActivity, actions, interactions, occasionIndicators, and possibleOccasion may be null or empty when unsupported.
         Every action or interaction personRef must use a supplied P label. possibleOccasion is always an uncertain visual
         interpretation in this call: isDirectlyConfirmed must be false. Never infer whose occasion it is.
-        predicate must be one of: scene, scene_summary, activity, primary_activity, activity_indicator, object, setting,
+        predicate must be one of: scene, scene_summary, image_subject, observed_activity, activity_state, activity,
+        primary_activity, activity_indicator, object, setting,
         occasion, possible_occasion, occasion_indicator, clothing, document_type.
         value must be concise visible evidence, never a caption, identity guess, private value, password, payment data, phone, email, order ID, path, URI, or tool.
         applicability must be EVIDENCE_MEDIA_ONLY or SAFE_FOR_EXACT_DUPLICATES.
@@ -196,6 +202,9 @@ internal object SemanticFactCodec {
         "scene", "scene_type" -> "scene"
         "scene_summary", "summary" -> "scene_summary"
         "activity", "activities" -> "activity"
+        "image_subject", "subject" -> "image_subject"
+        "observed_activity" -> "observed_activity"
+        "activity_state" -> "activity_state"
         "primary_activity", "main_activity" -> "primary_activity"
         "activity_indicator", "activity_evidence" -> "activity_indicator"
         "object", "objects" -> "object"
@@ -214,7 +223,7 @@ internal object SemanticFactCodec {
             ?: "EVIDENCE_MEDIA_ONLY"
 
     private object Rules {
-        const val PROMPT_VERSION = "adaptive-semantic-facts-v2"
+        const val PROMPT_VERSION = SemanticEnrichmentCodec.PROMPT_VERSION
         const val MAX_FACTS = 20
         const val MAX_VALUE_LENGTH = 120
         val MALFORMED_CONFIDENCE = Regex(
