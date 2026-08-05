@@ -333,3 +333,7 @@ media, databases, or logs.
 ### 2026-08-05 - Deterministic Gemma list plans
 - Sanitized list-structural planner terms and hard-place duplicates so `LIST` scope queries remain deterministic; meaningful filters remain searchable.
 - Validation: Gemma plan, query compiler, capability tests, and consumer assemble PASS.
+
+### 2026-08-05 - Complete metadata count path
+- Metadata-only counts now use the complete eligible set instead of ranked top-K; deterministic aggregation remains exact even when no compatible numeric facts exist.
+- Validation: focused tests, full `testConsumerDebugUnitTest`, and `assembleConsumerDebug` PASS.

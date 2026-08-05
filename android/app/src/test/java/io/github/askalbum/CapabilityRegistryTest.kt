@@ -166,6 +166,16 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun metadataCountIsDeterministicOnlyWithoutSemanticPredicates() {
+        val countPlan = context(QueryIntent.COUNT).plan
+
+        assertTrue(isDeterministicMetadataCount(countPlan, emptyList(), emptyList(), false))
+        assertFalse(isDeterministicMetadataCount(countPlan, listOf("dog"), emptyList(), false))
+        assertFalse(isDeterministicMetadataCount(countPlan, emptyList(), listOf("dog"), false))
+        assertFalse(isDeterministicMetadataCount(countPlan, emptyList(), emptyList(), true))
+    }
+
+    @Test
     fun listPersonUsesReviewedLabelsOnly() {
         val base = context(QueryIntent.LIST)
         val answer = CapabilityAnswerExecutor.execute(

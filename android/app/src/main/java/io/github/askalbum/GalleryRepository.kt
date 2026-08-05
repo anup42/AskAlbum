@@ -28,6 +28,17 @@ internal fun shouldExecuteCapabilityWithoutMediaHits(
     QueryIntent.COMPARE,
 )
 
+internal fun isDeterministicMetadataCount(
+    plan: GalleryQueryPlan,
+    terms: List<String>,
+    semanticQueries: List<String>,
+    verificationApplied: Boolean,
+): Boolean = plan.intent == QueryIntent.COUNT &&
+    plan.semanticClauses.isEmpty() &&
+    terms.isEmpty() &&
+    semanticQueries.isEmpty() &&
+    !verificationApplied
+
 class GalleryRepository(context: Context) {
     private val appContext = context.applicationContext
     private val services = (context.applicationContext as AskAlbumApplication).services
@@ -782,6 +793,8 @@ class GalleryRepository(context: Context) {
             )
         }
         val deterministicCapabilityHits = when {
+            isDeterministicMetadataCount(plan, terms, semanticQueries, false) ->
+                allItems.map(deterministicScopeHit)
             plan.intent == QueryIntent.LIST && terms.isEmpty() && semanticQueries.isEmpty() ->
                 allItems.map(deterministicScopeHit)
             hasExplicitComparisonScopes ->
@@ -1045,6 +1058,7 @@ class GalleryRepository(context: Context) {
             enriched
         }
         val hits = verified.take(plan.limit.coerceIn(1, 100))
+        val deterministicMetadataCount = isDeterministicMetadataCount(plan, terms, semanticQueries, verification.applied)
         val visualChannelReport = RetrievalChannelReport(
             RetrievalChannel.VISUAL_VERIFICATION,
             when {
@@ -1073,10 +1087,11 @@ class GalleryRepository(context: Context) {
             visualChannelReport,
         )
 
-        val matchCount = if (verification.applied) verified.size else if (exactPredicateScan?.completeCoverage == true) {
-            semanticVectorReport.hits.map(VectorHit::mediaId).distinct().size
-        } else {
-            ranked.size
+        val matchCount = when {
+            verification.applied -> verified.size
+            deterministicMetadataCount -> deterministicAnswerHits.size
+            exactPredicateScan?.completeCoverage == true -> semanticVectorReport.hits.map(VectorHit::mediaId).distinct().size
+            else -> ranked.size
         }
         val deterministicAnswer = buildAnswer(
             plan,
@@ -1088,6 +1103,7 @@ class GalleryRepository(context: Context) {
             channelReports,
             deterministicAnswerHits,
             completePredicateScan = exactPredicateScan?.completeCoverage == true,
+            deterministicMetadataCount = deterministicMetadataCount,
         )
         val requiresAuthentication = hits.any(SensitiveEvidencePolicy::requiresAuthentication)
         val answer = if (requiresAuthentication) {
@@ -1218,6 +1234,7 @@ class GalleryRepository(context: Context) {
         channelReports: List<RetrievalChannelReport<SearchHit>>,
         deterministicAnswerHits: List<SearchHit>,
         completePredicateScan: Boolean = false,
+        deterministicMetadataCount: Boolean = false,
     ): SearchAnswer {
         val totalItems = eligibleIds.size
         val readyItems = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
@@ -1232,7 +1249,8 @@ class GalleryRepository(context: Context) {
         val deterministicResultSetFilter = plan.baseResultIds != null && plan.terms.isEmpty() &&
             plan.semanticClauses.isEmpty() && plan.filter != FilterExpression.True && !verification.applied
         val deterministicAggregation = plan.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
-            plan.aggregation != null && plan.semanticClauses.isEmpty() && deterministicAnswerHits.isNotEmpty() && !verification.applied
+            plan.aggregation != null && plan.semanticClauses.isEmpty() && !verification.applied &&
+            (deterministicMetadataCount || deterministicAnswerHits.isNotEmpty() || plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX))
         val deterministicList = plan.intent == QueryIntent.LIST &&
             plan.terms.isEmpty() && plan.semanticClauses.isEmpty() && !verification.applied
         val deterministicComparison = plan.intent == QueryIntent.COMPARE &&
