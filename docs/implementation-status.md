@@ -688,3 +688,11 @@ media, databases, or logs.
 - PASS focused retrieval-channel and caption-coverage tests.
 - PASS `consumerDebug` rebuilt and replacement-installed on `R3CW408WE4J`; `offlineDemoDebug` assembled successfully.
 - NOT RUN model-backed vector search on device because a verified retrieval-pack runtime remains unavailable for the full acceptance gate.
+
+## 2026-08-05 - Fence superseded personal enrichment jobs
+
+- Fixed personal semantic-memory policy replacement so live `RUNNING` jobs retain their lease while being marked superseded; healthy workers are not reclaimed by queue polling.
+- Added completion/failure generation fencing so stale callbacks cannot persist captions or facts after a policy replacement.
+- Added a regression test covering live lease preservation and stale completion rejection.
+- Validation: fixture unit tests PASS; isolated `PersonalSemanticMemoryDatabaseTest` on secondary device PASS; `consumerDebug` and `offlineDemoDebug` builds PASS.
+- Primary production connected instrumentation remains intentionally unrun after the documented package/data cleanup incident; no further production-device test was performed.
