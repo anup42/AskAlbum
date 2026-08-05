@@ -558,3 +558,9 @@ media, databases, or logs.
 - `ANSWER_FACT` and `DOCUMENT_QA` now apply the validated plan sort before selecting the first document, so `latest` cannot depend on incidental input order and still fails closed when that document lacks the requested field.
 - Numeric `SUM`, `MIN`, and `MAX` collapse only media rows with the same verified exact-content digest; rows without a digest remain distinct.
 - Added regressions for newest-document selection and exact-duplicate aggregation. No migration or destructive data change was introduced.
+
+## 2026-08-05 - Normalize reviewed-person identity lookup consistently
+
+- Reviewed-person media filtering and group resolution now use one NFKC, whitespace-normalized, case-insensitive identity representation.
+- Token-boundary matching remains Unicode-aware, so Hindi, Hinglish, decomposed accents, and compatibility-width aliases resolve without substring false positives.
+- Added regression coverage; no database migration or People-data rewrite was introduced.

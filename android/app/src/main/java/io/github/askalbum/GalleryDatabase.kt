@@ -1624,7 +1624,7 @@ class GalleryDatabase(
         if (personIds.isEmpty()) return emptySet()
         val db = readableDatabase
         val clusterSets = personIds.distinct().map { requested ->
-            val needle = requested.trim().lowercase(Locale.ROOT)
+            val needle = PersonIdentityNormalization.normalize(requested)
             val clusterIds = db.rawQuery(
                 "SELECT id,label,relationship,aliases FROM person_cluster WHERE reviewed=1 AND hidden=0",
                 null,
@@ -1638,7 +1638,10 @@ class GalleryDatabase(
                             val json = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(3)))
                             List(json.length()) { json.getString(it) }
                         }.getOrDefault(emptyList())
-                        if (listOfNotNull(id, label, relationship).plus(aliases).any { it.lowercase(Locale.ROOT) == needle }) add(id)
+                        if (listOfNotNull(id, label, relationship).plus(aliases).any {
+                                PersonIdentityNormalization.normalize(it) == needle
+                            }
+                        ) add(id)
                     }
                 }
             }
@@ -2138,7 +2141,7 @@ class GalleryDatabase(
         resolveReviewedPersonGroups(query).flatMapTo(linkedSetOf(), ReviewedPersonMatchGroup::personIds)
 
     internal fun resolveReviewedPersonGroups(query: String): List<ReviewedPersonMatchGroup> {
-        val normalizedQuery = query.lowercase(Locale.ROOT)
+        val normalizedQuery = PersonIdentityNormalization.normalize(query)
         val candidates = readableDatabase.rawQuery(
             """
             SELECT c.id,c.label,c.relationship,c.aliases,
@@ -3022,10 +3025,7 @@ class GalleryDatabase(
     ).use(android.database.Cursor::moveToFirst)
 
     private fun identityTermMatches(normalizedQuery: String, rawTerm: String): Boolean {
-        val term = rawTerm.trim().lowercase(Locale.ROOT)
-        if (term.isEmpty()) return false
-        return Regex("(^|[^\\p{L}\\p{M}\\p{N}])${Regex.escape(term)}([^\\p{L}\\p{M}\\p{N}]|$)")
-            .containsMatchIn(normalizedQuery)
+        return PersonIdentityNormalization.containsIdentityTerm(normalizedQuery, rawTerm)
     }
 
     fun embeddingReadyMediaIds(): Set<String> = readableDatabase.rawQuery(
