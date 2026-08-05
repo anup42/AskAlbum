@@ -320,3 +320,8 @@ media, databases, or logs.
 - Added codec, compiler, and executor regression tests; no schema or media-data migration was introduced.
 - Complete term-free LIST and explicit two-scope COMPARE answers now report `EXACT` only when the eligible local coverage is complete; bounded semantic retrieval remains estimated.
 - SUM and MIN/MAX fallback plans now use the complete allowlisted OCR fact set without a semantic predicate pass or top-K arithmetic.
+
+### 2026-08-05 - SFace settings disclosure
+- Kept the pinned OpenCV SFace model name and version visible when the verified pack is not installed; installation state is shown separately.
+- Validation: `SFaceSettingsUiTest` PASS on SM-F731U; consumer unit suite and `assembleConsumerDebug` PASS; replacement install PASS.
+- The broad connected CI report remains limited by missing private SFace/SigLIP2 artifacts; those acceptance cases are not marked PASS.

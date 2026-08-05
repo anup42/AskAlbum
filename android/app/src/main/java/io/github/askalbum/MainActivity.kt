@@ -1194,7 +1194,13 @@ private fun IndexManagerScreen(
             Column(Modifier.padding(20.dp)) {
                 Text("Face identity model", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(7.dp))
-                Text(if (faceModel.installed) "${faceModel.name} ${faceModel.version}" else "Not installed — face boxes only")
+                Text("${faceModel.name} ${faceModel.version}")
+                Text(
+                    if (faceModel.installed) "Installed and verified in app-private storage"
+                    else "Not installed — face boxes only",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
                 Text(
                     "Apache-2.0 • 128 dimensions • ${formatBytes(faceModel.sizeBytes)} • pinned SHA-256 ${faceModel.sha256.take(12)}…",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
