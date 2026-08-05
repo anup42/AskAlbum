@@ -473,3 +473,10 @@ media, databases, or logs.
 - `consumerDebug` and `fixtureCiDebug` APK assembly PASS; replacement install and launch smoke PASS on `SM-F731U`.
 - `fixtureCiDebug` INTERNET permission: ABSENT.
 - Long-running 5k/20k, Doze, process-death, foreground-service-timeout, E4B, and full acceptance-query gates remain unverified.
+
+### 2026-08-05 - Semantic scan and caption-vector completion hardening
+- Complete predicate scans now consume typed vector coverage and do not advance a batch on unavailable, failed, partial, or missing-vector results.
+- Caption-vector reconciliation failures are reported as `FAILED` and retried; they cannot be hidden behind `COMPLETE`.
+- Tests: semantic scan batch policy and caption reconciliation policy PASS; `consumerDebug` and `fixtureCiDebug` compilation PASS.
+- Build/device: both APKs assembled PASS; consumer replacement install and launch smoke PASS on `SM-F731U`; fixture INTERNET permission ABSENT.
+- Long-running 5k/20k, Doze, process-death, foreground-service-timeout, E4B, and full acceptance-query gates remain unverified.
