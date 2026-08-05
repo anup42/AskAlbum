@@ -1150,16 +1150,18 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     private suspend fun reloadIndexStatus(message: String? = state.operationMessage) {
         val refreshed = withContext(Dispatchers.IO) {
-            Triple(
-                repository.indexSummary(),
-                repository.peopleIndexStatus(),
-                repository.indexingAdmission(),
+            IndexStatusRefresh(
+                summary = repository.indexSummary(),
+                peopleIndex = repository.peopleIndexStatus(),
+                admission = repository.indexingAdmission(),
+                semanticMemory = repository.semanticMemoryProgress(),
             )
         }
         state = state.copy(
-            index = refreshed.first,
-            peopleIndex = refreshed.second,
-            indexingAdmission = refreshed.third,
+            index = refreshed.summary,
+            peopleIndex = refreshed.peopleIndex,
+            indexingAdmission = refreshed.admission,
+            semanticMemory = refreshed.semanticMemory,
             operationMessage = message,
         )
     }
@@ -1238,6 +1240,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val items: List<GalleryItem>,
         val peopleIndex: PeopleIndexStatus,
         val admission: BackgroundWorkAdmission,
+    )
+
+    private data class IndexStatusRefresh(
+        val summary: IndexSummary,
+        val peopleIndex: PeopleIndexStatus,
+        val admission: BackgroundWorkAdmission,
+        val semanticMemory: SemanticMemoryProgress,
     )
 
     private fun hasRunnableIndexing(
