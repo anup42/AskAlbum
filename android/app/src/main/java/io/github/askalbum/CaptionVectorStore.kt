@@ -65,7 +65,7 @@ class CaptionVectorStore(
                     eligibleChunkCount = 0,
                     indexedChunkCount = 0,
                 ),
-                eligibleChunkCount = eligibleMediaCount,
+                eligibleChunkCount = 0,
                 indexedChunkCount = 0,
                 searchedChunkCount = 0,
                 hits = emptyList(),
