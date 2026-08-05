@@ -3813,7 +3813,7 @@ class GalleryDatabase(
                             scope = SemanticFactScope.valueOf(cursor.text("scope")),
                             subjectId = cursor.text("subject_id"),
                             predicate = cursor.text("predicate"),
-                            value = cursor.text("value"),
+                            value = sensitiveDataAtRest.reveal(cursor.text("value")),
                             confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
                             evidenceMediaId = cursor.text("evidence_media_id"),
                             region = cursor.nullableText("region")?.let { encoded ->
@@ -3841,7 +3841,7 @@ class GalleryDatabase(
                         scope = SemanticFactScope.valueOf(cursor.text("scope")),
                         subjectId = cursor.text("subject_id"),
                         predicate = cursor.text("predicate"),
-                        value = cursor.text("value"),
+                        value = sensitiveDataAtRest.reveal(cursor.text("value")),
                         confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
                         evidenceMediaId = cursor.text("evidence_media_id"),
                         region = cursor.nullableText("region")?.let { encoded ->
@@ -3868,7 +3868,7 @@ class GalleryDatabase(
                         scope = SemanticFactScope.valueOf(cursor.text("scope")),
                         subjectId = cursor.text("subject_id"),
                         predicate = cursor.text("predicate"),
-                        value = cursor.text("value"),
+                        value = sensitiveDataAtRest.reveal(cursor.text("value")),
                         confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
                         evidenceMediaId = cursor.text("evidence_media_id"),
                         region = cursor.nullableText("region")?.let { encoded ->

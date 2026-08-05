@@ -350,3 +350,9 @@ media, databases, or logs.
 - The validated planner schema accepts an app-checked boolean `followUp` decision; result-set IDs remain app-owned and are never emitted by Gemma.
 - Existing language/prefix heuristics remain the deterministic fallback when the model omits the field, while standalone requests can explicitly remain gallery-wide.
 - Added JVM coverage for contextual utterances without fixed prefixes and for standalone requests after an active result set.
+
+## Reveal encrypted semantic fact values at the database boundary
+
+- Semantic facts are stored with the Keystore envelope and all three read paths now reveal the value before constructing `SemanticFactRecord`.
+- This restores cached Gemma fact display, semantic evidence text, and deterministic fact matching without exposing plaintext at rest.
+- The existing temporary-database semantic-enrichment instrumentation test covers the round trip.
