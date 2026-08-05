@@ -43,6 +43,21 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
         database.prepareCaptionEmbeddingVersion(producer)
         database.materializeCaptionChunkBackfill(BACKFILL_CAPTIONS_PER_RUN)
         if (!database.hasCaptionEmbeddingWork(producer)) {
+            try {
+                services.captionVectorStore.reconcile(database.currentCaptionEmbeddingChunkIds(producer))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                Log.e(TAG, "Caption vector reconciliation failed before completion", error)
+                setProgress(
+                    workDataOf(
+                        "status" to "FAILED",
+                        "error_code" to "CAPTION_VECTOR_RECONCILIATION_FAILED",
+                        "last_progress_at" to System.currentTimeMillis(),
+                    ),
+                )
+                return@withContext Result.retry()
+            }
             setProgress(
                 workDataOf(
                     "status" to "COMPLETE",
@@ -55,7 +70,6 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
                     "quarantined" to 0,
                 ),
             )
-            runCatching { services.captionVectorStore.reconcile(database.currentCaptionEmbeddingChunkIds(producer)) }
             return@withContext Result.success()
         }
         val admission = BackgroundWorkAdmissionPolicy(applicationContext).evaluate()
@@ -125,15 +139,32 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
             ),
         )
         val hasMore = database.hasCaptionEmbeddingWork(producer)
+        var reconciliationFailed = false
         if (hasMore && controls.load().captionEmbeddingsEnabled) {
             CaptionEmbeddingScheduler.scheduleContinuation(applicationContext)
         } else if (!hasMore) {
-            runCatching {
+            try {
                 services.captionVectorStore.reconcile(database.currentCaptionEmbeddingChunkIds(producer))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                reconciliationFailed = true
+                Log.e(TAG, "Caption vector reconciliation failed after processing", error)
+                setProgress(
+                    workDataOf(
+                        "status" to "FAILED",
+                        "error_code" to "CAPTION_VECTOR_RECONCILIATION_FAILED",
+                        "last_progress_at" to System.currentTimeMillis(),
+                    ),
+                )
             }
         }
         Log.i(TAG, "Caption embedding run processed=$processed failures=$failures hasMore=$hasMore")
-        if (processed == 0 && failures > 0) Result.retry() else Result.success()
+        if (CaptionEmbeddingReconciliationPolicy.shouldRetry(reconciliationFailed, processed, failures)) {
+            Result.retry()
+        } else {
+            Result.success()
+        }
     }
 
     private companion object {
@@ -145,6 +176,11 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
 
 internal object CaptionEmbeddingAvailabilityPolicy {
     fun shouldRetryForUnavailablePack(hasPendingWork: Boolean): Boolean = hasPendingWork
+}
+
+internal object CaptionEmbeddingReconciliationPolicy {
+    fun shouldRetry(reconciliationFailed: Boolean, processed: Int, failures: Int): Boolean =
+        reconciliationFailed || (processed == 0 && failures > 0)
 }
 
 object CaptionEmbeddingScheduler {
