@@ -63,6 +63,7 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
 
         var processed = 0
         var failures = 0
+        val progressStartedAt = System.currentTimeMillis()
         val chunks = database.claimCaptionEmbeddingChunks(id.toString(), producer, CHUNKS_PER_RUN)
         if (chunks.isNotEmpty()) {
             try {
@@ -104,6 +105,12 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
             }
         }
 
+        val captionProgress = database.captionEmbeddingProgress()
+        val estimate = IndexingProgressEstimate.calculate(
+            processed = processed,
+            remaining = captionProgress.pendingChunkCount + captionProgress.runningChunkCount + captionProgress.delayedRetryCount,
+            startedAtMillis = progressStartedAt,
+        )
         setProgress(
             workDataOf(
                 "processed" to processed,
@@ -113,6 +120,8 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
                 "next_attempt_at" to 0L,
                 "delayed_retries" to failures,
                 "quarantined" to 0,
+                "rate_per_minute" to (estimate.ratePerMinute ?: 0.0),
+                "eta_millis" to (estimate.etaMillis ?: 0L),
             ),
         )
         val hasMore = database.hasCaptionEmbeddingWork(producer)

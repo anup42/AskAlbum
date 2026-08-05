@@ -460,3 +460,9 @@ media, databases, or logs.
 - Added optional rate-per-minute and ETA fields to typed indexing progress snapshots, preserving null when a worker has no estimate.
 - Foreground indexing notifications now identify the active media/vector lane and show a bounded rate and estimated remaining duration when enough progress exists.
 - `IndexingWorkProgressTest` covers parsing estimates; all debug variants, consumer lint, offline permission validation, replacement install, and launch smoke passed.
+
+## 2026-08-05 - Publish worker rate and ETA estimates
+
+- Added one shared bounded estimator and published optional rate/ETA fields from media analysis, SigLIP2, People, caption-vector, and Gemma semantic-memory progress payloads.
+- Estimates use completed work and current pending counts; zero-progress and completed queues intentionally expose no invented rate or ETA.
+- Focused progress tests, all debug variants, consumer lint, offline INTERNET validation, replacement install, and prior launch smoke are PASS; no Room migration or index data mutation was performed.

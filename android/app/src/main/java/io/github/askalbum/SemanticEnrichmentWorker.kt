@@ -75,7 +75,14 @@ class SemanticEnrichmentWorker(
         var processed = 0
         var retryableFailures = 0
         var quarantinedFailures = 0
+        val progressStartedAt = System.currentTimeMillis()
         suspend fun publishProgress(inFlight: Int) {
+            val semanticProgress = database.semanticMemoryProgress(modelStatus.packVersion)
+            val estimate = IndexingProgressEstimate.calculate(
+                processed = processed,
+                remaining = semanticProgress.pendingJobs + semanticProgress.runningJobs,
+                startedAtMillis = progressStartedAt,
+            )
             setProgress(
                 workDataOf(
                     "processed" to processed,
@@ -85,6 +92,8 @@ class SemanticEnrichmentWorker(
                     "next_attempt_at" to (database.nextSemanticEnrichmentRetryAt() ?: 0L),
                     "delayed_retries" to retryableFailures,
                     "quarantined" to quarantinedFailures,
+                    "rate_per_minute" to (estimate.ratePerMinute ?: 0.0),
+                    "eta_millis" to (estimate.etaMillis ?: 0L),
                 ),
             )
         }

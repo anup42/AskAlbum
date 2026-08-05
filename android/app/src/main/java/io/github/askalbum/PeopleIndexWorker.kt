@@ -37,7 +37,8 @@ class PeopleIndexWorker(
             if (embedder != null) services.faceVectorStore.reconcile(repository.allEmbeddedFaceIds())
             val pendingItems = repository.facePendingItems(BATCH_SIZE)
             var processed = 0
-            publishProgress(processed, pendingItems.size, pendingItems.size, retryableFailures, quarantinedFailures)
+            val progressStartedAt = System.currentTimeMillis()
+            publishProgress(processed, pendingItems.size, pendingItems.size, retryableFailures, quarantinedFailures, progressStartedAt)
             for ((index, item) in pendingItems.withIndex()) {
                 if (isStopped || !repository.peopleIndexStatus().enabled || !jobControls.load().peopleEnabled) {
                     return@withContext Result.success()
@@ -45,7 +46,7 @@ class PeopleIndexWorker(
                 if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
                 if (!repository.markFaces(item.id, faceProducerVersion, ownerId)) {
                     processed = index + 1
-                    publishProgress(processed, pendingItems.size, pendingItems.size - processed, retryableFailures, quarantinedFailures)
+                    publishProgress(processed, pendingItems.size, pendingItems.size - processed, retryableFailures, quarantinedFailures, progressStartedAt)
                     continue
                 }
                 runCatching {
@@ -89,7 +90,7 @@ class PeopleIndexWorker(
                     }
                 }
                 processed = index + 1
-                publishProgress(processed, pendingItems.size, pendingItems.size - processed, retryableFailures, quarantinedFailures)
+                publishProgress(processed, pendingItems.size, pendingItems.size - processed, retryableFailures, quarantinedFailures, progressStartedAt)
             }
             val enabled = repository.peopleIndexStatus().enabled && jobControls.load().peopleEnabled
             val hasMore = repository.facePendingItems(1).isNotEmpty()
@@ -140,7 +141,13 @@ class PeopleIndexWorker(
         inFlight: Int,
         delayedRetries: Int,
         quarantined: Int,
+        startedAtMillis: Long,
     ) {
+        val estimate = IndexingProgressEstimate.calculate(
+            processed = processed,
+            remaining = repository.peopleIndexStatus().pendingMediaCount,
+            startedAtMillis = startedAtMillis,
+        )
         setProgress(
             workDataOf(
                 "processed" to processed,
@@ -150,6 +157,8 @@ class PeopleIndexWorker(
                 "next_attempt_at" to 0L,
                 "delayed_retries" to delayedRetries,
                 "quarantined" to quarantined,
+                "rate_per_minute" to (estimate.ratePerMinute ?: 0.0),
+                "eta_millis" to (estimate.etaMillis ?: 0L),
             ),
         )
     }

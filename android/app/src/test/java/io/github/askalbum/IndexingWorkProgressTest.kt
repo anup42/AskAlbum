@@ -56,6 +56,27 @@ class IndexingWorkProgressTest {
     }
 
     @Test
+    fun progressEstimateRequiresCompletedWorkAndKeepsEtaApproximate() {
+        val estimate = IndexingProgressEstimate.calculate(
+            processed = 10,
+            remaining = 20,
+            startedAtMillis = 1_000L,
+            nowMillis = 61_000L,
+        )
+
+        assertEquals(10.0, estimate.ratePerMinute!!, 0.001)
+        assertEquals(120_000L, estimate.etaMillis)
+        assertNull(
+            IndexingProgressEstimate.calculate(
+                processed = 0,
+                remaining = 20,
+                startedAtMillis = 1_000L,
+                nowMillis = 61_000L,
+            ).ratePerMinute,
+        )
+    }
+
+    @Test
     fun peopleCoverageUsesOnlyEligibleImages() {
         assertEquals(6, IndexingCoverageMath.peopleCompleted(faceScanned = 6, faceEligible = 10))
         assertEquals(3, IndexingCoverageMath.peoplePending(pending = 3, faceEligible = 10))

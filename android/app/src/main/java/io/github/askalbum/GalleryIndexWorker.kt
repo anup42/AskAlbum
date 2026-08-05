@@ -27,6 +27,7 @@ class GalleryIndexWorker(
         var permanentFailures = 0
         var hasMore = true
         var stoppedDuringBatch = false
+        val progressStartedAt = System.currentTimeMillis()
         GalleryIndexBatchProcessor(applicationContext, repository).use { processor ->
             while (
                 hasMore &&
@@ -52,16 +53,23 @@ class GalleryIndexWorker(
                 hasMore = batch.hasMore
                 stoppedDuringBatch = batch.stopped
                 if (!batch.stopped) repository.renewIndexingLeases(IndexingPipeline.MEDIA_ANALYSIS, id.toString())
+                val estimate = IndexingProgressEstimate.calculate(
+                    processed = processed,
+                    remaining = repository.indexSummary().pending,
+                    startedAtMillis = progressStartedAt,
+                )
                 setProgress(
                     workDataOf(
                         "processed" to processed,
                         "batches" to batches,
                         "in_flight" to if (hasMore) GalleryIndexBatchProcessor.DEFAULT_BATCH_SIZE else 0,
-                    "retryable_failures" to retryableFailures,
-                    "last_progress_at" to System.currentTimeMillis(),
-                    "next_attempt_at" to (batch.nextAttemptAtMillis ?: 0L),
-                    "delayed_retries" to retryableFailures,
-                    "quarantined" to 0,
+                        "retryable_failures" to retryableFailures,
+                        "last_progress_at" to System.currentTimeMillis(),
+                        "next_attempt_at" to (batch.nextAttemptAtMillis ?: 0L),
+                        "delayed_retries" to retryableFailures,
+                        "quarantined" to 0,
+                        "rate_per_minute" to (estimate.ratePerMinute ?: 0.0),
+                        "eta_millis" to (estimate.etaMillis ?: 0L),
                     ),
                 )
                 if (batch.stopped) break
