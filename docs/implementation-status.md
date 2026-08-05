@@ -368,3 +368,9 @@ media, databases, or logs.
 - Receipt totals and extracted amounts are now high-risk OCR fields, encrypted with the existing Keystore envelope and included in migration version 6 for existing rows.
 - FTS retains safe labels such as `receipt total` while redacting currency values; financial evidence requires device authentication before answer composition or display.
 - Deterministic sums and min/max remain available through the existing authenticated evidence path; no arithmetic is delegated to Gemma.
+
+## Protect semantic fact values at rest
+
+- `semantic_fact.value` is now written through the Keystore envelope and migration version 7 upgrades existing plaintext fact rows in place.
+- Reads continue to reveal values only at the repository boundary, preserving semantic matching and evidence display without storing plaintext in SQLite.
+- A connected temporary-database test covers both new writes and the legacy-row migration path.

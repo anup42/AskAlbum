@@ -50,6 +50,7 @@ class GalleryDatabase(
             migrateSensitiveColumn(db, "person_attribute_fact", "id", "attributes")
             migrateSensitiveColumn(db, "media_item", "id", "ocr_text")
             migrateSensitiveOcrEntities(db)
+            migrateSensitiveColumn(db, "semantic_fact", "id", "value")
             // The encrypted OCR migration previously rebuilt FTS with ciphertext.
             // Rebuild once for this migration version using only the safe searchable
             // projection while the media row remains protected at rest.
@@ -3663,7 +3664,7 @@ class GalleryDatabase(
                     put("scope", fact.scope.name)
                     put("subject_id", fact.subjectId)
                     put("predicate", fact.predicate)
-                    put("value", fact.value)
+                    put("value", sensitiveDataAtRest.protect(fact.value))
                     put("confidence", fact.confidence)
                     put("evidence_media_id", fact.evidenceMediaId)
                     if (fact.region == null) putNull("region") else put("region", JSONArray(fact.region).toString())
