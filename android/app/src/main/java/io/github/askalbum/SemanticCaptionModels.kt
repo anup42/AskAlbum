@@ -111,7 +111,7 @@ internal object SemanticEnrichmentCodec {
             .uppercase(Locale.ROOT)
             .replace('-', '_')
             .replace(' ', '_')
-        val activityIsObserved = activityState.isBlank() || activityState == "OBSERVED"
+        val activityIsObserved = activityState == "OBSERVED"
         if (detailedCaption.isNotBlank() && sceneSummary.isBlank()) {
             throw SemanticEnrichmentOutputException("Enrichment omitted a safe sceneSummary")
         }
@@ -293,14 +293,14 @@ internal object SemanticEnrichmentCodec {
             if (it in ACTIVITY_STATES) addFact("activity_state", it, defaultConfidence)
         }
         root.safeText("observedActivity", 300).takeIf {
-            it.isNotBlank() && (activityState.isBlank() || activityState == "OBSERVED")
+            it.isNotBlank() && activityState == "OBSERVED"
         }?.let {
             addFact("observed_activity", it, defaultConfidence)
         }
         root.safeText("sceneSummary", 600).takeIf(String::isNotBlank)?.let {
             addFact("scene_summary", it, defaultConfidence)
         }
-        if (activityState.isBlank() || activityState == "OBSERVED") root.optJSONObject("primaryActivity")?.let { activity ->
+        if (activityState == "OBSERVED") root.optJSONObject("primaryActivity")?.let { activity ->
             addFact("primary_activity", activity.safeText("label", 240), activity.opt("confidence").asConfidence())
             activity.optJSONArray("evidence")?.strings()?.forEach {
                 addFact("activity_indicator", it, activity.opt("confidence").asConfidence())

@@ -246,3 +246,8 @@ media, databases, or logs.
 
 - Activity-aware caption composition now compares the first two sentences with the scene summary using normalized, inflection-tolerant tokens.
 - Prepended summaries are sentence-bounded and never truncated in the middle of a sentence.
+
+### 2026-08-05 - Fail closed on missing activity state
+
+- Typed activity, action, and interaction facts now require an explicit `activityState=OBSERVED` value.
+- Missing or malformed state preserves safe scene/image-subject facts but cannot create observed activity claims.

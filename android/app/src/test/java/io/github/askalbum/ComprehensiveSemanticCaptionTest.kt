@@ -24,7 +24,7 @@ class ComprehensiveSemanticCaptionTest {
     @Test
     fun oneResponseProducesCaptionFactsAndGeneralPersonAppearance() {
         val raw = """
-            {"sceneSummary":"P1 and P2 are posing together in a decorated living room.",
+            {"sceneSummary":"P1 and P2 are posing together in a decorated living room.","activityState":"OBSERVED",
              "primaryActivity":{"label":"posing together","confidence":0.95,"evidence":["P1 is standing beside P2"]},
              "actions":[{"subjectRef":"P1","action":"holding","objectRef":"a flower","confidence":0.93}],
              "interactions":[{"subjectRef":"P1","predicate":"standing beside","targetRef":"P2","confidence":0.94}],
@@ -101,7 +101,7 @@ class ComprehensiveSemanticCaptionTest {
     @Test
     fun cakeDoesNotForceAnOccasionWithoutModelEvidence() {
         val raw = """
-            {"sceneSummary":"A person is placing a plain cake on a kitchen counter.",
+            {"sceneSummary":"A person is placing a plain cake on a kitchen counter.","activityState":"OBSERVED",
              "primaryActivity":{"label":"placing a cake on a counter","confidence":0.91,"evidence":[]},
              "actions":[],"interactions":[],"occasionIndicators":[],"possibleOccasion":null,
              "detailedCaption":"A person is placing a plain cake on a kitchen counter.",
@@ -141,7 +141,7 @@ class ComprehensiveSemanticCaptionTest {
     @Test
     fun nullObjectReferenceIsAbsentFromTypedFact() {
         val raw = """
-            {"sceneSummary":"P1 is holding an object.",
+            {"sceneSummary":"P1 is holding an object.","activityState":"OBSERVED",
              "detailedCaption":"P1 is holding an object.","captionConfidence":0.9,
              "people":[{"personRef":"P1","visibility":"FULL_BODY","associationStatus":"CONFIDENT","actions":[]}],
              "actions":[{"subjectRef":"P1","action":"holding","objectRef":null,"confidence":0.95}],
