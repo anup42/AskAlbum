@@ -51,6 +51,7 @@ class GalleryDatabase(
             migrateSensitiveColumn(db, "media_item", "id", "ocr_text")
             migrateSensitiveOcrEntities(db)
             migrateSensitiveColumn(db, "semantic_fact", "id", "value")
+            migrateSensitiveColumn(db, "semantic_caption", "id", "text")
             // The encrypted OCR migration previously rebuilt FTS with ciphertext.
             // Rebuild once for this migration version using only the safe searchable
             // projection while the media row remains protected at rest.
@@ -3704,7 +3705,7 @@ class GalleryDatabase(
                     put("id", captionId)
                     put("scope", caption.scope.name)
                     put("subject_id", caption.subjectId)
-                    put("text", caption.text.take(4_000))
+                    put("text", sensitiveDataAtRest.protect(caption.text.take(4_000)))
                     put("confidence", caption.confidence.coerceIn(0f, 1f))
                     put("evidence_media_id", caption.evidenceMediaId)
                     if (caption.representativeMediaId == null) {
@@ -4417,7 +4418,7 @@ class GalleryDatabase(
             id = id,
             scope = SemanticFactScope.valueOf(cursor.text("scope")),
             subjectId = cursor.text("subject_id"),
-            text = cursor.text("text"),
+            text = sensitiveDataAtRest.reveal(cursor.text("text")),
             confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
             evidenceMediaId = cursor.text("evidence_media_id"),
             representativeMediaId = cursor.nullableText("representative_media_id"),

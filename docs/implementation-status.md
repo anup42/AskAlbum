@@ -376,3 +376,8 @@ media, databases, or logs.
 - `semantic_fact.value` is now written through the Keystore envelope and migration version 7 upgrades existing plaintext fact rows in place.
 - Reads continue to reveal values only at the repository boundary, preserving semantic matching and evidence display without storing plaintext in SQLite.
 - A connected temporary-database test covers both new writes and the legacy-row migration path.
+
+## Protect comprehensive caption text at rest
+
+- Stored comprehensive captions now use the same Keystore envelope through migration version 8; caption chunks remain the separate searchable projection.
+- Caption retrieval, evidence display, and deterministic chunk generation continue to receive plaintext only after the repository read boundary.
