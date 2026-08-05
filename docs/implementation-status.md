@@ -736,3 +736,9 @@ media, databases, or logs.
 - A completed scan is no longer reusable as exhaustive when vectors were removed or replaced, even if the covered-item count is unchanged; dormant scans reset and re-evaluate, while live leases are preserved.
 - Validation: fixture unit tests, `consumerDebug`, `offlineDemoDebug`, and the isolated v26-to-v27 migration test on `SM-F966` passed. Existing app data and media were not modified.
 - Commit `f0e83ad` was pushed to `anup42/AskAlbum`.
+
+### 2026-08-06 - Repair invalid reviewed-person face vectors
+
+- Reviewed-person expansion now validates that a representative face vector is readable and has the current SFace embedding dimension before reusing it.
+- Missing, corrupt, or stale-dimension representative vectors are re-embedded from the source image through the existing on-device face engine; existing valid vectors remain untouched.
+- Validation: fixture unit tests and `consumerDebug`/`offlineDemoDebug` assembly passed. Commit `710906f` was pushed to `anup42/AskAlbum`.
