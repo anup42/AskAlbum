@@ -48,7 +48,16 @@ class PeoplePrivacyDatabaseTest {
         assertEquals(GalleryDatabase.PEOPLE_CONSENT_VERSION, enabled.consentVersion)
         assertTrue("Opted-in demo images must be eligible for local face indexing", enabled.pendingMediaCount > 0)
         assertTrue(store.facePendingItems(100).any { it.id == media.id })
+        val eligibleImages = store.allItems().filter { it.kind == MediaKind.IMAGE }.mapTo(mutableSetOf()) { it.id }
+        val pendingCoverage = store.peopleCoverage(eligibleImages)
+        assertEquals(eligibleImages.size, pendingCoverage.eligibleCount)
+        assertEquals(0, pendingCoverage.indexedCount)
+        assertTrue(pendingCoverage.pendingCount > 0)
+        assertFalse(pendingCoverage.isComplete)
         store.completeFaces(media.id, listOf(face()), "test-face-v1")
+        val partialCoverage = store.peopleCoverage(eligibleImages)
+        assertEquals(1, partialCoverage.indexedCount)
+        assertTrue(partialCoverage.pendingCount < pendingCoverage.pendingCount)
         store.saveReviewedPersonCluster("person_fixture", "Fixture Person", "friend", listOf("Friend", "दोस्त"))
 
         val populated = store.peopleIndexStatus()

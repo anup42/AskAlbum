@@ -308,3 +308,8 @@ media, databases, or logs.
 ### 2026-08-05 - Validate model-free CI variant
 
 - `fixtureCiDebug` unit tests and APK assembly pass without private Gemma, OCR, SFace, or retrieval model artifacts.
+### Scoped People channel coverage
+
+- `GalleryRepository` now builds the People coverage universe before the People filter and reports `PARTIAL` until every query-eligible image has a terminal face-stage result.
+- Deterministic People answers now inherit partial exactness during an incomplete face scan instead of treating known reviewed-cluster hits as complete coverage.
+- Added database coverage regression assertions without changing the schema or existing derived People data.

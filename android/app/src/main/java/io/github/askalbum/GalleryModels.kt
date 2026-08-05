@@ -309,6 +309,16 @@ data class PeopleIndexStatus(
     val pendingMediaCount: Int = 0,
 )
 
+data class PeopleCoverage(
+    val eligibleCount: Int = 0,
+    val indexedCount: Int = 0,
+    val pendingCount: Int = 0,
+    val failedCount: Int = 0,
+) {
+    val isComplete: Boolean
+        get() = indexedCount >= eligibleCount && pendingCount == 0 && failedCount == 0
+}
+
 data class PersonClusterReviewItem(
     val id: String,
     val label: String?,

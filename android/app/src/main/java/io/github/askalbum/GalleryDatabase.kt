@@ -1052,6 +1052,30 @@ class GalleryDatabase(
         )
     }
 
+    fun peopleCoverage(mediaIds: Set<String>): PeopleCoverage {
+        if (mediaIds.isEmpty()) return PeopleCoverage()
+        val placeholders = mediaIds.joinToString(",") { "?" }
+        return readableDatabase.rawQuery(
+            "SELECT COUNT(*), " +
+                "COALESCE(SUM(CASE WHEN s.status='COMPLETE' THEN 1 ELSE 0 END),0), " +
+                "COALESCE(SUM(CASE WHEN s.media_id IS NULL OR s.status IN " +
+                "('PENDING','RUNNING','FAILED_RETRYABLE') THEN 1 ELSE 0 END),0), " +
+                "COALESCE(SUM(CASE WHEN s.status IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') THEN 1 ELSE 0 END),0) " +
+                "FROM media_item m LEFT JOIN media_index_stage s " +
+                "ON s.media_id=m.id AND s.stage='FACES' " +
+                "WHERE m.id IN ($placeholders)",
+            mediaIds.toTypedArray(),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return PeopleCoverage()
+            PeopleCoverage(
+                eligibleCount = cursor.getInt(0),
+                indexedCount = cursor.getInt(1),
+                pendingCount = cursor.getInt(2),
+                failedCount = cursor.getInt(3),
+            )
+        }
+    }
+
     fun enablePeopleIndexing(consentVersion: Int): PeopleIndexStatus {
         require(consentVersion == PEOPLE_CONSENT_VERSION) { "Unsupported people-consent version" }
         val db = writableDatabase

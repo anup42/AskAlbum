@@ -576,18 +576,19 @@ class GalleryRepository(context: Context) {
                 reviewedPeopleFilterApplied = plan.peopleClauses.isNotEmpty(),
             ),
         )
-        val allItems = databaseItems.filter { item ->
+        val prePeopleItems = databaseItems.filter { item ->
             val inScope = when (plan.mediaScope) {
                 MediaScope.ALL -> true
                 MediaScope.IMAGES -> item.kind == MediaKind.IMAGE
                 MediaScope.VIDEOS -> item.kind == MediaKind.VIDEO
                 MediaScope.DOCUMENTS -> item.kind == MediaKind.PDF || item.ocrText.isNotBlank() || item.looksLikeDocument()
             }
-            inScope && (allowed == null || item.id in allowed) &&
+            inScope && (baseAllowed == null || item.id in baseAllowed) &&
                 GalleryFilterEvaluator.matches(item, plan.filter) &&
                 item.matchesRequiredPlace(plan.place) &&
                 item.matchesRequiredMerchant(plan.ocrClause?.merchant)
         }
+        val allItems = prePeopleItems.filter { allowed == null || it.id in allowed }
         val eligibleIds = allItems.mapTo(mutableSetOf(), GalleryItem::id)
         val deterministicAggregationHits = if (
             plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX) &&
@@ -851,14 +852,30 @@ class GalleryRepository(context: Context) {
             modelVersion = captionVectorSearch.modelVersion,
             errorCode = captionVectorSearch.errorCode,
         )
+        val peopleCoverage = if (plan.peopleClauses.isEmpty()) {
+            PeopleCoverage()
+        } else {
+            database.peopleCoverage(
+                prePeopleItems.filter { it.kind == MediaKind.IMAGE }.mapTo(mutableSetOf(), GalleryItem::id),
+            )
+        }
         val peopleChannelReport = RetrievalChannelReport<SearchHit>(
             RetrievalChannel.PEOPLE,
-            if (plan.peopleClauses.isEmpty()) ChannelStatus.NOT_REQUIRED else ChannelStatus.SUCCESS,
-            allItems.count { it.id in eligibleIds && it.kind == MediaKind.IMAGE },
-            peopleStatus.identityReadyFaceCount,
-            if (plan.peopleClauses.isEmpty()) 0 else eligibleIds.size,
+            when {
+                plan.peopleClauses.isEmpty() -> ChannelStatus.NOT_REQUIRED
+                peopleCoverage.isComplete -> ChannelStatus.SUCCESS
+                else -> ChannelStatus.PARTIAL
+            },
+            peopleCoverage.eligibleCount,
+            peopleCoverage.indexedCount,
+            peopleCoverage.indexedCount,
             emptyList(),
             modelVersion = services.faceEngines.activeDescriptor()?.producerVersion,
+            errorCode = if (plan.peopleClauses.isNotEmpty() && !peopleCoverage.isComplete) {
+                "FACE_COVERAGE_PARTIAL"
+            } else {
+                null
+            },
         )
         val ocrChannelReport = RetrievalChannelReport<SearchHit>(
             RetrievalChannel.OCR,
@@ -1184,6 +1201,12 @@ class GalleryRepository(context: Context) {
         val totalItems = eligibleIds.size
         val readyItems = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
         val semanticReport = channelReports.first { it.channel == RetrievalChannel.SEMANTIC }
+        val peopleReport = channelReports.first { it.channel == RetrievalChannel.PEOPLE }
+        val peopleCoverageComplete = peopleReport.status !in setOf(
+            ChannelStatus.PARTIAL,
+            ChannelStatus.UNAVAILABLE,
+            ChannelStatus.FAILED,
+        )
         val usedSemanticRetrieval = semanticReport.status != ChannelStatus.NOT_REQUIRED
         val deterministicResultSetFilter = plan.baseResultIds != null && plan.terms.isEmpty() &&
             plan.semanticClauses.isEmpty() && plan.filter != FilterExpression.True && !verification.applied
@@ -1195,7 +1218,7 @@ class GalleryRepository(context: Context) {
             DocumentAnswerSelector.select(hits, setOf(requestedDocumentField.sourceField))?.fact != null &&
             !verification.applied
         val exactness = RetrievalExactnessPolicy.resolve(
-            allEligibleIndexed = readyItems == totalItems,
+            allEligibleIndexed = readyItems == totalItems && peopleCoverageComplete,
             deterministicOperation = deterministicAggregation || deterministicResultSetFilter || deterministicDocumentFact,
             semanticReport = semanticReport,
             verificationApplied = verification.applied,
