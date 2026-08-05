@@ -485,11 +485,62 @@ internal object SemanticEnrichmentCodec {
         val normalizedSummary = sceneSummary.trim().trimEnd('.', '!', '?')
         if (normalizedSummary.isBlank()) return detailedCaption
         val normalizedCaption = detailedCaption.trim()
-        return if (normalizedCaption.startsWith(normalizedSummary, ignoreCase = true)) {
+        val opening = captionSentences(normalizedCaption).take(2).joinToString(" ")
+        return if (
+            normalizedCaption.startsWith(normalizedSummary, ignoreCase = true) ||
+            captionOpeningCoversSummary(normalizedSummary, opening)
+        ) {
             normalizedCaption
         } else {
-            "$normalizedSummary. $normalizedCaption".take(MAX_CAPTION_LENGTH)
+            boundedCaption(
+                listOf("$normalizedSummary.") + captionSentences(normalizedCaption),
+            )
         }
+    }
+
+    private fun captionSentences(value: String): List<String> =
+        Regex("[^.!?]+(?:[.!?]+|$)")
+            .findAll(value)
+            .map { it.value.trim() }
+            .filter(String::isNotBlank)
+            .toList()
+            .ifEmpty { listOf(value.trim()) }
+
+    private fun captionOpeningCoversSummary(summary: String, opening: String): Boolean {
+        val summaryTokens = captionComparisonTokens(summary)
+        val openingTokens = captionComparisonTokens(opening)
+        if (summaryTokens.isEmpty() || openingTokens.isEmpty()) return false
+        val overlap = summaryTokens.intersect(openingTokens).size.toDouble()
+        val summaryCoverage = overlap / summaryTokens.size
+        val openingCoverage = overlap / openingTokens.size
+        return summaryCoverage >= 0.72 && openingCoverage >= 0.55
+    }
+
+    private fun captionComparisonTokens(value: String): Set<String> =
+        Regex("[\\p{L}\\p{N}]+")
+            .findAll(value.lowercase(Locale.ROOT))
+            .map { normalizeCaptionToken(it.value) }
+            .filter { it.length > 1 }
+            .toSet()
+
+    private fun normalizeCaptionToken(token: String): String {
+        val stemmed = when {
+            token.endsWith("ing") && token.length > 5 -> token.dropLast(3)
+            token.endsWith("ed") && token.length > 4 -> token.dropLast(2)
+            token.endsWith("es") && token.length > 4 -> token.dropLast(2)
+            token.endsWith("s") && token.length > 3 -> token.dropLast(1)
+            else -> token
+        }
+        return if (stemmed.length > 3 && stemmed.endsWith('e')) stemmed.dropLast(1) else stemmed
+    }
+
+    private fun boundedCaption(sentences: List<String>): String {
+        val result = StringBuilder()
+        sentences.map(String::trim).filter(String::isNotBlank).forEach { sentence ->
+            val candidate = if (result.isEmpty()) sentence else "$result $sentence"
+            if (candidate.length <= MAX_CAPTION_LENGTH) result.replace(0, result.length, candidate)
+        }
+        return result.toString()
     }
 
     private fun decodeVisibleItem(

@@ -241,3 +241,8 @@ media, databases, or logs.
 
 - Direct caption evidence now requires explicit exact-duplicate applicability.
 - Caption and chunk expansion only targets visual groups whose persisted kind is `EXACT_DUPLICATE`; perceptual/burst groups remain contextual.
+
+### 2026-08-05 - Avoid repeated caption openings
+
+- Activity-aware caption composition now compares the first two sentences with the scene summary using normalized, inflection-tolerant tokens.
+- Prepended summaries are sentence-bounded and never truncated in the middle of a sentence.
