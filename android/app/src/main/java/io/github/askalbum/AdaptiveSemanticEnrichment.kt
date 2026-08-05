@@ -74,6 +74,7 @@ data class SemanticEnrichmentJobRecord(
     val modelVersion: String? = null,
     val error: String? = null,
     val priority: Int = SemanticEnrichmentPriority.forJob(reason, userRequested),
+    val leaseOwner: String? = null,
 )
 
 data class SemanticMemoryProgress(

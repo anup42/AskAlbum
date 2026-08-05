@@ -192,3 +192,9 @@ media, databases, or logs.
 - Fixed the post-encryption FTS regression: media OCR search now indexes the classifier-redacted projection instead of the Keystore ciphertext.
 - Advanced the idempotent sensitive-data backfill marker to version 5 and rebuilt `media_fts` once for existing rows; raw OCR remains protected in the database.
 - Added a regression test proving searchable labels remain while credential values are excluded.
+
+## 2026-08-05 - Fence stale semantic workers
+
+- Semantic enrichment completion and failure updates are now bound to the claimed lease owner and an unexpired lease.
+- Completion changes the job state and derived evidence in one transaction, so a reclaimed worker cannot overwrite a newer attempt.
+- Added connected database coverage for stale-owner completion/failure rejection; no migration or data deletion was introduced.

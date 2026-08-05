@@ -3273,6 +3273,7 @@ class GalleryDatabase(
                     modelVersion = cursor.nullableText("model_version"),
                     error = cursor.nullableText("error"),
                     priority = cursor.getInt(cursor.getColumnIndexOrThrow("priority")),
+                    leaseOwner = owner,
                 )
             }
             selected?.let { job ->
@@ -3453,6 +3454,28 @@ class GalleryDatabase(
         writableDatabase.transaction { db ->
             val now = System.currentTimeMillis()
             val facts = result.facts
+            val leaseOwner = job.leaseOwner ?: return@transaction
+            val producer = result.caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
+            val completionModel = producer?.let { "caption-v4:$it" } ?: "caption-v4:no-accepted-output"
+            // Claim completion before writing derived records. The enclosing transaction
+            // makes the status change and all derived writes atomic, while the owner and
+            // unexpired lease prevent a reclaimed worker from committing stale evidence.
+            val claimed = db.update(
+                "semantic_enrichment_job",
+                ContentValues().apply {
+                    put("status", SemanticEnrichmentStatus.COMPLETE.name)
+                    put("model_version", completionModel)
+                    putNull("error")
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("next_attempt_at", 0L)
+                    put("last_progress_at", now)
+                    put("updated_at", now)
+                },
+                "id=? AND status=? AND lease_owner=? AND lease_expires_at>?",
+                arrayOf(job.id, SemanticEnrichmentStatus.RUNNING.name, leaseOwner, now.toString()),
+            )
+            if (claimed != 1) return@transaction
             var storedCaption: SemanticCaptionRecord? = null
 
             fun storeFact(fact: SemanticFactRecord) {
@@ -3589,18 +3612,6 @@ class GalleryDatabase(
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
             storedCaption?.let { replaceCaptionChunks(db, it, facts, result.personFacts) }
-            val producer = result.caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
-            val completionPrefix = "caption-v4"
-            db.update("semantic_enrichment_job", ContentValues().apply {
-                put("status", SemanticEnrichmentStatus.COMPLETE.name)
-                put("model_version", producer?.let { "$completionPrefix:$it" } ?: "$completionPrefix:no-accepted-output")
-                putNull("error")
-                putNull("lease_owner")
-                putNull("lease_expires_at")
-                put("next_attempt_at", 0L)
-                put("last_progress_at", now)
-                put("updated_at", now)
-            }, "id=?", arrayOf(job.id))
             updateStage(
                 db,
                 job.representativeMediaId,
@@ -3618,28 +3629,30 @@ class GalleryDatabase(
         authenticationRequired: Boolean = false,
     ) {
         writableDatabase.transaction { db ->
+            val leaseOwner = job.leaseOwner ?: return@transaction
+            val now = System.currentTimeMillis()
             val status = when {
                 authenticationRequired -> SemanticEnrichmentStatus.AUTH_REQUIRED
                 retryable && job.attemptCount < 3 -> SemanticEnrichmentStatus.PENDING
                 else -> SemanticEnrichmentStatus.FAILED
             }
-            db.update("semantic_enrichment_job", ContentValues().apply {
+            val updated = db.update("semantic_enrichment_job", ContentValues().apply {
                 put("status", status.name)
                 put("error", error.take(240))
                 putNull("lease_owner")
                 putNull("lease_expires_at")
-                put("last_progress_at", System.currentTimeMillis())
+                put("last_progress_at", now)
                 put(
                     "next_attempt_at",
                     if (status == SemanticEnrichmentStatus.PENDING) {
-                        IndexingRetryPolicy.nextAttemptAt(System.currentTimeMillis(), job.attemptCount)
+                        IndexingRetryPolicy.nextAttemptAt(now, job.attemptCount)
                     } else {
                         0L
                     },
                 )
-                put("updated_at", System.currentTimeMillis())
-            }, "id=?", arrayOf(job.id))
-            if (status == SemanticEnrichmentStatus.FAILED) {
+                put("updated_at", now)
+            }, "id=? AND status=? AND lease_owner=?", arrayOf(job.id, SemanticEnrichmentStatus.RUNNING.name, leaseOwner))
+            if (updated == 1 && status == SemanticEnrichmentStatus.FAILED) {
                 updateStage(
                     db,
                     job.representativeMediaId,

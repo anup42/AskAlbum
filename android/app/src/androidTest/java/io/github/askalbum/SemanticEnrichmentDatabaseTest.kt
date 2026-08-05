@@ -84,6 +84,50 @@ class SemanticEnrichmentDatabaseTest {
     }
 
     @Test
+    fun staleSemanticOwnerCannotCommitFactsOrFailure() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "semantic-lease-fence-${UUID.randomUUID()}.db"
+        val database = GalleryDatabase(context, name)
+        try {
+            database.seedDemoIfEmpty()
+            val mediaId = database.allItems().first().id
+            val job = SemanticEnrichmentJobRecord(
+                id = UUID.randomUUID().toString(),
+                scope = SemanticFactScope.MEDIA,
+                subjectId = mediaId,
+                representativeMediaId = mediaId,
+                reason = "lease-fence",
+                status = SemanticEnrichmentStatus.PENDING,
+                attemptCount = 0,
+                userRequested = false,
+            )
+            database.replaceSemanticEnrichmentPlan(SemanticEnrichmentPlan(emptyList(), emptyList(), listOf(job)))
+            val claimed = requireNotNull(database.claimSemanticEnrichmentJob(owner = "owner-1"))
+            val stale = claimed.copy(leaseOwner = "owner-2")
+            val fact = SemanticFactRecord(
+                scope = SemanticFactScope.MEDIA,
+                subjectId = mediaId,
+                predicate = "scene",
+                value = "stale owner must not persist",
+                confidence = 0.9f,
+                evidenceMediaId = mediaId,
+                modelVersion = "fixture",
+                promptVersion = "fixture-v1",
+            )
+
+            database.completeSemanticEnrichment(stale, listOf(fact))
+            database.failSemanticEnrichment(stale, "stale failure", retryable = false)
+            assertTrue(database.allSemanticFacts().isEmpty())
+
+            database.completeSemanticEnrichment(claimed, listOf(fact))
+            assertEquals(1, database.allSemanticFacts().count { it.value == fact.value })
+        } finally {
+            database.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
     fun representativeJobPreservesScopeAndSharesOnlyVerifiedExactDuplicates() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "semantic-facts-${UUID.randomUUID()}.db"
