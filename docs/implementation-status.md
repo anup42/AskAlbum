@@ -520,3 +520,8 @@ media, databases, or logs.
 - Builds: `consumerDebug`, `offlineDemoDebug`, and `fixtureCiDebug` PASS. No migration or destructive data change was introduced.
 - Device: replacement-installed consumer APK; `firstInstallTime` unchanged; `MainActivity` resumed; no recent fatal/ANR match. A real OCR query remains unverified on-device.
 - Remaining: process-death/Doze/FGS-timeout, 5k/20k workload, and full acceptance-query gates remain NOT RUN.
+## 2026-08-05 - Person visual verification cannot be disabled by planner output
+
+- Fixed the runtime verification policy so a semantic clause with `PERSON` subject or a reviewed-person binding always requires targeted visual verification, even if planner output requests `VerificationPolicy.NEVER`.
+- Preserved `NEVER` for ordinary non-person searches and added regression coverage for both cases.
+- This closes a fail-open path where face presence or caption retrieval could otherwise confirm a person-specific clothing, action, or relation predicate without body association verification.

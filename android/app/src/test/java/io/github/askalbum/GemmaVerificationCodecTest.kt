@@ -75,7 +75,8 @@ class GemmaVerificationCodecTest {
 
         assertFalse(VisualVerificationPolicy.requiresVerification(ordinary))
         assertTrue(VisualVerificationPolicy.requiresVerification(relation))
-        assertFalse(VisualVerificationPolicy.requiresVerification(relation.copy(verification = VerificationPolicy.NEVER)))
+        assertTrue(VisualVerificationPolicy.requiresVerification(relation.copy(verification = VerificationPolicy.NEVER)))
+        assertFalse(VisualVerificationPolicy.requiresVerification(ordinary.copy(verification = VerificationPolicy.NEVER)))
         assertEquals(listOf("c1"), VisualVerificationPolicy.conditions(relation).map { it.id })
         assertEquals(LiteRtGemmaVisualVerifier.MAX_CANDIDATES, 8)
     }

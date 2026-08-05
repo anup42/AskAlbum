@@ -251,16 +251,26 @@ internal object VisualVerificationPolicy {
     private const val MAX_CONDITIONS = 16
     private val hardVisualTerms = setOf("only", "wearing", "behind", "in front", "taller", "shorter", "same person")
 
-    fun requiresVerification(plan: GalleryQueryPlan): Boolean = when (plan.verification) {
-        VerificationPolicy.NEVER -> false
-        VerificationPolicy.REQUIRED -> true
-        VerificationPolicy.AUTO -> plan.semanticClauses.any { clause ->
-            clause.hardness == ConstraintStrength.HARD ||
-                clause.polarity == Polarity.NEGATIVE ||
-                clause.subject == SemanticSubject.PERSON ||
-                clause.relationToPerson != null ||
-                hardVisualTerms.any { it in clause.text.lowercase() }
+    fun requiresVerification(plan: GalleryQueryPlan): Boolean {
+        // A planner must not be able to disable the identity/body binding check for
+        // person-conditioned predicates. Face presence alone cannot prove clothing,
+        // action, relation, or other visual attributes belong to the requested person.
+        if (hasPersonCondition(plan)) return true
+        return when (plan.verification) {
+            VerificationPolicy.NEVER -> false
+            VerificationPolicy.REQUIRED -> true
+            VerificationPolicy.AUTO -> plan.semanticClauses.any { clause ->
+                clause.hardness == ConstraintStrength.HARD ||
+                    clause.polarity == Polarity.NEGATIVE ||
+                    clause.subject == SemanticSubject.PERSON ||
+                    clause.relationToPerson != null ||
+                    hardVisualTerms.any { it in clause.text.lowercase() }
+            }
         }
+    }
+
+    private fun hasPersonCondition(plan: GalleryQueryPlan): Boolean = plan.semanticClauses.any { clause ->
+        clause.subject == SemanticSubject.PERSON || clause.relationToPerson != null
     }
 
     fun conditions(plan: GalleryQueryPlan): List<VerificationConditionSpec> {
