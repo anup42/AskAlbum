@@ -466,3 +466,10 @@ media, databases, or logs.
 - Added one shared bounded estimator and published optional rate/ETA fields from media analysis, SigLIP2, People, caption-vector, and Gemma semantic-memory progress payloads.
 - Estimates use completed work and current pending counts; zero-progress and completed queues intentionally expose no invented rate or ETA.
 - Focused progress tests, all debug variants, consumer lint, offline INTERNET validation, replacement install, and prior launch smoke are PASS; no Room migration or index data mutation was performed.
+
+### 2026-08-05 - JSON boundary hardening and deployment gate
+- Added typed JSON string decoding for optional metadata, tags, and semantic attribute arrays; null, non-string, empty, and placeholder values are omitted instead of persisted as text.
+- `JsonValuePolicyTest` PASS; `consumerDebug` and `fixtureCiDebug` compilation PASS.
+- `consumerDebug` and `fixtureCiDebug` APK assembly PASS; replacement install and launch smoke PASS on `SM-F731U`.
+- `fixtureCiDebug` INTERNET permission: ABSENT.
+- Long-running 5k/20k, Doze, process-death, foreground-service-timeout, E4B, and full acceptance-query gates remain unverified.
