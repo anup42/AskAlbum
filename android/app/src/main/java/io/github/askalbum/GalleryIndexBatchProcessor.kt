@@ -41,16 +41,20 @@ internal class GalleryIndexBatchProcessor(
                 break
             }
             if (!repository.markIndexing(item.id, ownerId)) continue
+            val ownedBitmaps = mutableListOf<Bitmap>()
             try {
                 val analyses = when (item.kind) {
                     MediaKind.VIDEO -> VideoKeyframeExtractor(appContext).extract(item).map { frame ->
+                        ownedBitmaps += frame.bitmap
                         analyze(item, frame.bitmap, 0, frame.timestampMs, frame.previewPath, frame.id, frame.visualFeatures)
                     }
                     MediaKind.PDF -> PdfPageRenderer(appContext).render(item).map { page ->
+                        ownedBitmaps += page.bitmap
                         analyze(item, page.bitmap, page.pageIndex, null, page.previewPath, null, null)
                     }
                     MediaKind.IMAGE -> {
                         val (bitmap, previewPath) = prepareBitmap(item)
+                        ownedBitmaps += bitmap
                         listOf(analyze(item, bitmap, 0, null, previewPath, null, null))
                     }
                 }
@@ -59,25 +63,21 @@ internal class GalleryIndexBatchProcessor(
                 val entities = DocumentFactExtractor.extract(blocks)
                 val representative = analyses.maxByOrNull { it.visualFeatures.qualityScore }
                     ?: error("No media frame was analyzed")
-                try {
-                    repository.completeIndex(
-                        id = item.id,
-                        labels = labels,
-                        description = labels.take(8).joinToString(", "),
-                        ocrText = analyses.map { it.ocrText }.filter(String::isNotBlank).joinToString("\n"),
-                        faceCount = 0,
-                        previewPath = representative.previewPath,
-                        blocks = blocks,
-                        entities = entities,
-                        ocrAttempted = analyses.any { it.ocrAttempted },
-                        ocrProducerVersion = analyses.firstNotNullOfOrNull { it.ocrProducerVersion },
-                        visualFeatures = representative.visualFeatures,
-                        keyframes = analyses.mapNotNull { it.asKeyframe(item.id) },
-                    )
-                    processed++
-                } finally {
-                    analyses.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
-                }
+                repository.completeIndex(
+                    id = item.id,
+                    labels = labels,
+                    description = labels.take(8).joinToString(", "),
+                    ocrText = analyses.map { it.ocrText }.filter(String::isNotBlank).joinToString("\n"),
+                    faceCount = 0,
+                    previewPath = representative.previewPath,
+                    blocks = blocks,
+                    entities = entities,
+                    ocrAttempted = analyses.any { it.ocrAttempted },
+                    ocrProducerVersion = analyses.firstNotNullOfOrNull { it.ocrProducerVersion },
+                    visualFeatures = representative.visualFeatures,
+                    keyframes = analyses.mapNotNull { it.asKeyframe(item.id) },
+                )
+                processed++
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
@@ -85,6 +85,10 @@ internal class GalleryIndexBatchProcessor(
                 when (repository.failIndex(item.id, error::class.java.simpleName, permanent)) {
                     StageStatus.FAILED_RETRYABLE -> retryableFailures++
                     else -> permanentFailures++
+                }
+            } finally {
+                ownedBitmaps.forEach { bitmap ->
+                    if (!bitmap.isRecycled) bitmap.recycle()
                 }
             }
         }

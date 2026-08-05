@@ -849,3 +849,6 @@ media, databases, or logs.
 - Search-hit evidence now uses the same allowlist and content classifier as answer gating.
 - Sensitive OCR evidence is masked in the evidence viewer until the existing biometric/device-credential unlock completes; non-sensitive metadata remains visible.
 - Added a regression for allowlisted password evidence.
+### 2026-08-06 - Recycle media-analysis bitmaps on every exit path
+
+`GalleryIndexBatchProcessor` now tracks every decoded video frame, PDF page, and image bitmap as soon as ownership enters the batch. The processor recycles those bitmaps from a single `finally` block even when ML Kit, OCR, decoding, completion, cancellation, or a poison item fails. This prevents repeated media-analysis failures from retaining native pixel buffers and making indexing progressively slower or unstable. No completed index rows or media data are changed.
