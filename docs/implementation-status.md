@@ -10,6 +10,19 @@ Last reviewed: 2026-08-06
   scans remain estimated or partial.
 - Added focused JVM regression coverage; no gallery data or vectors are changed.
 
+## 2026-08-06 - Fixture-device acceptance evidence
+
+- On the isolated `fixtureCi` device, People editing, semantic provenance and
+  coverage, caption-vector storage, smoke navigation/search, persistent
+  follow-up, and the primary gallery shell completed without reported failures.
+- The external corpus evaluator was explicitly skipped because no
+  `galleryRunId`/seed archive was supplied; it did not run Q01-Q13.
+- Bundled SigLIP2 verification was ignored because model-independent variants
+  intentionally omit the external archive. Cancellation acceptance was ignored
+  because the fixture query completed before an active model call.
+- The production device was not launched or modified; its private app state
+  remains outside this fixture validation.
+
 AskAlbum is an early open-source Android implementation of private, on-device
 photo search. The public source snapshot contains the Android application,
 fixture CI path, tests, model-pack validation code, sample-gallery tooling, and
