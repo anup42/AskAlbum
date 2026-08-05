@@ -52,6 +52,14 @@ Last reviewed: 2026-08-06
 - Event planner/executor regressions plus all three variant assemblies completed
   with zero reported failures or skips.
 
+## 2026-08-06 - URL/link OCR intent mapping
+
+- Natural-language `link` questions now select the allowlisted URL OCR field
+  and execute through deterministic document QA instead of falling through to
+  media search.
+- URL, event-list, and merchant-list regressions plus all three variant
+  assemblies completed with zero reported failures or skips.
+
 AskAlbum is an early open-source Android implementation of private, on-device
 photo search. The public source snapshot contains the Android application,
 fixture CI path, tests, model-pack validation code, sample-gallery tooling, and

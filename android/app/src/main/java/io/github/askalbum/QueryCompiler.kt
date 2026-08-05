@@ -55,7 +55,7 @@ class QueryCompiler(
             "\\b(?:amount|line amount|item amount|amount due|amount charged|amount payable)\\b",
         ).containsMatchIn(normalized)
         val asksAllowlistedDocumentFact = Regex(
-            "\\b(flight number|flight time|departure time|boarding time|order id|booking id|email address|phone number|mobile number|date|url|website)\\b",
+            "\\b(flight number|flight time|departure time|boarding time|order id|booking id|email address|phone number|mobile number|date|url|website|link)\\b",
         ).containsMatchIn(normalized) || Regex("\\b(what|which)\\s+(?:was\\s+)?(?:the\\s+)?merchant\\b").containsMatchIn(normalized)
         val asksPassword = Regex("\\b(password|passcode)\\b").containsMatchIn(normalized)
         val intent = when {
