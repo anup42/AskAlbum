@@ -142,3 +142,12 @@ media, databases, or logs.
 - Consumer lint and consumer/offlineDemo/fixtureCi assemblies: PASS.
 - Replacement consumer install and launch smoke check on SM-F966: PASS; no sampled fatal exception or ANR.
 - Remaining gap: full backlog repair and model-backed semantic acceptance queries require longer device observation.
+
+## 2026-08-05 - People identity data-at-rest protection
+
+- Changed files: `android/app/src/main/java/io/github/askalbum/SensitiveDataAtRest.kt`, `android/app/src/main/java/io/github/askalbum/GalleryDatabase.kt`, `android/app/src/androidTest/java/io/github/askalbum/PeopleIdentityProtectionDeviceTest.kt`.
+- Reused the existing Keystore envelope and advanced the sensitive-data migration marker from v3 to v4; no Room schema or destructive data migration was introduced.
+- Protected reviewed People labels, relationships, aliases, and person-bound visual values/attributes on new writes and legacy backfill; database-boundary reads preserve People search and reviewed corrections.
+- Tests: focused JVM People/provenance tests PASS; connected People identity, People privacy, and sensitive-data tests PASS (3/3); consumerDebug, offlineDemoDebug, and fixtureCiDebug assembly PASS; consumer lint PASS.
+- Device: replacement-installed consumerDebug with `adb install -r -d` semantics; app launched on `R3CY30QFWLP`, process alive, no recent fatal exception or ANR observed.
+- Remaining: broader model-backed 5k/20k acceptance and other historical semantic identity surfaces remain unverified.

@@ -43,6 +43,11 @@ class GalleryDatabase(
             migrateSensitiveColumn(db, "query_session", "session_id", "last_query")
             migrateSensitiveColumn(db, "result_set", "id", "query")
             migrateSensitiveColumn(db, "semantic_predicate_scan", "id", "query_text")
+            migrateSensitiveColumn(db, "person_cluster", "id", "label")
+            migrateSensitiveColumn(db, "person_cluster", "id", "relationship")
+            migrateSensitiveColumn(db, "person_cluster", "id", "aliases")
+            migrateSensitiveColumn(db, "person_attribute_fact", "id", "value")
+            migrateSensitiveColumn(db, "person_attribute_fact", "id", "attributes")
             val mediaOcrChanged = migrateSensitiveColumn(db, "media_item", "id", "ocr_text")
             if (mediaOcrChanged > 0) rebuildRedactedFts(db)
             db.insertWithOnConflict(
@@ -1018,21 +1023,34 @@ class GalleryDatabase(
                 put("updated_at", now)
             }, SQLiteDatabase.CONFLICT_IGNORE)
             db.update("person_cluster", ContentValues().apply {
-                put("label", safeLabel)
-                if (safeRelationship == null) putNull("relationship") else put("relationship", safeRelationship)
-                put("aliases", JSONArray(safeAliases).toString())
+                put("label", sensitiveDataAtRest.protect(safeLabel))
+                if (safeRelationship == null) putNull("relationship") else put("relationship", sensitiveDataAtRest.protect(safeRelationship))
+                put("aliases", sensitiveDataAtRest.protect(JSONArray(safeAliases).toString()))
                 put("reviewed", 1)
                 put("hidden", 0)
                 put("include_in_personal_memory", if (includeInPersonalMemory) 1 else 0)
                 put("updated_at", now)
             }, "id=?", arrayOf(id))
             if (safeRelationship.equals("me", ignoreCase = true)) {
-                db.update(
-                    "person_cluster",
-                    ContentValues().apply { putNull("relationship"); put("updated_at", now) },
-                    "id<>? AND reviewed=1 AND lower(relationship)='me'",
+                val otherMeIds = db.rawQuery(
+                    "SELECT id,relationship FROM person_cluster WHERE id<>? AND reviewed=1",
                     arrayOf(id),
-                )
+                ).use { cursor ->
+                    buildList {
+                        while (cursor.moveToNext()) {
+                            val relationship = if (cursor.isNull(1)) null else sensitiveDataAtRest.reveal(cursor.getString(1))
+                            if (relationship.equals("me", ignoreCase = true)) add(cursor.getString(0))
+                        }
+                    }
+                }
+                otherMeIds.forEach { otherId ->
+                    db.update(
+                        "person_cluster",
+                        ContentValues().apply { putNull("relationship"); put("updated_at", now) },
+                        "id=?",
+                        arrayOf(otherId),
+                    )
+                }
             }
             db.setTransactionSuccessful()
         } finally {
@@ -1174,9 +1192,9 @@ class GalleryDatabase(
                 add(
                     IndexedPersonMetadata(
                         clusterId = cursor.getString(0),
-                        label = if (cursor.isNull(1)) null else cursor.getString(1),
-                        relationship = if (cursor.isNull(2)) null else cursor.getString(2),
-                        aliases = decodeStrings(cursor.getString(3)).sorted(),
+                        label = if (cursor.isNull(1)) null else sensitiveDataAtRest.reveal(cursor.getString(1)),
+                        relationship = if (cursor.isNull(2)) null else sensitiveDataAtRest.reveal(cursor.getString(2)),
+                        aliases = decodeStrings(sensitiveDataAtRest.reveal(cursor.getString(3))).sorted(),
                         reviewed = cursor.getInt(4) != 0,
                         hidden = cursor.getInt(5) != 0,
                         faceCount = cursor.getInt(6),
@@ -1349,10 +1367,10 @@ class GalleryDatabase(
                 buildSet {
                     while (cursor.moveToNext()) {
                         val id = cursor.getString(0)
-                        val label = if (cursor.isNull(1)) null else cursor.getString(1)
-                        val relationship = if (cursor.isNull(2)) null else cursor.getString(2)
+                        val label = if (cursor.isNull(1)) null else sensitiveDataAtRest.reveal(cursor.getString(1))
+                        val relationship = if (cursor.isNull(2)) null else sensitiveDataAtRest.reveal(cursor.getString(2))
                         val aliases = runCatching {
-                            val json = JSONArray(cursor.getString(3))
+                            val json = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(3)))
                             List(json.length()) { json.getString(it) }
                         }.getOrDefault(emptyList())
                         if (listOfNotNull(id, label, relationship).plus(aliases).any { it.lowercase(Locale.ROOT) == needle }) add(id)
@@ -1389,10 +1407,10 @@ class GalleryDatabase(
                     add(
                         PersonClusterReviewItem(
                             id = cursor.getString(0),
-                            label = if (cursor.isNull(1)) null else cursor.getString(1),
-                            relationship = if (cursor.isNull(2)) null else cursor.getString(2),
+                            label = if (cursor.isNull(1)) null else sensitiveDataAtRest.reveal(cursor.getString(1)),
+                            relationship = if (cursor.isNull(2)) null else sensitiveDataAtRest.reveal(cursor.getString(2)),
                             aliases = runCatching {
-                                val json = JSONArray(cursor.getString(3))
+                                val json = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(3)))
                                 List(json.length()) { json.getString(it) }
                             }.getOrDefault(emptyList()),
                             faceCount = cursor.getInt(4),
@@ -1756,10 +1774,10 @@ class GalleryDatabase(
             ).use { cursor ->
                 check(cursor.moveToFirst())
                 ClusterIdentity(
-                    label = if (cursor.isNull(0)) null else cursor.getString(0),
-                    relationship = if (cursor.isNull(1)) null else cursor.getString(1),
+                    label = if (cursor.isNull(0)) null else sensitiveDataAtRest.reveal(cursor.getString(0)),
+                    relationship = if (cursor.isNull(1)) null else sensitiveDataAtRest.reveal(cursor.getString(1)),
                     aliases = runCatching {
-                        val json = JSONArray(cursor.getString(2))
+                        val json = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(2)))
                         List(json.length()) { json.getString(it) }
                     }.getOrDefault(emptyList()),
                     representativeFaceId = if (cursor.isNull(3)) null else cursor.getString(3),
@@ -1784,10 +1802,10 @@ class GalleryDatabase(
                 val label = targetIdentity.label ?: sourceIdentity.label
                 val relationship = targetIdentity.relationship ?: sourceIdentity.relationship
                 val representativeFaceId = targetIdentity.representativeFaceId ?: sourceIdentity.representativeFaceId
-                if (label == null) putNull("label") else put("label", label)
-                if (relationship == null) putNull("relationship") else put("relationship", relationship)
+                if (label == null) putNull("label") else put("label", sensitiveDataAtRest.protect(label))
+                if (relationship == null) putNull("relationship") else put("relationship", sensitiveDataAtRest.protect(relationship))
                 if (representativeFaceId == null) putNull("representative_face_id") else put("representative_face_id", representativeFaceId)
-                put("aliases", JSONArray(aliases).toString())
+                put("aliases", sensitiveDataAtRest.protect(JSONArray(aliases).toString()))
                 put("reviewed", if (label != null) 1 else 0)
                 put(
                     "include_in_personal_memory",
@@ -1858,10 +1876,10 @@ class GalleryDatabase(
                 while (cursor.moveToNext()) {
                     val id = cursor.getString(0)
                     val terms = buildList {
-                        if (!cursor.isNull(1)) add(cursor.getString(1))
-                        if (!cursor.isNull(2)) add(cursor.getString(2))
+                        if (!cursor.isNull(1)) add(sensitiveDataAtRest.reveal(cursor.getString(1)))
+                        if (!cursor.isNull(2)) add(sensitiveDataAtRest.reveal(cursor.getString(2)))
                         val aliases = runCatching {
-                            val json = JSONArray(cursor.getString(3))
+                            val json = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(3)))
                             List(json.length()) { json.getString(it) }
                         }.getOrDefault(emptyList())
                         addAll(aliases)
@@ -1904,7 +1922,7 @@ class GalleryDatabase(
                 while (cursor.moveToNext()) {
                     val clusterId = cursor.getString(1)
                     val aliases = runCatching {
-                        val json = JSONArray(cursor.getString(8))
+                        val json = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(8)))
                         List(json.length()) { json.getString(it) }
                     }.getOrDefault(emptyList())
                     add(
@@ -1913,8 +1931,8 @@ class GalleryDatabase(
                             clusterId = clusterId,
                             stableLabel = stable.getValue(clusterId),
                             identityTerms = setOfNotNull(
-                                if (cursor.isNull(6)) null else cursor.getString(6),
-                                if (cursor.isNull(7)) null else cursor.getString(7),
+                                if (cursor.isNull(6)) null else sensitiveDataAtRest.reveal(cursor.getString(6)),
+                                if (cursor.isNull(7)) null else sensitiveDataAtRest.reveal(cursor.getString(7)),
                             ) + aliases,
                             left = cursor.getFloat(2),
                             top = cursor.getFloat(3),
@@ -1962,14 +1980,14 @@ class GalleryDatabase(
             put("media_id", mediaId)
             put("cluster_id", clusterId)
             put("predicate", predicate.take(240))
-            put("value", value.take(240))
+            put("value", sensitiveDataAtRest.protect(value.take(240)))
             put("confidence", confidence.coerceIn(0f, 1f))
             put("region", JSONArray(region).toString())
             put("model_version", modelVersion.take(160))
             put("person_ref", "")
             put("relation", PersonVisualRelation.ACTION.name)
             put("category", WornItemCategory.OTHER_WORN_ITEM.name)
-            put("attributes", "{}")
+            put("attributes", sensitiveDataAtRest.protect("{}"))
             put("body_region", BodyRegion.UNKNOWN.name)
             put("face_region", JSONArray(region).toString())
             put("association_status", PersonAssociationStatus.CONFIDENT.name)
@@ -3405,7 +3423,7 @@ class GalleryDatabase(
                     put("media_id", fact.mediaId)
                     put("cluster_id", fact.clusterId)
                     put("predicate", fact.relation.name.lowercase(Locale.ROOT))
-                    put("value", fact.value.take(240))
+                    put("value", sensitiveDataAtRest.protect(fact.value.take(240)))
                     put("confidence", fact.confidence.coerceIn(0f, 1f))
                     put("region", JSONArray(fact.evidenceRegion ?: fact.faceRegion).toString())
                     put("model_version", fact.modelVersion)
@@ -3413,7 +3431,7 @@ class GalleryDatabase(
                     put("relation", fact.relation.name)
                     put("category", fact.category?.name ?: WornItemCategory.OTHER_WORN_ITEM.name)
                     if (fact.itemType == null) putNull("item_type") else put("item_type", fact.itemType.take(120))
-                    put("attributes", encodeAttributes(fact.attributes))
+                    put("attributes", sensitiveDataAtRest.protect(encodeAttributes(fact.attributes)))
                     put("body_region", fact.bodyRegion.name)
                     put("face_region", JSONArray(fact.faceRegion).toString())
                     put("association_status", fact.associationStatus.name)
@@ -4070,13 +4088,14 @@ class GalleryDatabase(
             id = cursor.text("id"),
             mediaId = cursor.text("media_id"),
             clusterId = cursor.text("cluster_id"),
-            resolvedLabel = cursor.nullableText("label") ?: cursor.nullableText("relationship"),
+            resolvedLabel = cursor.nullableText("label")?.let(sensitiveDataAtRest::reveal)
+                ?: cursor.nullableText("relationship")?.let(sensitiveDataAtRest::reveal),
             personRef = cursor.text("person_ref"),
             relation = enumOrDefault(cursor.text("relation"), PersonVisualRelation.ACTION),
             category = enumOrNull<WornItemCategory>(cursor.text("category")),
             itemType = cursor.nullableText("item_type"),
-            value = cursor.text("value"),
-            attributes = decodeAttributes(cursor.text("attributes")),
+            value = sensitiveDataAtRest.reveal(cursor.text("value")),
+            attributes = decodeAttributes(sensitiveDataAtRest.reveal(cursor.text("attributes"))),
             bodyRegion = enumOrDefault(cursor.text("body_region"), BodyRegion.UNKNOWN),
             confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
             faceRegion = cursor.nullableText("face_region")?.let(::decodeRegion) ?: region,
@@ -4172,7 +4191,8 @@ class GalleryDatabase(
                 SemanticCaptionPersonRefRecord(
                     personRef = cursor.text("person_ref"),
                     clusterId = cursor.text("cluster_id"),
-                    resolvedLabel = cursor.nullableText("label") ?: cursor.nullableText("relationship"),
+                    resolvedLabel = cursor.nullableText("label")?.let(sensitiveDataAtRest::reveal)
+                        ?: cursor.nullableText("relationship")?.let(sensitiveDataAtRest::reveal),
                     faceRegion = decodeRegion(cursor.text("face_region")),
                     bodyRegion = cursor.nullableText("body_region")?.let(::decodeRegion),
                     associationStatus = enumOrDefault(cursor.text("association_status"), PersonAssociationStatus.AMBIGUOUS),

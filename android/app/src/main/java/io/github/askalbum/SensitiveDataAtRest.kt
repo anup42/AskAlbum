@@ -63,7 +63,7 @@ internal class SensitiveDataAtRest {
     }
 
     companion object {
-        const val MIGRATION_VERSION = 3
+        const val MIGRATION_VERSION = 4
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "askalbum_sensitive_ocr_v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
