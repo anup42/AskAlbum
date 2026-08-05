@@ -10,6 +10,10 @@ class FaceVectorStore(context: Context) {
     )
 
     suspend fun ids(): Set<String> = index.ids()
+    suspend fun hasUsableVector(faceId: String): Boolean {
+        val dimension = runCatching { index.vector(faceId)?.size }.getOrNull()
+        return FaceEmbeddingAvailabilityPolicy.isUsable(dimension, FaceModelCatalog.sface.embeddingDimension)
+    }
     suspend fun nearest(vector: FloatArray, allowedIds: Set<String>? = null): VectorHit? =
         index.search(vector, 1, allowedIds).firstOrNull()
     suspend fun nearestNeighbors(vector: FloatArray, limit: Int, allowedIds: Set<String>? = null): List<VectorHit> =
@@ -24,6 +28,11 @@ class FaceVectorStore(context: Context) {
     suspend fun delete(faceId: String) = index.delete(faceId)
     suspend fun reconcile(validFaceIds: Set<String>) = (index.ids() - validFaceIds).forEach { index.delete(it) }
     suspend fun clear() = index.replaceAll(emptyMap())
+}
+
+internal object FaceEmbeddingAvailabilityPolicy {
+    fun isUsable(vectorDimension: Int?, expectedDimension: Int): Boolean =
+        vectorDimension == expectedDimension
 }
 
 data class FaceClusterReference(

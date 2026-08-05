@@ -23,7 +23,7 @@ internal class ReviewedIdentityClusterExpander(
     private val imageLoader = GalleryImageLoader(application)
 
     suspend fun ensureEmbedding(face: PersonFaceReviewItem): Boolean {
-        if (face.id in vectors.ids()) return false
+        if (vectors.hasUsableVector(face.id)) return false
         val lease = application.services.faceEngines.acquireOrNull()
             ?: error("SFace is unavailable; the representative embedding will be repaired when the face model is ready")
         try {
