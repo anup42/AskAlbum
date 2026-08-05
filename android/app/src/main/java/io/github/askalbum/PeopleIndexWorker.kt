@@ -94,6 +94,7 @@ class PeopleIndexWorker(
             val enabled = repository.peopleIndexStatus().enabled && jobControls.load().peopleEnabled
             val hasMore = repository.facePendingItems(1).isNotEmpty()
             val admission = workAdmission.evaluate()
+            val nextRetryAt = if (!hasMore) repository.nextPeopleRetryAt() else null
             val shouldRetry = IndexingWorkerResultPolicy.shouldRetryWorker(
                 processed = processed,
                 retryableFailures = retryableFailures,
@@ -101,10 +102,21 @@ class PeopleIndexWorker(
                 admissionAllowed = admission.allowed,
                 hasImmediateWork = hasMore,
             )
+            setProgress(
+                workDataOf(
+                    "processed" to processed,
+                    "eligible" to pendingItems.size,
+                    "in_flight" to 0,
+                    "last_progress_at" to System.currentTimeMillis(),
+                    "next_attempt_at" to (nextRetryAt ?: 0L),
+                    "delayed_retries" to retryableFailures,
+                    "quarantined" to quarantinedFailures,
+                ),
+            )
             if (hasMore && enabled && !shouldRetry) {
                 PeopleIndexScheduler.scheduleContinuation(applicationContext)
             } else if (!hasMore && enabled) {
-                repository.nextPeopleRetryAt()?.let { retryAt ->
+                nextRetryAt?.let { retryAt ->
                     PeopleIndexScheduler.scheduleContinuation(
                         applicationContext,
                         (retryAt - System.currentTimeMillis()).coerceAtLeast(10_000L),
