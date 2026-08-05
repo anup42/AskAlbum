@@ -304,3 +304,7 @@ media, databases, or logs.
 - `offlineDemoDebug` assembles successfully and its merged manifest contains no `android.permission.INTERNET`.
 - `consumerRelease` assembles with R8/resource shrinking enabled; existing Kotlin-metadata warnings remain non-fatal.
 - The supplied review’s remaining physical 5k/20k workload and external-fixture model tests remain unverified or explicitly skipped because no `galleryRunId`/retained fixtures were supplied.
+
+### 2026-08-05 - Validate model-free CI variant
+
+- `fixtureCiDebug` unit tests and APK assembly pass without private Gemma, OCR, SFace, or retrieval model artifacts.
