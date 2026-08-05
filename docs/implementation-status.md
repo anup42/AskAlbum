@@ -624,3 +624,7 @@ media, databases, or logs.
 ### 2026-08-05 - Add controlled foreground process-death coverage
 - Added a connected instrumentation harness that starts the real foreground service, verifies the durable media recovery request, kills only the target app process, and confirms non-cancelled recovery work survives.
 - The test cleanup cancels only the two indexing work names and stops the service; it does not uninstall, clear data, reset indexes, or delete device media.
+### 2026-08-05 - Add forced-Doze recovery coverage
+- Extended the connected recovery harness to force device idle, verify recovery work is not cancelled, unforce idle, and verify the request remains available.
+- The test restores device idle state in `finally` and cancels only its two indexing work names.
+- The two recovery tests pass on `SM-F966B` and `SM-F731U`.
