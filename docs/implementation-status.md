@@ -60,10 +60,10 @@ See `PRIVACY.md` and `THIRD_PARTY_NOTICES.md`.
 - Native vector scanning ships a portable scalar baseline instead of assuming
   ARMv8.2 FP16; derived evidence IDs use SHA-256 and the Gradle wrapper is
   executable in Git.
-- High-risk OCR entity values are encrypted with an Android Keystore AES-GCM
-  envelope; legacy plaintext rows remain readable for non-destructive upgrade.
-  OCR blocks, aggregate OCR text, and historical query fields still require a
-  separate migration before they can be called encrypted at rest.
+- High-risk OCR, query-history, People-label, person-attribute, and semantic-fact
+  values are encrypted with an Android Keystore AES-GCM envelope; legacy
+  plaintext rows remain readable through non-destructive migrations. FTS keeps
+  only a redacted searchable projection for protected OCR values.
 - Current checkpoint was replacement-installed only; no app data, People data,
   indexes, media, or model packs were cleared or reset.
 
@@ -89,7 +89,8 @@ media, databases, or logs.
 - OCR blocks, video-keyframe OCR, query history, follow-up session text, result-set queries, and semantic-scan query text are protected at rest while existing read/search APIs transparently reveal values at the database boundary.
 - Existing media rows, vectors, People data, semantic facts, captions, events, and model packs are preserved; no uninstall or data reset was used.
 - Unit tests, the v19-to-v20 migration test, Keystore instrumentation, replacement install, and consumer launch passed on SM-F966B.
-- Remaining privacy scope: media aggregate OCR/FTS fields and historical People-derived identity fields still require a separate compatibility-safe encrypted-index design.
+- Searchable FTS intentionally retains redacted labels rather than ciphertext;
+  raw protected values are revealed only at the repository/evidence boundary.
 
 ### Deterministic aggregation checkpoint (2026-08-05)
 
@@ -104,7 +105,8 @@ media, databases, or logs.
 - Rebuilt the media FTS projection from a deterministic redacted view that retains searchable labels but never stores raw passwords, contact values, or payment-card candidates.
 - Added email/phone/contact detection and cached the Keystore key for bounded migration cost.
 - Existing device database startup after replacement install reached MainActivity in 12 seconds without SQLite, Keystore, fatal-exception, or ANR evidence; device Keystore test and all build/lint gates passed.
-- Remaining privacy scope: historical People-derived identity fields and some non-OCR semantic identity records still need a separate encrypted-index design.
+- Financial OCR and semantic-fact migrations are covered by the later sensitive
+  storage checkpoints below; no plaintext backfill or data reset is required.
 - 2026-08-05: Hardened activity/person parsing: negative predicates, unknown interactions, and placeholder JSON values are rejected before typed person facts; recognized actions remain cluster-bound.
 - 2026-08-05: Deterministic LIST grouping now uses complete eligible source hits for places, events, and date buckets; added a below-top-K regression test.
 - 2026-08-05: Event summary, timeline, and comparison answers now consume complete resolved event membership when available, carry deterministic scope evidence, and disclose ranked-pass fallback when a scope cannot be resolved.
