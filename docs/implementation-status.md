@@ -715,3 +715,10 @@ media, databases, or logs.
 - Fixed caption coverage accounting to expand only verified `EXACT_DUPLICATE` visual-group members for captions explicitly marked `SAFE_FOR_EXACT_DUPLICATES`.
 - Representative evidence no longer makes a verified duplicate member appear uncovered, while event and visual-group context remains non-direct coverage.
 - Validation: exact-duplicate coverage regression PASS on the secondary fixture device; fixture unit tests PASS; `consumerDebug` and `offlineDemoDebug` builds PASS.
+
+## 2026-08-06 - Channel report evidence closure
+
+- Retrieval channel reports now retain only evidence produced by their own semantic, event, caption, or caption-embedding channel instead of exposing empty `SearchHit` evidence.
+- Fixture unit tests and `consumerDebug`/`offlineDemoDebug` assembly passed.
+- The fixture connected gate was run on the isolated secondary device and failed on pre-existing absent bundled model assets plus an existing empty-query status assertion; no production acceptance result is claimed.
+- Commit: `71c1f94` pushed to `anup42/AskAlbum`.
