@@ -21,6 +21,8 @@ internal data class IndexingWorkProgress(
     val nextAttemptAt: Long?,
     val delayedRetryCount: Int,
     val quarantinedCount: Int,
+    val ratePerMinute: Double? = null,
+    val etaMillis: Long? = null,
 ) {
     companion object {
         fun from(data: androidx.work.Data?): IndexingWorkProgress {
@@ -33,6 +35,8 @@ internal data class IndexingWorkProgress(
                 nextAttemptAt = nextAttemptAt,
                 delayedRetryCount = delayedRetryCount,
                 quarantinedCount = data?.getInt("quarantined", 0) ?: 0,
+                ratePerMinute = data?.getDouble("rate_per_minute", 0.0)?.takeIf { it > 0.0 },
+                etaMillis = data?.getLong("eta_millis", 0L)?.takeIf { it > 0L },
             )
         }
     }
@@ -60,6 +64,8 @@ data class IndexingPipelineSnapshot(
     val quarantinedCount: Int = 0,
     val lastProgressAt: Long? = null,
     val nextAttemptAt: Long? = null,
+    val ratePerMinute: Double? = null,
+    val etaMillis: Long? = null,
     val stopReason: Int? = null,
     val message: String,
 )
@@ -194,6 +200,8 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             quarantinedCount = work.quarantinedCount,
             lastProgressAt = work.lastProgressAt,
             nextAttemptAt = work.nextAttemptAt,
+            ratePerMinute = work.ratePerMinute,
+            etaMillis = work.etaMillis,
             stopReason = work.stopReason,
             message = message,
         )
@@ -229,6 +237,8 @@ internal class IndexingRuntimeStatusReader(context: Context) {
 
         val lastProgressAt: Long? get() = progress.lastProgressAt
         val nextAttemptAt: Long? get() = progress.nextAttemptAt
+        val ratePerMinute: Double? get() = progress.ratePerMinute
+        val etaMillis: Long? get() = progress.etaMillis
         val delayedRetryCount: Int get() = progress.delayedRetryCount
         val quarantinedCount: Int get() = progress.quarantinedCount
     }

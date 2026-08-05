@@ -454,3 +454,9 @@ media, databases, or logs.
 - Added focused state coverage for user pause; `consumerDebug`, `offlineDemoDebug`, and `fixtureCiDebug` assemble successfully; consumer lint passes; offlineDemo has no INTERNET permission.
 - Replacement-installed consumerDebug on the connected device with `adb install -r -d`; first-install time remained unchanged and the demo index remained 14/14.
 - Direct shell service-action validation was not available because the service is intentionally non-exported and the device had no pending indexing work; app-owned notification action execution remains unverified on-device.
+
+## 2026-08-05 - Indexing rate and ETA reporting
+
+- Added optional rate-per-minute and ETA fields to typed indexing progress snapshots, preserving null when a worker has no estimate.
+- Foreground indexing notifications now identify the active media/vector lane and show a bounded rate and estimated remaining duration when enough progress exists.
+- `IndexingWorkProgressTest` covers parsing estimates; all debug variants, consumer lint, offline permission validation, replacement install, and launch smoke passed.

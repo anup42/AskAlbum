@@ -41,6 +41,21 @@ class IndexingWorkProgressTest {
     }
 
     @Test
+    fun readsOptionalRateAndEtaWithoutInventingMissingValues() {
+        val progress = IndexingWorkProgress.from(
+            workDataOf(
+                "rate_per_minute" to 12.5,
+                "eta_millis" to 90_000L,
+            ),
+        )
+
+        assertEquals(12.5, progress.ratePerMinute!!, 0.001)
+        assertEquals(90_000L, progress.etaMillis)
+        assertNull(IndexingWorkProgress.from(null).ratePerMinute)
+        assertNull(IndexingWorkProgress.from(null).etaMillis)
+    }
+
+    @Test
     fun peopleCoverageUsesOnlyEligibleImages() {
         assertEquals(6, IndexingCoverageMath.peopleCompleted(faceScanned = 6, faceEligible = 10))
         assertEquals(3, IndexingCoverageMath.peoplePending(pending = 3, faceEligible = 10))

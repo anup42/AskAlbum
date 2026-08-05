@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -53,17 +54,41 @@ class InitialImportService : Service() {
                 val app = application as AskAlbumApplication
                 val result = runCatching {
                     val imported = if (action == ACTION_IMPORT) app.repository.scanAccessibleGallery() else 0
+                    val progressStartedAt = SystemClock.elapsedRealtime()
                     val indexed = ForegroundIndexCoordinator(this@InitialImportService).run(
                         onProgress = { progress ->
                             val summary = app.repository.indexSummary()
                             val discovered = summary.discovered
                             val completed = (discovered - summary.pending - summary.failed)
                                 .coerceIn(0, discovered)
+                            val processed = progress.galleryProcessed + progress.embeddingsProcessed
+                            val elapsedMs = (SystemClock.elapsedRealtime() - progressStartedAt).coerceAtLeast(1L)
+                            val ratePerMinute = processed * 60_000.0 / elapsedMs
+                            val remaining = (summary.pending +
+                                (summary.discovered - summary.siglipVectorsReady).coerceAtLeast(0))
+                                .coerceAtLeast(0)
+                            val etaMillis = if (ratePerMinute > 0.0 && remaining > 0) {
+                                (remaining * 60_000.0 / ratePerMinute).toLong()
+                            } else {
+                                null
+                            }
+                            val pipeline = when {
+                                progress.galleryHasMore && progress.embeddingsHaveMore -> "media + vectors"
+                                progress.galleryHasMore -> "media analysis"
+                                progress.embeddingsHaveMore -> "SigLIP2 vectors"
+                                else -> "finalizing"
+                            }
+                            val rateText = if (ratePerMinute >= 1.0) {
+                                " | ${ratePerMinute.toInt()}/min"
+                            } else {
+                                ""
+                            }
+                            val etaText = etaMillis?.let { " | ETA ${formatDuration(it)}" } ?: ""
                             getSystemService(NotificationManager::class.java).notify(
                                 NOTIFICATION_ID,
                                 notification(
-                                    "Media $completed/$discovered; vectors " +
-                                        "${summary.siglipVectorsReady}/$discovered",
+                                    "$pipeline | media $completed/$discovered; vectors " +
+                                        "${summary.siglipVectorsReady}/$discovered$rateText$etaText",
                                     indeterminate = discovered <= 0,
                                     progress = completed,
                                     total = discovered,
@@ -199,6 +224,13 @@ class InitialImportService : Service() {
             Intent(this, InitialImportService::class.java).setAction(action),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+
+    private fun formatDuration(millis: Long): String {
+        val totalSeconds = (millis / 1_000L).coerceAtLeast(1L)
+        val minutes = totalSeconds / 60L
+        val seconds = totalSeconds % 60L
+        return if (minutes > 0L) "${minutes}m ${seconds}s" else "${seconds}s"
+    }
 
     companion object {
         private const val ACTION_IMPORT = "io.github.anup42.askalbum.action.INITIAL_IMPORT"
