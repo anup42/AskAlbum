@@ -3229,14 +3229,14 @@ class GalleryDatabase(
             arrayOf(digest, job.representativeMediaId, job.reason),
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
         for (sourceId in sourceIds) {
-            val sourceBindings = reviewedFaceBindingsForMedia(sourceId)
-            if (!equivalentReviewedBindings(sourceBindings, targetBindings)) continue
-            val caption = semanticCaptionsForMedia(sourceId).firstOrNull {
-                it.scope == SemanticFactScope.MEDIA &&
-                    it.subjectId == sourceId &&
-                    it.applicability !in SemanticProvenanceApplicability.NON_CONFIRMING &&
-                    it.promptVersion == SemanticEnrichmentCodec.PROMPT_VERSION
-            } ?: continue
+        val sourceBindings = reviewedFaceBindingsForMedia(sourceId)
+        if (!equivalentReviewedBindings(sourceBindings, targetBindings)) continue
+        val caption = semanticCaptionsForMedia(sourceId).firstOrNull {
+            it.scope == SemanticFactScope.MEDIA &&
+                it.subjectId == sourceId &&
+                SemanticProvenanceApplicability.isSafeForExactDuplicateSharing(it.applicability) &&
+                it.promptVersion == SemanticEnrichmentCodec.PROMPT_VERSION
+        } ?: continue
             val targetByLabel = targetBindings.associateBy(PersonVerificationBinding::stableLabel)
             val copiedRefs = caption.personRefs.mapNotNull { sourceRef ->
                 val target = targetByLabel[sourceRef.personRef]
@@ -3247,12 +3247,12 @@ class GalleryDatabase(
                 )
             }
             if (copiedRefs.size != caption.personRefs.size) continue
-            val copiedFacts = semanticFacts(listOf(sourceId))
-                .filter {
-                    it.scope == SemanticFactScope.MEDIA &&
-                        it.subjectId == sourceId &&
-                        it.applicability !in SemanticProvenanceApplicability.NON_CONFIRMING
-                }
+        val copiedFacts = semanticFacts(listOf(sourceId))
+            .filter {
+                it.scope == SemanticFactScope.MEDIA &&
+                    it.subjectId == sourceId &&
+                    SemanticProvenanceApplicability.isSafeForExactDuplicateSharing(it.applicability)
+            }
                 .map {
                     it.copy(
                         subjectId = job.representativeMediaId,

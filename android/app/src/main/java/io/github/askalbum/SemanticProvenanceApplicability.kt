@@ -23,6 +23,10 @@ internal object SemanticProvenanceApplicability {
 
     fun isContextual(value: String?): Boolean = value in CONTEXTUAL
 
+    /** Only facts explicitly authored for pixel-equivalent reuse may be propagated. */
+    fun isSafeForExactDuplicateSharing(value: String?): Boolean =
+        value == SAFE_FOR_EXACT_DUPLICATES
+
     fun isDirect(
         scope: Any?,
         applicability: String?,

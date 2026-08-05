@@ -886,3 +886,9 @@ People cluster summaries now expose both the user-selected representative face a
 - Exact semantic-scan batches now report the real number of eligible media when no vector IDs are available instead of a hard-coded count of one.
 - The durable scan runner passes its batch size into the typed semantic channel report; zero-eligible scopes remain `NOT_REQUIRED`.
 - Added a regression for the 64-item missing-vector batch case. No completed media, vectors, People data, semantic facts, captions, events, or model state is modified.
+
+## 2026-08-06 - Restrict exact-duplicate semantic reuse
+
+- Exact-duplicate caption and semantic-fact reuse now requires explicit `SAFE_FOR_EXACT_DUPLICATES` applicability in addition to the existing normalized-pixel digest and reviewed-face binding checks.
+- Media-only evidence, possible inferences, and contextual facts are no longer silently promoted to exact-duplicate truth; those targets remain eligible for direct generation.
+- Added a provenance regression. Existing media, captions, facts, People data, vectors, events, and model packs are unchanged.

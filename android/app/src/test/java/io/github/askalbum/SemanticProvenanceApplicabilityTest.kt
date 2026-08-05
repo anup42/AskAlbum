@@ -6,6 +6,23 @@ import org.junit.Test
 
 class SemanticProvenanceApplicabilityTest {
     @Test
+    fun onlyExplicitlySafeFactsCanBeSharedAcrossExactDuplicates() {
+        assertTrue(
+            SemanticProvenanceApplicability.isSafeForExactDuplicateSharing(
+                SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES,
+            ),
+        )
+        assertFalse(
+            SemanticProvenanceApplicability.isSafeForExactDuplicateSharing("EVIDENCE_MEDIA_ONLY"),
+        )
+        assertFalse(
+            SemanticProvenanceApplicability.isSafeForExactDuplicateSharing(
+                SemanticProvenanceApplicability.POSSIBLE_INFERENCE,
+            ),
+        )
+    }
+
+    @Test
     fun exactDuplicateGroupRequiresExplicitSafeApplicability() {
         assertTrue(
             SemanticProvenanceApplicability.isDirect(
