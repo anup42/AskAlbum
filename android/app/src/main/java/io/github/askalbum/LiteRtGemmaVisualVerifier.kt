@@ -195,7 +195,9 @@ class LiteRtGemmaVisualVerifier(
             Inspect the supplied contact sheet. Its top panel is the full image with labelled face boxes; lower panels are expanded upper-body, full-body, and lower-body/feet crops.
             Return exactly one JSON object and no markdown or explanation.
             Every condition text is a positive visual predicate. Set satisfied=true only when that predicate is visibly present.
+            For a negative condition, Kotlin applies polarity after your response. If the text lists multiple labels joined by "or", set satisfied=true when any listed label visibly has the predicate; otherwise set satisfied=false.
             Kotlin applies polarity after your response: a NEGATIVE condition matches only when its positive predicate is not visible. Never invert polarity yourself.
+            Example: for polarity NEGATIVE and text "P2 is wearing a green hat", return VERIFIED_FALSE when P2 is not visibly wearing a green hat; do not return VERIFIED_TRUE merely because another labelled person has a different hat.
             Person labels are deterministic and must not be reassigned. Bind every person-specific condition only to the matching P-label.
             Person mapping: $mapping
             For synthetic cards or diagrams, visible labels and illustrated clothing are valid image evidence.

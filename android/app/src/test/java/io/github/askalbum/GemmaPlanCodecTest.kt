@@ -98,6 +98,63 @@ class GemmaPlanCodecTest {
     }
 
     @Test
+    fun emptyOrNullFilterOperationMeansNoHardFilter() {
+        listOf(
+            """{"intent":"FIND_MEDIA","mediaScope":"IMAGES","filter":{},"terms":["family"]}""",
+            """{"intent":"FIND_MEDIA","mediaScope":"IMAGES","filter":{"op":null},"terms":["family"]}""",
+        ).forEach { response ->
+            val plan = codec.decode("family photos", response, null)
+            assertEquals(FilterExpression.True, plan.filter)
+        }
+    }
+
+    @Test
+    fun infersOnlyUnambiguousMissingFilterOperations() {
+        val plan = codec.decode(
+            "Goa photos from 2024",
+            """{"intent":"FIND_MEDIA","mediaScope":"IMAGES","filter":{"startEpochMs":1704067200000,"endEpochMs":1735689599999},"terms":["goa"]}""",
+            null,
+        )
+
+        assertEquals(FilterExpression.TimeRange(1704067200000, 1735689599999), plan.filter)
+    }
+
+    @Test
+    fun termsOnlyFilterObjectIsPromotedToLexicalTerms() {
+        listOf(
+            """{"intent":"FIND_MEDIA","mediaScope":"IMAGES","filter":{"terms":["Goa","family"]}}""",
+            """{"intent":"FIND_MEDIA","mediaScope":"IMAGES","filter":{"terms":"Goa family"}}""",
+        ).forEachIndexed { index, response ->
+            val plan = codec.decode("Goa family photos", response, null)
+            assertEquals(if (index == 0) listOf("goa", "family") else listOf("goa family"), plan.terms)
+            assertEquals(FilterExpression.True, plan.filter)
+        }
+    }
+
+    @Test
+    fun termsOnlyNestedFilterClauseIsNotAVisualPredicate() {
+        val plan = codec.decode(
+            "Goa family photos",
+            """{"intent":"FIND_MEDIA","mediaScope":"IMAGES","filter":{"op":"AND","clauses":[{"terms":["family"]}]},"terms":["Goa"]}""",
+            null,
+        )
+
+        assertEquals(FilterExpression.And(listOf(FilterExpression.True)), plan.filter)
+        assertEquals(listOf("goa"), plan.terms)
+    }
+
+    @Test
+    fun listAnswerModeAliasKeepsMediaSearchGrounded() {
+        val plan = codec.decode(
+            "Show Goa photos",
+            """{"intent":"FIND_MEDIA","mediaScope":"IMAGES","answerMode":"LIST","terms":["Goa"]}""",
+            null,
+        )
+
+        assertEquals(AnswerMode.RESULTS_AND_SUMMARY, plan.answerMode)
+    }
+
+    @Test
     fun listScopeWordsDoNotCreateAFalseSemanticPredicate() {
         val plan = codec.decode(
             "List places in Goa",

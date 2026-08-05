@@ -24,7 +24,11 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
                 relationToPerson = item.optNullableString("relationToPerson"),
             ))
         }.orEmpty()
-        val terms = json.optJSONArray("terms")?.strings(MAX_TERMS).orEmpty().map { it.lowercase(Locale.ROOT) }.distinct()
+        val filterJson = json.optJSONObject("filter")
+        val terms = (
+            json.optJSONArray("terms")?.strings(MAX_TERMS).orEmpty() +
+                filterJson?.takeIf { it.isTermsOnlyObject() }?.filterTerms().orEmpty()
+            ).map { it.lowercase(Locale.ROOT) }.distinct()
         val place = json.optNullableString("place")
         val normalizedPlace = place?.lowercase(Locale.ROOT)
         val structuralListSemantics = semantic.filterNot { clause ->
@@ -76,7 +80,9 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
             originalQuery = query,
             intent = intent,
             mediaScope = json.optEnum("mediaScope", MediaScope.ALL),
-            filter = json.optJSONObject("filter")?.let(::parseFilter) ?: FilterExpression.True,
+            filter = filterJson?.let { filterObject ->
+                if (filterObject.isEmptyUnfilteredObject() || filterObject.isTermsOnlyObject()) FilterExpression.True else parseFilter(filterObject)
+            } ?: FilterExpression.True,
             semanticClauses = structuralListSemantics.ifEmpty { finalTerms.map { SemanticClause(it, it) } },
             peopleClauses = people,
             ocrClause = ocr,
@@ -84,7 +90,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
             aggregation = aggregation ?: defaultAggregation(intent),
             sort = json.optEnum("sort", SortSpec.RELEVANCE),
             verification = json.optEnum("verification", VerificationPolicy.AUTO),
-            answerMode = json.optEnum("answerMode", AnswerMode.RESULTS_AND_SUMMARY),
+            answerMode = json.optAnswerMode(),
             terms = finalTerms,
             place = place,
             comparisonScopes = comparisonScopes,
@@ -108,7 +114,8 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
     """.trimIndent()
 
     private fun parseFilter(json: JSONObject): FilterExpression {
-        val op = json.getString("op")
+        if (json.isEmptyUnfilteredObject() || json.isTermsOnlyObject()) return FilterExpression.True
+        val op = json.filterOperation()
         return when (op) {
             "TRUE" -> {
                 json.requireOnly("op")
@@ -134,6 +141,21 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         }
     }
 
+    private fun JSONObject.filterOperation(): String {
+        val raw = if (has("op") && !isNull("op")) opt("op") as? String else null
+        val explicit = raw?.trim()?.takeIf {
+            it.isNotBlank() && !it.equals("null", ignoreCase = true) && !it.equals("undefined", ignoreCase = true)
+        }
+        if (explicit != null) return explicit.uppercase(Locale.ROOT)
+        return when {
+            has("clauses") -> "AND"
+            has("startEpochMs") || has("endEpochMs") -> "TIME_RANGE"
+            has("kind") -> "MEDIA_KIND"
+            has("album") -> "ALBUM"
+            else -> error("Filter operation is required; fields=${keys().asSequence().toList().sorted().joinToString(",")}")
+        }
+    }
+
     private fun parseSingleObject(text: String): JSONObject {
         val trimmed = text.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
         require(trimmed.startsWith('{') && trimmed.endsWith('}')) { "Planner must return one JSON object" }
@@ -150,6 +172,16 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
 
     private inline fun <reified T : Enum<T>> JSONObject.optEnum(key: String, default: T): T =
         if (!has(key) || isNull(key)) default else enum(this, key)
+
+    private fun JSONObject.optAnswerMode(): AnswerMode {
+        if (!has("answerMode") || isNull("answerMode")) return AnswerMode.RESULTS_AND_SUMMARY
+        val raw = getString("answerMode")
+        return if (raw == "LIST") AnswerMode.RESULTS_AND_SUMMARY else
+            enumValues<AnswerMode>().singleOrNull { it.name == raw }
+                ?: throw IllegalArgumentException(
+                    "\"answerMode\" must be one of ${enumValues<AnswerMode>().joinToString(prefix = "[", postfix = "]") { it.name }}; received ${JSONObject.quote(raw)}",
+                )
+    }
 
     private fun defaultAggregation(intent: QueryIntent): AggregationSpec? = when (intent) {
         QueryIntent.COUNT -> AggregationSpec(AggregationOperation.COUNT)
@@ -213,6 +245,23 @@ private fun JSONObject.optNullableString(key: String): String? =
     if (!has(key) || isNull(key)) null else getString(key).trim().takeIf(String::isNotBlank)
 
 private fun JSONObject.optNullableLong(key: String): Long? = if (!has(key) || isNull(key)) null else getLong(key)
+
+private fun JSONObject.isEmptyUnfilteredObject(): Boolean {
+    if (length() == 0) return true
+    if (length() != 1 || !has("op")) return false
+    if (isNull("op")) return true
+    val operation = opt("op") as? String ?: return false
+    return operation.isBlank() || operation.equals("null", ignoreCase = true) || operation.equals("undefined", ignoreCase = true)
+}
+
+private fun JSONObject.isTermsOnlyObject(): Boolean =
+    length() == 1 && has("terms")
+
+private fun JSONObject.filterTerms(): List<String> = when (val raw = opt("terms")) {
+    is JSONArray -> raw.strings(16)
+    is String -> listOf(raw.trim()).filter(String::isNotBlank)
+    else -> emptyList()
+}
 
 private fun JSONArray.strings(max: Int): List<String> {
     require(length() <= max) { "Planner array exceeds its bound" }

@@ -26,6 +26,59 @@ class PersonVerificationPromptBindingTest {
         assertEquals("brother-cluster", result[1].relationToPerson)
     }
 
+    @Test
+    fun negativeOtherPersonPredicateIsExpandedToRemainingLabels() {
+        val bindings = listOf(
+            binding("me-cluster", "P1", setOf("Me")),
+            binding("wife-cluster", "P2", setOf("Wife")),
+        )
+        val normalized = SemanticPolarityNormalizer.normalize(
+            SemanticClause(
+                text = "No visible person other than Me is wearing a yellow hat",
+                polarity = Polarity.POSITIVE,
+                subject = SemanticSubject.PERSON,
+            ),
+        )
+        val condition = VerificationConditionSpec(
+            id = "c1",
+            text = normalized.text,
+            polarity = normalized.polarity,
+            hardness = ConstraintStrength.HARD,
+            subject = normalized.subject,
+            relationToPerson = normalized.relationToPerson,
+        )
+
+        val result = PersonVerificationPromptBinding.bind(listOf(condition), bindings).single()
+
+        assertEquals("P2 is wearing a yellow hat", result.text)
+        assertEquals(Polarity.NEGATIVE, result.polarity)
+    }
+
+    @Test
+    fun negativeConditionUsesPredicateVisibilityNotClauseSatisfaction() {
+        val spec = VerificationConditionSpec(
+            id = "c1",
+            text = "P2 is wearing a green hat",
+            polarity = Polarity.NEGATIVE,
+            hardness = ConstraintStrength.HARD,
+            subject = SemanticSubject.PERSON,
+            relationToPerson = "wife-cluster",
+        )
+
+        assertTrue(
+            SemanticPolarityNormalizer.conditionMatched(
+                spec,
+                VerificationConditionEvaluation("c1", satisfied = false, confidence = .9f, verdict = PersonVisualVerdict.VERIFIED_FALSE),
+            ),
+        )
+        assertFalse(
+            SemanticPolarityNormalizer.conditionMatched(
+                spec,
+                VerificationConditionEvaluation("c1", satisfied = true, confidence = .9f, verdict = PersonVisualVerdict.VERIFIED_TRUE),
+            ),
+        )
+    }
+
     private fun binding(clusterId: String, label: String, terms: Set<String>) = PersonVerificationBinding(
         faceId = "$clusterId:face",
         clusterId = clusterId,

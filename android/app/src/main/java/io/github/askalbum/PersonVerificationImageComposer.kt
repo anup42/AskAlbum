@@ -120,6 +120,7 @@ internal object PersonVerificationPromptBinding {
                     }
                 }
             }
+            text = expandOtherPersonPredicate(text, bindings)
             val bound = explicit ?: bindings.singleOrNull()?.takeIf { condition.subject == SemanticSubject.PERSON }
             if (bound != null && bound.stableLabel.lowercase(Locale.ROOT) !in text.lowercase(Locale.ROOT)) {
                 text = "${bound.stableLabel}: $text"
@@ -127,4 +128,32 @@ internal object PersonVerificationPromptBinding {
             condition.copy(text = text, relationToPerson = bound?.clusterId ?: condition.relationToPerson)
         }
     }
+
+    /**
+     * Turns a negative existential such as "no visible person other than P1 is wearing X"
+     * into the positive predicate Gemma must evaluate. Kotlin still owns the negative
+     * polarity, so VERIFIED_FALSE means that none of the remaining labelled people match.
+     */
+    private fun expandOtherPersonPredicate(
+        text: String,
+        bindings: List<PersonVerificationBinding>,
+    ): String {
+        val match = OTHER_PERSON_PATTERN.matchEntire(text.trim()) ?: return text
+        val excluded = match.groupValues[1]
+        val predicate = match.groupValues[2].trim()
+        val otherLabels = bindings
+            .map(PersonVerificationBinding::stableLabel)
+            .filterNot { it.equals(excluded, ignoreCase = true) }
+            .distinct()
+        if (predicate.isBlank() || otherLabels.isEmpty()) return text
+        return if (otherLabels.size == 1) {
+            "${otherLabels.single()} is $predicate"
+        } else {
+            "${otherLabels.joinToString(" or ")} is $predicate"
+        }
+    }
+
+    private val OTHER_PERSON_PATTERN = Regex(
+        "(?i)^(?:any\\s+)?(?:visible\\s+)?person\\s+other\\s+than\\s+(P\\d+)\\s+(?:is\\s+)?(.+)$",
+    )
 }

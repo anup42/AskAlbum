@@ -414,3 +414,14 @@ media, databases, or logs.
 - Visual Gemma fact decoding now forces `occasion` and `possible_occasion` records to `POSSIBLE_INFERENCE`, preventing visual occasion text from becoming confirmed media evidence.
 - Real Gemma planner acceptance now accounts for shared-session reuse: model-load timing is required at most once across English, Hindi, and Hinglish cases, and the test asserts no repeated Gemma initialization.
 - Validation: 254 consumer unit tests passed; `consumerDebug`, `offlineDemoDebug`, and `fixtureCiDebug` assembled successfully. The connected real-Gemma planner gate was first blocked by a per-case load-time assertion, then correctly skipped because the current app-private state has no active verified E2B generation and only an incomplete `e2b.litertlm.part`; no real-model result is claimed.
+- Real E2B planner validation found and fixed a model-output edge case: empty/null unfiltered objects now normalize to `TRUE`, while non-empty malformed filter objects remain rejected; regression coverage added.
+- Hinglish E2B planner acceptance exposed missing filter discriminators; the typed codec now infers only unambiguous filter shapes and rejects unknown shapes, with regression coverage.
+- Real E2B Hinglish planning also exposed `answerMode=LIST`; the typed codec maps this legacy/model alias to `RESULTS_AND_SUMMARY` without changing the validated capability or retrieval semantics.
+
+### 2026-08-05 real E2B acceptance gate
+- PASS: Direct connected-device instrumentation compiled English, Hindi, and Hinglish planner outputs without fallback; Hinglish used the bounded repair path and accepted the typed plan.
+- PASS: Real Gemma E2B visual verification ran on GPU with one initialization and one vision call for the synthetic relationship fixture; three positive person conditions produced three media-scoped evidence records.
+- PASS: Real Gemma E2B grounded-answer composition ran on GPU with one initialization and one generation; two claims were limited to supplied evidence and the no-evidence case did not bypass Gemma.
+- FIXED: Planner decoding now accepts empty/null filter wrappers, unambiguous discriminator-free filter shapes, lexical terms wrappers, and the model's LIST answer-mode alias without weakening typed validation.
+- FIXED: Person visual prompts expand negative existential clauses to the remaining stable P-labels and keep negative polarity owned by Kotlin; unit coverage verifies the visibility-based verdict contract.
+- LIMITATION: The live synthetic verifier gate covers positive visual confirmation; negative-result behavior is covered by deterministic/unit tests because the installed E2B model over-accepted the synthetic negative predicate and the verifier correctly failed closed.
