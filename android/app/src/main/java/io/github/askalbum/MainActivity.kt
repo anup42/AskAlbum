@@ -2814,7 +2814,7 @@ private fun OnboardingScreen(onContinue: () -> Unit) {
 
 @Composable
 internal fun LegacyEvidenceDialog(hit: SearchHit, onDismiss: () -> Unit) {
-    val playbackTimestamp = hit.evidence.mapNotNull { it.timestampMs }.minOrNull()
+    val playbackTimestamp = VideoKeyframeSelectionPolicy.selectEvidenceTimestamp(hit.evidence)
     var playing by remember(hit.item.id, playbackTimestamp) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3325,7 +3325,7 @@ internal fun EvidenceDialog(
     val pagerState = rememberPagerState(initialPage = initialPage) { viewerItems.size }
     val currentItem = viewerItems.getOrElse(pagerState.currentPage) { hit.item }
     val currentHit = if (currentItem.id == hit.item.id) hit else currentItem.asMetadataHit()
-    val playbackTimestamp = currentHit.evidence.mapNotNull { it.timestampMs }.minOrNull()
+    val playbackTimestamp = VideoKeyframeSelectionPolicy.selectEvidenceTimestamp(currentHit.evidence)
     var playing by remember(currentItem.id, playbackTimestamp) { mutableStateOf(false) }
     var detailsVisible by remember(currentItem.id) { mutableStateOf(false) }
     var controlsVisible by remember(currentItem.id) { mutableStateOf(true) }

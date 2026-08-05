@@ -564,3 +564,9 @@ media, databases, or logs.
 - Reviewed-person media filtering and group resolution now use one NFKC, whitespace-normalized, case-insensitive identity representation.
 - Token-boundary matching remains Unicode-aware, so Hindi, Hinglish, decomposed accents, and compatibility-width aliases resolve without substring false positives.
 - Added regression coverage; no database migration or People-data rewrite was introduced.
+
+## 2026-08-05 - Preserve the winning video-keyframe timestamp
+
+- Visual verification and video evidence playback now prioritize the semantic image-text keyframe timestamp, then lexical keyframe/OCR timestamps, instead of choosing the first or earliest unrelated timestamp in a fused hit.
+- Parent videos remain the returned media item while verification and playback use the matched frame time.
+- Added timestamp-priority regression coverage; no media, vector, or database data changed.

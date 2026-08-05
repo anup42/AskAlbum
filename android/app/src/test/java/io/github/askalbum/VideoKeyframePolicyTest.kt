@@ -29,4 +29,21 @@ class VideoKeyframePolicyTest {
         )
         assertTrue(VideoKeyframePolicy.stableId("media-1", 5_000).matches(Regex("vf-[0-9a-f]{30}")))
     }
+
+    @Test
+    fun semanticFrameTimestampWinsOverOtherEvidenceTimestamps() {
+        val evidence = listOf(
+            EvidenceRecord("ocr", "video-1", "ocr_text", "text", .8f, timestampMs = 2_000L),
+            EvidenceRecord("frame", "video-1", "image_text_embedding", "visual", .9f, timestampMs = 7_000L),
+        )
+
+        assertEquals(7_000L, VideoKeyframeSelectionPolicy.selectEvidenceTimestamp(evidence))
+        assertEquals(
+            7_000L,
+            VideoKeyframeSelectionPolicy.selectTimestamp(
+                available = listOf(2_000L, 7_000L),
+                evidence = listOfNotNull(VideoKeyframeSelectionPolicy.selectEvidenceTimestamp(evidence)),
+            ),
+        )
+    }
 }
