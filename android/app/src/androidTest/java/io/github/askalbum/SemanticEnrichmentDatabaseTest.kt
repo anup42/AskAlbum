@@ -128,6 +128,72 @@ class SemanticEnrichmentDatabaseTest {
     }
 
     @Test
+    fun contextualCaptionDoesNotInflateDirectCaptionCoverage() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "caption-coverage-${UUID.randomUUID()}.db"
+        val database = GalleryDatabase(context, name)
+        try {
+            database.seedDemoIfEmpty()
+            val mediaId = database.allItems().first().id
+            val eventJob = SemanticEnrichmentJobRecord(
+                id = UUID.randomUUID().toString(),
+                scope = SemanticFactScope.EVENT,
+                subjectId = "event:caption-coverage",
+                representativeMediaId = mediaId,
+                reason = "event-caption",
+                status = SemanticEnrichmentStatus.PENDING,
+                attemptCount = 0,
+                userRequested = false,
+            )
+            database.replaceSemanticEnrichmentPlan(SemanticEnrichmentPlan(emptyList(), emptyList(), listOf(eventJob)))
+            database.completeSemanticEnrichment(
+                requireNotNull(database.claimSemanticEnrichmentJob(owner = "event-caption-owner")),
+                SemanticEnrichmentResult(
+                    facts = emptyList(),
+                    caption = SemanticCaptionRecord(
+                        scope = SemanticFactScope.EVENT,
+                        subjectId = eventJob.subjectId,
+                        text = "A shared event scene",
+                        confidence = 0.8f,
+                        evidenceMediaId = mediaId,
+                        modelVersion = "fixture",
+                        promptVersion = "fixture-v1",
+                    ),
+                ),
+            )
+            assertEquals(0, database.semanticCaptionEvidenceCount(setOf(mediaId)))
+
+            val mediaJob = eventJob.copy(
+                id = UUID.randomUUID().toString(),
+                scope = SemanticFactScope.MEDIA,
+                subjectId = mediaId,
+                reason = "media-caption",
+                status = SemanticEnrichmentStatus.PENDING,
+            )
+            database.replaceSemanticEnrichmentPlan(SemanticEnrichmentPlan(emptyList(), emptyList(), listOf(mediaJob)))
+            database.completeSemanticEnrichment(
+                requireNotNull(database.claimSemanticEnrichmentJob(owner = "media-caption-owner")),
+                SemanticEnrichmentResult(
+                    facts = emptyList(),
+                    caption = SemanticCaptionRecord(
+                        scope = SemanticFactScope.MEDIA,
+                        subjectId = mediaId,
+                        text = "A direct media scene",
+                        confidence = 0.9f,
+                        evidenceMediaId = mediaId,
+                        modelVersion = "fixture",
+                        promptVersion = "fixture-v1",
+                    ),
+                ),
+            )
+            assertEquals(1, database.semanticCaptionEvidenceCount(setOf(mediaId)))
+        } finally {
+            database.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
     fun representativeJobPreservesScopeAndSharesOnlyVerifiedExactDuplicates() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "semantic-facts-${UUID.randomUUID()}.db"

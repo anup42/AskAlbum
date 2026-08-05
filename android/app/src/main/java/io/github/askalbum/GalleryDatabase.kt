@@ -4179,14 +4179,17 @@ class GalleryDatabase(
         if (mediaIds != null && mediaIds.isEmpty()) return 0
         return if (mediaIds == null) {
             readableDatabase.rawQuery(
-                "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption",
+                "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption " +
+                    "WHERE scope IN ('MEDIA','QUERY_VERIFICATION','EXACT_DUPLICATE_GROUP')",
                 emptyArray(),
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
         } else {
             mediaIds.chunked(SQLITE_ID_CHUNK).sumOf { ids ->
                 val placeholders = ids.joinToString(",") { "?" }
                 readableDatabase.rawQuery(
-                    "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption WHERE evidence_media_id IN ($placeholders)",
+                    "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption " +
+                        "WHERE evidence_media_id IN ($placeholders) " +
+                        "AND scope IN ('MEDIA','QUERY_VERIFICATION','EXACT_DUPLICATE_GROUP')",
                     ids.toTypedArray(),
                 ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
             }

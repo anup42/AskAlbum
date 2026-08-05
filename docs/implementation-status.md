@@ -221,3 +221,8 @@ media, databases, or logs.
 - Media FTS lookup now returns a typed lexical result; empty terms are `NOT_REQUIRED` and corrupt/unavailable FTS is `FAILED` rather than a successful empty set.
 - Search channel reports preserve the failure code while metadata scoring remains available as a partial fallback.
 - Added isolated database coverage for a corrupt FTS table.
+
+### 2026-08-05 - Keep contextual captions out of direct coverage
+
+- Direct caption coverage now excludes event and visual-group representative captions; only media, query-verification, and verified exact-duplicate scopes count.
+- Added connected database coverage proving an event caption cannot inflate an individual media caption count.
