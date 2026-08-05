@@ -86,6 +86,31 @@ class PeopleIdentityProtectionDeviceTest {
         }
     }
 
+    @Test
+    fun negativeVisualVerificationIsNotStoredAsPositiveEvidence() {
+        val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
+        store.seedDemoIfEmpty()
+        val mediaId = store.allItems().first().id
+        store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+        store.ensureAutomaticPersonCluster("person_fixture")
+        store.saveReviewedPersonCluster("person_fixture", "Alice Example", "partner", emptyList())
+
+        store.saveVerifiedPersonAttributeFact(
+            mediaId = mediaId,
+            clusterId = "person_fixture",
+            predicate = "wearing green hat",
+            value = PersonVisualVerdict.VERIFIED_FALSE.name,
+            confidence = .9f,
+            region = listOf(.1f, .1f, .9f, .9f),
+            modelVersion = "fixture",
+            verdict = PersonVisualVerdict.VERIFIED_FALSE,
+        )
+
+        val fact = store.personVisualFactsForMedia(mediaId).single()
+        assertEquals(PersonVisualVerdict.VERIFIED_FALSE, fact.verdict)
+        assertFalse(fact.verdict == PersonVisualVerdict.VERIFIED_TRUE)
+    }
+
     private fun rawIdentity(): SQLiteDatabase =
         SQLiteDatabase.openDatabase(
             context.getDatabasePath(TEST_DATABASE).path,

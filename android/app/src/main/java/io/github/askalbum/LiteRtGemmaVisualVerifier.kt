@@ -133,6 +133,7 @@ class LiteRtGemmaVisualVerifier(
                                             confidence = evaluation.confidence,
                                             region = listOf(binding.left, binding.top, binding.right, binding.bottom),
                                             modelVersion = producerVersion(status),
+                                            verdict = evaluation.verdict,
                                         )
                                     }
                                 }

@@ -2252,6 +2252,7 @@ class GalleryDatabase(
         confidence: Float,
         region: List<Float>,
         modelVersion: String,
+        verdict: PersonVisualVerdict = PersonVisualVerdict.VERIFIED_TRUE,
     ) {
         require(PERSON_ID.matches(clusterId) && predicate.isNotBlank() && value.isNotBlank()) { "Invalid person fact" }
         val id = "$mediaId:$clusterId:${StableDerivedId.sha256(predicate.lowercase(Locale.ROOT))}"
@@ -2271,7 +2272,7 @@ class GalleryDatabase(
             put("body_region", BodyRegion.UNKNOWN.name)
             put("face_region", JSONArray(region).toString())
             put("association_status", PersonAssociationStatus.CONFIDENT.name)
-            put("verdict", PersonVisualVerdict.VERIFIED_TRUE.name)
+            put("verdict", verdict.name)
             put("prompt_version", "query-visual-verification-v2")
             put("body_region_version", PersonalSemanticMemoryPolicy.BODY_REGION_VERSION)
             put("updated_at", System.currentTimeMillis())
