@@ -652,3 +652,10 @@ media, databases, or logs.
 - PASS focused `ForegroundIndexCompletionPolicyTest` and existing foreground run-limit tests.
 - PASS `consumerDebug` assembled and replacement-installed on `R3CW408WE4J` with `adb install -r` through the Android build/install workflow; existing app data was preserved.
 - NOT RUN full device SigLIP2 indexing because the connected consumer installation does not have a verified external retrieval pack available for this validation.
+
+### 2026-08-05 - truthful runtime status for missing retrieval packs
+- PASS indexing snapshots now expose `UNAVAILABLE` and `NO_VERIFIED_RETRIEVAL_PACK` when embeddings are enabled but no verified SigLIP2 producer is active; this is separate from `COMPLETE` and `DEGRADED`.
+- PASS explicit user pause remains higher priority than unavailable model state, and the ViewModel does not poll an unavailable pipeline as if it were active work.
+- PASS focused indexing-state, reliability, and foreground-completion unit tests.
+- PASS `consumerDebug` rebuilt and replacement-installed on `R3CW408WE4J`; `offlineDemoDebug` assembled successfully.
+- NOT RUN model-backed vector indexing on device; the connected consumer validation still lacks a verified external retrieval-pack path for that gate.

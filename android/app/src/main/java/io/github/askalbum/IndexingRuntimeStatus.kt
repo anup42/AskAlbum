@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit
 enum class IndexingPipelineState {
     RUNNING,
     WAITING_CONSTRAINTS,
+    UNAVAILABLE,
     BACKOFF,
     STOPPED_BY_USER,
     PAUSED_BY_USER,
@@ -67,11 +68,13 @@ data class IndexingPipelineSnapshot(
     val ratePerMinute: Double? = null,
     val etaMillis: Long? = null,
     val stopReason: Int? = null,
+    val errorCode: String? = null,
     val message: String,
 )
 
 internal class IndexingRuntimeStatusReader(context: Context) {
-    private val workManager = WorkManager.getInstance(context.applicationContext)
+    private val appContext = context.applicationContext
+    private val workManager = WorkManager.getInstance(appContext)
 
     fun read(
         summary: IndexSummary,
@@ -85,6 +88,8 @@ internal class IndexingRuntimeStatusReader(context: Context) {
         val captionEmbeddings = workState("gallery-caption-embeddings")
         val peopleWork = workState("gallery-people-index")
         val semanticWork = workState("semantic-enrichment")
+        val retrievalAvailable = (appContext as AskAlbumApplication)
+            .services.retrievalModelPackManager.current() != null
         val mediaCompleted = (summary.discovered - summary.pending - summary.failed).coerceAtLeast(0)
         val peopleCompleted = IndexingCoverageMath.peopleCompleted(summary.facesScanned, summary.faceEligible)
         val peoplePending = IndexingCoverageMath.peoplePending(people.pendingMediaCount, summary.faceEligible)
@@ -120,6 +125,12 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 admission,
                 foregroundActive = ForegroundIndexRuntime.active,
                 pausedByUser = controls.foregroundPaused,
+                unavailable = controls.embeddingsEnabled && !retrievalAvailable && summary.discovered > 0,
+                errorCode = if (controls.embeddingsEnabled && !retrievalAvailable && summary.discovered > 0) {
+                    "NO_VERIFIED_RETRIEVAL_PACK"
+                } else {
+                    null
+                },
             ),
             IndexingJob.CAPTION_EMBEDDINGS to snapshot(
                 IndexingJob.CAPTION_EMBEDDINGS,
@@ -168,6 +179,8 @@ internal class IndexingRuntimeStatusReader(context: Context) {
         admission: BackgroundWorkAdmission,
         foregroundActive: Boolean = false,
         pausedByUser: Boolean = false,
+        unavailable: Boolean = false,
+        errorCode: String? = null,
     ): IndexingPipelineSnapshot {
         val state = IndexingRuntimeStatePolicy.resolve(
             enabled = enabled,
@@ -179,10 +192,12 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             runAttemptCount = work.runAttemptCount,
             foregroundActive = foregroundActive,
             pausedByUser = pausedByUser,
+            unavailable = unavailable,
         )
         val message = when (state) {
             IndexingPipelineState.RUNNING -> "$completed / $eligible indexed"
             IndexingPipelineState.WAITING_CONSTRAINTS -> admission.reason ?: "Queued for the next available run"
+            IndexingPipelineState.UNAVAILABLE -> "Verified retrieval pack unavailable"
             IndexingPipelineState.BACKOFF -> "Retry backoff after ${work.runAttemptCount} worker attempts"
             IndexingPipelineState.STOPPED_BY_USER -> "Stopped"
             IndexingPipelineState.PAUSED_BY_USER -> "Paused by user"
@@ -203,6 +218,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             ratePerMinute = work.ratePerMinute,
             etaMillis = work.etaMillis,
             stopReason = work.stopReason,
+            errorCode = errorCode,
             message = message,
         )
     }
@@ -255,9 +271,11 @@ internal object IndexingRuntimeStatePolicy {
         runAttemptCount: Int,
         foregroundActive: Boolean,
         pausedByUser: Boolean = false,
+        unavailable: Boolean = false,
     ): IndexingPipelineState = when {
         !enabled -> IndexingPipelineState.STOPPED_BY_USER
         pausedByUser && pending > 0 -> IndexingPipelineState.PAUSED_BY_USER
+        unavailable -> IndexingPipelineState.UNAVAILABLE
         foregroundActive && pending > 0 -> IndexingPipelineState.RUNNING
         workRunning -> IndexingPipelineState.RUNNING
         pending == 0 && failed > 0 -> IndexingPipelineState.DEGRADED

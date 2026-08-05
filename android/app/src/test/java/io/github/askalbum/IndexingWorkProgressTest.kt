@@ -137,4 +137,41 @@ class IndexingWorkProgressTest {
             ),
         )
     }
+
+    @Test
+    fun missingVerifiedRetrievalPackIsReportedAsUnavailable() {
+        assertEquals(
+            IndexingPipelineState.UNAVAILABLE,
+            IndexingRuntimeStatePolicy.resolve(
+                enabled = true,
+                pending = 0,
+                failed = 0,
+                admissionAllowed = true,
+                workRunning = false,
+                workEnqueued = false,
+                runAttemptCount = 0,
+                foregroundActive = false,
+                unavailable = true,
+            ),
+        )
+    }
+
+    @Test
+    fun userPauseTakesPrecedenceOverUnavailablePack() {
+        assertEquals(
+            IndexingPipelineState.PAUSED_BY_USER,
+            IndexingRuntimeStatePolicy.resolve(
+                enabled = true,
+                pending = 12,
+                failed = 0,
+                admissionAllowed = true,
+                workRunning = false,
+                workEnqueued = false,
+                runAttemptCount = 0,
+                foregroundActive = false,
+                pausedByUser = true,
+                unavailable = true,
+            ),
+        )
+    }
 }

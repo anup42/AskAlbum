@@ -1186,6 +1186,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     it.state !in setOf(
                         IndexingPipelineState.COMPLETE,
                         IndexingPipelineState.DEGRADED,
+                        IndexingPipelineState.UNAVAILABLE,
                         IndexingPipelineState.STOPPED_BY_USER,
                         IndexingPipelineState.PAUSED_BY_USER,
                     )
