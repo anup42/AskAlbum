@@ -257,6 +257,11 @@ media, databases, or logs.
 - People cluster sample media and supporting thumbnails now use capture/modified timestamps instead of media-ID ordering or face quality.
 - Explicitly selected representatives remain visible without displacing the latest thumbnail ordering.
 
+
+### 2026-08-05 - Remove unreachable legacy answer path
+
+- Deleted the unreachable repository answer switch after `CapabilityAnswerExecutor` so planner-visible capabilities have one active executor and no stale receipt-only fallback can be restored accidentally.
+
 ### 2026-08-05 - Use explicit foreground indexing service types
 
 - Initial gallery indexing now calls the platform typed `startForeground` API, using `mediaProcessing` on Android 15+ and `dataSync` on older supported releases.

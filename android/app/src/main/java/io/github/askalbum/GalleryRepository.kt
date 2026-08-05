@@ -1253,68 +1253,6 @@ class GalleryRepository(context: Context) {
             ),
         )
 
-        @Suppress("UNREACHABLE_CODE")
-        val scope = if (plan.baseResultIds == null) "the local gallery" else "your previous result set"
-        return when (plan.intent) {
-            QueryIntent.COUNT -> SearchAnswer(
-                headline = RetrievalAnswerWording.countHeadline(matchCount, usedSemanticRetrieval),
-                detail = if (usedSemanticRetrieval) {
-                    "This count comes from thresholded semantic retrieval over $scope; run a complete predicate scan when an exact visual count is required."
-                } else {
-                    "This is a complete scan of $scope using indexed metadata and deterministic local facts."
-                },
-                evidenceIds = evidenceIds,
-                exactness = exactness,
-                indexedEligibleCount = readyItems,
-                totalEligibleCount = totalItems,
-                warnings = warnings,
-                channelReports = channelReports,
-            )
-            QueryIntent.EVENT_SUMMARY -> {
-                val event = database.eventsForMedia(hits.map { it.item.id }).values
-                    .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
-                val locations = hits.map { it.item.location }.filter(String::isNotBlank).groupingBy { it }.eachCount().entries
-                    .sortedByDescending { it.value }.take(3).joinToString { it.key }
-                SearchAnswer(
-                    headline = event?.let { "${it.title}: ${hits.size} related ${if (hits.size == 1) "memory" else "memories"}" }
-                        ?: "Found ${hits.size} related ${if (hits.size == 1) "memory" else "memories"}",
-                    detail = event?.let { "This local event runs from ${it.startTime} to ${it.endTime}${it.locationName?.let { name -> " near $name" }.orEmpty()}." }
-                        ?: "The strongest evidence points to ${locations.ifBlank { "the indexed event" }}.",
-                    evidenceIds = evidenceIds,
-                    exactness = exactness,
-                    indexedEligibleCount = readyItems,
-                    totalEligibleCount = totalItems,
-                    warnings = warnings,
-                    channelReports = channelReports,
-                )
-            }
-            QueryIntent.ANSWER_FACT -> {
-                // Hits are already sorted by the plan (for example newest first). Never skip a newer
-                // failed/ambiguous document and silently answer from an older one.
-                val selection = DocumentAnswerSelector.select(hits)
-                val fact = selection?.fact
-                SearchAnswer(
-                    headline = fact?.text ?: "I found the document, but not a reliable final total",
-                    detail = if (fact != null) "The value comes from a locally recognized Total, Grand Total, or Amount Paid line." else "Open the evidence to inspect the local OCR. The app will not invent a number.",
-                    evidenceIds = fact?.let { listOf(it.id) } ?: evidenceIds,
-                    exactness = if (fact != null && selection.document.item.indexState == IndexState.READY) ResultExactness.EXACT else exactness,
-                    indexedEligibleCount = readyItems,
-                    totalEligibleCount = totalItems,
-                    warnings = warnings,
-                    channelReports = channelReports,
-                )
-            }
-            else -> SearchAnswer(
-                headline = "Found ${hits.size} ${if (hits.size == 1) "match" else "matches"}",
-                detail = "Ranked from $scope. Open Why this answer? to inspect the exact sidecar fields used.",
-                evidenceIds = evidenceIds,
-                exactness = exactness,
-                indexedEligibleCount = readyItems,
-                totalEligibleCount = totalItems,
-                warnings = warnings,
-                channelReports = channelReports,
-            )
-        }
     }
 
     private fun SearchHit?.orEmptyEvidence(): List<EvidenceRecord> = this?.evidence.orEmpty()
