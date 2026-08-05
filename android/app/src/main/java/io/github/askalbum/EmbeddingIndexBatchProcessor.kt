@@ -30,7 +30,12 @@ internal class EmbeddingIndexBatchProcessor(
         ownerId: String = "gallery-image-embeddings",
         canContinue: () -> Boolean = { true },
     ): IndexBatchResult {
-        val producer = vectors.producerVersion() ?: return IndexBatchResult(processed = 0, hasMore = false)
+        val producer = vectors.producerVersion() ?: return IndexBatchResult(
+            processed = 0,
+            hasMore = false,
+            unavailable = true,
+            errorCode = "NO_VERIFIED_RETRIEVAL_PACK",
+        )
         val candidates = pendingItems(producer, allowedMediaIds, batchSize)
         val keyframeCandidates = pendingKeyframes(producer, allowedMediaIds, KEYFRAME_BATCH_SIZE)
         if (candidates.isEmpty() && keyframeCandidates.isEmpty()) {

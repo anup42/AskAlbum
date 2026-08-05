@@ -645,3 +645,10 @@ media, databases, or logs.
 - Fixed the debug-only seeded-gallery foreground service handoff so a completed seed operation can queue the following import/index/cleanup action while the prior coroutine releases its lease.
 - This prevents a transient `Another test gallery operation is active` result from being reported as a real import failure.
 - The corpus driver now removes only the current run's stale operation status before starting a new operation, so superseded failures cannot abort a fresh run.
+
+### 2026-08-05 - truthful foreground embedding availability
+- PASS `IndexBatchResult` now distinguishes unavailable embedding producers from an exhausted queue; missing verified retrieval packs report `UNAVAILABLE` with `NO_VERIFIED_RETRIEVAL_PACK`.
+- PASS foreground media analysis can finish without being falsely reported as complete for embeddings; the service notification names the unavailable retrieval pack state.
+- PASS focused `ForegroundIndexCompletionPolicyTest` and existing foreground run-limit tests.
+- PASS `consumerDebug` assembled and replacement-installed on `R3CW408WE4J` with `adb install -r` through the Android build/install workflow; existing app data was preserved.
+- NOT RUN full device SigLIP2 indexing because the connected consumer installation does not have a verified external retrieval pack available for this validation.

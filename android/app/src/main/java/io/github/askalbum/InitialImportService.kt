@@ -122,6 +122,8 @@ class InitialImportService : Service() {
                     onSuccess = { (imported, indexed) ->
                         when (indexed.reason) {
                             ForegroundIndexStopReason.COMPLETE -> "$imported gallery records indexed locally"
+                            ForegroundIndexStopReason.UNAVAILABLE ->
+                                "Indexed ${indexed.galleryProcessed}; retrieval pack unavailable (${indexed.errorCode ?: "unknown"})"
                             ForegroundIndexStopReason.THERMAL ->
                                 "Indexed ${indexed.galleryProcessed}; paused to keep your phone cool"
                             ForegroundIndexStopReason.RETRYABLE_FAILURE ->
