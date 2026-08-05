@@ -480,3 +480,9 @@ media, databases, or logs.
 - Tests: semantic scan batch policy and caption reconciliation policy PASS; `consumerDebug` and `fixtureCiDebug` compilation PASS.
 - Build/device: both APKs assembled PASS; consumer replacement install and launch smoke PASS on `SM-F731U`; fixture INTERNET permission ABSENT.
 - Long-running 5k/20k, Doze, process-death, foreground-service-timeout, E4B, and full acceptance-query gates remain unverified.
+
+### 2026-08-05 - People cancellation recovery
+- People indexing now propagates coroutine cancellation instead of converting WorkManager stops into per-item failures.
+- `PeopleIndexWorkerPolicyTest` PASS; `consumerDebug` and `fixtureCiDebug` compilation PASS.
+- Both APKs assembled PASS; consumer replacement install and launch smoke PASS on `SM-F731U`; fixture INTERNET permission ABSENT.
+- Process-death, screen-off/Doze, six-hour foreground-service timeout, 5k/20k workload, E4B, and full acceptance-query gates remain unverified.
