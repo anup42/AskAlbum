@@ -1,11 +1,6 @@
 package io.github.anup42.askalbum
 
 import android.os.SystemClock
-import com.google.ai.edge.litertlm.Backend
-import com.google.ai.edge.litertlm.ConversationConfig
-import com.google.ai.edge.litertlm.Engine
-import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -98,41 +93,6 @@ class LiteRtGemmaGroundedAnswerComposer(
         Evidence packet: ${packet.toPromptJson()}
     """.trimIndent()
 
-    private suspend fun generate(engine: Engine, prompt: String): String {
-        val config = ConversationConfig(
-            samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = 29),
-            extraContext = mapOf("enable_thinking" to false),
-        )
-        return engine.generateTextCancellable(config, prompt, mapOf("enable_thinking" to false))
-    }
-
-    private fun createEngine(path: String): InitializedAnswerEngine {
-        val started = SystemClock.elapsedRealtime()
-        val gpu = runCatching {
-            initializeEngine(EngineConfig(modelPath = path, backend = Backend.GPU(), maxNumTokens = 4096))
-                .let { InitializedAnswerEngine(it, PlannerInferenceBackend.GPU, SystemClock.elapsedRealtime() - started) }
-        }
-        return gpu.getOrElse { gpuFailure ->
-            runCatching {
-                initializeEngine(EngineConfig(modelPath = path, backend = Backend.CPU(), maxNumTokens = 4096))
-                    .let { InitializedAnswerEngine(it, PlannerInferenceBackend.CPU, SystemClock.elapsedRealtime() - started) }
-            }.getOrElse { cpuFailure ->
-                throw GemmaModelLoadFailure("Gemma answer composition failed on GPU and CPU", cpuFailure.also { it.addSuppressed(gpuFailure) })
-            }
-        }
-    }
-
-    private fun initializeEngine(config: EngineConfig): Engine {
-        val engine = Engine(config)
-        return try {
-            engine.initialize()
-            engine
-        } catch (error: Throwable) {
-            runCatching { engine.close() }
-            throw error
-        }
-    }
-
     private fun fallback(baseline: SearchAnswer, started: Long, reason: String): GroundedAnswerCompositionResult =
         GroundedAnswerCompositionResult(
             answer = baseline.copy(warnings = (baseline.warnings + reason).distinct()),
@@ -144,9 +104,4 @@ class LiteRtGemmaGroundedAnswerComposer(
             ),
         )
 
-    private data class InitializedAnswerEngine(
-        val engine: Engine,
-        val backend: PlannerInferenceBackend,
-        val loadMs: Long,
-    )
 }

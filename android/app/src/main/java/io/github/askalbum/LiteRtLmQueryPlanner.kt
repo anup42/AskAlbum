@@ -1,10 +1,5 @@
 package io.github.anup42.askalbum
 
-import com.google.ai.edge.litertlm.Backend
-import com.google.ai.edge.litertlm.ConversationConfig
-import com.google.ai.edge.litertlm.Engine
-import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
@@ -107,41 +102,6 @@ class LiteRtLmQueryPlanner(
         }
     }
 
-    private suspend fun generate(engine: Engine, prompt: String): String {
-        val config = ConversationConfig(
-            samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = 17),
-            extraContext = mapOf("enable_thinking" to false),
-        )
-        return engine.generateTextCancellable(config, prompt, mapOf("enable_thinking" to false))
-    }
-
-    private fun createEngine(path: String): InitializedPlannerEngine {
-        val started = android.os.SystemClock.elapsedRealtime()
-        val gpu = runCatching {
-            initializeEngine(EngineConfig(modelPath = path, backend = Backend.GPU(), maxNumTokens = 4096))
-                .let { InitializedPlannerEngine(it, PlannerInferenceBackend.GPU, android.os.SystemClock.elapsedRealtime() - started) }
-        }
-        return gpu.getOrElse { gpuFailure ->
-            runCatching {
-                initializeEngine(EngineConfig(modelPath = path, backend = Backend.CPU(), maxNumTokens = 4096))
-                    .let { InitializedPlannerEngine(it, PlannerInferenceBackend.CPU, android.os.SystemClock.elapsedRealtime() - started) }
-            }.getOrElse { cpuFailure ->
-                throw GemmaModelLoadFailure("Gemma failed on GPU and CPU", cpuFailure.also { it.addSuppressed(gpuFailure) })
-            }
-        }
-    }
-
-    private fun initializeEngine(config: EngineConfig): Engine {
-        val engine = Engine(config)
-        return try {
-            engine.initialize()
-            engine
-        } catch (error: Throwable) {
-            runCatching { engine.close() }
-            throw error
-        }
-    }
-
     private fun fallbackTrace(
         query: String,
         activeResultIds: Set<String>?,
@@ -178,11 +138,5 @@ class LiteRtLmQueryPlanner(
         Query: ${JSONObject.quote(query)}
     """.trimIndent()
 }
-
-private data class InitializedPlannerEngine(
-    val engine: Engine,
-    val backend: PlannerInferenceBackend,
-    val loadMs: Long,
-)
 
 class GemmaModelLoadFailure(message: String, cause: Throwable) : IllegalStateException(message, cause)

@@ -2,12 +2,6 @@ package io.github.anup42.askalbum
 
 import android.content.Context
 import android.os.SystemClock
-import com.google.ai.edge.litertlm.Backend
-import com.google.ai.edge.litertlm.Contents
-import com.google.ai.edge.litertlm.ConversationConfig
-import com.google.ai.edge.litertlm.Engine
-import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -209,62 +203,6 @@ class LiteRtGemmaVisualVerifier(
         """.trimIndent()
     }
 
-    private suspend fun generate(engine: Engine, imageBytes: ByteArray, prompt: String): String {
-        val config = ConversationConfig(
-            samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = 23),
-            extraContext = mapOf("enable_thinking" to false),
-        )
-        return engine.generateTextCancellable(
-            config,
-            Contents.of(
-                com.google.ai.edge.litertlm.Content.ImageBytes(imageBytes),
-                com.google.ai.edge.litertlm.Content.Text(prompt),
-            ),
-            mapOf("enable_thinking" to false),
-        )
-    }
-
-    private fun createEngine(path: String): InitializedVerificationEngine {
-        val started = SystemClock.elapsedRealtime()
-        val gpu = runCatching {
-            initializeEngine(
-                EngineConfig(
-                    modelPath = path,
-                    backend = Backend.GPU(),
-                    visionBackend = Backend.GPU(),
-                    maxNumTokens = 4096,
-                    maxNumImages = 1,
-                ),
-            ).let { InitializedVerificationEngine(it, VerificationInferenceBackend.GPU, SystemClock.elapsedRealtime() - started) }
-        }
-        return gpu.getOrElse { gpuFailure ->
-            runCatching {
-                initializeEngine(
-                    EngineConfig(
-                        modelPath = path,
-                        backend = Backend.CPU(),
-                        visionBackend = Backend.CPU(),
-                        maxNumTokens = 4096,
-                        maxNumImages = 1,
-                    ),
-                ).let { InitializedVerificationEngine(it, VerificationInferenceBackend.CPU, SystemClock.elapsedRealtime() - started) }
-            }.getOrElse { cpuFailure ->
-                throw GemmaModelLoadFailure("Gemma visual verification failed on GPU and CPU", cpuFailure.also { it.addSuppressed(gpuFailure) })
-            }
-        }
-    }
-
-    private fun initializeEngine(config: EngineConfig): Engine {
-        val engine = Engine(config)
-        return try {
-            engine.initialize()
-            engine
-        } catch (error: Throwable) {
-            runCatching { engine.close() }
-            throw error
-        }
-    }
-
     private fun failedBeforeInference(started: Long, count: Int, reason: String): VerificationResult {
         val safe = reason.take(240)
         return VerificationResult(
@@ -292,12 +230,6 @@ class LiteRtGemmaVisualVerifier(
 
     private fun producerVersion(status: ModelPackStatus): String =
         "gemma-4-${status.tier?.name?.lowercase() ?: "unknown"}-${status.packVersion ?: "unknown"}"
-
-    private data class InitializedVerificationEngine(
-        val engine: Engine,
-        val backend: VerificationInferenceBackend,
-        val loadMs: Long,
-    )
 
     companion object {
         const val MAX_CANDIDATES = 8
