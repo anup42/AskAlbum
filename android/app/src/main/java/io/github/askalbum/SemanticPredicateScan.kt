@@ -207,7 +207,11 @@ internal class SemanticPredicateScanRunner(
                 if (batch.mediaIds.isEmpty()) return database.semanticPredicateScan(scanId)
 
                 val vectorIds = database.vectorIdsForMedia(batch.mediaIds.toSet())
-                val scanReport = vectors.scanTextBatchReport(batch.queryText, vectorIds)
+                val scanReport = vectors.scanTextBatchReport(
+                    query = batch.queryText,
+                    allowedIds = vectorIds,
+                    eligibleCount = batch.mediaIds.size,
+                )
                 if (!SemanticPredicateScanPolicy.canCommitBatch(scanReport)) {
                     database.failSemanticPredicateScan(
                         scanId = scanId,

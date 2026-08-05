@@ -23,19 +23,11 @@ class SemanticVectorStore(
     suspend fun scanTextBatchReport(
         query: String,
         allowedIds: Set<String>,
+        eligibleCount: Int = allowedIds.size,
     ): RetrievalChannelReport<VectorHit> {
         if (query.isBlank()) return SemanticChannelReporter.notRequired()
         if (allowedIds.isEmpty()) {
-            return RetrievalChannelReport(
-                channel = RetrievalChannel.SEMANTIC,
-                status = ChannelStatus.PARTIAL,
-                eligibleCount = 1,
-                indexedCount = 0,
-                searchedCount = 0,
-                hits = emptyList(),
-                modelVersion = producerVersion(),
-                errorCode = "SCAN_BATCH_VECTOR_IDS_UNAVAILABLE",
-            )
+            return SemanticBatchCoveragePolicy.noVectorIds(eligibleCount, producerVersion())
         }
         return SemanticChannelReporter.execute(
             query = query,
@@ -98,6 +90,25 @@ class SemanticVectorStore(
         val pack: InstalledRetrievalPack,
         val index: MmapFp16VectorIndex,
     )
+}
+
+internal object SemanticBatchCoveragePolicy {
+    fun noVectorIds(
+        eligibleCount: Int,
+        modelVersion: String?,
+    ): RetrievalChannelReport<VectorHit> {
+        val safeEligibleCount = eligibleCount.coerceAtLeast(0)
+        return RetrievalChannelReport(
+            channel = RetrievalChannel.SEMANTIC,
+            status = if (safeEligibleCount == 0) ChannelStatus.NOT_REQUIRED else ChannelStatus.PARTIAL,
+            eligibleCount = safeEligibleCount,
+            indexedCount = 0,
+            searchedCount = 0,
+            hits = emptyList(),
+            modelVersion = modelVersion,
+            errorCode = if (safeEligibleCount == 0) null else "SCAN_BATCH_VECTOR_IDS_UNAVAILABLE",
+        )
+    }
 }
 
 data class RankedChannel(val weight: Double, val ids: List<String>)

@@ -880,3 +880,9 @@ People cluster summaries now expose both the user-selected representative face a
 - Metadata, OCR, and visual-label coverage now use their durable stage statuses instead of inferring readiness from media state or non-empty tag text.
 - A completed media-analysis item with zero detected labels is counted as processed without fabricating a label.
 - Added an Android database regression for stage-derived summary counts.
+
+## 2026-08-06 - Preserve exact-scan batch coverage denominators
+
+- Exact semantic-scan batches now report the real number of eligible media when no vector IDs are available instead of a hard-coded count of one.
+- The durable scan runner passes its batch size into the typed semantic channel report; zero-eligible scopes remain `NOT_REQUIRED`.
+- Added a regression for the 64-item missing-vector batch case. No completed media, vectors, People data, semantic facts, captions, events, or model state is modified.

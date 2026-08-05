@@ -1,5 +1,6 @@
 package io.github.anup42.askalbum
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,6 +20,16 @@ class SemanticPredicateScanBatchPolicyTest {
     fun successfulReportWithAnErrorCodeCannotAdvanceScan() {
         val report = report(ChannelStatus.SUCCESS).copy(errorCode = "VECTOR_COVERAGE_PARTIAL")
         assertFalse(SemanticPredicateScanPolicy.canCommitBatch(report))
+    }
+
+    @Test
+    fun missingVectorIdsRetainTheActualBatchEligibleCount() {
+        val report = SemanticBatchCoveragePolicy.noVectorIds(64, "siglip@test")
+
+        assertEquals(ChannelStatus.PARTIAL, report.status)
+        assertEquals(64, report.eligibleCount)
+        assertEquals(0, report.indexedCount)
+        assertEquals("SCAN_BATCH_VECTOR_IDS_UNAVAILABLE", report.errorCode)
     }
 
     private fun report(status: ChannelStatus): RetrievalChannelReport<VectorHit> = RetrievalChannelReport(
