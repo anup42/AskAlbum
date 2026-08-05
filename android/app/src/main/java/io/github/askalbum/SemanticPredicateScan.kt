@@ -173,6 +173,19 @@ internal object SemanticPredicateScanPolicy {
         .joinToString("") { "%02x".format(it) }
 }
 
+internal object SemanticPredicateScanResultPolicy {
+    /**
+     * Complete counts must come from the durable scan hit set, not the bounded
+     * retrieval channel that was used to discover or preview the scan.
+     */
+    fun completeMatchCount(
+        record: SemanticPredicateScanRecord?,
+        persistedHits: List<VectorHit>,
+    ): Int? = record
+        ?.takeIf { it.completeCoverage }
+        ?.let { persistedHits.map(VectorHit::mediaId).distinct().size }
+}
+
 /** Checkpointed runner shared by the interactive query and the recovery worker. */
 internal class SemanticPredicateScanRunner(
     private val database: GalleryDatabase,

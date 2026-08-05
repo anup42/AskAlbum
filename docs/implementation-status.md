@@ -1,6 +1,14 @@
 # Public implementation status
 
-Last reviewed: 2026-08-05
+Last reviewed: 2026-08-06
+
+## 2026-08-06 - Complete semantic count uses durable scan results
+
+- Explicit complete semantic counts now read the persisted full-scan hit set,
+  rather than the bounded top-K preview channel.
+- Duplicate media IDs are collapsed before the count is reported; incomplete
+  scans remain estimated or partial.
+- Added focused JVM regression coverage; no gallery data or vectors are changed.
 
 AskAlbum is an early open-source Android implementation of private, on-device
 photo search. The public source snapshot contains the Android application,

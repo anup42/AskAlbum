@@ -1190,10 +1190,16 @@ class GalleryRepository(context: Context) {
             visualChannelReport,
         )
 
+        val exactPredicateMatchCount = exactPredicateScan?.takeIf { it.completeCoverage }?.let { scan ->
+            SemanticPredicateScanResultPolicy.completeMatchCount(
+                scan,
+                database.semanticPredicateScanHits(scan.id),
+            )
+        }
         val matchCount = when {
             verification.applied -> verified.size
             deterministicMetadataCount -> deterministicAnswerHits.size
-            exactPredicateScan?.completeCoverage == true -> semanticVectorReport.hits.map(VectorHit::mediaId).distinct().size
+            exactPredicateMatchCount != null -> exactPredicateMatchCount
             else -> ranked.size
         }
         val deterministicAnswer = buildAnswer(
