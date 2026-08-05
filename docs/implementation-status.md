@@ -43,6 +43,15 @@ Last reviewed: 2026-08-06
 - Planner and executor regressions plus all three variant assemblies completed
   with zero reported failures or skips.
 
+## 2026-08-06 - Deterministic event LIST execution
+
+- Plain event and occasion list queries now select `Grouping.EVENT` and
+  enumerate eligible event memberships even when there is no search term.
+- Filtered event lists use the complete successful event channel and preserve
+  deterministic exactness instead of returning only ranked media titles.
+- Event planner/executor regressions plus all three variant assemblies completed
+  with zero reported failures or skips.
+
 AskAlbum is an early open-source Android implementation of private, on-device
 photo search. The public source snapshot contains the Android application,
 fixture CI path, tests, model-pack validation code, sample-gallery tooling, and

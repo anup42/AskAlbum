@@ -793,7 +793,13 @@ class GalleryRepository(context: Context) {
         val bestSemanticKeyframeByMedia = resolvedSemanticHits.mapNotNull { resolved ->
             resolved.keyframe?.let { it.mediaId to it }
         }.toMap()
-        val eventRanked = database.searchEvents(terms, eligibleIds)
+        val eventRanked = if (
+            plan.intent == QueryIntent.LIST && plan.grouping == Grouping.EVENT && terms.isEmpty() && semanticQueries.isEmpty()
+        ) {
+            database.listEvents(eligibleIds)
+        } else {
+            database.searchEvents(terms, eligibleIds)
+        }
         val rawEventMediaRank = eventRanked.flatMap { it.mediaIds }.distinct()
         val eventByMedia = eventRanked.flatMap { hit -> hit.mediaIds.map { it to hit.event } }.toMap()
         val lexicalById = lexicalRanked.associateBy { it.item.id }
@@ -861,6 +867,9 @@ class GalleryRepository(context: Context) {
                 allItems.map(deterministicScopeHit)
             plan.intent == QueryIntent.LIST && terms.isEmpty() && semanticQueries.isEmpty() ->
                 allItems.map(deterministicScopeHit)
+            plan.intent == QueryIntent.LIST && plan.grouping == Grouping.EVENT &&
+                eventStatus == ChannelStatus.SUCCESS && eventMediaRank.isNotEmpty() ->
+                eventMediaRank.mapNotNull { itemById[it] }.map(deterministicScopeHit)
             hasExplicitComparisonScopes ->
                 plan.comparisonScopes.flatMap { scope ->
                     allItems.filter { item -> item.matchesComparisonScope(scope, eventByMedia[item.id]) }
@@ -1370,14 +1379,18 @@ class GalleryRepository(context: Context) {
             ChannelStatus.UNAVAILABLE,
             ChannelStatus.FAILED,
         )
+        val eventCoverageComplete = channelReports.firstOrNull { it.channel == RetrievalChannel.EVENT }?.status == ChannelStatus.SUCCESS
         val usedSemanticRetrieval = semanticReport.status != ChannelStatus.NOT_REQUIRED
         val deterministicResultSetFilter = plan.baseResultIds != null && plan.terms.isEmpty() &&
             plan.semanticClauses.isEmpty() && plan.filter != FilterExpression.True && !verification.applied
         val deterministicAggregation = plan.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
             plan.aggregation != null && plan.semanticClauses.isEmpty() && !verification.applied &&
             (deterministicMetadataCount || deterministicAnswerHits.isNotEmpty() || plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX))
-        val deterministicList = plan.intent == QueryIntent.LIST &&
-            plan.terms.isEmpty() && plan.semanticClauses.isEmpty() && !verification.applied
+        val deterministicList = plan.intent == QueryIntent.LIST && !verification.applied && (
+            plan.terms.isEmpty() && plan.semanticClauses.isEmpty() ||
+                plan.grouping == Grouping.EVENT && eventCoverageComplete && deterministicAnswerHits.isNotEmpty() ||
+                plan.ocrClause != null && ocrCoverageComplete && deterministicAnswerHits.isNotEmpty()
+            )
         val deterministicComparison = plan.intent == QueryIntent.COMPARE &&
             plan.comparisonScopes.size >= 2 && !verification.applied
         val requestedDocumentField = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)

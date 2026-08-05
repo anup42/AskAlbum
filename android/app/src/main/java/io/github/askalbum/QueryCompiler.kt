@@ -15,7 +15,7 @@ class QueryCompiler(
         "pic", "pics", "picture", "pictures",
         "please", "show", "take", "took", "the", "this", "to", "was", "were", "what", "where", "with",
         "which", "list", "place", "places", "location", "locations", "merchant", "merchants", "people", "persons",
-        "recent", "day", "days", "date", "dates", "month", "months", "year", "years", "compare", "comparison", "versus", "vs",
+        "recent", "day", "days", "date", "dates", "month", "months", "year", "years", "event", "events", "occasion", "occasions", "compare", "comparison", "versus", "vs",
         "bas", "dikhao", "dikhाओ", "ke", "ki", "ka", "pichle", "saal", "sirf", "wali", "wala",
         "दिखाओ", "फोटो", "फोटोस", "के", "की", "का", "पिछले", "साल", "वाली", "वाला", "सिर्फ", "सिर्फ़", "केवल",
     )
@@ -146,6 +146,7 @@ class QueryCompiler(
                 requestedField = requestedField,
             ) else null,
             grouping = when {
+                intent == QueryIntent.LIST && Regex("\\b(event|events|occasion|occasions)\\b").containsMatchIn(normalized) -> Grouping.EVENT
                 intent == QueryIntent.LIST && Regex("\\b(place|places|location|locations)\\b").containsMatchIn(normalized) -> Grouping.PLACE
                 intent == QueryIntent.LIST && Regex("\\b(people|persons)\\b").containsMatchIn(normalized) -> Grouping.PERSON
                 intent == QueryIntent.LIST && Regex("\\b(day|days|date|dates)\\b").containsMatchIn(normalized) -> Grouping.DAY

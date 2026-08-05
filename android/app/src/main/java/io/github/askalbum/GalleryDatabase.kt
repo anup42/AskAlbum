@@ -2558,6 +2558,12 @@ class GalleryDatabase(
         }.sortedWith(compareByDescending<EventSearchHit> { it.score }.thenByDescending { it.event.startTime })
     }
 
+    fun listEvents(allowedIds: Set<String>? = null): List<EventSearchHit> = events()
+        .mapNotNull { event ->
+            val members = eventMembers(event.id).filter { allowedIds == null || it in allowedIds }
+            if (members.isEmpty()) null else EventSearchHit(event, members, 1.0)
+        }
+
     fun eventMembership(): Map<String, Long> = readableDatabase.rawQuery(
         "SELECT media_id,event_id FROM event_media", null,
     ).use { cursor -> buildMap { while (cursor.moveToNext()) put(cursor.getString(0), cursor.getLong(1)) } }
