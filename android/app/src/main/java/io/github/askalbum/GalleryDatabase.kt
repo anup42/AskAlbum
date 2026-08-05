@@ -2588,6 +2588,18 @@ class GalleryDatabase(
         ).use { cursor ->
             if (!cursor.moveToFirst()) IntArray(6) else IntArray(6) { cursor.getInt(it) }
         }
+        val analysisStageCounts = readableDatabase.rawQuery(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN stage='METADATA' AND status IN ('COMPLETE','SKIPPED') THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN stage='OCR' AND status IN ('COMPLETE','SKIPPED') THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN stage='ENRICHMENT' AND status IN ('COMPLETE','SKIPPED') THEN 1 ELSE 0 END),0)
+            FROM media_index_stage
+            """.trimIndent(),
+            null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) IntArray(3) else IntArray(3) { cursor.getInt(it) }
+        }
         val vectorStageCounts = readableDatabase.rawQuery(
             """
             SELECT
@@ -2605,13 +2617,13 @@ class GalleryDatabase(
         }
         return IndexSummary(
             discovered = mediaCounts[0],
-            metadataReady = mediaCounts[0],
+            metadataReady = analysisStageCounts[0],
             semanticFactsReady = readableDatabase.rawQuery(
                 "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_fact WHERE scope=?",
                 arrayOf(SemanticFactScope.MEDIA.name),
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
-            ocrReady = mediaCounts[1],
-            visualLabelsReady = mediaCounts[2],
+            ocrReady = analysisStageCounts[1],
+            visualLabelsReady = analysisStageCounts[2],
             siglipVectorsReady = vectorStageCounts[0],
             siglipVectorsEligible = vectorStageCounts[3],
             videoKeyframesReady = readableDatabase.rawQuery(

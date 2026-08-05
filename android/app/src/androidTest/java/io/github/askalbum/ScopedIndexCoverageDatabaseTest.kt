@@ -49,6 +49,26 @@ class ScopedIndexCoverageDatabaseTest {
         IndexStage.entries.forEach { stage ->
             assertEquals(2, both.stageStatuses.getValue(stage).values.sum())
         }
+
+        store.completeIndex(
+            id = first.stableId,
+            labels = emptyList(),
+            description = "",
+            ocrText = "",
+            faceCount = 0,
+            previewPath = null,
+            blocks = emptyList(),
+            entities = emptyList(),
+            ocrAttempted = false,
+            ocrProducerVersion = null,
+            visualFeatures = VisualFeatures(1L, 1f, 1f, 1f),
+            keyframes = emptyList(),
+        )
+        val summary = store.summary()
+        assertEquals(2, summary.discovered)
+        assertEquals(2, summary.metadataReady)
+        assertEquals(1, summary.ocrReady)
+        assertEquals("A completed media-analysis stage is ready even when it produced no labels", 1, summary.visualLabelsReady)
     }
 
     @Test

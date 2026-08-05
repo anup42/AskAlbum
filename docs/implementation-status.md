@@ -874,3 +874,9 @@ People cluster summaries now expose both the user-selected representative face a
 - Semantic completeness now tolerates the additional keyframe vector entries associated with an eligible video.
 - Missing vector coverage relative to the eligible media scope remains partial, and displayed counts stay in media units.
 - Added a regression test for a fully indexed parent video plus keyframe vector.
+
+## 2026-08-06 - Read media-analysis coverage from stage state
+
+- Metadata, OCR, and visual-label coverage now use their durable stage statuses instead of inferring readiness from media state or non-empty tag text.
+- A completed media-analysis item with zero detected labels is counted as processed without fabricating a label.
+- Added an Android database regression for stage-derived summary counts.
