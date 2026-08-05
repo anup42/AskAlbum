@@ -22,6 +22,19 @@ class IndexingReliabilityPolicyTest {
     }
 
     @Test
+    fun backgroundWorkersYieldToTheForegroundIndexLane() {
+        assertTrue(ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(true))
+        assertFalse(ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(false))
+    }
+
+    @Test
+    fun unexpectedServiceDestructionSchedulesRecoveryButExplicitStopDoesNot() {
+        assertTrue(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(false, true))
+        assertFalse(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(true, true))
+        assertFalse(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(false, false))
+    }
+
+    @Test
     fun retryDelayIsBoundedAndIncreasing() {
         assertEquals(30_000L, IndexingRetryPolicy.retryDelayMillis(1))
         assertEquals(60_000L, IndexingRetryPolicy.retryDelayMillis(2))

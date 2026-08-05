@@ -23,6 +23,9 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (!jobControls.load().embeddingsEnabled) return@withContext Result.success()
+        if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+            return@withContext Result.retry()
+        }
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         repository.recoverInterruptedJobs(IndexingPipeline.EMBEDDINGS)
         val processor = EmbeddingIndexBatchProcessor(
@@ -49,6 +52,7 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
             hasMore &&
             budget.hasTimeRemaining() &&
             !isStopped &&
+            !ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active) &&
             jobControls.load().embeddingsEnabled &&
             workAdmission.evaluate().allowed
         ) {
@@ -57,6 +61,7 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
                     ownerId = id.toString(),
                     canContinue = {
                         !isStopped &&
+                            !ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active) &&
                             jobControls.load().embeddingsEnabled &&
                             workAdmission.evaluate().allowed
                     },
@@ -92,6 +97,9 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
             if (batch.stopped) break
         }
 
+        if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+            return@withContext Result.retry()
+        }
         val enabled = jobControls.load().embeddingsEnabled
         val admission = workAdmission.evaluate()
         val shouldRetry = IndexingWorkerResultPolicy.shouldRetryWorker(

@@ -68,6 +68,15 @@ internal object IndexingWorkerResultPolicy {
             (processed == 0 && retryableFailures > 0 && hasImmediateWork)
 }
 
+internal object ForegroundIndexLanePolicy {
+    fun shouldDeferBackgroundWorker(foregroundActive: Boolean): Boolean = foregroundActive
+}
+
+internal object ForegroundIndexHandoffPolicy {
+    fun shouldScheduleRecovery(explicitUserStop: Boolean, importJobActive: Boolean): Boolean =
+        importJobActive && !explicitUserStop
+}
+
 internal object IndexingResourceCoordinator {
     private val backgroundInference = Mutex()
     private val interactiveQueries = java.util.concurrent.atomic.AtomicInteger()

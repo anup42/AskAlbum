@@ -25,6 +25,8 @@ import kotlinx.coroutines.launch
 class InitialImportService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var importJob: Job? = null
+    private var explicitUserStop = false
+    private var recoveryHandoffScheduled = false
 
     override fun onCreate() {
         super.onCreate()
@@ -34,11 +36,19 @@ class InitialImportService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         if (action == ACTION_STOP) {
+            explicitUserStop = true
             importJob?.cancel()
-            stopForegroundAndSelf()
+            scope.launch {
+                runCatching {
+                    IndexScheduler.cancelAndWait(this@InitialImportService)
+                    EmbeddingIndexScheduler.cancelAndWait(this@InitialImportService)
+                }
+                stopForegroundAndSelf()
+            }
             return START_NOT_STICKY
         }
         if (action == ACTION_PAUSE) {
+            explicitUserStop = true
             pauseIndexing()
             return START_NOT_STICKY
         }
@@ -46,6 +56,8 @@ class InitialImportService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
+        explicitUserStop = false
+        recoveryHandoffScheduled = false
         IndexingJobControlsStore(this).setForegroundPaused(false)
         startIndexingForeground(notification("Reading your permitted gallery", indeterminate = true))
         if (importJob?.isActive != true) {
@@ -135,6 +147,9 @@ class InitialImportService : Service() {
     }
 
     override fun onDestroy() {
+        if (ForegroundIndexHandoffPolicy.shouldScheduleRecovery(explicitUserStop, importJob?.isActive == true)) {
+            scheduleWorkManagerRecovery()
+        }
         ForegroundIndexRuntime.stopped()
         scope.cancel()
         super.onDestroy()
@@ -142,8 +157,7 @@ class InitialImportService : Service() {
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         importJob?.cancel()
-        IndexScheduler.schedule(this)
-        EmbeddingIndexScheduler.schedule(this)
+        scheduleWorkManagerRecovery()
         stopForegroundAndSelf()
     }
 
@@ -262,6 +276,7 @@ class InitialImportService : Service() {
     }
 
     private fun pauseIndexing() {
+        explicitUserStop = true
         IndexingJobControlsStore(this).setForegroundPaused(true)
         importJob?.cancel()
         scope.launch {
@@ -284,5 +299,12 @@ class InitialImportService : Service() {
         ForegroundIndexRuntime.stopped()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
         stopSelf()
+    }
+
+    private fun scheduleWorkManagerRecovery() {
+        if (recoveryHandoffScheduled) return
+        recoveryHandoffScheduled = true
+        IndexScheduler.schedule(this)
+        EmbeddingIndexScheduler.schedule(this)
     }
 }

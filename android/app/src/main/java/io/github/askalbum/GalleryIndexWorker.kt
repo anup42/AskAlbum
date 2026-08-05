@@ -18,6 +18,9 @@ class GalleryIndexWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (!jobControls.load().mediaAnalysisEnabled) return@withContext Result.success()
+        if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+            return@withContext Result.retry()
+        }
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
         val budget = IndexingWorkerRunBudget()
@@ -33,6 +36,7 @@ class GalleryIndexWorker(
                 hasMore &&
                 budget.hasTimeRemaining() &&
                 !isStopped &&
+                !ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active) &&
                 jobControls.load().mediaAnalysisEnabled &&
                 workAdmission.evaluate().allowed
             ) {
@@ -41,6 +45,7 @@ class GalleryIndexWorker(
                         ownerId = id.toString(),
                         canContinue = {
                             !isStopped &&
+                                !ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active) &&
                                 jobControls.load().mediaAnalysisEnabled &&
                                 workAdmission.evaluate().allowed
                         },
@@ -76,6 +81,9 @@ class GalleryIndexWorker(
             }
         }
 
+        if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+            return@withContext Result.retry()
+        }
         if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.schedule(applicationContext)
         val enabled = jobControls.load().mediaAnalysisEnabled
         val admission = workAdmission.evaluate()

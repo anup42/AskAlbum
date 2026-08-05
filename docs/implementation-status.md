@@ -614,3 +614,7 @@ media, databases, or logs.
 
 - Semantic-memory global totals now exclude jobs explicitly marked `superseded`, matching the existing personal-job coverage query and preventing stale failures or skipped counts from appearing after a caption-policy/model refresh.
 - Added database coverage proving replacement personal jobs do not double-count the superseded generation.
+### 2026-08-05 - Preserve WorkManager recovery during foreground indexing
+- Foreground media and SigLIP2 indexing no longer cancel their durable WorkManager fallback when the explicit foreground service starts. Background workers yield while the foreground lane is active, then resume through their existing lease/checkpoint path if the service is killed or reaches its platform timeout.
+- Service destruction and media-processing timeout now hand off recovery, while explicit pause/stop actions cancel the fallback as requested by the user.
+- Added policy coverage for foreground lane exclusion and explicit-stop recovery behavior. Long-running process-death and six-hour device tests remain unverified.
