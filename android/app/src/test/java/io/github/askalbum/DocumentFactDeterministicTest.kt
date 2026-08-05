@@ -43,7 +43,45 @@ class DocumentFactDeterministicTest {
         assertTrue(answer.evidenceIds.contains("document:flight"))
     }
 
-    private fun hit(id: String, title: String, evidence: List<EvidenceRecord>): SearchHit =
+    @Test
+    fun exactDuplicateDocumentsCountOnceForSum() {
+        val first = amountHit("first", "sha256-file-v1:duplicate", "INR 100")
+        val duplicate = amountHit("duplicate", "sha256-file-v1:duplicate", "INR 100")
+        val distinct = amountHit("distinct", "sha256-file-v1:other", "INR 30")
+        val answer = CapabilityAnswerExecutor.execute(
+            CapabilityAnswerContext(
+                plan = GalleryQueryPlan(
+                    originalQuery = "sum receipt totals",
+                    intent = QueryIntent.SUM,
+                    aggregation = AggregationSpec(AggregationOperation.SUM, "total"),
+                ),
+                hits = listOf(first, duplicate, distinct),
+                matchCount = 3,
+                exactness = ResultExactness.EXACT,
+                indexedEligibleCount = 3,
+                totalEligibleCount = 3,
+                warnings = emptyList(),
+                channelReports = emptyList(),
+                deterministicHits = listOf(first, duplicate, distinct),
+            ),
+        )
+
+        assertEquals("INR 130", answer.headline)
+    }
+
+    private fun amountHit(id: String, digest: String, amount: String): SearchHit = hit(
+        id,
+        "$id receipt",
+        listOf(EvidenceRecord("$id:total", id, "document_total", amount, .95f)),
+        digest,
+    )
+
+    private fun hit(
+        id: String,
+        title: String,
+        evidence: List<EvidenceRecord>,
+        exactDigest: String? = null,
+    ): SearchHit =
         SearchHit(
             item = GalleryItem(
                 id = id,
@@ -58,6 +96,7 @@ class DocumentFactDeterministicTest {
                 license = "",
                 sourceUrl = "",
                 assetPath = "",
+                exactContentDigest = exactDigest,
             ),
             score = 1.0,
             evidence = evidence,

@@ -1343,7 +1343,11 @@ class GalleryRepository(context: Context) {
         val deterministicDocumentFact = plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) &&
             requestedDocumentField != null &&
             ocrCoverageComplete &&
-            DocumentAnswerSelector.select(deterministicAnswerHits, setOf(requestedDocumentField.sourceField))?.fact != null &&
+            DocumentAnswerSelector.select(
+                deterministicAnswerHits,
+                setOf(requestedDocumentField.sourceField),
+                plan.sort,
+            )?.fact != null &&
             !verification.applied
         val exactness = RetrievalExactnessPolicy.resolve(
             allEligibleIndexed = readyItems == totalItems && peopleCoverageComplete && ocrCoverageComplete,

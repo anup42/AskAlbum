@@ -166,7 +166,7 @@ object CapabilityAnswerExecutor {
         val field = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField)
             ?: OcrFactAllowlist.fields.first()
         val sourceHits = context.deterministicHits.ifEmpty { context.hits }
-        val selection = DocumentAnswerSelector.select(sourceHits, setOf(field.sourceField))
+        val selection = DocumentAnswerSelector.select(sourceHits, setOf(field.sourceField), context.plan.sort)
         val fact = selection?.fact
         return if (fact == null) {
             base(
@@ -381,12 +381,19 @@ object CapabilityAnswerExecutor {
         val currency: String,
     )
 
-    private fun numericFacts(hits: List<SearchHit>, field: OcrFactField): List<ParsedFact> = hits.distinctBy { it.item.id }.mapNotNull { hit ->
+    private fun numericFacts(hits: List<SearchHit>, field: OcrFactField): List<ParsedFact> = hits
+        .distinctBy(::documentIdentity)
+        .mapNotNull { hit ->
         val evidence = hit.evidence.firstOrNull { it.sourceField == field.sourceField } ?: return@mapNotNull null
         val number = NUMBER.find(evidence.text)?.value?.replace(",", "")?.let { runCatching { BigDecimal(it) }.getOrNull() }
             ?: return@mapNotNull null
         ParsedFact(hit, evidence, number, currency(evidence.text))
     }
+
+    /** Exact content digests identify the same document across duplicate media rows. */
+    private fun documentIdentity(hit: SearchHit): String =
+        hit.item.exactContentDigest?.trim()?.takeIf(String::isNotBlank)?.let { "digest:$it" }
+            ?: "media:${hit.item.id}"
 
     private fun currency(text: String): String = when {
         Regex("(?i)(\\u20B9|\\binr\\b|\\brs\\.?)").containsMatchIn(text) -> "INR"

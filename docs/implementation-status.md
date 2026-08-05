@@ -552,3 +552,9 @@ media, databases, or logs.
 - Original-query, lexical, concept, and caption retrieval remain available through `terms`; relational and fine-grained clauses remain model-supplied typed predicates.
 - Numeric OCR aggregation plans now retain deterministic execution semantics instead of being misclassified as bounded semantic work.
 - Added codec regressions for ordinary search and SUM plans.
+
+## 2026-08-05 - Correct deterministic document ordering and duplicate aggregation
+
+- `ANSWER_FACT` and `DOCUMENT_QA` now apply the validated plan sort before selecting the first document, so `latest` cannot depend on incidental input order and still fails closed when that document lacks the requested field.
+- Numeric `SUM`, `MIN`, and `MAX` collapse only media rows with the same verified exact-content digest; rows without a digest remain distinct.
+- Added regressions for newest-document selection and exact-duplicate aggregation. No migration or destructive data change was introduced.
