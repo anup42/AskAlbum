@@ -40,6 +40,14 @@ internal object IndexingRecoveryPolicy {
         IndexingPipeline.ALL -> mediaAnalysisStages + setOf(IndexStage.EMBEDDING, IndexStage.FACES)
     }
 
+    fun pipelineFor(job: IndexingJob): IndexingPipeline = when (job) {
+        IndexingJob.MEDIA_ANALYSIS -> IndexingPipeline.MEDIA_ANALYSIS
+        IndexingJob.EMBEDDINGS -> IndexingPipeline.EMBEDDINGS
+        IndexingJob.PEOPLE -> IndexingPipeline.PEOPLE
+        IndexingJob.SEMANTIC_MEMORY -> IndexingPipeline.SEMANTIC_MEMORY
+        IndexingJob.CAPTION_EMBEDDINGS -> IndexingPipeline.CAPTION_EMBEDDINGS
+    }
+
     fun recoversSemanticMemory(pipeline: IndexingPipeline): Boolean =
         pipeline == IndexingPipeline.SEMANTIC_MEMORY || pipeline == IndexingPipeline.ALL
 

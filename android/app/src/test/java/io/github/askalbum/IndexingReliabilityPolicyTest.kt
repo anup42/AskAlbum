@@ -48,4 +48,13 @@ class IndexingReliabilityPolicyTest {
         assertTrue(IndexingRecoveryPolicy.recoversCaptionEmbeddings(IndexingPipeline.CAPTION_EMBEDDINGS))
         assertFalse(IndexingRecoveryPolicy.recoversCaptionEmbeddings(IndexingPipeline.MEDIA_ANALYSIS))
     }
+
+    @Test
+    fun everyUiIndexingJobMapsToOnlyItsOwnRecoveryPipeline() {
+        assertEquals(IndexingPipeline.MEDIA_ANALYSIS, IndexingRecoveryPolicy.pipelineFor(IndexingJob.MEDIA_ANALYSIS))
+        assertEquals(IndexingPipeline.EMBEDDINGS, IndexingRecoveryPolicy.pipelineFor(IndexingJob.EMBEDDINGS))
+        assertEquals(IndexingPipeline.CAPTION_EMBEDDINGS, IndexingRecoveryPolicy.pipelineFor(IndexingJob.CAPTION_EMBEDDINGS))
+        assertEquals(IndexingPipeline.PEOPLE, IndexingRecoveryPolicy.pipelineFor(IndexingJob.PEOPLE))
+        assertEquals(IndexingPipeline.SEMANTIC_MEMORY, IndexingRecoveryPolicy.pipelineFor(IndexingJob.SEMANTIC_MEMORY))
+    }
 }

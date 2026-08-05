@@ -425,3 +425,7 @@ media, databases, or logs.
 - FIXED: Planner decoding now accepts empty/null filter wrappers, unambiguous discriminator-free filter shapes, lexical terms wrappers, and the model's LIST answer-mode alias without weakening typed validation.
 - FIXED: Person visual prompts expand negative existential clauses to the remaining stable P-labels and keep negative polarity owned by Kotlin; unit coverage verifies the visibility-based verdict contract.
 - LIMITATION: The live synthetic verifier gate covers positive visual confirmation; negative-result behavior is covered by deterministic/unit tests because the installed E2B model over-accepted the synthetic negative predicate and the verifier correctly failed closed.
+### 2026-08-05 scoped indexing recovery
+- FIXED: Foreground indexing and UI restart, criteria, and job-toggle paths now recover only the owning pipeline instead of reclaiming unrelated active leases.
+- PASS: Pipeline mapping regression test; no-argument recovery calls remain in Android runtime call sites.
+- PASS: consumerDebug, offlineDemoDebug, and fixtureCiDebug assemblies; replacement-installed consumerDebug without data reset.

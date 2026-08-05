@@ -337,10 +337,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    repository.recoverInterruptedJobs()
+                    repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
                     IndexScheduler.restart(getApplication())
-                    if (retrievalPacks.status().installed) EmbeddingIndexScheduler.restart(getApplication())
-                    if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.restart(getApplication())
+                    if (retrievalPacks.status().installed) {
+                        repository.recoverInterruptedJobs(IndexingPipeline.EMBEDDINGS)
+                        EmbeddingIndexScheduler.restart(getApplication())
+                    }
+                    if (repository.peopleIndexStatus().enabled) {
+                        repository.recoverInterruptedJobs(IndexingPipeline.PEOPLE)
+                        PeopleIndexScheduler.restart(getApplication())
+                    }
                     repository.indexingAdmission()
                 }
             }.onSuccess { admission ->
@@ -369,10 +375,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 withContext(Dispatchers.IO) {
                     val saved = repository.saveIndexingRunCriteria(criteria)
-                    repository.recoverInterruptedJobs()
+                    repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
                     IndexScheduler.restart(getApplication())
-                    if (retrievalPacks.status().installed) EmbeddingIndexScheduler.restart(getApplication())
-                    if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.restart(getApplication())
+                    if (retrievalPacks.status().installed) {
+                        repository.recoverInterruptedJobs(IndexingPipeline.EMBEDDINGS)
+                        EmbeddingIndexScheduler.restart(getApplication())
+                    }
+                    if (repository.peopleIndexStatus().enabled) {
+                        repository.recoverInterruptedJobs(IndexingPipeline.PEOPLE)
+                        PeopleIndexScheduler.restart(getApplication())
+                    }
                     Triple(saved, repository.indexingAdmission(), repository.indexSummary())
                 }
             }.onSuccess { (saved, admission, summary) ->
@@ -449,7 +461,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                             else SemanticEnrichmentScheduler.cancelAndWait(getApplication())
                         }
                     }
-                    repository.recoverInterruptedJobs()
+                    repository.recoverInterruptedJobs(IndexingRecoveryPolicy.pipelineFor(job))
                     Triple(controls, repository.indexSummary(), repository.semanticMemoryProgress())
                 }
             }.onSuccess { (controls, summary, semanticMemory) ->
