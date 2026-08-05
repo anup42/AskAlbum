@@ -247,6 +247,8 @@ class GalleryRepository(context: Context) {
         return changed
     }
 
+    fun onGemmaModelInstalled(): Int = queuePersonalSemanticMemory()
+
     fun saveReviewedPersonCluster(
         id: String,
         label: String,

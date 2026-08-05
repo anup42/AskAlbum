@@ -178,6 +178,7 @@ class GemmaDownloadWorker(context: Context, parameters: WorkerParameters) : Coro
             download(spec, partial)
             setProgress(progressData(partial.length(), verifying = true))
             modelPacks.installDownloaded(spec, partial)
+            (applicationContext as AskAlbumApplication).repository.onGemmaModelInstalled()
             Result.success()
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
