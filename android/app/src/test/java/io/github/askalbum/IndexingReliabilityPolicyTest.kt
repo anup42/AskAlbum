@@ -27,4 +27,20 @@ class IndexingReliabilityPolicyTest {
         assertEquals(60_000L, IndexingRetryPolicy.retryDelayMillis(2))
         assertEquals(120_000L, IndexingRetryPolicy.retryDelayMillis(3))
     }
+
+    @Test
+    fun expiredLeaseRecoveryIsScopedToTheOwningPipeline() {
+        assertEquals(
+            setOf(IndexStage.THUMBNAIL),
+            IndexingRecoveryPolicy.stagesFor(IndexingPipeline.MEDIA_ANALYSIS),
+        )
+        assertEquals(
+            setOf(IndexStage.EMBEDDING),
+            IndexingRecoveryPolicy.stagesFor(IndexingPipeline.EMBEDDINGS),
+        )
+        assertTrue(IndexingRecoveryPolicy.recoversSemanticMemory(IndexingPipeline.SEMANTIC_MEMORY))
+        assertFalse(IndexingRecoveryPolicy.recoversSemanticMemory(IndexingPipeline.EMBEDDINGS))
+        assertTrue(IndexingRecoveryPolicy.recoversCaptionEmbeddings(IndexingPipeline.CAPTION_EMBEDDINGS))
+        assertFalse(IndexingRecoveryPolicy.recoversCaptionEmbeddings(IndexingPipeline.MEDIA_ANALYSIS))
+    }
 }

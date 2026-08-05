@@ -22,6 +22,23 @@ internal object IndexingRetryPolicy {
     }
 }
 
+internal object IndexingRecoveryPolicy {
+    fun stagesFor(pipeline: IndexingPipeline): Set<IndexStage> = when (pipeline) {
+        IndexingPipeline.MEDIA_ANALYSIS -> setOf(IndexStage.THUMBNAIL)
+        IndexingPipeline.EMBEDDINGS -> setOf(IndexStage.EMBEDDING)
+        IndexingPipeline.SEMANTIC_MEMORY,
+        IndexingPipeline.CAPTION_EMBEDDINGS,
+        -> emptySet()
+        IndexingPipeline.ALL -> setOf(IndexStage.THUMBNAIL, IndexStage.EMBEDDING)
+    }
+
+    fun recoversSemanticMemory(pipeline: IndexingPipeline): Boolean =
+        pipeline == IndexingPipeline.SEMANTIC_MEMORY || pipeline == IndexingPipeline.ALL
+
+    fun recoversCaptionEmbeddings(pipeline: IndexingPipeline): Boolean =
+        pipeline == IndexingPipeline.CAPTION_EMBEDDINGS || pipeline == IndexingPipeline.ALL
+}
+
 internal object IndexingWorkerResultPolicy {
     fun shouldRetryWorker(
         processed: Int,

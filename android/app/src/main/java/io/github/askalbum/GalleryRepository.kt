@@ -283,7 +283,8 @@ class GalleryRepository(context: Context) {
     fun completeEmbedding(id: String, producerVersion: String) = database.completeEmbedding(id, producerVersion)
     fun failEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean): StageStatus =
         database.failEmbedding(id, producerVersion, message, permanent)
-    fun recoverInterruptedJobs() = database.recoverInterruptedJobs()
+    fun recoverInterruptedJobs(pipeline: IndexingPipeline = IndexingPipeline.ALL) =
+        database.recoverInterruptedJobs(pipeline)
     fun markIndexing(
         id: String,
         owner: String = "repository-direct",

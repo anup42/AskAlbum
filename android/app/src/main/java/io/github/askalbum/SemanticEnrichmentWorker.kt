@@ -47,12 +47,18 @@ class SemanticEnrichmentWorker(
             SemanticEnrichmentCoordinator(database).rebuildPlan(
                 modelVersion = services.modelPackManager.status().packVersion,
             )
-            job = database.claimSemanticEnrichmentJob(owner = id.toString()) ?: run {
-                Log.i(TAG, "Semantic enrichment queue is complete")
+            job = database.claimSemanticEnrichmentJob(owner = id.toString())
+            if (job == null) {
+                if (database.hasPendingSemanticEnrichmentJobs()) {
+                    schedulePendingContinuation(database)
+                } else {
+                    Log.i(TAG, "Semantic enrichment queue is complete")
+                }
                 return Result.success()
             }
         }
         var processed = 0
+        var retryableFailures = 0
         while (job != null && processed < MAX_JOBS_PER_RUN) {
             val currentJob = job
             if (database.hasAuthenticationProtectedOcr(currentJob.representativeMediaId)) {
@@ -146,23 +152,43 @@ class SemanticEnrichmentWorker(
                     retryable = retryable,
                 )
                 Log.e(TAG, "Semantic enrichment failed job=${currentJob.id} retryable=$retryable", error)
-                if (retryable) return Result.retry()
+                if (retryable) retryableFailures += 1
             }
             processed += 1
             job = database.claimSemanticEnrichmentJob(owner = id.toString())
         }
-        if (database.hasPendingSemanticEnrichmentJobs()) {
+        val hasPending = database.hasPendingSemanticEnrichmentJobs()
+        if (hasPending) {
             Log.i(TAG, "Semantic enrichment scheduling continuation after $processed representatives")
-            SemanticEnrichmentScheduler.scheduleContinuation(applicationContext)
+            schedulePendingContinuation(database)
         } else {
             Log.i(TAG, "Semantic enrichment queue completed")
         }
-        return Result.success()
+        val shouldRetry = IndexingWorkerResultPolicy.shouldRetryWorker(
+            processed = processed,
+            retryableFailures = retryableFailures,
+            stopped = false,
+            admissionAllowed = true,
+            hasImmediateWork = hasPending,
+        )
+        return if (shouldRetry) Result.retry() else Result.success()
+    }
+
+    private fun schedulePendingContinuation(database: GalleryDatabase) {
+        val nextAttemptAt = database.nextSemanticEnrichmentRetryAt()
+        val delayMillis = if (nextAttemptAt == null) {
+            CONTINUATION_COOLING_DELAY_MILLIS
+        } else {
+            (nextAttemptAt - System.currentTimeMillis())
+                .coerceAtLeast(CONTINUATION_COOLING_DELAY_MILLIS)
+        }
+        SemanticEnrichmentScheduler.scheduleContinuation(applicationContext, delayMillis)
     }
 
     private companion object {
         const val TAG = "AskAlbumSemantic"
         const val MAX_JOBS_PER_RUN = 4
+        const val CONTINUATION_COOLING_DELAY_MILLIS = 5_000L
     }
 }
 
@@ -184,12 +210,16 @@ object SemanticEnrichmentScheduler {
         )
     }
 
-    fun scheduleContinuation(context: Context) {
+    fun scheduleContinuation(
+        context: Context,
+        initialDelayMillis: Long = CONTINUATION_COOLING_DELAY_SECONDS * 1_000L,
+    ) {
         if (!IndexingJobControlsStore(context).load().semanticMemoryEnabled) return
+        val initialDelaySeconds = ((initialDelayMillis + 999L) / 1_000L).coerceAtLeast(1L)
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
-            request(context, userRequested = true, initialDelaySeconds = CONTINUATION_COOLING_DELAY_SECONDS),
+            request(context, userRequested = true, initialDelaySeconds = initialDelaySeconds),
         )
     }
 
