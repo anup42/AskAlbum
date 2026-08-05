@@ -51,6 +51,7 @@ class GalleryIndexWorker(
                 permanentFailures += batch.permanentFailures
                 hasMore = batch.hasMore
                 stoppedDuringBatch = batch.stopped
+                if (!batch.stopped) repository.renewIndexingLeases(IndexingPipeline.MEDIA_ANALYSIS, id.toString())
                 setProgress(
                     workDataOf(
                         "processed" to processed,

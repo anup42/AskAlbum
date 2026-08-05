@@ -34,6 +34,8 @@ object PeopleIndexScheduler {
         WorkManager.getInstance(context).cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
     }
 
+    fun hasActiveWork(context: Context): Boolean = hasActiveIndexingWork(context, UNIQUE_WORK)
+
     private fun request(context: Context) = OneTimeWorkRequestBuilder<PeopleIndexWorker>()
         .setConstraints(indexingWorkerConstraints(context))
         .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.MINUTES)

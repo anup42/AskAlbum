@@ -5,7 +5,9 @@ import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -24,11 +26,11 @@ class CoreCorpusEvaluationAcceptanceTest {
         assumeTrue("galleryRunId was not supplied", !runId.isNullOrBlank())
         val application = instrumentation.targetContext.applicationContext as AskAlbumApplication
         val repository = application.repository
+        withContext(Dispatchers.IO) { repository.initialize() }
         val pack = requireNotNull(application.services.retrievalModelPackManager.current())
         assertEquals("ba1f3b0-q8-core05", pack.manifest.packVersion)
         assertEquals(0.05f, pack.manifest.minimumSimilarity, 0f)
 
-        waitForIndex(repository, application)
         val safeRunId = requireNotNull(runId)
         val seedResult = JSONObject(File(application.filesDir, "test-seed/$safeRunId/seed-result.json").readText())
         val seededUris = seedResult.getJSONArray("createdUris").let { array ->
@@ -36,6 +38,7 @@ class CoreCorpusEvaluationAcceptanceTest {
         }
         val seededIds = repository.allItems().filter { it.contentUri in seededUris }.mapTo(mutableSetOf()) { it.id }
         assertEquals("Core evaluator must resolve every recorded seed URI", seedResult.getInt("createdCount"), seededIds.size)
+        waitForIndex(repository, application, seededUris)
         val records = mutableListOf<CaseRecord>()
         val session = "core_eval_${safeRunId.take(40)}_${System.currentTimeMillis()}"
         var q01: SearchOutcome? = null
@@ -189,20 +192,50 @@ class CoreCorpusEvaluationAcceptanceTest {
         assertTrue(failed.joinToString { "${it.id}: ${it.detail}" }, failed.isEmpty())
     }
 
-    private fun waitForIndex(repository: GalleryRepository, application: AskAlbumApplication) {
-        val producer = requireNotNull(application.services.semanticVectorStore.producerVersion())
+    private fun waitForIndex(
+        repository: GalleryRepository,
+        application: AskAlbumApplication,
+        expectedUris: Set<String>,
+    ) {
+        IndexScheduler.schedule(application)
         EmbeddingIndexScheduler.schedule(application)
         val deadline = SystemClock.elapsedRealtime() + INDEX_TIMEOUT_MS
+        val requiredStages = setOf(
+            IndexStage.DISCOVERY,
+            IndexStage.METADATA,
+            IndexStage.THUMBNAIL,
+            IndexStage.VIDEO_KEYFRAMES,
+            IndexStage.EMBEDDING,
+            IndexStage.OCR,
+            IndexStage.EVENTS,
+        )
+        fun inFlight(coverage: ScopedIndexCoverage): Int = coverage.stageStatuses
+            .filterKeys { it in requiredStages }
+            .values
+            .sumOf { counts -> (counts[StageStatus.PENDING] ?: 0) + (counts[StageStatus.RUNNING] ?: 0) }
+
+        var coverage = repository.indexCoverageForContentUris(expectedUris)
         while (
-            (repository.pendingItems(1).isNotEmpty() || repository.embeddingPendingItems(producer, 1).isNotEmpty() ||
-                repository.keyframeEmbeddingPendingItems(producer, 1).isNotEmpty()) &&
+            (coverage.mediaCount < expectedUris.size ||
+                (coverage.indexStates[IndexState.PENDING] ?: 0) > 0 ||
+                (coverage.indexStates[IndexState.INDEXING] ?: 0) > 0 ||
+                inFlight(coverage) > 0) &&
             SystemClock.elapsedRealtime() < deadline
         ) {
             Thread.sleep(500)
+            coverage = repository.indexCoverageForContentUris(expectedUris)
         }
-        assertTrue("Core metadata indexing did not finish", repository.pendingItems(1).isEmpty())
-        assertTrue("Core image embeddings did not finish", repository.embeddingPendingItems(producer, 1).isEmpty())
-        assertTrue("Core video-keyframe embeddings did not finish", repository.keyframeEmbeddingPendingItems(producer, 1).isEmpty())
+        assertEquals("Core media rows did not finish", expectedUris.size, coverage.mediaCount)
+        assertEquals(0, coverage.indexStates[IndexState.PENDING] ?: 0)
+        assertEquals(0, coverage.indexStates[IndexState.INDEXING] ?: 0)
+        requiredStages.forEach { stage ->
+            val counts = coverage.stageStatuses.getValue(stage)
+            assertEquals("$stage still has pending work", 0, counts[StageStatus.PENDING] ?: 0)
+            assertEquals("$stage still has running work", 0, counts[StageStatus.RUNNING] ?: 0)
+            assertEquals("$stage has retryable failures", 0, counts[StageStatus.FAILED_RETRYABLE] ?: 0)
+            assertEquals("$stage has exhausted failures", 0, counts[StageStatus.FAILED_EXHAUSTED] ?: 0)
+            assertEquals("$stage has permanent failures", 0, counts[StageStatus.FAILED_PERMANENT] ?: 0)
+        }
     }
 
     private suspend fun MutableList<CaseRecord>.evaluate(id: String, block: suspend () -> CaseMetrics) {

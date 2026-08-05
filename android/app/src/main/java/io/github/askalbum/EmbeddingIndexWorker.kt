@@ -67,6 +67,7 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
             permanentFailures += batch.permanentFailures
             hasMore = batch.hasMore
             stoppedDuringBatch = batch.stopped
+            if (!batch.stopped) repository.renewIndexingLeases(IndexingPipeline.EMBEDDINGS, id.toString())
             setProgress(
                 workDataOf(
                     "processed" to processed,
@@ -152,6 +153,8 @@ object EmbeddingIndexScheduler {
     fun cancelAndWait(context: Context) {
         WorkManager.getInstance(context).cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
     }
+
+    fun hasActiveWork(context: Context): Boolean = hasActiveIndexingWork(context, UNIQUE_WORK)
 
     private fun request(context: Context, initialDelayMillis: Long = 0L) =
         OneTimeWorkRequestBuilder<EmbeddingIndexWorker>()

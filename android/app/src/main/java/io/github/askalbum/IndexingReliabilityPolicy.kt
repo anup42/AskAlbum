@@ -5,7 +5,7 @@ import kotlinx.coroutines.sync.withLock
 
 internal object IndexingRetryPolicy {
     const val MAX_ITEM_ATTEMPTS = 3
-    const val LEASE_MILLIS = 12L * 60L * 1_000L
+    const val LEASE_MILLIS = 2L * 60L * 1_000L
 
     fun nextAttemptAt(nowMillis: Long, attemptCount: Int): Long =
         nowMillis + retryDelayMillis(attemptCount)
@@ -23,14 +23,21 @@ internal object IndexingRetryPolicy {
 }
 
 internal object IndexingRecoveryPolicy {
+    val mediaAnalysisStages: Set<IndexStage> = setOf(
+        IndexStage.THUMBNAIL,
+        IndexStage.OCR,
+        IndexStage.EVENTS,
+        IndexStage.ENRICHMENT,
+    )
+
     fun stagesFor(pipeline: IndexingPipeline): Set<IndexStage> = when (pipeline) {
-        IndexingPipeline.MEDIA_ANALYSIS -> setOf(IndexStage.THUMBNAIL)
+        IndexingPipeline.MEDIA_ANALYSIS -> mediaAnalysisStages
         IndexingPipeline.EMBEDDINGS -> setOf(IndexStage.EMBEDDING)
         IndexingPipeline.PEOPLE -> setOf(IndexStage.FACES)
         IndexingPipeline.SEMANTIC_MEMORY,
         IndexingPipeline.CAPTION_EMBEDDINGS,
         -> emptySet()
-        IndexingPipeline.ALL -> setOf(IndexStage.THUMBNAIL, IndexStage.EMBEDDING, IndexStage.FACES)
+        IndexingPipeline.ALL -> mediaAnalysisStages + setOf(IndexStage.EMBEDDING, IndexStage.FACES)
     }
 
     fun recoversSemanticMemory(pipeline: IndexingPipeline): Boolean =

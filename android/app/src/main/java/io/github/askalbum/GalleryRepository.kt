@@ -30,7 +30,26 @@ class GalleryRepository(context: Context) {
 
     fun initialize(): IndexSummary {
         val restartWorkersAfterUpdate = consumeWorkerUpdateRestart()
-        database.recoverInterruptedJobs()
+        database.recoverInterruptedJobs(
+            pipeline = IndexingPipeline.MEDIA_ANALYSIS,
+            reclaimOrphanedLeases = !IndexScheduler.hasActiveWork(appContext),
+        )
+        database.recoverInterruptedJobs(
+            pipeline = IndexingPipeline.EMBEDDINGS,
+            reclaimOrphanedLeases = !EmbeddingIndexScheduler.hasActiveWork(appContext),
+        )
+        database.recoverInterruptedJobs(
+            pipeline = IndexingPipeline.PEOPLE,
+            reclaimOrphanedLeases = !PeopleIndexScheduler.hasActiveWork(appContext),
+        )
+        database.recoverInterruptedJobs(
+            pipeline = IndexingPipeline.SEMANTIC_MEMORY,
+            reclaimOrphanedLeases = !SemanticEnrichmentScheduler.hasActiveWork(appContext),
+        )
+        database.recoverInterruptedJobs(
+            pipeline = IndexingPipeline.CAPTION_EMBEDDINGS,
+            reclaimOrphanedLeases = !CaptionEmbeddingScheduler.hasActiveWork(appContext),
+        )
         val legacyCaptionJobs = database.queueLegacySemanticCaptionJobs()
         if (legacyCaptionJobs > 0 && indexingJobControlsStore.load().semanticMemoryEnabled) {
             SemanticEnrichmentScheduler.schedule(
@@ -302,6 +321,8 @@ class GalleryRepository(context: Context) {
         database.failEmbedding(id, producerVersion, message, permanent)
     fun recoverInterruptedJobs(pipeline: IndexingPipeline = IndexingPipeline.ALL) =
         database.recoverInterruptedJobs(pipeline)
+    fun renewIndexingLeases(pipeline: IndexingPipeline, owner: String) =
+        database.renewIndexingLeases(pipeline, owner)
     fun markIndexing(
         id: String,
         owner: String = "repository-direct",
@@ -1152,9 +1173,14 @@ class GalleryRepository(context: Context) {
             plan.semanticClauses.isEmpty() && plan.filter != FilterExpression.True && !verification.applied
         val deterministicAggregation = plan.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
             plan.aggregation != null && plan.semanticClauses.isEmpty() && !usedSemanticRetrieval && !verification.applied
+        val requestedDocumentField = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)
+        val deterministicDocumentFact = plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) &&
+            requestedDocumentField != null &&
+            DocumentAnswerSelector.select(hits, setOf(requestedDocumentField.sourceField))?.fact != null &&
+            !verification.applied
         val exactness = RetrievalExactnessPolicy.resolve(
             allEligibleIndexed = readyItems == totalItems,
-            deterministicOperation = deterministicAggregation || deterministicResultSetFilter,
+            deterministicOperation = deterministicAggregation || deterministicResultSetFilter || deterministicDocumentFact,
             semanticReport = semanticReport,
             verificationApplied = verification.applied,
             completePredicateScan = completePredicateScan,

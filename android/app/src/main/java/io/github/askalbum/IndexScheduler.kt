@@ -6,6 +6,7 @@ import androidx.work.BackoffPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
 
@@ -38,6 +39,8 @@ object IndexScheduler {
         WorkManager.getInstance(context).cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
     }
 
+    fun hasActiveWork(context: Context): Boolean = hasActiveIndexingWork(context, UNIQUE_WORK)
+
     private fun request(context: Context, initialDelayMillis: Long = 0L) =
         OneTimeWorkRequestBuilder<GalleryIndexWorker>()
             .setConstraints(indexingWorkerConstraints(context))
@@ -48,3 +51,13 @@ object IndexScheduler {
             }
             .build()
 }
+
+internal fun hasActiveIndexingWork(context: Context, uniqueWorkName: String): Boolean = runCatching {
+    WorkManager.getInstance(context).getWorkInfosForUniqueWork(uniqueWorkName)
+        .get(5, TimeUnit.SECONDS)
+        .any { info ->
+            info.state == WorkInfo.State.ENQUEUED ||
+                info.state == WorkInfo.State.RUNNING ||
+                info.state == WorkInfo.State.BLOCKED
+        }
+}.getOrDefault(true)

@@ -6,6 +6,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -67,7 +68,7 @@ internal class TestGallerySeedEngine(
             }
         }
 
-        val finalRows = ownedRows(runId)
+        val finalRows = awaitOwnedRows(runId, items.length())
         require(finalRows.size == items.length()) { "Expected ${items.length()} app-owned rows, found ${finalRows.size}" }
         val finalByKey = finalRows.groupBy { rowKey(it.relativePath, it.name) }
         val orderedUris = ArrayList<String>(items.length())
@@ -264,6 +265,16 @@ internal class TestGallerySeedEngine(
         }
     }
 
+    private suspend fun awaitOwnedRows(runId: String, expectedCount: Int): List<MediaRow> {
+        repeat(MEDIASTORE_VISIBILITY_RETRIES) {
+            coroutineContext.ensureActive()
+            val rows = ownedRows(runId)
+            if (rows.size >= expectedCount) return rows
+            delay(MEDIASTORE_VISIBILITY_DELAY_MS)
+        }
+        return ownedRows(runId)
+    }
+
     private fun writeCheckpoint(runId: String, completed: Int, total: Int, reused: Int, filename: String) {
         writeJsonAtomic(
             child(runRoot(runId), "checkpoint.json"),
@@ -338,5 +349,7 @@ internal class TestGallerySeedEngine(
         const val MAX_ARCHIVE_ENTRIES = 20_001
         const val MAX_ARCHIVE_BYTES = 512L * 1024 * 1024
         const val MAX_EXTRACTED_BYTES = 1024L * 1024 * 1024
+        const val MEDIASTORE_VISIBILITY_RETRIES = 40
+        const val MEDIASTORE_VISIBILITY_DELAY_MS = 125L
     }
 }

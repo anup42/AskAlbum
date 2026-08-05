@@ -135,11 +135,11 @@ internal object RetrievalExactnessPolicy {
     ): ResultExactness = when {
         !allEligibleIndexed -> ResultExactness.PARTIAL_INDEX
         completePredicateScan && semanticReport.status == ChannelStatus.SUCCESS -> ResultExactness.COMPLETE_MODEL_SCAN
+        deterministicOperation -> ResultExactness.EXACT
         semanticReport.status in setOf(ChannelStatus.UNAVAILABLE, ChannelStatus.FAILED, ChannelStatus.PARTIAL) ->
             ResultExactness.PARTIAL_INDEX
         semanticReport.status != ChannelStatus.NOT_REQUIRED || verificationApplied ->
             ResultExactness.ESTIMATED_FROM_RETRIEVAL
-        deterministicOperation -> ResultExactness.EXACT
         else -> ResultExactness.ESTIMATED_FROM_RETRIEVAL
     }
 }

@@ -179,3 +179,10 @@ media, databases, or logs.
 - Event expansion is filtered to media with item-level lexical, image-semantic, caption, or caption-embedding evidence; event summary/grouped event queries retain intentional contextual expansion.
 - Follow-up refinement now uses the same filtered event member set.
 - Added `EventExpansionPolicyTest`: PASS for semantic-only filtering and event-summary expansion.
+
+## 2026-08-05 - Indexing recovery acceptance fix
+
+- Recovered all media-analysis stages (`THUMBNAIL`, `OCR`, `EVENTS`, `ENRICHMENT`) by pipeline, reset orphaned parent items, and added progress-lease renewal after worker checkpoints.
+- Recovered stale `RUNNING` rows even when legacy claim metadata was missing; live WorkManager chains remain protected by progress heartbeats.
+- Marked allowlisted OCR document answers exact only when the selected deterministic fact and complete eligible coverage support it.
+- Validation: `IndexingReliabilityPolicyTest`, `RetrievalExactnessPolicyTest`, `consumerDebug`, `offlineDemoDebug`, and `fixtureCiDebug` passed; preserved 83-item device corpus passed 11/11 executable Q01-Q13 cases, with 2 People cases honestly skipped because face consent/model coverage was disabled.

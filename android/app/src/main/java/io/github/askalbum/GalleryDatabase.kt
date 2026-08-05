@@ -731,27 +731,51 @@ class GalleryDatabase(
         return status
     }
 
-    fun recoverInterruptedJobs(pipeline: IndexingPipeline = IndexingPipeline.ALL) {
+    fun recoverInterruptedJobs(
+        pipeline: IndexingPipeline = IndexingPipeline.ALL,
+        reclaimOrphanedLeases: Boolean = false,
+    ) {
         val db = writableDatabase
         val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
             val stages = IndexingRecoveryPolicy.stagesFor(pipeline)
-            if (IndexStage.THUMBNAIL in stages) {
-                db.execSQL(
-                    "UPDATE media_item SET index_state='PENDING' WHERE index_state='INDEXING' AND id IN (" +
-                        "SELECT media_id FROM media_index_stage WHERE stage='THUMBNAIL' AND status='RUNNING' " +
-                        "AND lease_expires_at IS NOT NULL AND lease_expires_at<=?)",
-                    arrayOf(now),
-                )
+            val mediaStages = stages.intersect(IndexingRecoveryPolicy.mediaAnalysisStages)
+            val stageNames = stages.joinToString(",") { "'${it.name}'" }
+            val mediaStageNames = mediaStages.joinToString(",") { "'${it.name}'" }
+            val staleProgressAt = now - IndexingRetryPolicy.LEASE_MILLIS
+            val leasePredicate = if (reclaimOrphanedLeases) {
+                "status='RUNNING'"
+            } else {
+                "status='RUNNING' AND (" +
+                    "(lease_expires_at IS NOT NULL AND lease_expires_at<=?) OR " +
+                    "COALESCE(last_progress_at,updated_at)<=?)"
             }
-            stages.forEach { stage ->
+            val leaseArgs: Array<Any?> = if (reclaimOrphanedLeases) {
+                emptyArray()
+            } else {
+                arrayOf(now, staleProgressAt)
+            }
+            val recoveryError = if (reclaimOrphanedLeases) "lease_orphaned" else "lease_expired"
+            if (mediaStages.isNotEmpty()) {
+                val orphanedMediaIds = "SELECT media_id FROM media_index_stage WHERE stage IN ($mediaStageNames) AND $leasePredicate"
+                db.execSQL(
+                    "UPDATE media_item SET index_state='PENDING',index_error=NULL " +
+                        "WHERE index_state='INDEXING' AND id IN ($orphanedMediaIds)",
+                    leaseArgs,
+                )
+                val resetThumbnailSql =
+                    "UPDATE media_index_stage SET status='PENDING',updated_at=?,error=? " +
+                        "WHERE stage='THUMBNAIL' AND status IN ('COMPLETE','RUNNING') AND media_id IN ($orphanedMediaIds)"
+                db.execSQL(resetThumbnailSql, arrayOf(now, recoveryError, *leaseArgs))
+            }
+            if (stages.isNotEmpty()) {
                 db.execSQL(
                     "UPDATE media_index_stage SET status='PENDING'," +
                         "attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END," +
-                        "updated_at=?,error='lease_expired',lease_owner=NULL,lease_expires_at=NULL " +
-                        "WHERE stage=? AND status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?",
-                    arrayOf(now, stage.name, now),
+                        "updated_at=?,error=?,lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=0 " +
+                        "WHERE stage IN ($stageNames) AND $leasePredicate",
+                    arrayOf(now, recoveryError, *leaseArgs),
                 )
             }
             if (IndexingRecoveryPolicy.recoversSemanticMemory(pipeline)) {
@@ -761,10 +785,15 @@ class GalleryDatabase(
                     SET status='PENDING',
                         attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
                         updated_at=$now,
-                        error='lease_expired',
+                        error='$recoveryError',
                         lease_owner=NULL,
                         lease_expires_at=NULL
-                    WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=$now
+                    WHERE status='RUNNING'
+                        AND ${if (reclaimOrphanedLeases) {
+                            "1=1"
+                        } else {
+                            "(lease_expires_at IS NOT NULL AND lease_expires_at<=$now) OR updated_at<=$staleProgressAt"
+                        }}
                     """.trimIndent(),
                 )
             }
@@ -775,10 +804,15 @@ class GalleryDatabase(
                     SET embedding_state='PENDING',
                         attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
                         updated_at=$now,
-                        error='lease_expired',
+                        error='$recoveryError',
                         lease_owner=NULL,
                         lease_expires_at=NULL
-                    WHERE embedding_state='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=$now
+                    WHERE embedding_state='RUNNING'
+                        AND ${if (reclaimOrphanedLeases) {
+                            "1=1"
+                        } else {
+                            "(lease_expires_at IS NOT NULL AND lease_expires_at<=$now) OR updated_at<=$staleProgressAt"
+                        }}
                     """.trimIndent(),
                 )
             }
@@ -834,6 +868,21 @@ class GalleryDatabase(
     fun mediaStoreItemsIncludingInaccessible(): List<GalleryItem> = queryItems(
         "source_kind=?", arrayOf(MediaSource.MEDIA_STORE.name), "COALESCE(captured_at,0) DESC", null,
     )
+
+    fun renewIndexingLeases(pipeline: IndexingPipeline, owner: String) {
+        val stages = IndexingRecoveryPolicy.stagesFor(pipeline)
+        if (stages.isEmpty()) return
+        val now = System.currentTimeMillis()
+        writableDatabase.update(
+            "media_index_stage",
+            ContentValues().apply {
+                put("lease_expires_at", now + IndexingRetryPolicy.LEASE_MILLIS)
+                put("last_progress_at", now)
+            },
+            "status='RUNNING' AND lease_owner=? AND stage IN (${stages.joinToString(",") { "'${it.name}'" }})",
+            arrayOf(owner),
+        )
+    }
 
     fun applyReconciliation(plan: MediaReconciliationPlan): Int {
         val db = writableDatabase

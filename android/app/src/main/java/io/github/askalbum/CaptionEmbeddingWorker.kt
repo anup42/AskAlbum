@@ -110,6 +110,8 @@ object CaptionEmbeddingScheduler {
         WorkManager.getInstance(context).cancelAllWorkByTag(UNIQUE_WORK).result.get(30, TimeUnit.SECONDS)
     }
 
+    fun hasActiveWork(context: Context): Boolean = hasActiveIndexingWork(context, UNIQUE_WORK)
+
     private fun request(context: Context, delayMillis: Long = 0L) =
         OneTimeWorkRequestBuilder<CaptionEmbeddingWorker>()
             .setConstraints(indexingWorkerConstraints(context))
