@@ -350,6 +350,7 @@ data class PersonClusterReviewItem(
     val includeInPersonalSemanticMemory: Boolean = false,
     val representativeFaceId: String? = null,
     val representativeFace: PersonFaceReviewItem? = null,
+    val latestFace: PersonFaceReviewItem? = null,
     val supportingFaces: List<PersonFaceReviewItem> = emptyList(),
     val mediaCount: Int = 0,
 )

@@ -110,6 +110,7 @@ class PeopleEditingDatabaseTest {
         val summaryBeforeRepresentative = store.personClusterSummaries(true).single { it.id == "person_me" }
         assertEquals(expectedNewest.id, summaryBeforeRepresentative.sampleMediaId)
         assertEquals(expectedNewest.id, summaryBeforeRepresentative.supportingFaces.first().mediaId)
+        assertEquals(expectedNewest.id, summaryBeforeRepresentative.latestFace?.mediaId)
         store.setPersonClusterRepresentative("person_me", secondPage.single().id)
         assertEquals(secondPage.single().id, store.personClusterSummaries(true).single { it.id == "person_me" }.representativeFaceId)
         assertEquals(

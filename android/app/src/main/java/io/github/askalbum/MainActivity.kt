@@ -2617,7 +2617,7 @@ private fun PersonClusterCard(
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                cluster.representativeFace?.let {
+                (cluster.latestFace ?: cluster.representativeFace)?.let {
                     FaceCropImage(it, Modifier.size(82.dp).clip(RoundedCornerShape(18.dp)))
                     Spacer(Modifier.width(12.dp))
                 }

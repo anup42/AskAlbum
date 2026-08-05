@@ -1708,8 +1708,12 @@ class GalleryDatabase(
             val selectedRepresentative = summary.representativeFaceId?.let { representativeId ->
                 faces.firstOrNull { it.id == representativeId } ?: personFace(representativeId)
             }
+            val latestFace = summary.sampleMediaId?.let { mediaId ->
+                faces.firstOrNull { it.mediaId == mediaId }
+            } ?: faces.firstOrNull()
             summary.copy(
                 representativeFace = selectedRepresentative ?: faces.firstOrNull(),
+                latestFace = latestFace,
                 supportingFaces = faces,
             )
         }

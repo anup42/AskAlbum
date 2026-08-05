@@ -858,3 +858,6 @@ Caption embedding now validates that the text encoder returned exactly one vecto
 ### 2026-08-06 - Resume every durable pipeline after foreground timeout
 
 Unexpected foreground-service destruction and the Android `mediaProcessing` timeout now hand off media analysis, SigLIP2 vectors, People, caption embeddings, and semantic-memory work to their existing guarded WorkManager schedulers. This preserves durable leases/checkpoints and avoids leaving secondary queues dormant after a long foreground indexing session. No completed data or model state is changed.
+### 2026-08-06 - Render the newest People photo without losing representatives
+
+People cluster summaries now expose both the user-selected representative face and the newest face derived from the existing capture-time ordering. The People list card renders the newest face, while the editor and representative controls continue to use the selected representative. Added a database acceptance assertion; no face assignments or corrections are changed.
