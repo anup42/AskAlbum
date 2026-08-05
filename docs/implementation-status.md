@@ -742,3 +742,10 @@ media, databases, or logs.
 - Reviewed-person expansion now validates that a representative face vector is readable and has the current SFace embedding dimension before reusing it.
 - Missing, corrupt, or stale-dimension representative vectors are re-embedded from the source image through the existing on-device face engine; existing valid vectors remain untouched.
 - Validation: fixture unit tests and `consumerDebug`/`offlineDemoDebug` assembly passed. Commit `710906f` was pushed to `anup42/AskAlbum`.
+
+## 2026-08-06 - Typed semantic retrieval enforcement
+
+- Removed the legacy hit-only semantic text search API that converted missing or unavailable retrieval into an empty result.
+- Updated the stored 5k retrieval acceptance test to consume `searchTextReport` and require `ChannelStatus.SUCCESS` before evaluating hits.
+- Validation: `:app:testFixtureCiDebugUnitTest`, `:app:assembleConsumerDebug`, `:app:assembleOfflineDemoDebug`, and `:app:compileFixtureCiDebugAndroidTestKotlin` PASS.
+- Published to AskAlbum branch `codex/current-agentic-gallery-sync` as commit `db511be`.
