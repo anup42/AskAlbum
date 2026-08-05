@@ -3313,6 +3313,7 @@ class GalleryDatabase(
                     put("applicability", fact.applicability)
                     put("model_version", fact.modelVersion)
                     put("prompt_version", fact.promptVersion)
+                    if (fact.generationId == null) putNull("generation_id") else put("generation_id", fact.generationId)
                     put("updated_at", now)
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
@@ -3339,7 +3340,7 @@ class GalleryDatabase(
                 }
             }
             result.caption?.let { caption ->
-                val stable = "${caption.scope}|${caption.subjectId}|${caption.evidenceMediaId}|${caption.modelVersion}|${caption.promptVersion}"
+                val stable = "${caption.scope}|${caption.subjectId}|${caption.evidenceMediaId}|${caption.modelVersion}|${caption.promptVersion}|${caption.generationId.orEmpty()}"
                 val captionId = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
                 db.insertWithOnConflict("semantic_caption", null, ContentValues().apply {
                     put("id", captionId)
@@ -3358,6 +3359,7 @@ class GalleryDatabase(
                     put("body_region_version", caption.bodyRegionVersion)
                     put("model_version", caption.modelVersion)
                     put("prompt_version", caption.promptVersion)
+                    if (caption.generationId == null) putNull("generation_id") else put("generation_id", caption.generationId)
                     put("created_at", caption.createdAt.takeIf { it > 0L } ?: now)
                     put("updated_at", now)
                     putNull("chunk_policy_version")
@@ -3380,8 +3382,22 @@ class GalleryDatabase(
                     updatedAt = now,
                 )
             }
+            result.generation?.let { generation ->
+                db.insertWithOnConflict("semantic_generation", null, ContentValues().apply {
+                    put("generation_id", generation.generationId)
+                    if (storedCaption?.id == null) putNull("caption_id") else put("caption_id", storedCaption?.id)
+                    put("job_id", generation.jobId)
+                    put("scope", generation.scope.name)
+                    put("scope_id", generation.scopeId)
+                    put("evidence_media_id", generation.evidenceMediaId)
+                    put("model_version", generation.modelVersion)
+                    put("prompt_version", generation.promptVersion)
+                    put("body_region_version", generation.bodyRegionVersion)
+                    put("created_at", generation.createdAt)
+                }, SQLiteDatabase.CONFLICT_REPLACE)
+            }
             result.personFacts.forEach { fact ->
-                val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}"
+                val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}|${fact.generationId.orEmpty()}"
                 db.insertWithOnConflict("person_attribute_fact", null, ContentValues().apply {
                     put("id", UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString())
                     put("media_id", fact.mediaId)
@@ -3402,6 +3418,7 @@ class GalleryDatabase(
                     put("verdict", fact.verdict.name)
                     if (fact.targetClusterId == null) putNull("target_cluster_id") else put("target_cluster_id", fact.targetClusterId)
                     put("prompt_version", fact.promptVersion)
+                    if (fact.generationId == null) putNull("generation_id") else put("generation_id", fact.generationId)
                     put("updated_at", now)
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
@@ -3491,6 +3508,7 @@ class GalleryDatabase(
                             applicability = cursor.text("applicability"),
                             modelVersion = cursor.text("model_version"),
                             promptVersion = cursor.text("prompt_version"),
+                            generationId = cursor.nullableText("generation_id"),
                         ),
                     )
                 }
@@ -3518,6 +3536,7 @@ class GalleryDatabase(
                         applicability = cursor.text("applicability"),
                         modelVersion = cursor.text("model_version"),
                         promptVersion = cursor.text("prompt_version"),
+                        generationId = cursor.nullableText("generation_id"),
                     ),
                 )
             }
@@ -3544,6 +3563,7 @@ class GalleryDatabase(
                         applicability = cursor.text("applicability"),
                         modelVersion = cursor.text("model_version"),
                         promptVersion = cursor.text("prompt_version"),
+                        generationId = cursor.nullableText("generation_id"),
                     ),
                 )
             }
@@ -3991,6 +4011,7 @@ class GalleryDatabase(
             createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
             updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
             personRefs = captionPersonRefs(id),
+            generationId = cursor.nullableText("generation_id"),
         )
     }
 
@@ -4024,6 +4045,7 @@ class GalleryDatabase(
         lastProgressAt = cursor.getColumnIndex("last_progress_at").let { if (it < 0 || cursor.isNull(it)) null else cursor.getLong(it) },
         createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
         updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+        generationId = cursor.nullableText("generation_id"),
     )
 
     private fun readPersonVisualFact(cursor: android.database.Cursor): PersonVisualFactRecord {
@@ -4049,6 +4071,7 @@ class GalleryDatabase(
             modelVersion = cursor.text("model_version"),
             promptVersion = cursor.text("prompt_version"),
             updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+            generationId = cursor.nullableText("generation_id"),
         )
     }
 
@@ -4082,6 +4105,7 @@ class GalleryDatabase(
                 put("caption_model_version", chunk.captionModelVersion)
                 put("caption_prompt_version", chunk.captionPromptVersion)
                 put("chunk_policy_version", chunk.chunkPolicyVersion)
+                if (chunk.generationId == null) putNull("generation_id") else put("generation_id", chunk.generationId)
                 putNull("embedding_model_version")
                 put("embedding_state", CaptionEmbeddingState.PENDING.name)
                 put("attempt_count", 0)

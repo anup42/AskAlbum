@@ -59,6 +59,7 @@ data class SemanticCaptionChunkRecord(
     val lastProgressAt: Long? = null,
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
+    val generationId: String? = null,
 )
 
 data class CaptionEmbeddingProgress(
@@ -104,8 +105,25 @@ internal object SemanticCaptionChunker {
     ): List<SemanticCaptionChunkRecord> {
         if (caption.text.isBlank() || SensitiveContentClassifier.isSensitive(caption.text)) return emptyList()
         val candidates = mutableListOf<Candidate>()
+        val generationId = caption.generationId
+        val scopedPersonFacts = personFacts.filter {
+            generationId != null &&
+                it.generationId == generationId &&
+                it.mediaId == caption.evidenceMediaId &&
+                it.modelVersion == caption.modelVersion &&
+                it.promptVersion == caption.promptVersion
+        }
+        val scopedFacts = facts.filter {
+            generationId != null &&
+                it.generationId == generationId &&
+                it.scope == caption.scope &&
+                it.subjectId == caption.subjectId &&
+                it.evidenceMediaId == caption.evidenceMediaId &&
+                it.modelVersion == caption.modelVersion &&
+                it.promptVersion == caption.promptVersion
+        }
 
-        personFacts
+        scopedPersonFacts
             .filter {
                 it.mediaId == caption.evidenceMediaId &&
                     it.verdict == PersonVisualVerdict.VERIFIED_TRUE &&
@@ -156,7 +174,7 @@ internal object SemanticCaptionChunker {
                 }
             }
 
-        facts
+        scopedFacts
             .filter {
                 it.evidenceMediaId == caption.evidenceMediaId &&
                     it.applicability !in setOf("STALE_PERSON_BINDING", "LEGACY_GROUP_CONTEXT_ONLY")
@@ -198,6 +216,7 @@ internal object SemanticCaptionChunker {
                 candidate.clusterId.orEmpty(),
                 candidate.type.name,
                 POLICY_VERSION,
+                generationId.orEmpty(),
                 index.toString(),
                 normalize(candidate.text),
             ).joinToString("|")
@@ -220,6 +239,7 @@ internal object SemanticCaptionChunker {
                 embeddingState = CaptionEmbeddingState.PENDING,
                 createdAt = now,
                 updatedAt = now,
+                generationId = generationId,
             )
         }
     }

@@ -36,6 +36,7 @@ data class SemanticCaptionRecord(
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
     val personRefs: List<SemanticCaptionPersonRefRecord> = emptyList(),
+    val generationId: String? = null,
 )
 
 data class PersonVisualFactRecord(
@@ -59,12 +60,14 @@ data class PersonVisualFactRecord(
     val modelVersion: String,
     val promptVersion: String,
     val updatedAt: Long = 0L,
+    val generationId: String? = null,
 )
 
 data class SemanticEnrichmentResult(
     val facts: List<SemanticFactRecord>,
     val caption: SemanticCaptionRecord? = null,
     val personFacts: List<PersonVisualFactRecord> = emptyList(),
+    val generation: SemanticGenerationProvenance? = null,
 )
 
 data class CaptionSearchHit(
@@ -87,12 +90,13 @@ internal object SemanticEnrichmentCodec {
         raw: String,
         modelVersion: String,
         bindings: List<PersonVerificationBinding>,
+        generation: SemanticGenerationProvenance? = null,
     ): SemanticEnrichmentResult {
         val root = JSONObject(
             extractFirstJsonObject(raw)
                 ?: throw SemanticEnrichmentOutputException("Enrichment must return one JSON object"),
         )
-        val baseFacts = SemanticFactCodec.decode(job, raw, modelVersion)
+        val baseFacts = SemanticFactCodec.decode(job, raw, modelVersion, generation)
         val bindingByLabel = bindings.distinctBy(PersonVerificationBinding::clusterId)
             .associateBy(PersonVerificationBinding::stableLabel)
         val sceneSummary = root.safeText("sceneSummary", 600)
@@ -102,7 +106,7 @@ internal object SemanticEnrichmentCodec {
         }
         val captionText = activityAwareCaption(sceneSummary, detailedCaption)
         val captionConfidence = root.opt("captionConfidence").asConfidence()
-        val activityFacts = decodeSceneActivityFacts(job, root, modelVersion, captionConfidence)
+        val activityFacts = decodeSceneActivityFacts(job, root, modelVersion, captionConfidence, generation)
         val facts = (baseFacts + activityFacts).distinctBy {
             "${it.scope}|${it.subjectId}|${it.predicate}|${it.value}|${it.applicability}"
         }
@@ -131,6 +135,7 @@ internal object SemanticEnrichmentCodec {
                     bodyRegionVersion = PersonalSemanticMemoryPolicy.BODY_REGION_VERSION,
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
+                    generationId = generation?.generationId,
                 )
             }
         if (PersonalSemanticMemoryPolicy.isPersonalJob(job.reason) && caption == null) {
@@ -168,6 +173,7 @@ internal object SemanticEnrichmentCodec {
                     defaultCategory = WornItemCategory.OTHER_WORN_ITEM,
                     visibility = visibility,
                     modelVersion = modelVersion,
+                    generationId = generation?.generationId,
                 )?.let(personFacts::add)
             }
             val carried = person.optJSONArray("carriedItems") ?: JSONArray()
@@ -181,6 +187,7 @@ internal object SemanticEnrichmentCodec {
                     defaultCategory = WornItemCategory.OTHER_WORN_ITEM,
                     visibility = visibility,
                     modelVersion = modelVersion,
+                    generationId = generation?.generationId,
                 )?.let(personFacts::add)
             }
             val actions = person.optJSONArray("actions") ?: JSONArray()
@@ -200,6 +207,7 @@ internal object SemanticEnrichmentCodec {
                     evidenceRegion = bodyBox,
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
+                    generationId = generation?.generationId,
                 )
             }
         }
@@ -210,6 +218,7 @@ internal object SemanticEnrichmentCodec {
             confidentlyAssociatedLabels = confidentlyAssociatedLabels,
             modelVersion = modelVersion,
             defaultConfidence = captionConfidence,
+            generationId = generation?.generationId,
         )
         personFacts += decodeInteractions(
             job = job,
@@ -218,6 +227,7 @@ internal object SemanticEnrichmentCodec {
             confidentlyAssociatedLabels = confidentlyAssociatedLabels,
             modelVersion = modelVersion,
             defaultConfidence = captionConfidence,
+            generationId = generation?.generationId,
         )
         return SemanticEnrichmentResult(
             facts = facts,
@@ -225,6 +235,7 @@ internal object SemanticEnrichmentCodec {
             personFacts = personFacts.distinctBy {
                 "${it.clusterId}|${it.relation}|${it.category}|${it.itemType}|${it.value}|${it.bodyRegion}"
             },
+            generation = generation,
         )
     }
 
@@ -233,6 +244,7 @@ internal object SemanticEnrichmentCodec {
         root: JSONObject,
         modelVersion: String,
         defaultConfidence: Float?,
+        generation: SemanticGenerationProvenance?,
     ): List<SemanticFactRecord> = buildList {
         fun addFact(
             predicate: String,
@@ -253,6 +265,7 @@ internal object SemanticEnrichmentCodec {
                     applicability = applicability,
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
+                    generationId = generation?.generationId,
                 ),
             )
         }
@@ -292,6 +305,7 @@ internal object SemanticEnrichmentCodec {
         confidentlyAssociatedLabels: Set<String>,
         modelVersion: String,
         defaultConfidence: Float?,
+        generationId: String?,
     ): List<PersonVisualFactRecord> = buildList {
         for (index in 0 until minOf(actions.length(), 24)) {
             val actionObject = actions.optJSONObject(index) ?: continue
@@ -318,6 +332,7 @@ internal object SemanticEnrichmentCodec {
                     evidenceRegion = actionObject.optJSONArray("region")?.normalizedRegion(),
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
+                    generationId = generationId,
                 ),
             )
         }
@@ -330,6 +345,7 @@ internal object SemanticEnrichmentCodec {
         confidentlyAssociatedLabels: Set<String>,
         modelVersion: String,
         defaultConfidence: Float?,
+        generationId: String?,
     ): List<PersonVisualFactRecord> = buildList {
         for (index in 0 until minOf(interactions.length(), 24)) {
             val interaction = interactions.optJSONObject(index) ?: continue
@@ -355,6 +371,7 @@ internal object SemanticEnrichmentCodec {
                     targetClusterId = target.clusterId,
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
+                    generationId = generationId,
                 ),
             )
         }
@@ -458,6 +475,7 @@ internal object SemanticEnrichmentCodec {
         defaultCategory: WornItemCategory,
         visibility: PersonVisibility,
         modelVersion: String,
+        generationId: String?,
     ): PersonVisualFactRecord? {
         val itemType = item.safeText("itemType", 120).takeIf(String::isNotBlank) ?: return null
         if (itemType.length > 120 || SensitiveContentClassifier.isSensitive(itemType)) return null
@@ -493,6 +511,7 @@ internal object SemanticEnrichmentCodec {
             evidenceRegion = evidenceRegion,
             modelVersion = modelVersion,
             promptVersion = PROMPT_VERSION,
+            generationId = generationId,
         )
     }
 

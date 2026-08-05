@@ -2,6 +2,7 @@ package io.github.anup42.askalbum
 
 import java.io.File
 import java.util.Locale
+import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -23,10 +24,22 @@ class AdaptiveGemmaSemanticEnricher(
         }
         require(status.deviceAssessment?.supported != false) { status.deviceAssessment?.reason ?: "Device unsupported" }
         require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
+        val modelVersion = "gemma-4-${status.packVersion ?: "unknown"}"
+        val generation = SemanticGenerationProvenance(
+            generationId = UUID.randomUUID().toString(),
+            jobId = job.id,
+            scope = job.scope,
+            scopeId = job.subjectId,
+            evidenceMediaId = job.representativeMediaId,
+            modelVersion = modelVersion,
+            promptVersion = SemanticEnrichmentCodec.PROMPT_VERSION,
+            bodyRegionVersion = PersonalSemanticMemoryPolicy.BODY_REGION_VERSION,
+            createdAt = System.currentTimeMillis(),
+        )
         val response = sessions.withEngine(path, multimodal = true) { lease ->
             lease.engine.generateVision(imageBytes, prompt(job, bindings, repairReason), seed = 31)
         }
-        return SemanticEnrichmentCodec.decode(job, response, "gemma-4-${status.packVersion ?: "unknown"}", bindings)
+        return SemanticEnrichmentCodec.decode(job, response, modelVersion, bindings, generation)
     }
 
     private fun prompt(
@@ -100,6 +113,7 @@ internal object SemanticFactCodec {
         job: SemanticEnrichmentJobRecord,
         raw: String,
         modelVersion: String,
+        generation: SemanticGenerationProvenance? = null,
     ): List<SemanticFactRecord> {
         val json = extractFirstJsonObject(raw)
         if (json == null) {
@@ -139,6 +153,7 @@ internal object SemanticFactCodec {
                         applicability = applicability,
                         modelVersion = modelVersion,
                         promptVersion = PROMPT_VERSION,
+                        generationId = generation?.generationId,
                     ),
                 )
             }

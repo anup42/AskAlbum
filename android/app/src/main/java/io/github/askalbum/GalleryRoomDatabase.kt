@@ -266,6 +266,7 @@ data class FaceInstanceEntity(
     indices = [
         Index(name = "person_attribute_media_idx", value = ["media_id"]),
         Index(name = "person_attribute_cluster_idx", value = ["cluster_id"]),
+        Index(name = "person_attribute_generation_idx", value = ["generation_id"]),
     ],
 )
 data class PersonAttributeFactEntity(
@@ -289,6 +290,7 @@ data class PersonAttributeFactEntity(
     @ColumnInfo(defaultValue = "'VERIFIED_TRUE'") val verdict: String = "VERIFIED_TRUE",
     @ColumnInfo(name = "target_cluster_id") val targetClusterId: String? = null,
     @ColumnInfo(name = "prompt_version", defaultValue = "'legacy-person-attribute-v1'") val promptVersion: String = "legacy-person-attribute-v1",
+    @ColumnInfo(name = "generation_id") val generationId: String? = null,
 )
 
 @Entity(tableName = "query_turn")
@@ -431,6 +433,7 @@ data class EventRepresentativeEntity(
         Index(name = "semantic_fact_subject_idx", value = ["scope", "subject_id"]),
         Index(name = "semantic_fact_evidence_idx", value = ["evidence_media_id"]),
         Index(name = "semantic_fact_predicate_idx", value = ["predicate"]),
+        Index(name = "semantic_fact_generation_idx", value = ["generation_id"]),
     ],
     foreignKeys = [
         ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["evidence_media_id"], onDelete = ForeignKey.CASCADE),
@@ -449,6 +452,27 @@ data class SemanticFactEntity(
     @ColumnInfo(name = "model_version") val modelVersion: String,
     @ColumnInfo(name = "prompt_version") val promptVersion: String,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "generation_id") val generationId: String?,
+)
+
+@Entity(
+    tableName = "semantic_generation",
+    indices = [Index(name = "semantic_generation_evidence_idx", value = ["evidence_media_id"])],
+    foreignKeys = [
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["evidence_media_id"], onDelete = ForeignKey.CASCADE),
+    ],
+)
+data class SemanticGenerationEntity(
+    @PrimaryKey @ColumnInfo(name = "generation_id") val generationId: String,
+    @ColumnInfo(name = "caption_id") val captionId: String?,
+    @ColumnInfo(name = "job_id") val jobId: String,
+    val scope: String,
+    @ColumnInfo(name = "scope_id") val scopeId: String,
+    @ColumnInfo(name = "evidence_media_id") val evidenceMediaId: String,
+    @ColumnInfo(name = "model_version") val modelVersion: String,
+    @ColumnInfo(name = "prompt_version") val promptVersion: String,
+    @ColumnInfo(name = "body_region_version") val bodyRegionVersion: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
 )
 
 @Entity(
@@ -456,6 +480,7 @@ data class SemanticFactEntity(
     indices = [
         Index(name = "semantic_caption_subject_idx", value = ["scope", "subject_id"]),
         Index(name = "semantic_caption_evidence_idx", value = ["evidence_media_id"]),
+        Index(name = "semantic_caption_generation_idx", value = ["generation_id"]),
     ],
     foreignKeys = [
         ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["evidence_media_id"], onDelete = ForeignKey.CASCADE),
@@ -478,6 +503,7 @@ data class SemanticCaptionEntity(
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
     @ColumnInfo(name = "chunk_policy_version") val chunkPolicyVersion: String?,
     @ColumnInfo(name = "chunked_at") val chunkedAt: Long?,
+    @ColumnInfo(name = "generation_id") val generationId: String?,
 )
 
 @Entity(
@@ -506,6 +532,7 @@ data class SemanticCaptionPersonRefEntity(
         Index(name = "semantic_caption_chunk_evidence_idx", value = ["evidence_media_id"]),
         Index(name = "semantic_caption_chunk_cluster_idx", value = ["cluster_id"]),
         Index(name = "semantic_caption_chunk_queue_idx", value = ["embedding_state", "next_attempt_at"]),
+        Index(name = "semantic_caption_chunk_generation_idx", value = ["generation_id"]),
     ],
     foreignKeys = [
         ForeignKey(entity = SemanticCaptionEntity::class, parentColumns = ["id"], childColumns = ["caption_id"], onDelete = ForeignKey.CASCADE),
@@ -539,6 +566,7 @@ data class SemanticCaptionChunkEntity(
     @ColumnInfo(name = "last_progress_at") val lastProgressAt: Long?,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "generation_id") val generationId: String?,
 )
 
 @Fts4
@@ -610,13 +638,14 @@ data class SemanticEnrichmentJobEntity(
         SemanticCaptionPersonRefEntity::class,
         SemanticCaptionChunkEntity::class,
         SemanticCaptionChunkFtsEntity::class,
+        SemanticGenerationEntity::class,
         SemanticEnrichmentJobEntity::class,
         SemanticPredicateScanEntity::class,
         SemanticPredicateScanScopeEntity::class,
         SemanticPredicateScanHitEntity::class,
         SensitiveDataMigrationEntity::class,
     ],
-    version = 20,
+    version = 21,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -647,6 +676,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_17_18,
             MIGRATION_18_19,
             MIGRATION_19_20,
+            MIGRATION_20_21,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1036,6 +1066,38 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                         "`id` INTEGER NOT NULL, `version` INTEGER NOT NULL, " +
                         "`completed_at` INTEGER NOT NULL, PRIMARY KEY(`id`))",
                 )
+            }
+        }
+
+        internal val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE semantic_fact ADD COLUMN generation_id TEXT")
+                db.execSQL("ALTER TABLE semantic_caption ADD COLUMN generation_id TEXT")
+                db.execSQL("ALTER TABLE semantic_caption_chunk ADD COLUMN generation_id TEXT")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN generation_id TEXT")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS semantic_generation (
+                        generation_id TEXT NOT NULL,
+                        caption_id TEXT,
+                        job_id TEXT NOT NULL,
+                        scope TEXT NOT NULL,
+                        scope_id TEXT NOT NULL,
+                        evidence_media_id TEXT NOT NULL,
+                        model_version TEXT NOT NULL,
+                        prompt_version TEXT NOT NULL,
+                        body_region_version TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        PRIMARY KEY(generation_id),
+                        FOREIGN KEY(evidence_media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_generation_evidence_idx ON semantic_generation(evidence_media_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_fact_generation_idx ON semantic_fact(generation_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_generation_idx ON semantic_caption(generation_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_generation_idx ON semantic_caption_chunk(generation_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS person_attribute_generation_idx ON person_attribute_fact(generation_id)")
             }
         }
 
