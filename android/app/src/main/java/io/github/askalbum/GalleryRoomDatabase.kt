@@ -647,7 +647,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticPredicateScanHitEntity::class,
         SensitiveDataMigrationEntity::class,
     ],
-    version = 23,
+    version = 24,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -681,6 +681,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_20_21,
             MIGRATION_21_22,
             MIGRATION_22_23,
+            MIGRATION_23_24,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1259,6 +1260,17 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                     """.trimIndent(),
                 )
                 db.execSQL("DROP TABLE semantic_provenance_repair_caption")
+            }
+        }
+
+        internal val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Keep historical result sets readable while removing the ambiguous
+                // model-scan wording from persisted exactness values.
+                db.execSQL(
+                    "UPDATE result_set SET exactness='COMPLETE_PREDICATE_SCAN' " +
+                        "WHERE exactness='COMPLETE_MODEL_SCAN'",
+                )
             }
         }
 

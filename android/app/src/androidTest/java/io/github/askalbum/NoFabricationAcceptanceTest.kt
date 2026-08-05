@@ -32,6 +32,6 @@ class NoFabricationAcceptanceTest {
         assertEquals("No supported matches found", outcome.answer.headline)
         assertTrue(outcome.answer.evidenceIds.isEmpty())
         assertTrue(outcome.answer.claims.isEmpty())
-        assertTrue(outcome.answer.exactness in setOf(ResultExactness.COMPLETE_MODEL_SCAN, ResultExactness.PARTIAL_INDEX))
+        assertTrue(outcome.answer.exactness in setOf(ResultExactness.COMPLETE_PREDICATE_SCAN, ResultExactness.PARTIAL_INDEX))
     }
 }

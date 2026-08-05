@@ -72,7 +72,7 @@ class RealGemmaGroundedAnswerAcceptanceTest {
             headline = "No supported matches found",
             detail = "No indexed receipt matched the requested merchant.",
             evidenceIds = emptyList(),
-            exactness = ResultExactness.COMPLETE_MODEL_SCAN,
+            exactness = ResultExactness.COMPLETE_PREDICATE_SCAN,
             indexedEligibleCount = 8,
             totalEligibleCount = 8,
         )

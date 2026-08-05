@@ -204,3 +204,9 @@ media, databases, or logs.
 - Caption chunk generation now rejects person-bound facts for event and visual-group captions even when generation, model, and evidence IDs match.
 - Media, query-verification, and verified exact-duplicate scopes retain cluster-bound chunks; contextual captions remain candidate-only.
 - Added a regression test covering event captions with a same-generation person action.
+
+## 2026-08-05 - Name complete predicate scans truthfully
+
+- Replaced the ambiguous `COMPLETE_MODEL_SCAN` runtime exactness with `COMPLETE_PREDICATE_SCAN`.
+- Added a non-destructive Room 23-to-24 migration that rewrites only historical result-set exactness labels; media, indexes, People data, and models are untouched.
+- Added migration coverage for preserving the result set while renaming its exactness value.

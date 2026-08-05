@@ -24,7 +24,7 @@ class FakeGenerativeEngine(
             headline = claim.text,
             detail = "Computed by the deterministic debug backend.",
             evidenceIds = claim.evidenceIds,
-            exactness = ResultExactness.COMPLETE_MODEL_SCAN,
+            exactness = ResultExactness.COMPLETE_PREDICATE_SCAN,
             indexedEligibleCount = input.hits.size,
             totalEligibleCount = input.hits.size,
             claims = listOf(claim),

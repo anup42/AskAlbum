@@ -17,7 +17,7 @@ class RetrievalExactnessPolicyTest {
         val partial = success.copy(status = ChannelStatus.PARTIAL, searchedCount = 4)
 
         assertEquals(
-            ResultExactness.COMPLETE_MODEL_SCAN,
+            ResultExactness.COMPLETE_PREDICATE_SCAN,
             RetrievalExactnessPolicy.resolve(true, false, success, false, completePredicateScan = true),
         )
         assertEquals(

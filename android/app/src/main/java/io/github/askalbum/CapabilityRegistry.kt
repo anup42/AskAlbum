@@ -106,9 +106,9 @@ object CapabilityAnswerExecutor {
                 RetrievalAnswerWording.countHeadline(
                     context.matchCount,
                     context.channelReports.any { it.channel == RetrievalChannel.SEMANTIC && it.status != ChannelStatus.NOT_REQUIRED } &&
-                        context.exactness != ResultExactness.COMPLETE_MODEL_SCAN,
+                        context.exactness != ResultExactness.COMPLETE_PREDICATE_SCAN,
                 ),
-                if (context.exactness == ResultExactness.COMPLETE_MODEL_SCAN) {
+                if (context.exactness == ResultExactness.COMPLETE_PREDICATE_SCAN) {
                     "An exhaustive local semantic predicate scan evaluated every eligible indexed item."
                 } else if (context.exactness == ResultExactness.EXACT) {
                     "This is a deterministic count over complete eligible coverage."
