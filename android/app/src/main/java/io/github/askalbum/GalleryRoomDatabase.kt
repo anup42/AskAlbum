@@ -653,7 +653,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticPredicateScanHitEntity::class,
         SensitiveDataMigrationEntity::class,
     ],
-    version = 26,
+    version = 27,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -690,6 +690,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_23_24,
             MIGRATION_24_25,
             MIGRATION_25_26,
+            MIGRATION_26_27,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1304,6 +1305,12 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE person_attribute_fact ADD COLUMN body_region_version TEXT NOT NULL DEFAULT 'person-body-regions-v1'",
                 )
+            }
+        }
+
+        internal val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE semantic_predicate_scan ADD COLUMN indexed_coverage_hash TEXT")
             }
         }
 

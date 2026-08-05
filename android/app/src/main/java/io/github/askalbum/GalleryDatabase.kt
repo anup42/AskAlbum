@@ -4741,11 +4741,14 @@ class GalleryDatabase(
         query: String,
         modelVersion: String,
         eligibleMediaIds: Set<String>,
-        indexedMediaCount: Int,
+        indexedMediaIds: Set<String>,
     ): String {
         require(query.isNotBlank())
         require(modelVersion.isNotBlank())
         val orderedMediaIds = eligibleMediaIds.toList().sorted()
+        val coveredMediaIds = indexedMediaIds.intersect(eligibleMediaIds)
+        val indexedMediaCount = coveredMediaIds.size
+        val indexedCoverageHash = SemanticPredicateScanPolicy.coverageHash(eligibleMediaIds, coveredMediaIds)
         val scopeHash = SemanticPredicateScanPolicy.scopeHash(eligibleMediaIds)
         val queryKey = SemanticPredicateScanPolicy.queryKey(query, modelVersion, scopeHash)
         val scanId = SemanticPredicateScanPolicy.scanId(queryKey)
@@ -4761,6 +4764,7 @@ class GalleryDatabase(
                     put("scope_hash", scopeHash)
                     put("eligible_count", orderedMediaIds.size)
                     put("indexed_count", indexedMediaCount.coerceIn(0, orderedMediaIds.size))
+                    put("indexed_coverage_hash", indexedCoverageHash)
                     put("searched_count", 0)
                     put("next_ordinal", 0)
                     put("hit_count", 0)
@@ -4782,11 +4786,16 @@ class GalleryDatabase(
                     })
                 }
             } else {
-                val coverageImproved = indexedMediaCount > existing.indexedCount
-                val mustRestart = existing.status == SemanticPredicateScanStatus.COMPLETE &&
-                    existing.indexedCount < existing.eligibleCount && coverageImproved
+                val mustRestart = SemanticPredicateScanPolicy.requiresCoverageReset(
+                    status = existing.status,
+                    storedCoverageHash = existing.indexedCoverageHash,
+                    currentCoverageHash = indexedCoverageHash,
+                )
                 db.update("semantic_predicate_scan", ContentValues().apply {
                     put("indexed_count", indexedMediaCount.coerceIn(0, orderedMediaIds.size))
+                    if (existing.status != SemanticPredicateScanStatus.RUNNING) {
+                        put("indexed_coverage_hash", indexedCoverageHash)
+                    }
                     if (existing.status == SemanticPredicateScanStatus.FAILED) {
                         put("status", SemanticPredicateScanStatus.PENDING.name)
                         put("next_attempt_at", 0L)
@@ -4975,6 +4984,7 @@ class GalleryDatabase(
         scopeHash = cursor.text("scope_hash"),
         eligibleCount = cursor.getInt(cursor.getColumnIndexOrThrow("eligible_count")),
         indexedCount = cursor.getInt(cursor.getColumnIndexOrThrow("indexed_count")),
+        indexedCoverageHash = cursor.nullableText("indexed_coverage_hash"),
         searchedCount = cursor.getInt(cursor.getColumnIndexOrThrow("searched_count")),
         nextOrdinal = cursor.getInt(cursor.getColumnIndexOrThrow("next_ordinal")),
         hitCount = cursor.getInt(cursor.getColumnIndexOrThrow("hit_count")),

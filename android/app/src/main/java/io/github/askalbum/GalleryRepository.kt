@@ -726,15 +726,15 @@ class GalleryRepository(context: Context) {
             eligibleIds.isNotEmpty()
         ) {
             semanticVectors.producerVersion()?.let { modelVersion ->
-                val indexedMediaCount = database.mediaIdsWithVectorCoverage(
+                val indexedMediaIds = database.mediaIdsWithVectorCoverage(
                     eligibleIds,
                     semanticVectors.indexedIds(),
-                ).size
+                )
                 val scanId = database.createOrResumeSemanticPredicateScan(
                     query = SemanticPredicateScanPolicy.queryText(plan),
                     modelVersion = modelVersion,
                     eligibleMediaIds = eligibleIds,
-                    indexedMediaCount = indexedMediaCount,
+                    indexedMediaIds = indexedMediaIds,
                 )
                 val record = SemanticPredicateScanRunner(database, semanticVectors).run(scanId) { progress ->
                     emit(QueryProgress.SemanticScan(progress.searchedCount, progress.eligibleCount))

@@ -32,4 +32,23 @@ class SemanticPredicateScanPolicyTest {
         assertNotEquals(first, second)
         assertNotEquals(first, SemanticPredicateScanPolicy.queryKey("dog", "siglip-v2", scopeA))
     }
+
+    @Test
+    fun coverageFingerprintDistinguishesDifferentMediaWithTheSameCount() {
+        val eligible = setOf("a", "b", "c")
+        val first = SemanticPredicateScanPolicy.coverageHash(eligible, setOf("a", "b"))
+        val second = SemanticPredicateScanPolicy.coverageHash(eligible, setOf("a", "c"))
+
+        assertNotEquals(first, second)
+    }
+
+    @Test
+    fun coverageChangeResetsDormantScansButNotAHealthyLiveLease() {
+        val oldHash = "old"
+        val newHash = "new"
+
+        assertTrue(SemanticPredicateScanPolicy.requiresCoverageReset(SemanticPredicateScanStatus.COMPLETE, oldHash, newHash))
+        assertTrue(SemanticPredicateScanPolicy.requiresCoverageReset(SemanticPredicateScanStatus.PENDING, null, newHash))
+        assertFalse(SemanticPredicateScanPolicy.requiresCoverageReset(SemanticPredicateScanStatus.RUNNING, oldHash, newHash))
+    }
 }

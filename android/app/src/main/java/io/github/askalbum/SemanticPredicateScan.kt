@@ -31,6 +31,7 @@ data class SemanticPredicateScanEntity(
     @ColumnInfo(name = "scope_hash") val scopeHash: String,
     @ColumnInfo(name = "eligible_count") val eligibleCount: Int,
     @ColumnInfo(name = "indexed_count") val indexedCount: Int,
+    @ColumnInfo(name = "indexed_coverage_hash") val indexedCoverageHash: String?,
     @ColumnInfo(name = "searched_count") val searchedCount: Int,
     @ColumnInfo(name = "next_ordinal") val nextOrdinal: Int,
     @ColumnInfo(name = "hit_count") val hitCount: Int,
@@ -103,6 +104,7 @@ data class SemanticPredicateScanRecord(
     val scopeHash: String,
     val eligibleCount: Int,
     val indexedCount: Int,
+    val indexedCoverageHash: String?,
     val searchedCount: Int,
     val nextOrdinal: Int,
     val hitCount: Int,
@@ -119,6 +121,7 @@ data class SemanticPredicateScanRecord(
     val completeCoverage: Boolean
         get() = status == SemanticPredicateScanStatus.COMPLETE &&
             indexedCount >= eligibleCount && searchedCount >= eligibleCount
+            && indexedCoverageHash == scopeHash
 }
 
 data class SemanticPredicateScanBatch(
@@ -146,6 +149,15 @@ internal object SemanticPredicateScanPolicy {
 
     fun canCommitBatch(report: RetrievalChannelReport<*>): Boolean =
         report.status == ChannelStatus.SUCCESS && report.errorCode == null
+
+    fun coverageHash(eligibleMediaIds: Set<String>, indexedMediaIds: Set<String>): String =
+        scopeHash(indexedMediaIds.intersect(eligibleMediaIds))
+
+    fun requiresCoverageReset(
+        status: SemanticPredicateScanStatus,
+        storedCoverageHash: String?,
+        currentCoverageHash: String,
+    ): Boolean = status != SemanticPredicateScanStatus.RUNNING && storedCoverageHash != currentCoverageHash
 
     fun scopeHash(mediaIds: Set<String>): String = digest(mediaIds.toList().sorted().joinToString("\n"))
 
