@@ -29,4 +29,27 @@ class RetrievalExactnessPolicyTest {
             RetrievalExactnessPolicy.resolve(true, false, partial, false, completePredicateScan = true),
         )
     }
+
+    @Test
+    fun completeSemanticScanWithBoundedVisualVerificationIsNotExact() {
+        val success = RetrievalChannelReport<Any>(
+            channel = RetrievalChannel.SEMANTIC,
+            status = ChannelStatus.SUCCESS,
+            eligibleCount = 10,
+            indexedCount = 10,
+            searchedCount = 10,
+            hits = emptyList(),
+        )
+
+        assertEquals(
+            ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+            RetrievalExactnessPolicy.resolve(
+                allEligibleIndexed = true,
+                deterministicOperation = false,
+                semanticReport = success,
+                verificationApplied = true,
+                completePredicateScan = true,
+            ),
+        )
+    }
 }

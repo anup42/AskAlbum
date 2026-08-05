@@ -604,3 +604,8 @@ media, databases, or logs.
 - Index summaries now distinguish SigLIP2 stages that are pending/retryable from stages that are exhausted or permanently failed.
 - Runtime status, supervisor scheduling, ViewModel activity, foreground notifications, and worker ETA use that durable coverage instead of `discovered - ready`.
 - Caption-vector progress now exposes durable delayed-retry and quarantined counts when its queue is otherwise exhausted.
+
+### 2026-08-05 - Keep verified visual counts non-exhaustive
+
+- A complete semantic predicate scan is no longer reported as exact when bounded visual verification is also required.
+- Added regression coverage for person-conditioned or other visual predicates that cannot be evaluated exhaustively by the semantic scan alone.

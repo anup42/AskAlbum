@@ -135,6 +135,10 @@ internal object RetrievalExactnessPolicy {
         completePredicateScan: Boolean = false,
     ): ResultExactness = when {
         !allEligibleIndexed -> ResultExactness.PARTIAL_INDEX
+        // A full semantic scan only evaluates its semantic predicate. If bounded
+        // visual verification was also needed, the visual predicate was not
+        // evaluated across the complete eligible set and cannot be called exact.
+        verificationApplied -> ResultExactness.ESTIMATED_FROM_RETRIEVAL
         completePredicateScan && semanticReport.status == ChannelStatus.SUCCESS -> ResultExactness.COMPLETE_PREDICATE_SCAN
         deterministicOperation -> ResultExactness.EXACT
         semanticReport.status in setOf(ChannelStatus.UNAVAILABLE, ChannelStatus.FAILED, ChannelStatus.PARTIAL) ->
