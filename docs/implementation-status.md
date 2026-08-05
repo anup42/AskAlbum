@@ -445,4 +445,4 @@ media, databases, or logs.
 - Foreground media and embedding runs now remain visibly `RUNNING` even after their WorkManager records are cancelled for foreground ownership.
 - User cancellation no longer gets converted into a failure that silently re-enqueues background indexing.
 - Foreground notifications show media/vector count progress after gallery discovery instead of remaining indeterminate.
-- Verified with `IndexingWorkProgressTest` and `consumerDebug` assembly; replacement device install remains pending for this patch.
+- Verified with `IndexingWorkProgressTest` and `consumerDebug` assembly; replacement device install and launch smoke check passed without changing app data.
