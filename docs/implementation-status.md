@@ -215,3 +215,9 @@ media, databases, or logs.
 - Caption-vector completion and failure now require the current lease owner and producer version, preventing stale workers from overwriting reclaimed chunks.
 - Missing verified retrieval packs now produce explicit WorkManager retry state instead of a successful empty embedding run.
 - Added a temporary-database instrumentation regression for stale-owner completion and failure.
+
+### 2026-08-05 - Report lexical FTS failures
+
+- Media FTS lookup now returns a typed lexical result; empty terms are `NOT_REQUIRED` and corrupt/unavailable FTS is `FAILED` rather than a successful empty set.
+- Search channel reports preserve the failure code while metadata scoring remains available as a partial fallback.
+- Added isolated database coverage for a corrupt FTS table.

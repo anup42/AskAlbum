@@ -615,7 +615,8 @@ class GalleryRepository(context: Context) {
         } else {
             emptyList()
         }
-        val fullTextIds = database.fullTextMatches(terms)
+        val lexicalSearch = database.fullTextMatches(terms)
+        val fullTextIds = lexicalSearch.ids
         val lexicalRanked = allItems
             .asSequence()
             .mapNotNull { item -> score(item, terms, item.id in fullTextIds) }
@@ -786,12 +787,13 @@ class GalleryRepository(context: Context) {
         val readyEligibleCount = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
         val lexicalChannelReport = RetrievalChannelReport(
             RetrievalChannel.LEXICAL,
-            ChannelStatus.SUCCESS,
-            eligibleIds.size,
-            readyEligibleCount,
-            eligibleIds.size,
+            lexicalSearch.status,
+            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
+            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else readyEligibleCount,
+            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
             lexicalRanked,
-            modelVersion = "sqlite-fts+metadata-v1",
+            modelVersion = "sqlite-fts+metadata-v2",
+            errorCode = lexicalSearch.errorCode,
         )
         val eventChannelReport = RetrievalChannelReport(
             RetrievalChannel.EVENT,

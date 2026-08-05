@@ -212,6 +212,12 @@ data class RetrievalChannelReport<T>(
     val errorCode: String? = null,
 )
 
+data class LexicalSearchResult(
+    val ids: Set<String> = emptySet(),
+    val status: ChannelStatus,
+    val errorCode: String? = null,
+)
+
 data class VisualFeatures(
     val perceptualHash: Long,
     val blurScore: Float,

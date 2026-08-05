@@ -2245,16 +2245,22 @@ class GalleryDatabase(
         )
     }
 
-    fun fullTextMatches(terms: List<String>, limit: Int = 500): Set<String> {
+    fun fullTextMatches(terms: List<String>, limit: Int = 500): LexicalSearchResult {
         val safe = terms.map { it.replace(Regex("[^\\p{L}\\p{N}]+"), "").trim() }.filter(String::isNotBlank)
-        if (safe.isEmpty()) return emptySet()
+        if (safe.isEmpty()) return LexicalSearchResult(status = ChannelStatus.NOT_REQUIRED)
         val expression = safe.joinToString(" OR ") { "\"$it\"" }
         return runCatching {
-            readableDatabase.rawQuery(
+            val ids = readableDatabase.rawQuery(
                 "SELECT media_id FROM media_fts WHERE media_fts MATCH ? LIMIT ?",
                 arrayOf(expression, limit.toString()),
             ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
-        }.getOrDefault(emptySet())
+            LexicalSearchResult(ids = ids, status = ChannelStatus.SUCCESS)
+        }.getOrElse {
+            LexicalSearchResult(
+                status = ChannelStatus.FAILED,
+                errorCode = "MEDIA_FTS_SEARCH_FAILED",
+            )
+        }
     }
 
     fun rebuildEvents() {
