@@ -898,3 +898,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Exact-duplicate reuse now copies only person facts matching the source caption's generation, media, model, prompt, and body-region versions.
 - Older person observations on the same source image cannot leak into a newer duplicate caption; the existing caption provenance policy remains the single matching rule.
 - No media, People corrections, captions, facts, vectors, events, or model packs were modified.
+
+## 2026-08-06 - Repair legacy shared provenance on current installations
+
+- Added the non-destructive v27-to-v28 migration for already-upgraded databases.
+- Shared media facts and captions remain shared only when a distinct source-generation record and matching exact-content digest prove pixel-equivalent reuse; event/group rows become contextual and ambiguous legacy rows become `LEGACY_SCOPE_UNCERTAIN`.
+- Affected caption chunks and FTS rows are invalidated for provenance-safe regeneration without deleting captions, facts, media, People data, vectors, events, or models.
+- Added an Android migration regression covering valid reuse, ambiguous rows, event scope repair, and chunk invalidation.

@@ -653,7 +653,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticPredicateScanHitEntity::class,
         SensitiveDataMigrationEntity::class,
     ],
-    version = 27,
+    version = 28,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -691,6 +691,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_24_25,
             MIGRATION_25_26,
             MIGRATION_26_27,
+            MIGRATION_27_28,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1311,6 +1312,183 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
         internal val MIGRATION_26_27 = object : Migration(26, 27) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE semantic_predicate_scan ADD COLUMN indexed_coverage_hash TEXT")
+            }
+        }
+
+        internal val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val exactShared = SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED
+                val groupContext = SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY
+                val legacyUncertain = SemanticProvenanceApplicability.LEGACY_SCOPE_UNCERTAIN
+
+                // Keep the source records, but force every affected caption's derived chunks
+                // through the normal provenance-aware rebuild path.
+                db.execSQL("DROP TABLE IF EXISTS semantic_provenance_repair_caption")
+                db.execSQL(
+                    """
+                    CREATE TEMP TABLE semantic_provenance_repair_caption AS
+                    SELECT id
+                    FROM semantic_caption
+                    WHERE applicability=?
+                       OR generation_id IS NULL
+                    """.trimIndent(),
+                    arrayOf(exactShared),
+                )
+
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET scope='EVENT', applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND EXISTS (
+                        SELECT 1 FROM event_media em
+                        WHERE CAST(em.event_id AS TEXT)=semantic_fact.subject_id
+                          AND em.media_id=semantic_fact.evidence_media_id
+                      )
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET scope='VISUAL_GROUP', applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND EXISTS (
+                        SELECT 1 FROM visual_group_member vgm
+                        WHERE vgm.group_id=semantic_fact.subject_id
+                          AND vgm.media_id=semantic_fact.evidence_media_id
+                      )
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET applicability=?
+                    WHERE scope IN ('EVENT','VISUAL_GROUP') AND applicability=?
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM semantic_generation generation
+                        JOIN media_item source ON source.id=generation.evidence_media_id
+                        JOIN media_item target ON target.id=semantic_fact.evidence_media_id
+                        WHERE generation.generation_id=semantic_fact.generation_id
+                          AND generation.scope='MEDIA'
+                          AND generation.evidence_media_id<>semantic_fact.evidence_media_id
+                          AND generation.model_version=semantic_fact.model_version
+                          AND generation.prompt_version=semantic_fact.prompt_version
+                          AND source.exact_content_digest IS NOT NULL
+                          AND source.exact_content_digest=target.exact_content_digest
+                      )
+                    """.trimIndent(),
+                    arrayOf(legacyUncertain, exactShared),
+                )
+
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET scope='EVENT', applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND EXISTS (
+                        SELECT 1 FROM event_media em
+                        WHERE CAST(em.event_id AS TEXT)=semantic_caption.subject_id
+                          AND em.media_id=semantic_caption.evidence_media_id
+                      )
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET scope='VISUAL_GROUP', applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND EXISTS (
+                        SELECT 1 FROM visual_group_member vgm
+                        WHERE vgm.group_id=semantic_caption.subject_id
+                          AND vgm.media_id=semantic_caption.evidence_media_id
+                      )
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET applicability=?
+                    WHERE scope IN ('EVENT','VISUAL_GROUP') AND applicability=?
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM semantic_generation generation
+                        JOIN media_item source ON source.id=semantic_caption.representative_media_id
+                        JOIN media_item target ON target.id=semantic_caption.evidence_media_id
+                        WHERE generation.generation_id=semantic_caption.generation_id
+                          AND generation.scope='MEDIA'
+                          AND generation.evidence_media_id=source.id
+                          AND source.id<>target.id
+                          AND generation.model_version=semantic_caption.model_version
+                          AND generation.prompt_version=semantic_caption.prompt_version
+                          AND source.exact_content_digest IS NOT NULL
+                          AND source.exact_content_digest=target.exact_content_digest
+                      )
+                    """.trimIndent(),
+                    arrayOf(legacyUncertain, exactShared),
+                )
+
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO semantic_provenance_repair_caption(id)
+                    SELECT DISTINCT chunk.caption_id
+                    FROM semantic_caption_chunk chunk
+                    JOIN semantic_caption caption ON caption.id=chunk.caption_id
+                    WHERE caption.generation_id IS NULL
+                       OR chunk.scope IS NOT caption.scope
+                       OR chunk.scope_id IS NOT caption.subject_id
+                       OR chunk.evidence_media_id IS NOT caption.evidence_media_id
+                       OR chunk.caption_model_version IS NOT caption.model_version
+                       OR chunk.caption_prompt_version IS NOT caption.prompt_version
+                       OR chunk.generation_id IS NOT caption.generation_id
+                       OR caption.applicability=?
+                    """.trimIndent(),
+                    arrayOf(legacyUncertain),
+                )
+                db.execSQL(
+                    """
+                    DELETE FROM semantic_caption_chunk_fts
+                    WHERE chunk_id IN (
+                        SELECT chunk.id
+                        FROM semantic_caption_chunk chunk
+                        WHERE chunk.caption_id IN (SELECT id FROM semantic_provenance_repair_caption)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    DELETE FROM semantic_caption_chunk
+                    WHERE caption_id IN (SELECT id FROM semantic_provenance_repair_caption)
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET chunk_policy_version=NULL, chunked_at=NULL
+                    WHERE id IN (SELECT id FROM semantic_provenance_repair_caption)
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE semantic_provenance_repair_caption")
             }
         }
 
