@@ -852,3 +852,6 @@ media, databases, or logs.
 ### 2026-08-06 - Recycle media-analysis bitmaps on every exit path
 
 `GalleryIndexBatchProcessor` now tracks every decoded video frame, PDF page, and image bitmap as soon as ownership enters the batch. The processor recycles those bitmaps from a single `finally` block even when ML Kit, OCR, decoding, completion, cancellation, or a poison item fails. This prevents repeated media-analysis failures from retaining native pixel buffers and making indexing progressively slower or unstable. No completed index rows or media data are changed.
+### 2026-08-06 - Reject partial caption-vector batches
+
+Caption embedding now validates that the text encoder returned exactly one vector per claimed chunk before persisting any result. A cardinality mismatch retries every claimed chunk with a bounded item attempt instead of silently dropping rows through `zip` and leaving them in-flight. Added a regression test; existing captions and image vectors are unchanged.

@@ -92,22 +92,36 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
                 val vectors = IndexingResourceCoordinator.withBackgroundPermit {
                     services.captionVectorStore.embedTexts(chunks.map(SemanticCaptionChunkRecord::exactText))
                 }
-                chunks.zip(vectors).forEach { (chunk, vector) ->
-                    try {
-                        services.captionVectorStore.upsert(chunk.id, vector)
-                        database.completeCaptionEmbedding(chunk.id, producer, id.toString())
-                        processed++
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Throwable) {
+                if (!CaptionEmbeddingBatchPolicy.hasCompleteOutput(chunks.size, vectors.size)) {
+                    val error = "Embedding batch cardinality mismatch: requested=${chunks.size} returned=${vectors.size}"
+                    chunks.forEach { chunk ->
                         database.failCaptionEmbedding(
                             chunk.id,
                             producer,
                             id.toString(),
-                            error.message ?: error::class.java.simpleName,
+                            error,
                             retryable = true,
                         )
-                        failures++
+                    }
+                    failures += chunks.size
+                } else {
+                    chunks.zip(vectors).forEach { (chunk, vector) ->
+                        try {
+                            services.captionVectorStore.upsert(chunk.id, vector)
+                            database.completeCaptionEmbedding(chunk.id, producer, id.toString())
+                            processed++
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Throwable) {
+                            database.failCaptionEmbedding(
+                                chunk.id,
+                                producer,
+                                id.toString(),
+                                error.message ?: error::class.java.simpleName,
+                                retryable = true,
+                            )
+                            failures++
+                        }
                     }
                 }
             } catch (cancelled: CancellationException) {
@@ -180,6 +194,10 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
         const val BACKFILL_CAPTIONS_PER_RUN = 8
         const val CHUNKS_PER_RUN = 24
     }
+}
+
+internal object CaptionEmbeddingBatchPolicy {
+    fun hasCompleteOutput(requested: Int, returned: Int): Boolean = requested == returned
 }
 
 internal object CaptionEmbeddingAvailabilityPolicy {
