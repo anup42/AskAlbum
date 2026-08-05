@@ -842,3 +842,7 @@ media, databases, or logs.
 - Added a typed policy that sends non-empty semantic FIND_MEDIA queries through the existing shared Gemma grounded-answer composer when requested output allows a summary.
 - RESULTS_ONLY, empty/metadata-only, and unavailable-model paths remain deterministic; no per-image Gemma processing or extra vision pass was added.
 - Added three policy regressions. Existing media, indexes, People data, captions, events, and model packs are unchanged.
+2026-08-06 - Broadened bounded OCR fact extraction
+- Receipt totals now accept a labeled currencyless amount without treating arbitrary numbers as totals.
+- ISO dates and common `Wi-Fi password is ...` wording are extracted into the existing allowlisted entity types.
+- Added extractor regressions; sensitive values remain protected and no OCR value is sent to Gemma before authentication.
