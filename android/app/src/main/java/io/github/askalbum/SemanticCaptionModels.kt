@@ -156,6 +156,7 @@ internal object SemanticEnrichmentCodec {
         val refs = mutableListOf<SemanticCaptionPersonRefRecord>()
         val personFacts = mutableListOf<PersonVisualFactRecord>()
         val confidentlyAssociatedLabels = mutableSetOf<String>()
+        val visibilityByLabel = mutableMapOf<String, PersonVisibility>()
         for (index in 0 until minOf(people.length(), MAX_PEOPLE)) {
             val person = people.optJSONObject(index) ?: continue
             val personRef = person.safeText("personRef", 20)
@@ -163,6 +164,7 @@ internal object SemanticEnrichmentCodec {
             val association = enumValue<PersonAssociationStatus>(person.safeText("associationStatus", 40))
                 ?: PersonAssociationStatus.AMBIGUOUS
             val visibility = enumValue<PersonVisibility>(person.safeText("visibility", 40)) ?: PersonVisibility.UNKNOWN
+            visibilityByLabel[personRef] = visibility
             val bodyBox = person.optJSONArray("bodyRegion")?.normalizedRegion()
             refs += SemanticCaptionPersonRefRecord(
                 personRef = personRef,
@@ -213,10 +215,11 @@ internal object SemanticEnrichmentCodec {
                         personRef = personRef,
                         relation = relation,
                         value = action,
-                        bodyRegion = BodyRegion.FULL_BODY,
+                        bodyRegion = actionBodyRegion(relation),
                         confidence = person.opt("confidence").asConfidence() ?: captionConfidence ?: 0.6f,
                         faceRegion = binding.faceRegion(),
                         evidenceRegion = bodyBox,
+                        verdict = inferredActionVerdict(relation, visibility, bodyBox),
                         modelVersion = modelVersion,
                         promptVersion = PROMPT_VERSION,
                         generationId = generation?.generationId,
@@ -230,6 +233,7 @@ internal object SemanticEnrichmentCodec {
                 actions = root.optJSONArray("actions") ?: JSONArray(),
                 bindingByLabel = bindingByLabel,
                 confidentlyAssociatedLabels = confidentlyAssociatedLabels,
+                visibilityByLabel = visibilityByLabel,
                 modelVersion = modelVersion,
                 defaultConfidence = captionConfidence,
                 generationId = generation?.generationId,
@@ -239,6 +243,7 @@ internal object SemanticEnrichmentCodec {
                 interactions = root.optJSONArray("interactions") ?: JSONArray(),
                 bindingByLabel = bindingByLabel,
                 confidentlyAssociatedLabels = confidentlyAssociatedLabels,
+                visibilityByLabel = visibilityByLabel,
                 modelVersion = modelVersion,
                 defaultConfidence = captionConfidence,
                 generationId = generation?.generationId,
@@ -330,6 +335,7 @@ internal object SemanticEnrichmentCodec {
         actions: JSONArray,
         bindingByLabel: Map<String, PersonVerificationBinding>,
         confidentlyAssociatedLabels: Set<String>,
+        visibilityByLabel: Map<String, PersonVisibility>,
         modelVersion: String,
         defaultConfidence: Float?,
         generationId: String?,
@@ -345,6 +351,21 @@ internal object SemanticEnrichmentCodec {
             if (value.isBlank() || SensitiveContentClassifier.isSensitive(value)) continue
             val relation = normalizeActionRelation(action) ?: continue
             if (hasNegativePredicate(objectRef)) continue
+            val visibility = enumValue<PersonVisibility>(actionObject.safeText("visibility", 40))
+                ?: visibilityByLabel[personRef]
+                ?: PersonVisibility.UNKNOWN
+            val evidenceRegion = actionObject.optJSONArray("region")?.normalizedRegion()
+            val inferredVerdict = inferredActionVerdict(relation, visibility, evidenceRegion)
+            val explicitAssociation = enumValue<PersonAssociationStatus>(actionObject.safeText("associationStatus", 40))
+                ?: PersonAssociationStatus.CONFIDENT
+            val verdict = if (explicitAssociation == PersonAssociationStatus.CONFIDENT) {
+                safeVisualVerdict(
+                    enumValue<PersonVisualVerdict>(actionObject.safeText("verdict", 40)),
+                    inferredVerdict,
+                )
+            } else {
+                PersonVisualVerdict.AMBIGUOUS
+            }
             add(
                 PersonVisualFactRecord(
                     mediaId = job.representativeMediaId,
@@ -353,10 +374,12 @@ internal object SemanticEnrichmentCodec {
                     relation = relation,
                     itemType = objectRef.takeIf(String::isNotBlank),
                     value = value,
-                    bodyRegion = BodyRegion.FULL_BODY,
+                    bodyRegion = actionBodyRegion(relation),
                     confidence = actionObject.opt("confidence").asConfidence() ?: defaultConfidence ?: 0.6f,
                     faceRegion = binding.faceRegion(),
-                    evidenceRegion = actionObject.optJSONArray("region")?.normalizedRegion(),
+                    evidenceRegion = evidenceRegion,
+                    associationStatus = explicitAssociation,
+                    verdict = verdict,
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
                     generationId = generationId,
@@ -370,6 +393,7 @@ internal object SemanticEnrichmentCodec {
         interactions: JSONArray,
         bindingByLabel: Map<String, PersonVerificationBinding>,
         confidentlyAssociatedLabels: Set<String>,
+        visibilityByLabel: Map<String, PersonVisibility>,
         modelVersion: String,
         defaultConfidence: Float?,
         generationId: String?,
@@ -384,6 +408,19 @@ internal object SemanticEnrichmentCodec {
             val predicate = interaction.safeText("predicate", 120)
             if (predicate.isBlank() || SensitiveContentClassifier.isSensitive(predicate)) continue
             val relation = normalizeInteractionPredicate(predicate) ?: continue
+            val subjectVisibility = visibilityByLabel[subjectRef] ?: PersonVisibility.UNKNOWN
+            val targetVisibility = visibilityByLabel[targetRef] ?: PersonVisibility.UNKNOWN
+            val inferredVerdict = inferredInteractionVerdict(subjectVisibility, targetVisibility)
+            val explicitAssociation = enumValue<PersonAssociationStatus>(interaction.safeText("associationStatus", 40))
+                ?: PersonAssociationStatus.CONFIDENT
+            val verdict = if (explicitAssociation == PersonAssociationStatus.CONFIDENT) {
+                safeVisualVerdict(
+                    enumValue<PersonVisualVerdict>(interaction.safeText("verdict", 40)),
+                    inferredVerdict,
+                )
+            } else {
+                PersonVisualVerdict.AMBIGUOUS
+            }
             add(
                 PersonVisualFactRecord(
                     mediaId = job.representativeMediaId,
@@ -394,7 +431,8 @@ internal object SemanticEnrichmentCodec {
                     bodyRegion = BodyRegion.FULL_BODY,
                     confidence = interaction.opt("confidence").asConfidence() ?: defaultConfidence ?: 0.6f,
                     faceRegion = subject.faceRegion(),
-                    associationStatus = PersonAssociationStatus.CONFIDENT,
+                    associationStatus = explicitAssociation,
+                    verdict = verdict,
                     targetClusterId = target.clusterId,
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
@@ -416,6 +454,55 @@ internal object SemanticEnrichmentCodec {
             tokens.any { it in OBSERVED_ACTIONS } -> PersonVisualRelation.ACTION
             else -> null
         }
+    }
+
+    private fun actionBodyRegion(relation: PersonVisualRelation): BodyRegion = when (relation) {
+        PersonVisualRelation.HOLDING,
+        PersonVisualRelation.CARRYING,
+        PersonVisualRelation.USING,
+        -> BodyRegion.HAND
+        else -> BodyRegion.FULL_BODY
+    }
+
+    private fun inferredActionVerdict(
+        relation: PersonVisualRelation,
+        visibility: PersonVisibility,
+        evidenceRegion: List<Float>?,
+    ): PersonVisualVerdict = when {
+        visibility == PersonVisibility.UNKNOWN || visibility == PersonVisibility.FACE_ONLY ->
+            PersonVisualVerdict.NOT_VISIBLE
+        visibility == PersonVisibility.LOWER_BODY -> PersonVisualVerdict.NOT_VISIBLE
+        visibility == PersonVisibility.PARTIAL || visibility == PersonVisibility.OCCLUDED ->
+            PersonVisualVerdict.AMBIGUOUS
+        relation in setOf(PersonVisualRelation.HOLDING, PersonVisualRelation.CARRYING, PersonVisualRelation.USING) &&
+            visibility == PersonVisibility.UPPER_BODY && evidenceRegion == null ->
+            PersonVisualVerdict.NOT_VISIBLE
+        relation == PersonVisualRelation.ACTION && visibility != PersonVisibility.FULL_BODY ->
+            PersonVisualVerdict.NOT_VISIBLE
+        else -> PersonVisualVerdict.VERIFIED_TRUE
+    }
+
+    private fun inferredInteractionVerdict(
+        subjectVisibility: PersonVisibility,
+        targetVisibility: PersonVisibility,
+    ): PersonVisualVerdict {
+        val visibilities = setOf(subjectVisibility, targetVisibility)
+        return when {
+            visibilities.any { it == PersonVisibility.UNKNOWN || it == PersonVisibility.FACE_ONLY || it == PersonVisibility.LOWER_BODY } ->
+                PersonVisualVerdict.NOT_VISIBLE
+            visibilities.any { it == PersonVisibility.PARTIAL || it == PersonVisibility.OCCLUDED } ->
+                PersonVisualVerdict.AMBIGUOUS
+            else -> PersonVisualVerdict.VERIFIED_TRUE
+        }
+    }
+
+    private fun safeVisualVerdict(
+        explicit: PersonVisualVerdict?,
+        inferred: PersonVisualVerdict,
+    ): PersonVisualVerdict = if (inferred == PersonVisualVerdict.VERIFIED_TRUE) {
+        explicit ?: inferred
+    } else {
+        inferred
     }
 
     private fun normalizeInteractionPredicate(raw: String): PersonVisualRelation? {
@@ -560,6 +647,10 @@ internal object SemanticEnrichmentCodec {
         val category = enumValue<WornItemCategory>(item.safeText("category", 40)) ?: defaultCategory
         val bodyRegion = enumValue<BodyRegion>(item.safeText("bodyRegion", 40)) ?: inferredBodyRegion(category, visibility)
         val evidenceRegion = item.optJSONArray("region")?.normalizedRegion()
+        val verdict = safeVisualVerdict(
+            enumValue<PersonVisualVerdict>(item.safeText("verdict", 40)),
+            inferredItemVerdict(bodyRegion, visibility, evidenceRegion),
+        )
         val attributes = buildMap {
             item.optJSONArray("colors")?.strings()?.takeIf(List<String>::isNotEmpty)?.let { put("colors", it) }
             listOf("pattern", "material", "style", "length", "sleeves").forEach { key ->
@@ -586,6 +677,7 @@ internal object SemanticEnrichmentCodec {
             confidence = confidence,
             faceRegion = binding.faceRegion(),
             evidenceRegion = evidenceRegion,
+            verdict = verdict,
             modelVersion = modelVersion,
             promptVersion = PROMPT_VERSION,
             generationId = generationId,
@@ -597,6 +689,24 @@ internal object SemanticEnrichmentCodec {
         WornItemCategory.HEADWEAR, WornItemCategory.EYEWEAR -> BodyRegion.HEAD
         WornItemCategory.JEWELRY -> BodyRegion.NECK
         else -> if (visibility == PersonVisibility.FULL_BODY) BodyRegion.FULL_BODY else BodyRegion.UPPER_BODY
+    }
+
+    private fun inferredItemVerdict(
+        bodyRegion: BodyRegion,
+        visibility: PersonVisibility,
+        evidenceRegion: List<Float>?,
+    ): PersonVisualVerdict = when {
+        visibility == PersonVisibility.UNKNOWN -> PersonVisualVerdict.NOT_VISIBLE
+        visibility == PersonVisibility.OCCLUDED || visibility == PersonVisibility.PARTIAL -> PersonVisualVerdict.AMBIGUOUS
+        bodyRegion in setOf(BodyRegion.FEET, BodyRegion.LOWER_BODY) &&
+            visibility !in setOf(PersonVisibility.FULL_BODY, PersonVisibility.LOWER_BODY) ->
+            PersonVisualVerdict.NOT_VISIBLE
+        bodyRegion in setOf(BodyRegion.UPPER_BODY, BodyRegion.FULL_BODY, BodyRegion.HAND) &&
+            visibility == PersonVisibility.FACE_ONLY ->
+            PersonVisualVerdict.NOT_VISIBLE
+        bodyRegion == BodyRegion.HEAD && visibility == PersonVisibility.FACE_ONLY ->
+            if (evidenceRegion != null) PersonVisualVerdict.VERIFIED_TRUE else PersonVisualVerdict.NOT_VISIBLE
+        else -> PersonVisualVerdict.VERIFIED_TRUE
     }
 
     private fun PersonVerificationBinding.faceRegion(): List<Float> = listOf(left, top, right, bottom)

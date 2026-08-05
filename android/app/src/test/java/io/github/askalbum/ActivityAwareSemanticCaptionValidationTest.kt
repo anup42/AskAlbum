@@ -87,4 +87,32 @@ class ActivityAwareSemanticCaptionValidationTest {
         assertFalse(result.personFacts.any { it.value.contains("null", ignoreCase = true) })
         assertEquals(1, result.personFacts.count { it.relation == PersonVisualRelation.STANDING_BESIDE })
     }
+
+    @Test
+    fun faceOnlyActionIsStoredAsNotVisibleAndCannotConfirm() {
+        val result = SemanticEnrichmentCodec.decode(
+            job,
+            """
+            {
+              "sceneSummary":"A face is visible near a gift.",
+              "imageSubject":"portrait near a gift",
+              "observedActivity":"holding a gift",
+              "activityState":"OBSERVED",
+              "detailedCaption":"A close portrait is shown near a wrapped gift.",
+              "people":[
+                {"personRef":"P1","visibility":"FACE_ONLY","associationStatus":"CONFIDENT","actions":["holding"]}
+              ],
+              "actions":[{"subjectRef":"P1","action":"holding","objectRef":"gift","confidence":0.99}],
+              "interactions":[],
+              "facts":[]
+            }
+            """.trimIndent(),
+            "gemma-fixture",
+            bindings,
+        )
+
+        val holding = result.personFacts.filter { it.relation == PersonVisualRelation.HOLDING }
+        assertTrue(holding.isNotEmpty())
+        assertTrue(holding.all { it.verdict == PersonVisualVerdict.NOT_VISIBLE })
+    }
 }

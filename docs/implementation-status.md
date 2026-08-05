@@ -404,3 +404,4 @@ media, databases, or logs.
 - People indexing now treats mixed face-item success as progress, schedules delayed retryable face stages at their durable `next_attempt_at`, and uses WorkManager retry only for zero-progress/systemic stoppage.
 - Caption chunks now preserve fact-level applicability, so possible occasions remain uncertain candidate evidence instead of becoming direct media facts.
 - Pending semantic jobs now remain retryable when no verified multimodal Gemma pack is available; the worker reports `UNAVAILABLE` instead of completing successfully.
+- Person action and appearance facts now fail closed when required body regions are cropped, face-only, occluded, or ambiguously associated; only visible, confident facts can produce confirming chunks.
