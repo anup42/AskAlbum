@@ -85,6 +85,19 @@ data class CaptionLexicalSearchResult(
     val errorCode: String? = null,
 )
 
+internal object SemanticCaptionValuePolicy {
+    private val placeholderValues = setOf("null", "undefined", "unknown", "n a", "na")
+    private val nonWord = Regex("[^\\p{L}\\p{N}]+")
+
+    fun text(value: Any?, maximumLength: Int): String {
+        if (value !is String) return ""
+        val text = value.trim().take(maximumLength)
+        if (text.isBlank() || SensitiveContentClassifier.isSensitive(text)) return ""
+        val normalized = text.lowercase(Locale.ROOT).replace(nonWord, " ").trim()
+        return text.takeUnless { normalized in placeholderValues }.orEmpty()
+    }
+}
+
 internal object SemanticEnrichmentCodec {
     private const val MAX_CAPTION_LENGTH = 4_000
     private const val MAX_PEOPLE = 12
@@ -530,10 +543,7 @@ internal object SemanticEnrichmentCodec {
         raw.lowercase(Locale.ROOT).replace(Regex("""[^\p{L}\p{N}]+"""), " ").trim()
 
     private fun JSONArray.safeTextAt(index: Int, maximumLength: Int): String {
-        val value = opt(index)
-        if (value !is String) return ""
-        val text = value.trim().take(maximumLength)
-        return text.takeUnless { normalizePredicate(it) in PLACEHOLDER_VALUES }.orEmpty()
+        return SemanticCaptionValuePolicy.text(opt(index), maximumLength)
     }
 
     private val NEGATIVE_PREDICATE = Regex(
@@ -727,9 +737,7 @@ internal object SemanticEnrichmentCodec {
     }
 
     private fun JSONObject.safeText(key: String, maxLength: Int): String {
-        val value = opt(key)
-        if (value !is String) return ""
-        return value.trim().take(maxLength).takeUnless(SensitiveContentClassifier::isSensitive).orEmpty()
+        return SemanticCaptionValuePolicy.text(opt(key), maxLength)
     }
 
     private fun Any?.asConfidence(): Float? = when (this) {
