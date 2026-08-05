@@ -194,6 +194,49 @@ class SemanticEnrichmentDatabaseTest {
     }
 
     @Test
+    fun staleMediaCaptionDoesNotCountAsCurrentCaptionCoverage() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "stale-caption-coverage-${UUID.randomUUID()}.db"
+        val database = GalleryDatabase(context, name)
+        try {
+            database.seedDemoIfEmpty()
+            val mediaId = database.allItems().first().id
+            val job = SemanticEnrichmentJobRecord(
+                id = UUID.randomUUID().toString(),
+                scope = SemanticFactScope.MEDIA,
+                subjectId = mediaId,
+                representativeMediaId = mediaId,
+                reason = "stale-caption",
+                status = SemanticEnrichmentStatus.PENDING,
+                attemptCount = 0,
+                userRequested = false,
+            )
+            database.replaceSemanticEnrichmentPlan(SemanticEnrichmentPlan(emptyList(), emptyList(), listOf(job)))
+            database.completeSemanticEnrichment(
+                requireNotNull(database.claimSemanticEnrichmentJob(owner = "stale-caption-owner")),
+                SemanticEnrichmentResult(
+                    facts = emptyList(),
+                    caption = SemanticCaptionRecord(
+                        scope = SemanticFactScope.MEDIA,
+                        subjectId = mediaId,
+                        text = "An outdated personal caption",
+                        confidence = 0.8f,
+                        evidenceMediaId = mediaId,
+                        applicability = SemanticProvenanceApplicability.STALE_PERSON_BINDING,
+                        modelVersion = "fixture",
+                        promptVersion = "fixture-v1",
+                    ),
+                ),
+            )
+
+            assertEquals(0, database.semanticCaptionEvidenceCount(setOf(mediaId)))
+        } finally {
+            database.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
     fun representativeJobPreservesScopeAndSharesOnlyVerifiedExactDuplicates() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "semantic-facts-${UUID.randomUUID()}.db"
