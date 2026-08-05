@@ -199,6 +199,36 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun unsupportedDocumentFieldsNeverFallbackToReceiptTotal() {
+        val fact = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.DOCUMENT_QA).copy(
+                plan = context(QueryIntent.DOCUMENT_QA).plan.copy(
+                    ocrClause = OcrClause(requestedField = "bank_account"),
+                ),
+            ),
+        )
+        val sum = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.SUM).copy(
+                plan = context(QueryIntent.SUM).plan.copy(
+                    aggregation = AggregationSpec(AggregationOperation.SUM, "bank_account"),
+                ),
+            ),
+        )
+        val minMax = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.MIN_MAX).copy(
+                plan = context(QueryIntent.MIN_MAX).plan.copy(
+                    aggregation = AggregationSpec(AggregationOperation.MIN_MAX, "bank_account"),
+                ),
+            ),
+        )
+
+        assertEquals("Unsupported document field", fact.headline)
+        assertEquals("Unsupported document field", sum.headline)
+        assertEquals("Unsupported document field", minMax.headline)
+        assertFalse(fact.headline.contains("INR"))
+    }
+
+    @Test
     fun compareExecutorUsesBothExplicitScopes() {
         val base = context(QueryIntent.COMPARE)
         val goa = hit("goa", "Goa", "INR 10.00", 1_700_000_000_000).let {

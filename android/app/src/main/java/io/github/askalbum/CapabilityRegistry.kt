@@ -165,7 +165,11 @@ object CapabilityAnswerExecutor {
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
         val field = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField)
-            ?: OcrFactAllowlist.fields.first()
+            ?: return base(
+                "Unsupported document field",
+                "The requested document field is not in the local allowlist, so no value was selected.",
+                emptyList(),
+            )
         val sourceHits = context.deterministicHits.ifEmpty { context.hits }
         val selection = DocumentAnswerSelector.select(sourceHits, setOf(field.sourceField), context.plan.sort)
         val fact = selection?.fact
@@ -188,7 +192,12 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
-        val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field) ?: OcrFactAllowlist.fields.first()
+        val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field)
+            ?: return base(
+                "Unsupported document field",
+                "The requested numeric field is not in the local allowlist, so no sum was computed.",
+                emptyList(),
+            )
         if (!field.numeric) return base("Cannot sum ${field.key}", "Only allowlisted numeric document facts can be summed.", emptyList())
         if (!context.hasCompleteEligibleCoverage()) {
             return base(
@@ -220,7 +229,12 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
-        val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field) ?: OcrFactAllowlist.fields.first()
+        val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field)
+            ?: return base(
+                "Unsupported document field",
+                "The requested numeric field is not in the local allowlist, so no minimum or maximum was computed.",
+                emptyList(),
+            )
         if (!context.hasCompleteEligibleCoverage()) {
             return base(
                 "Exact minimum or maximum unavailable",
