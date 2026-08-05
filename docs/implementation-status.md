@@ -356,3 +356,9 @@ media, databases, or logs.
 - Semantic facts are stored with the Keystore envelope and all three read paths now reveal the value before constructing `SemanticFactRecord`.
 - This restores cached Gemma fact display, semantic evidence text, and deterministic fact matching without exposing plaintext at rest.
 - The existing temporary-database semantic-enrichment instrumentation test covers the round trip.
+
+## Compose grounded text for factual and document answers
+
+- Grounded answer composition now also covers `ANSWER_FACT`, `DOCUMENT_QA`, `SUM`, and `MIN_MAX` plans when the verified model pack is installed.
+- Ordinary media search remains deterministic unless person/query verification is applied, avoiding an extra Gemma call for every image search.
+- Composer failure still falls back to the deterministic, evidence-backed answer rather than fabricating a result.

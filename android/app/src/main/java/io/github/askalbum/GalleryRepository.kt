@@ -1358,9 +1358,13 @@ class GalleryRepository(context: Context) {
         verification: VerificationResult,
     ): Boolean = hits.isNotEmpty() && services.modelPackManager.status().installed && (
         verification.applied || plan.intent in setOf(
+            QueryIntent.ANSWER_FACT,
             QueryIntent.COMPARE,
+            QueryIntent.DOCUMENT_QA,
             QueryIntent.TIMELINE,
             QueryIntent.EVENT_SUMMARY,
+            QueryIntent.SUM,
+            QueryIntent.MIN_MAX,
         )
     )
 
