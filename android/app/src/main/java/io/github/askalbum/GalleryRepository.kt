@@ -1488,16 +1488,11 @@ class GalleryRepository(context: Context) {
         plan: GalleryQueryPlan,
         hits: List<SearchHit>,
         verification: VerificationResult,
-    ): Boolean = hits.isNotEmpty() && services.modelPackManager.status().installed && (
-        verification.applied || plan.intent in setOf(
-            QueryIntent.ANSWER_FACT,
-            QueryIntent.COMPARE,
-            QueryIntent.DOCUMENT_QA,
-            QueryIntent.TIMELINE,
-            QueryIntent.EVENT_SUMMARY,
-            QueryIntent.SUM,
-            QueryIntent.MIN_MAX,
-        )
+    ): Boolean = GroundedAnswerPolicy.shouldCompose(
+        plan = plan,
+        hasHits = hits.isNotEmpty(),
+        modelInstalled = services.modelPackManager.status().installed,
+        verificationApplied = verification.applied,
     )
 
     private fun GalleryItem.looksLikeDocument(): Boolean {

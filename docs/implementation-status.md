@@ -838,3 +838,7 @@ media, databases, or logs.
 - Confirmed the supervisor could still schedule People, semantic enrichment, and caption-vector background work while the explicit media-processing foreground service was active.
 - Added a shared supervisor gate and worker-side checks; caption-vector claims are released before retry when the foreground lane takes priority.
 - Added a policy regression test. No completed gallery, People, vector, semantic, caption, event, or model data is modified.
+2026-08-06 - Grounded text responses for semantic media search
+- Added a typed policy that sends non-empty semantic FIND_MEDIA queries through the existing shared Gemma grounded-answer composer when requested output allows a summary.
+- RESULTS_ONLY, empty/metadata-only, and unavailable-model paths remain deterministic; no per-image Gemma processing or extra vision pass was added.
+- Added three policy regressions. Existing media, indexes, People data, captions, events, and model packs are unchanged.
