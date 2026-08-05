@@ -166,16 +166,18 @@ class GalleryDatabase(
                 val item = entries.getJSONObject(i)
                 val tagArray = item.getJSONArray("tags")
                 val tags = buildList {
-                    for (tagIndex in 0 until tagArray.length()) add(tagArray.getString(tagIndex))
+                    for (tagIndex in 0 until tagArray.length()) {
+                        tagArray.optionalSafeString(tagIndex, 128)?.let(::add)
+                    }
                 }
-                val location = item.optString("location_name", "Unknown location")
+                val location = item.optionalSafeString("location_name", 256) ?: "Unknown location"
                 val galleryItem = GalleryItem(
                     id = item.getString("id"),
                     filename = item.getString("filename"),
                     title = item.getString("title"),
-                    creator = item.optString("creator").takeIf { it.isNotBlank() && it != "null" },
+                    creator = item.optionalSafeString("creator", 256),
                     location = location,
-                    album = item.optString("album", location),
+                    album = item.optionalSafeString("album", 256) ?: location,
                     latitude = item.optDouble("latitude").takeUnless(Double::isNaN),
                     longitude = item.optDouble("longitude").takeUnless(Double::isNaN),
                     tags = tags,
@@ -4637,7 +4639,11 @@ class GalleryDatabase(
         val json = JSONObject(encoded)
         json.keys().asSequence().associateWith { key ->
             val values = json.optJSONArray(key) ?: JSONArray()
-            List(values.length()) { values.optString(it) }
+            buildList {
+                for (index in 0 until values.length()) {
+                    values.optionalSafeString(index, 256)?.let(::add)
+                }
+            }
         }
     }.getOrDefault(emptyMap())
 
