@@ -19,25 +19,47 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
         val application = applicationContext as AskAlbumApplication
         val controls = IndexingJobControlsStore(applicationContext)
         if (!controls.load().captionEmbeddingsEnabled) return@withContext Result.success()
-        val admission = BackgroundWorkAdmissionPolicy(applicationContext).evaluate()
-        if (!admission.allowed) return@withContext Result.retry()
 
         val services = application.services
+        val database = services.galleryDatabase
+        database.recoverCaptionEmbeddingClaims()
         val producer = services.captionVectorStore.producerVersion()
             ?: run {
+                val hasPendingWork = database.hasCaptionEmbeddingBackfillWork()
                 setProgress(
                     workDataOf(
-                        "status" to "UNAVAILABLE",
-                        "error_code" to "NO_VERIFIED_RETRIEVAL_PACK",
+                        "status" to if (hasPendingWork) "UNAVAILABLE" else "COMPLETE",
+                        "error_code" to if (hasPendingWork) "NO_VERIFIED_RETRIEVAL_PACK" else "",
+                        "pending" to if (hasPendingWork) 1 else 0,
                         "last_progress_at" to System.currentTimeMillis(),
                     ),
                 )
-                return@withContext Result.retry()
+                return@withContext if (CaptionEmbeddingAvailabilityPolicy.shouldRetryForUnavailablePack(hasPendingWork)) {
+                    Result.retry()
+                } else {
+                    Result.success()
+                }
             }
-        val database = services.galleryDatabase
-        database.recoverCaptionEmbeddingClaims()
         database.prepareCaptionEmbeddingVersion(producer)
         database.materializeCaptionChunkBackfill(BACKFILL_CAPTIONS_PER_RUN)
+        if (!database.hasCaptionEmbeddingWork(producer)) {
+            setProgress(
+                workDataOf(
+                    "status" to "COMPLETE",
+                    "processed" to 0,
+                    "failed" to 0,
+                    "in_flight" to 0,
+                    "last_progress_at" to System.currentTimeMillis(),
+                    "next_attempt_at" to 0L,
+                    "delayed_retries" to 0,
+                    "quarantined" to 0,
+                ),
+            )
+            runCatching { services.captionVectorStore.reconcile(database.currentCaptionEmbeddingChunkIds(producer)) }
+            return@withContext Result.success()
+        }
+        val admission = BackgroundWorkAdmissionPolicy(applicationContext).evaluate()
+        if (!admission.allowed) return@withContext Result.retry()
 
         var processed = 0
         var failures = 0
@@ -110,6 +132,10 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
         const val BACKFILL_CAPTIONS_PER_RUN = 8
         const val CHUNKS_PER_RUN = 24
     }
+}
+
+internal object CaptionEmbeddingAvailabilityPolicy {
+    fun shouldRetryForUnavailablePack(hasPendingWork: Boolean): Boolean = hasPendingWork
 }
 
 object CaptionEmbeddingScheduler {

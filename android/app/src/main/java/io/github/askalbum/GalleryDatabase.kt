@@ -4036,6 +4036,25 @@ class GalleryDatabase(
         )
     }
 
+    fun hasCaptionEmbeddingBackfillWork(): Boolean =
+        readableDatabase.rawQuery(
+            """
+            SELECT 1 WHERE EXISTS(
+                SELECT 1 FROM semantic_caption
+                WHERE COALESCE(chunk_policy_version,'')<>?
+                  AND applicability<>'STALE_PERSON_BINDING'
+            ) OR EXISTS(
+                SELECT 1 FROM semantic_caption_chunk
+                WHERE COALESCE(applicability,'')<>'STALE_PERSON_BINDING'
+                  AND (
+                    embedding_state IN ('PENDING','RUNNING','FAILED_RETRYABLE')
+                    OR (embedding_state='COMPLETE' AND embedding_model_version IS NULL)
+                  )
+            ) LIMIT 1
+            """.trimIndent(),
+            arrayOf(SemanticCaptionChunker.POLICY_VERSION),
+        ).use { cursor -> cursor.moveToFirst() }
+
     fun claimCaptionEmbeddingChunks(owner: String, producerVersion: String, limit: Int): List<SemanticCaptionChunkRecord> =
         writableDatabase.transaction { db ->
             val now = System.currentTimeMillis()
