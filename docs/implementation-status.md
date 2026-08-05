@@ -589,3 +589,8 @@ media, databases, or logs.
 - The existing generic `AMOUNT` OCR entities are now exposed through a distinct allowlisted `amount` field and `document_amount` evidence source.
 - `amount paid` remains mapped to the receipt `total` field; generic amount queries now compile to the correct deterministic executor path.
 - Added extraction, compiler, allowlist, and deterministic answer regressions. No migration or data rewrite was required.
+### 2026-08-05 - Preserve deterministic evidence during grounded answer composition
+
+- Grounded-answer packets now merge ranked and deterministic hits by media ID, retaining OCR, aggregation, event, and ranked evidence together for the optional Gemma wording stage.
+- Deterministic answers remain authoritative when composition is unavailable or fails; no model, media, or database migration was required.
+- Added a regression proving same-media evidence is not dropped before composition.

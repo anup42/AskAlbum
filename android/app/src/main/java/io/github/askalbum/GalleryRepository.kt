@@ -1201,7 +1201,13 @@ class GalleryRepository(context: Context) {
             SensitiveEvidencePolicy.lock(deterministicAnswer)
         } else if (shouldComposeGroundedAnswer(plan, hits, verification)) {
             emit(QueryProgress.ComposingAnswer)
-            groundedAnswerComposer.compose(GroundedAnswerInput(plan, hits, deterministicAnswer)).answer
+            groundedAnswerComposer.compose(
+                GroundedAnswerInput(
+                    plan,
+                    GroundedAnswerEvidenceHits.merge(hits, deterministicAnswerHits),
+                    deterministicAnswer,
+                ),
+            ).answer
         } else {
             deterministicAnswer
         }.copy(channelReports = channelReports)
