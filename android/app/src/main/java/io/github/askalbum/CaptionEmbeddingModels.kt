@@ -167,6 +167,7 @@ internal object SemanticCaptionChunker {
                         },
                         appearance.maxOf(PersonVisualFactRecord::confidence),
                         clusterId,
+                        caption.applicability,
                     )
                 }
                 val actions = clusterFacts.filter { it.relation == PersonVisualRelation.ACTION }
@@ -176,6 +177,7 @@ internal object SemanticCaptionChunker {
                         actions.joinToString("; ") { it.value },
                         actions.maxOf(PersonVisualFactRecord::confidence),
                         clusterId,
+                        caption.applicability,
                     )
                 }
                 clusterFacts.filter {
@@ -190,6 +192,7 @@ internal object SemanticCaptionChunker {
                         "${it.relation.name.lowercase(Locale.ROOT).replace('_', ' ')} another reviewed person",
                         it.confidence,
                         clusterId,
+                        caption.applicability,
                     )
                 }
             }
@@ -199,19 +202,20 @@ internal object SemanticCaptionChunker {
                 it.evidenceMediaId == caption.evidenceMediaId &&
                     it.applicability !in setOf("STALE_PERSON_BINDING", "LEGACY_GROUP_CONTEXT_ONLY")
             }
-            .groupBy(::classifyFact)
-            .forEach { (type, grouped) ->
+            .groupBy { classifyFact(it) to it.applicability }
+            .forEach { (key, grouped) ->
                 candidates += Candidate(
-                    type,
+                    key.first,
                     grouped.joinToString("; ") { "${it.predicate.replace('_', ' ')}: ${it.value}" },
                     grouped.maxOf(SemanticFactRecord::confidence),
+                    applicability = key.second,
                 )
             }
 
         caption.text.split(sentenceBoundary)
             .flatMap(::boundedPieces)
             .filter(String::isNotBlank)
-            .forEach { candidates += Candidate(classify(it), it, caption.confidence) }
+            .forEach { candidates += Candidate(classify(it), it, caption.confidence, applicability = caption.applicability) }
 
         val accepted = mutableListOf<Candidate>()
         candidates.forEach { candidate ->
@@ -251,11 +255,11 @@ internal object SemanticCaptionChunker {
                 chunkType = candidate.type,
                 exactText = candidate.text,
                 confidence = candidate.confidence.coerceIn(0f, 1f),
-            applicability = if (caption.generationId == null) {
-                SemanticProvenanceApplicability.LEGACY_UNCORRELATED
-            } else {
-                caption.applicability
-            },
+                applicability = if (caption.generationId == null) {
+                    SemanticProvenanceApplicability.LEGACY_UNCORRELATED
+                } else {
+                    candidate.applicability ?: caption.applicability
+                },
                 captionModelVersion = caption.modelVersion,
                 captionPromptVersion = caption.promptVersion,
                 chunkPolicyVersion = POLICY_VERSION,
@@ -321,6 +325,7 @@ internal object SemanticCaptionChunker {
         val text: String,
         val confidence: Float,
         val clusterId: String? = null,
+        val applicability: String? = null,
     )
 }
 

@@ -149,6 +149,24 @@ class CaptionEmbeddingRetrievalTest {
         assertTrue(chunks.none { it.clusterId != null })
     }
 
+    @Test
+    fun possibleOccasionChunkRetainsFactApplicability() {
+        val chunks = SemanticCaptionChunker.generate(
+            caption.copy(
+                id = "possible-occasion-caption",
+                text = "Two people are standing beside a decorated table.",
+            ),
+            listOf(
+                semanticFact("possible_occasion", "birthday celebration")
+                    .copy(applicability = "POSSIBLE_INFERENCE"),
+            ),
+            emptyList(),
+        )
+
+        val occasion = chunks.single { it.chunkType == CaptionChunkType.OCCASION }
+        assertEquals("POSSIBLE_INFERENCE", occasion.applicability)
+    }
+
     private fun semanticFact(predicate: String, value: String) = SemanticFactRecord(
         scope = SemanticFactScope.MEDIA,
         subjectId = "media-1",

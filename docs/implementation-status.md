@@ -402,3 +402,4 @@ media, databases, or logs.
 - Caption-vector availability still requires the verified SigLIP2 retrieval pack, and no caption, image vector, Gemma fact, or Room data is deleted by the control change.
 - Required caption-vector searches now report `PARTIAL` when eligible media have no usable caption chunks, instead of silently reporting `NOT_REQUIRED` with empty hits.
 - People indexing now treats mixed face-item success as progress, schedules delayed retryable face stages at their durable `next_attempt_at`, and uses WorkManager retry only for zero-progress/systemic stoppage.
+- Caption chunks now preserve fact-level applicability, so possible occasions remain uncertain candidate evidence instead of becoming direct media facts.
