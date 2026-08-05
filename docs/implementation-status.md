@@ -709,3 +709,9 @@ media, databases, or logs.
 - Fixed direct caption coverage accounting to exclude `STALE_PERSON_BINDING` captions, matching the existing search, chunk-backfill, and personal-queue behavior.
 - Added an isolated database regression proving stale media captions do not count as current caption coverage.
 - Validation: `SemanticEnrichmentDatabaseTest` PASS on the secondary fixture device; fixture unit tests PASS; `consumerDebug` and `offlineDemoDebug` builds PASS.
+
+## 2026-08-06 - Count verified exact-duplicate caption coverage
+
+- Fixed caption coverage accounting to expand only verified `EXACT_DUPLICATE` visual-group members for captions explicitly marked `SAFE_FOR_EXACT_DUPLICATES`.
+- Representative evidence no longer makes a verified duplicate member appear uncovered, while event and visual-group context remains non-direct coverage.
+- Validation: exact-duplicate coverage regression PASS on the secondary fixture device; fixture unit tests PASS; `consumerDebug` and `offlineDemoDebug` builds PASS.
