@@ -337,3 +337,9 @@ media, databases, or logs.
 ### 2026-08-05 - Complete metadata count path
 - Metadata-only counts now use the complete eligible set instead of ranked top-K; deterministic aggregation remains exact even when no compatible numeric facts exist.
 - Validation: focused tests, full `testConsumerDebugUnitTest`, and `assembleConsumerDebug` PASS.
+
+## Shared Gemma session ownership
+
+- `LiteRtLmQueryPlanner` now requires the application-owned `GemmaSessionManager`; it no longer constructs a private session from an `InferenceResourceManager`.
+- The real Gemma planner acceptance test uses `context.services.gemmaSessions`, matching production planner, verifier, composer, and enrichment ownership.
+- This prevents accidental duplicate Gemma initialization while retaining model generation replacement and memory-pressure eviction behavior.

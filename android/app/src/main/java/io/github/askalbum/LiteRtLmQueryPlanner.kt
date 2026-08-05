@@ -43,15 +43,11 @@ class BoundedGemmaPlanCompiler(private val codec: GemmaPlanCodec = GemmaPlanCode
 /** LiteRT-LM planner with central high-memory leasing, GPU/CPU fallback, bounded repair, and safe deterministic fallback. */
 class LiteRtLmQueryPlanner(
     private val modelPacks: ModelPackManager,
-    private val sessions: GemmaSessionManager = GemmaSessionManager(SerializedInferenceResourceManager()),
+    private val sessions: GemmaSessionManager,
     private val fallback: QueryCompiler = QueryCompiler(),
     private val boundedCompiler: BoundedGemmaPlanCompiler = BoundedGemmaPlanCompiler(),
     private val deterministicOverlay: DeterministicPlanOverlay = DeterministicPlanOverlay(),
 ) {
-    constructor(
-        modelPacks: ModelPackManager,
-        resources: InferenceResourceManager,
-    ) : this(modelPacks, GemmaSessionManager(resources))
 
     suspend fun compile(query: String, activeResultIds: Set<String>?): GalleryQueryPlan =
         compileWithTrace(query, activeResultIds).plan

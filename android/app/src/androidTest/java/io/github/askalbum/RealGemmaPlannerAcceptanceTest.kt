@@ -24,7 +24,7 @@ class RealGemmaPlannerAcceptanceTest {
         val context = instrumentation.targetContext.applicationContext as AskAlbumApplication
         val status = context.modelPackManager.status()
         assumeTrue("A verified E2B pack is required", status.installed && status.tier == GemmaModelTier.E2B)
-        val planner = LiteRtLmQueryPlanner(context.modelPackManager, context.services.inferenceResources)
+        val planner = LiteRtLmQueryPlanner(context.modelPackManager, context.services.gemmaSessions)
         val previousYear = LocalDate.now().year - 1
         val cases = listOf(
             PlanCase("english", "Show beach sunset photos from 2024", listOf(setOf("beach"), setOf("sunset")), 2024),
