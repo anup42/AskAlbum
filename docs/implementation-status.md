@@ -762,3 +762,10 @@ media, databases, or logs.
 - Unsupported fields now return an explicit non-answer, preserving truthful capability behavior.
 - Validation: `CapabilityRegistryTest` and `consumerDebug`/`offlineDemoDebug` assembly PASS.
 - Published to AskAlbum as commit `b4d8a93` on `codex/current-agentic-gallery-sync`.
+
+## 2026-08-06 - Queue personal memory after Gemma installation
+
+- Successful verified Gemma installation now immediately queues eligible personal semantic-memory media and schedules the existing worker when enabled.
+- This closes the same-process gap where tagging occurred before model availability and captions remained at zero until the next app restart.
+- Validation: fixture unit tests and `consumerDebug`/`offlineDemoDebug` assembly PASS; live download/install behavior NOT RUN because no model download was performed.
+- Published to AskAlbum as commit `4acdafd`.
