@@ -37,6 +37,18 @@ internal data class IndexingWorkProgress(
     }
 }
 
+internal object IndexingCoverageMath {
+    fun peopleCompleted(faceScanned: Int, faceEligible: Int): Int =
+        faceScanned.coerceIn(0, faceEligible.coerceAtLeast(0))
+
+    fun peoplePending(pending: Int, faceEligible: Int): Int =
+        pending.coerceIn(0, faceEligible.coerceAtLeast(0))
+
+    fun peopleFailed(faceScanned: Int, pending: Int, faceEligible: Int): Int =
+        (faceEligible - peopleCompleted(faceScanned, faceEligible) - peoplePending(pending, faceEligible))
+            .coerceAtLeast(0)
+}
+
 data class IndexingPipelineSnapshot(
     val job: IndexingJob,
     val state: IndexingPipelineState,
@@ -66,6 +78,13 @@ internal class IndexingRuntimeStatusReader(context: Context) {
         val peopleWork = workState("gallery-people-index")
         val semanticWork = workState("semantic-enrichment")
         val mediaCompleted = (summary.discovered - summary.pending - summary.failed).coerceAtLeast(0)
+        val peopleCompleted = IndexingCoverageMath.peopleCompleted(summary.facesScanned, summary.faceEligible)
+        val peoplePending = IndexingCoverageMath.peoplePending(people.pendingMediaCount, summary.faceEligible)
+        val peopleFailed = IndexingCoverageMath.peopleFailed(
+            summary.facesScanned,
+            people.pendingMediaCount,
+            summary.faceEligible,
+        )
         return mapOf(
             IndexingJob.MEDIA_ANALYSIS to snapshot(
                 IndexingJob.MEDIA_ANALYSIS,
@@ -90,10 +109,10 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             IndexingJob.PEOPLE to snapshot(
                 IndexingJob.PEOPLE,
                 controls.peopleEnabled && people.enabled,
-                people.pendingMediaCount,
-                0,
-                (summary.discovered - people.pendingMediaCount).coerceAtLeast(0),
-                summary.discovered,
+                peoplePending,
+                peopleFailed,
+                peopleCompleted,
+                summary.faceEligible,
                 peopleWork,
                 admission,
             ),

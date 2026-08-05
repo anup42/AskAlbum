@@ -388,3 +388,9 @@ media, databases, or logs.
 - Media analysis, image embeddings, People, semantic memory, and caption-vector workers publish the common progress fields without changing their lease or retry policies.
 - Missing legacy progress remains unknown rather than being presented as a complete or delayed scan.
 - The model-free fixture build and real-model paths retain the same production validation boundaries.
+
+### People indexing coverage correction
+
+- People runtime status now uses the complete accessible-ready image universe and completed FACES stages, rather than all discovered media.
+- Pending face work is clamped to that eligible universe, and the remaining eligible face-stage rows are reported as failures instead of being presented as completed.
+- No Room migration or destructive data operation was introduced.

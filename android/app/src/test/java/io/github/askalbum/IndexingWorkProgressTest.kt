@@ -39,4 +39,18 @@ class IndexingWorkProgressTest {
 
         assertEquals(4, progress.delayedRetryCount)
     }
+
+    @Test
+    fun peopleCoverageUsesOnlyEligibleImages() {
+        assertEquals(6, IndexingCoverageMath.peopleCompleted(faceScanned = 6, faceEligible = 10))
+        assertEquals(3, IndexingCoverageMath.peoplePending(pending = 3, faceEligible = 10))
+        assertEquals(1, IndexingCoverageMath.peopleFailed(faceScanned = 6, pending = 3, faceEligible = 10))
+    }
+
+    @Test
+    fun peopleCoverageClampsImpossibleCounts() {
+        assertEquals(4, IndexingCoverageMath.peopleCompleted(faceScanned = 9, faceEligible = 4))
+        assertEquals(4, IndexingCoverageMath.peoplePending(pending = 8, faceEligible = 4))
+        assertEquals(0, IndexingCoverageMath.peopleFailed(faceScanned = 9, pending = 8, faceEligible = 4))
+    }
 }
