@@ -8,6 +8,7 @@ internal object SemanticProvenanceApplicability {
     const val LEGACY_SCOPE_UNCERTAIN = "LEGACY_SCOPE_UNCERTAIN"
     const val STALE_PERSON_BINDING = "STALE_PERSON_BINDING"
     const val POSSIBLE_INFERENCE = "POSSIBLE_INFERENCE"
+    const val SAFE_FOR_EXACT_DUPLICATES = "SAFE_FOR_EXACT_DUPLICATES"
     const val EXACT_DUPLICATE_SHARED = "EXACT_DUPLICATE_SHARED"
 
     val NON_CONFIRMING = setOf(
@@ -31,6 +32,9 @@ internal object SemanticProvenanceApplicability {
         if (isContextual(applicability)) return false
         val scopeName = scope?.toString()
         if (scopeName == "EVENT" || scopeName == "VISUAL_GROUP") return false
-        return scopeName == "EXACT_DUPLICATE_GROUP" || mediaId == evidenceMediaId
+        if (scopeName == "EXACT_DUPLICATE_GROUP") {
+            return applicability == SAFE_FOR_EXACT_DUPLICATES || applicability == EXACT_DUPLICATE_SHARED
+        }
+        return mediaId == evidenceMediaId
     }
 }

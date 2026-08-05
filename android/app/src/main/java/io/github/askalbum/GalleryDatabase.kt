@@ -4213,7 +4213,8 @@ class GalleryDatabase(
         return if (mediaIds == null) {
             readableDatabase.rawQuery(
                 "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption " +
-                    "WHERE scope IN ('MEDIA','QUERY_VERIFICATION','EXACT_DUPLICATE_GROUP')",
+                    "WHERE scope IN ('MEDIA','QUERY_VERIFICATION') OR " +
+                        "(scope='EXACT_DUPLICATE_GROUP' AND applicability='${SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES}')",
                 emptyArray(),
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
         } else {
@@ -4222,7 +4223,8 @@ class GalleryDatabase(
                 readableDatabase.rawQuery(
                     "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption " +
                         "WHERE evidence_media_id IN ($placeholders) " +
-                        "AND scope IN ('MEDIA','QUERY_VERIFICATION','EXACT_DUPLICATE_GROUP')",
+                        "AND (scope IN ('MEDIA','QUERY_VERIFICATION') OR " +
+                        "(scope='EXACT_DUPLICATE_GROUP' AND applicability='${SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES}'))",
                     ids.toTypedArray(),
                 ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
             }
@@ -4384,7 +4386,8 @@ class GalleryDatabase(
 
     private fun captionTargets(caption: SemanticCaptionRecord): List<String> = when (caption.scope) {
         SemanticFactScope.MEDIA, SemanticFactScope.QUERY_VERIFICATION -> listOf(caption.evidenceMediaId)
-        SemanticFactScope.EXACT_DUPLICATE_GROUP, SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
+        SemanticFactScope.EXACT_DUPLICATE_GROUP -> exactDuplicateGroupMembers(caption.subjectId)
+        SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
             "SELECT media_id FROM visual_group_member WHERE group_id=?",
             arrayOf(caption.subjectId),
         ).use { cursor -> buildList { add(caption.evidenceMediaId); while (cursor.moveToNext()) add(cursor.getString(0)) } }
@@ -4393,12 +4396,20 @@ class GalleryDatabase(
 
     private fun chunkTargets(chunk: SemanticCaptionChunkRecord): List<String> = when (chunk.scope) {
         SemanticFactScope.MEDIA, SemanticFactScope.QUERY_VERIFICATION -> listOf(chunk.evidenceMediaId)
-        SemanticFactScope.EXACT_DUPLICATE_GROUP, SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
+        SemanticFactScope.EXACT_DUPLICATE_GROUP -> exactDuplicateGroupMembers(chunk.scopeId)
+        SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
             "SELECT media_id FROM visual_group_member WHERE group_id=?",
             arrayOf(chunk.scopeId),
         ).use { cursor -> buildList { add(chunk.evidenceMediaId); while (cursor.moveToNext()) add(cursor.getString(0)) } }
         SemanticFactScope.EVENT -> listOf(chunk.evidenceMediaId) + eventMembers(chunk.scopeId.toLongOrNull() ?: Long.MIN_VALUE)
     }.distinct()
+
+    private fun exactDuplicateGroupMembers(groupId: String): List<String> = readableDatabase.rawQuery(
+        "SELECT member.media_id FROM visual_group_member member " +
+            "JOIN visual_group group_record ON group_record.id=member.group_id " +
+            "WHERE member.group_id=? AND group_record.kind='EXACT_DUPLICATE'",
+        arrayOf(groupId),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
 
     private fun captionPersonRefs(captionId: String): List<SemanticCaptionPersonRefRecord> = readableDatabase.rawQuery(
         "SELECT r.*,p.label,p.relationship FROM semantic_caption_person_ref r " +

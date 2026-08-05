@@ -139,7 +139,7 @@ internal object SemanticEnrichmentCodec {
                         else -> "GEMMA_MEDIA_DIRECT"
                     },
                     applicability = if (job.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP) {
-                        "SAFE_FOR_EXACT_DUPLICATES"
+                        SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES
                     } else {
                         "EVIDENCE_MEDIA_ONLY"
                     },

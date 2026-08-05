@@ -236,3 +236,8 @@ media, databases, or logs.
 
 - Caption lexical retrieval now returns typed `SUCCESS`, `PARTIAL`, `FAILED`, or `NOT_REQUIRED` status.
 - FTS corruption or query failure is no longer reported as a successful empty channel; the legacy caption fallback is explicitly marked partial.
+
+### 2026-08-05 - Fence exact-duplicate provenance
+
+- Direct caption evidence now requires explicit exact-duplicate applicability.
+- Caption and chunk expansion only targets visual groups whose persisted kind is `EXACT_DUPLICATE`; perceptual/burst groups remain contextual.
