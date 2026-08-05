@@ -73,6 +73,25 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun boundedAggregationDoesNotPresentAnExactNumericAnswer() {
+        val partial = context(QueryIntent.SUM).copy(
+            exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+            indexedEligibleCount = 2,
+            totalEligibleCount = 10,
+            deterministicHits = emptyList(),
+        )
+        val sum = CapabilityAnswerExecutor.execute(partial)
+        val minMax = CapabilityAnswerExecutor.execute(
+            partial.copy(plan = partial.plan.copy(intent = QueryIntent.MIN_MAX))
+        )
+
+        assertEquals("Exact sum unavailable", sum.headline)
+        assertEquals("Exact minimum or maximum unavailable", minMax.headline)
+        assertTrue(sum.detail.contains("partial", ignoreCase = true))
+        assertTrue(minMax.detail.contains("partial", ignoreCase = true))
+    }
+
+    @Test
     fun listUsesCompleteDeterministicEvidenceInsteadOfRankedTopK() {
         val complete = hit("three", "Trip C", "INR 30.00", 1_720_000_000_000)
         val base = context(QueryIntent.LIST)

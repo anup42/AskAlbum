@@ -185,6 +185,14 @@ object CapabilityAnswerExecutor {
     ): SearchAnswer {
         val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field) ?: OcrFactAllowlist.fields.first()
         if (!field.numeric) return base("Cannot sum ${field.key}", "Only allowlisted numeric document facts can be summed.", emptyList())
+        if (!context.hasCompleteEligibleCoverage()) {
+            return base(
+                "Exact sum unavailable",
+                "The current retrieval pass covered ${context.indexedEligibleCount} of ${context.totalEligibleCount} eligible items. " +
+                    "A partial pass cannot produce a trustworthy total.",
+                context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+            )
+        }
         val values = numericFacts(context.deterministicHits.ifEmpty { context.hits }, field)
         if (values.isEmpty()) return base("No compatible numeric facts", "No reliable ${field.key} values were available.", emptyList())
         val currencies = values.map(ParsedFact::currency).distinct()
@@ -208,6 +216,14 @@ object CapabilityAnswerExecutor {
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
         val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field) ?: OcrFactAllowlist.fields.first()
+        if (!context.hasCompleteEligibleCoverage()) {
+            return base(
+                "Exact minimum or maximum unavailable",
+                "The current retrieval pass covered ${context.indexedEligibleCount} of ${context.totalEligibleCount} eligible items. " +
+                    "A partial pass cannot establish a trustworthy minimum or maximum.",
+                context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+            )
+        }
         val values = numericFacts(context.deterministicHits.ifEmpty { context.hits }, field)
         if (values.isEmpty()) return base("No compatible numeric facts", "No reliable ${field.key} values were available.", emptyList())
         if (values.map(ParsedFact::currency).distinct().size > 1) {
@@ -373,6 +389,9 @@ object CapabilityAnswerExecutor {
         Regex("(?i)(\\busd\\b|\\$)").containsMatchIn(text) -> "USD"
         else -> "UNSPECIFIED"
     }
+
+    private fun CapabilityAnswerContext.hasCompleteEligibleCoverage(): Boolean =
+        exactness == ResultExactness.EXACT || exactness == ResultExactness.COMPLETE_PREDICATE_SCAN
 
     private fun formatDate(epochMs: Long): String = DATE_FORMAT.format(Instant.ofEpochMilli(epochMs))
 

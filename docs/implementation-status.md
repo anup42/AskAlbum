@@ -429,3 +429,7 @@ media, databases, or logs.
 - FIXED: Foreground indexing and UI restart, criteria, and job-toggle paths now recover only the owning pipeline instead of reclaiming unrelated active leases.
 - PASS: Pipeline mapping regression test; no-argument recovery calls remain in Android runtime call sites.
 - PASS: consumerDebug, offlineDemoDebug, and fixtureCiDebug assemblies; replacement-installed consumerDebug without data reset.
+### 2026-08-05 bounded aggregation truthfulness
+- FIXED: SUM and MIN_MAX now refuse exact-looking answers when the eligible scope was only partially evaluated; bounded ranked hits cannot be used as a complete arithmetic source.
+- PASS: CapabilityRegistryTest coverage for complete deterministic aggregation and bounded partial aggregation.
+- PASS: full consumer unit suite and consumerDebug, offlineDemoDebug, fixtureCiDebug assemblies; replacement-installed consumerDebug without data reset.
