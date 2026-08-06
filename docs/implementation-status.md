@@ -2,6 +2,16 @@
 
 Last reviewed: 2026-08-06
 
+## 2026-08-06 - Deterministic hard screenshot exclusions
+
+- Hard negative screenshot predicates now remove items identified by
+  filename, title, album, or tags before lexical/vector top-K ranking.
+- Caption and OCR text are deliberately not used for this deterministic
+  exclusion; other negative visual predicates still fail closed through the
+  existing Kotlin polarity and visual-verification path.
+- Added focused policy coverage; no gallery data, vectors, People data,
+  captions, or model packs are changed.
+
 ## 2026-08-06 - Truthful semantic no-result wording
 
 - Semantic `UNAVAILABLE` and `FAILED` results no longer claim that a bounded

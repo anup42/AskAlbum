@@ -172,6 +172,24 @@ class RetrievalChannelPolicyTest {
     }
 
     @Test
+    fun hardScreenshotExclusionUsesOnlyMetadataOwnedEvidence() {
+        val exclusion = SemanticClause(
+            text = "screenshots",
+            polarity = Polarity.NEGATIVE,
+            hardness = ConstraintStrength.HARD,
+        )
+        assertTrue(DeterministicNegativeClausePolicy.excludes(item("Screenshot_2024.png"), listOf(exclusion)))
+        assertTrue(DeterministicNegativeClausePolicy.excludes(item("vacation.jpg", tags = listOf("screen capture")), listOf(exclusion)))
+        assertFalse(DeterministicNegativeClausePolicy.excludes(item("vacation.jpg", description = "A screenshot is visible"), listOf(exclusion)))
+        assertFalse(
+            DeterministicNegativeClausePolicy.excludes(
+                item("Screenshot_2024.png"),
+                listOf(exclusion.copy(hardness = ConstraintStrength.SOFT)),
+            ),
+        )
+    }
+
+    @Test
     fun totalEclipseDoesNotBecomeDocumentFactIntent() {
         val plan = QueryCompiler().compile("Show total eclipse photos.")
 
@@ -185,5 +203,20 @@ class RetrievalChannelPolicyTest {
             terms = listOf("family", "goa"),
             semanticClauses = listOf(SemanticClause("family Goa", canonical)),
         ),
+    )
+
+    private fun item(filename: String, tags: List<String> = emptyList(), description: String = "") = GalleryItem(
+        id = filename,
+        filename = filename,
+        title = filename,
+        creator = null,
+        location = "",
+        latitude = null,
+        longitude = null,
+        tags = tags,
+        description = description,
+        license = "",
+        sourceUrl = "",
+        assetPath = null,
     )
 }

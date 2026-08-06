@@ -674,7 +674,10 @@ class GalleryRepository(context: Context) {
                 item.matchesRequiredPlace(if (hasExplicitComparisonScopes) null else plan.place) &&
                 item.matchesRequiredMerchant(plan.ocrClause?.merchant)
         }
-        val allItems = prePeopleItems.filter { allowed == null || it.id in allowed }
+        val allItems = prePeopleItems.filter {
+            (allowed == null || it.id in allowed) &&
+                !DeterministicNegativeClausePolicy.excludes(it, plan.semanticClauses)
+        }
         val eligibleIds = allItems.mapTo(mutableSetOf(), GalleryItem::id)
         val deterministicAggregationHits = if (
             plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX) &&
@@ -920,7 +923,7 @@ class GalleryRepository(context: Context) {
             PeopleCoverage()
         } else {
             database.peopleCoverage(
-                prePeopleItems.filter { it.kind == MediaKind.IMAGE }.mapTo(mutableSetOf(), GalleryItem::id),
+                allItems.filter { it.kind == MediaKind.IMAGE }.mapTo(mutableSetOf(), GalleryItem::id),
             )
         }
         val peopleChannelReport = RetrievalChannelReport<SearchHit>(

@@ -206,6 +206,25 @@ internal object RetrievalCoverageWording {
     }
 }
 
+/** Applies only high-confidence, metadata-owned negative predicates before ranking. */
+internal object DeterministicNegativeClausePolicy {
+    private val screenshotPredicate = Regex(
+        "\\b(?:screenshots?|screen\\s+shots?|screen\\s+captures?)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+
+    fun excludes(item: GalleryItem, clauses: Collection<SemanticClause>): Boolean = clauses.any { clause ->
+        clause.polarity == Polarity.NEGATIVE &&
+            clause.hardness == ConstraintStrength.HARD &&
+            containsScreenshot(clause.text) &&
+            containsScreenshot(listOf(item.filename, item.title, item.album).plus(item.tags).joinToString(" "))
+    }
+
+    private fun containsScreenshot(text: String): Boolean = screenshotPredicate.containsMatchIn(
+        text.lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]+"), " "),
+    )
+}
+
 internal fun <T, R> RetrievalChannelReport<T>.mapHits(transform: (T) -> R?): RetrievalChannelReport<R> =
     RetrievalChannelReport(
         channel,
