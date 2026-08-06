@@ -1161,3 +1161,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Contextual group/event evidence, possible inference, legacy scope, foreign clusters, and unbound person chunks remain non-confirming; fresh visual verification remains accepted.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.GroundedEvidenceClosureTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Make verifier polarity Kotlin-owned
+
+- Visual-verification decoding now treats Gemma's `overallMatch` as schema-only and derives hard-condition acceptance through `SemanticPolarityNormalizer`, including negative predicates and fail-closed `AMBIGUOUS`/`NOT_VISIBLE` verdicts.
+- Added regression coverage proving a missing forbidden predicate can match and that arbitrary model summary booleans cannot override Kotlin-owned polarity.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.GemmaVerificationCodecTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
