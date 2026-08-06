@@ -41,7 +41,10 @@ class GalleryQueryPlanValidator(
         plan.ocrClause?.let {
             it.query?.let { text -> validateText("OCR query", text, errors, 240) }
             it.merchant?.let { text -> validateText("merchant", text, errors, 120) }
-            it.requestedField?.let { field -> validateIdentifier("OCR field", field, errors) }
+            it.requestedField?.let { field ->
+                validateIdentifier("OCR field", field, errors)
+                if (OcrFactAllowlist.resolve(field) == null) errors += "Unsupported OCR field"
+            }
         }
         validateFilter(plan.filter, errors, 0)
         validateContradictions(plan, errors)
@@ -119,6 +122,15 @@ class GalleryQueryPlanValidator(
             else -> null
         }
         if (required != null && plan.aggregation?.operation != required) errors += "Intent requires $required aggregation"
+        if (plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX)) {
+            val field = plan.aggregation?.field
+            val resolved = OcrFactAllowlist.resolve(field)
+            if (resolved == null) {
+                errors += "Aggregation requires an allowlisted field"
+            } else if (!resolved.numeric) {
+                errors += "Aggregation field must be numeric"
+            }
+        }
     }
 
     private fun validateFollowUp(

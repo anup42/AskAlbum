@@ -1196,3 +1196,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Added integration coverage proving non-media enrichment cannot be persisted with media-only applicability even when the model requests it.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.SemanticScopeApplicabilityTest --tests io.github.anup42.askalbum.SemanticProvenanceApplicabilityTest --tests io.github.anup42.askalbum.ComprehensiveSemanticCaptionTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Validate OCR capability fields before execution
+
+- Gemma plans now publish the allowlisted OCR field keys, accept normalized field keys and canonical source-field names, and reject unknown OCR fields at the typed plan boundary instead of failing later in an executor.
+- SUM and MIN_MAX plans now require an allowlisted numeric field before execution.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.CapabilityRegistryTest --tests io.github.anup42.askalbum.GalleryQueryPlanValidatorTest --tests io.github.anup42.askalbum.QueryCompilerTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.

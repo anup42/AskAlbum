@@ -24,6 +24,19 @@ class CapabilityRegistryTest {
         )
         assertEquals(OcrEntityType.RECEIPT_TOTAL, OcrFactAllowlist.resolve("amount paid")?.type)
         assertEquals(OcrEntityType.AMOUNT, OcrFactAllowlist.resolve("amount")?.type)
+        assertEquals("flight_number", OcrFactAllowlist.resolve("document_flight_number")?.key)
+        assertEquals("password", OcrFactAllowlist.resolve("DOCUMENT-PASSWORD")?.key)
+    }
+
+    @Test
+    fun validatorRejectsUnknownOcrFieldsBeforeExecution() {
+        val plan = QueryCompiler().compile("What is the password in the latest screenshot?").copy(
+            ocrClause = OcrClause(requestedField = "not_allowlisted"),
+        )
+
+        val result = GalleryQueryPlanValidator().validate(plan)
+
+        assertTrue(result.errors.contains("Unsupported OCR field"))
     }
 
     @Test

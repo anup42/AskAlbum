@@ -59,10 +59,13 @@ object OcrFactAllowlist {
     )
     private val byAlias = fields.flatMap { field -> field.aliases.map { it to field } }.toMap()
     private val bySource = fields.associateBy(OcrFactField::sourceField)
+    private val byCanonicalName = fields.flatMap { field ->
+        listOf(field.key, field.sourceField).map { it.lowercase(Locale.ROOT) to field }
+    }.toMap()
 
     fun resolve(value: String?): OcrFactField? = value?.trim()?.lowercase(Locale.ROOT)
         ?.replace(Regex("[^\\p{L}\\p{N}]+"), "_")
-        ?.let(byAlias::get)
+        ?.let { normalized -> byAlias[normalized] ?: byCanonicalName[normalized] }
 
     fun fromSource(sourceField: String): OcrFactField? = bySource[sourceField]
 }
