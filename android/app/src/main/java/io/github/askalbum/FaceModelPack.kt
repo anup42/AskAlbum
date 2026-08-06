@@ -82,10 +82,52 @@ data class FaceModelStatus(
 
 data class InstalledFaceModel(val file: File, val spec: FaceModelSpec)
 
+internal class FaceGenerationPointer(private val root: File) {
+    private val current = File(root, "current")
+    private val previous = File(root, "previous")
+
+    fun currentName(): String? = readName(current)
+
+    fun previousName(): String? = readName(previous)
+
+    fun activate(generationName: String) {
+        require(GENERATION_NAME.matches(generationName)) { "Invalid SFace generation name" }
+        require(root.mkdirs() || root.isDirectory) { "Could not create SFace model directory" }
+        currentName()?.let { previous.writeTextAndSync(it) }
+        replaceCurrent(generationName)
+    }
+
+    fun restore(generationName: String) {
+        require(GENERATION_NAME.matches(generationName)) { "Invalid SFace generation name" }
+        require(root.mkdirs() || root.isDirectory) { "Could not create SFace model directory" }
+        replaceCurrent(generationName)
+    }
+
+    private fun replaceCurrent(generationName: String) {
+        val next = File(root, "current.next")
+        next.writeTextAndSync(generationName)
+        if (current.exists()) require(current.delete()) { "Could not replace SFace generation pointer" }
+        require(next.renameTo(current)) { "Could not activate SFace generation pointer" }
+    }
+
+    private fun readName(pointer: File): String? {
+        if (!pointer.isFile) return null
+        return pointer.readText().trim().also {
+            require(GENERATION_NAME.matches(it)) { "Invalid SFace generation pointer" }
+        }
+    }
+
+    private companion object {
+        val GENERATION_NAME = Regex("generation-[A-Za-z0-9._-]+")
+    }
+}
+
 class FaceModelPackManager(private val context: Context) {
     private val root = File(context.filesDir, "models/face/sface")
     private val modelFile = File(root, FaceModelCatalog.sface.fileName)
     private val verificationMarker = File(root, "verified.sha256")
+    private val generations = File(root, "generations")
+    private val generationPointer = FaceGenerationPointer(root)
 
     fun status(): FaceModelStatus = runCatching {
         val current = current()
@@ -96,11 +138,45 @@ class FaceModelPackManager(private val context: Context) {
     }.getOrElse { FaceModelStatus(error = it.message) }
 
     fun current(): InstalledFaceModel? {
-        if (!modelFile.isFile || !verificationMarker.isFile) return null
         val spec = FaceModelCatalog.sface
-        verifyFaceModelArtifact(modelFile, spec)
-        require(verificationMarker.readText().trim() == spec.sha256) { "SFace verification marker is invalid" }
-        return InstalledFaceModel(modelFile, spec)
+        val activeAttempt = runCatching {
+            generationPointer.currentName()?.let { loadGeneration(it, spec) }
+        }
+        activeAttempt.getOrNull()?.let { return it }
+
+        val previousAttempt = runCatching {
+            generationPointer.previousName()?.let { loadGeneration(it, spec) }
+        }
+        previousAttempt.getOrNull()?.let { previous ->
+            generationPointer.restore(previous.file.parentFile!!.name)
+            return previous
+        }
+
+        if (modelFile.isFile && verificationMarker.isFile) {
+            verifyFaceModelArtifact(modelFile, spec)
+            require(verificationMarker.readText().trim() == spec.sha256) { "SFace verification marker is invalid" }
+            return InstalledFaceModel(modelFile, spec)
+        }
+        activeAttempt.exceptionOrNull()?.let { throw it }
+        previousAttempt.exceptionOrNull()?.let { throw it }
+        return null
+    }
+
+    private fun loadGeneration(generationName: String, spec: FaceModelSpec): InstalledFaceModel {
+        val directory = File(generations, generationName)
+        require(directory.isDirectory && directory.canonicalPath.startsWith(generations.canonicalPath + File.separator)) {
+            "SFace generation is unavailable"
+        }
+        val model = File(directory, spec.fileName)
+        val marker = File(directory, "verified.sha256")
+        require(marker.isFile && marker.readText().trim() == spec.sha256) { "SFace generation marker is invalid" }
+        verifyFaceModelArtifact(model, spec)
+        val expected = setOf(spec.fileName, "verified.sha256")
+        val actual = directory.listFiles()?.toList() ?: error("Could not inspect SFace generation")
+        require(actual.all { it.isFile } && actual.map { it.name }.toSet() == expected) {
+            "SFace generation contains an unlisted or missing file"
+        }
+        return InstalledFaceModel(model, spec)
     }
 
     suspend fun import(uri: Uri): FaceModelStatus = withContext(Dispatchers.IO) {
@@ -136,18 +212,26 @@ class FaceModelPackManager(private val context: Context) {
             "Not enough app-private storage for SFace"
         }
         require(root.mkdirs() || root.isDirectory) { "Could not create the private face-model directory" }
-        val staged = File(root, "${spec.fileName}.next")
-        if (staged.exists()) require(staged.delete())
-        source.inputStream().use { input ->
-            FileOutputStream(staged).use { output ->
-                input.copyTo(output)
-                output.fd.sync()
+        require(generations.mkdirs() || generations.isDirectory) { "Could not create SFace generation directory" }
+        val generationName = "generation-${spec.packVersion}-${UUID.randomUUID()}"
+        val staging = File(generations, "$generationName.importing")
+        val installed = File(generations, generationName)
+        require(staging.mkdirs()) { "Could not create SFace staging directory" }
+        try {
+            val stagedModel = File(staging, spec.fileName)
+            source.inputStream().use { input ->
+                FileOutputStream(stagedModel).use { output ->
+                    input.copyTo(output)
+                    output.fd.sync()
+                }
             }
+            File(staging, "verified.sha256").writeTextAndSync(spec.sha256)
+            require(staging.renameTo(installed)) { "Could not finalize the verified SFace generation" }
+            generationPointer.activate(generationName)
+            return InstalledFaceModel(File(installed, spec.fileName), spec)
+        } finally {
+            if (staging.exists()) staging.deleteRecursively()
         }
-        if (modelFile.exists()) require(modelFile.delete()) { "Could not replace the previous SFace model" }
-        require(staged.renameTo(modelFile)) { "Could not activate the verified SFace model" }
-        verificationMarker.writeText(spec.sha256)
-        return InstalledFaceModel(modelFile, spec)
     }
 
 }
@@ -155,6 +239,11 @@ class FaceModelPackManager(private val context: Context) {
 internal fun verifyFaceModelArtifact(file: File, spec: FaceModelSpec) {
     require(file.isFile && file.length() == spec.sizeBytes) { "SFace model has the wrong size" }
     require(sha256(file) == spec.sha256) { "SFace SHA-256 does not match the pinned OpenCV artifact" }
+}
+
+private fun File.writeTextAndSync(value: String) = FileOutputStream(this).use { output ->
+    output.write(value.toByteArray(Charsets.UTF_8))
+    output.fd.sync()
 }
 
 private fun sha256(file: File): String {

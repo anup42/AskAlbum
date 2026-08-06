@@ -1117,3 +1117,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Tests: `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.OcrPackActivationTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
 - Device validation: NOT RUN; safe fixture unavailable. Production OCR pack and gallery data were not touched.
 - Remaining related gap: SFace activation still needs the same migration-safe recovery treatment.
+
+### 2026-08-06 - Make SFace activation generation-safe
+
+- New SFace installs now use app-private versioned generations with signed-by-catalog SHA-256 verification, durable current/previous pointers, and exact generation file validation.
+- Existing legacy SFace model and marker paths remain readable as a non-destructive fallback; replacement installation never deletes them.
+- Tests: `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.FaceGenerationPointerTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
+- Device validation: NOT RUN; safe fixture unavailable. Production SFace files, gallery data, People data, and consent were not touched.
