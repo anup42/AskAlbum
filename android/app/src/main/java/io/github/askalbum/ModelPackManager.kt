@@ -192,6 +192,61 @@ class GemmaPackSignatureVerifier(private val publicKey: PublicKey) {
     }
 }
 
+internal class GemmaInstalledGenerationVerifier(
+    private val signatureVerifier: GemmaPackSignatureVerifier,
+) {
+    fun verify(directory: File): GemmaPackManifest {
+        require(directory.isDirectory) { "Gemma generation is unavailable" }
+        val manifestFile = File(directory, MANIFEST_NAME)
+        require(manifestFile.isFile && manifestFile.length() in 1..MAX_GEMMA_MANIFEST_BYTES.toLong()) {
+            "Gemma manifest is incomplete"
+        }
+        val manifestBytes = manifestFile.inputStream().use { it.gemmaReadBytesLimited(MAX_GEMMA_MANIFEST_BYTES) }
+        val manifest = GemmaPackManifest.parse(manifestBytes)
+
+        val signatureFile = File(directory, SIGNATURE_NAME)
+        require(signatureFile.isFile && signatureFile.length() in 1..MAX_GEMMA_SIGNATURE_BYTES.toLong()) {
+            "Gemma signature is incomplete"
+        }
+        val signature = Base64.getDecoder().decode(
+            signatureFile.inputStream().use {
+                it.gemmaReadBytesLimited(MAX_GEMMA_SIGNATURE_BYTES).toString(Charsets.US_ASCII).trim()
+            },
+        )
+        signatureVerifier.verify(manifestBytes, signature, manifest)
+
+        val expectedNames = (manifest.files.map { it.name } + MANIFEST_NAME + SIGNATURE_NAME).toSet()
+        val actualFiles = directory.listFiles()?.toList().orEmpty()
+        require(actualFiles.all(File::isFile) && actualFiles.map(File::getName).toSet() == expectedNames) {
+            "Gemma generation contains an unlisted or missing file"
+        }
+        manifest.files.forEach { spec ->
+            val artifact = File(directory, spec.name)
+            require(artifact.length() == spec.sizeBytes) { "Gemma artifact is incomplete: ${spec.name}" }
+            require(sha256(artifact) == spec.sha256) { "Gemma artifact checksum mismatch: ${spec.name}" }
+        }
+        return manifest
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(1024 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().gemmaToHex()
+    }
+
+    private companion object {
+        const val MANIFEST_NAME = "manifest.json"
+        const val SIGNATURE_NAME = "manifest.sig"
+    }
+}
+
 class ModelPackManager(
     private val context: Context,
     private val signatureVerifier: GemmaPackSignatureVerifier = GemmaPackSignatureVerifier(context.gemmaApkSigningPublicKey()),
@@ -202,6 +257,7 @@ class ModelPackManager(
     private val pointer = File(root, "current")
     private val previousPointer = File(root, "previous")
     private val preferences = context.getSharedPreferences("gemma-model-selection", Context.MODE_PRIVATE)
+    private val installedVerifier = GemmaInstalledGenerationVerifier(signatureVerifier)
 
     fun selectedTier(): GemmaModelTier = runCatching {
         GemmaModelTier.valueOf(preferences.getString("tier", GemmaModelTier.E2B.name)!!)
@@ -258,11 +314,7 @@ class ModelPackManager(
         require(name.matches(Regex("generation-[A-Za-z0-9._-]+"))) { "Invalid Gemma generation pointer" }
         val directory = File(generations, name)
         require(directory.isDirectory && directory.canonicalPath.startsWith(generations.canonicalPath + File.separator)) { "Gemma generation is unavailable" }
-        val manifest = GemmaPackManifest.parse(File(directory, GEMMA_MANIFEST_NAME).readBytes())
-        manifest.files.forEach { spec ->
-            val artifact = File(directory, spec.name)
-            require(artifact.isFile && artifact.length() == spec.sizeBytes) { "Gemma artifact is incomplete" }
-        }
+        val manifest = installedVerifier.verify(directory)
         return InstalledGemmaPack(directory, manifest)
     }
 
@@ -438,9 +490,8 @@ class ModelPackManager(
             .sortedByDescending(File::lastModified)
             .mapNotNull { directory ->
                 runCatching {
-                    val manifest = GemmaPackManifest.parse(File(directory, GEMMA_MANIFEST_NAME).readBytes())
+                    val manifest = installedVerifier.verify(directory)
                     require(manifest.tier == tier)
-                    manifest.files.forEach { spec -> require(File(directory, spec.name).let { it.isFile && it.length() == spec.sizeBytes }) }
                     InstalledGemmaPack(directory, manifest)
                 }.getOrNull()
             }

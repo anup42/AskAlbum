@@ -1088,3 +1088,11 @@ People cluster summaries now expose both the user-selected representative face a
 - Focused and full fixture unit tests: PASS.
 - `:app:assembleConsumerDebug :app:assembleOfflineDemoDebug`: PASS.
 - Device execution: NOT RUN; safe fixture unavailable and production device untouched.
+
+### 2026-08-06 - Gemma installed-pack reactivation integrity
+
+- Changed files: `android/app/src/main/java/io/github/askalbum/ModelPackManager.kt`, `android/app/src/test/java/io/github/askalbum/GemmaPackValidationTest.kt`.
+- Installed Gemma generations now revalidate the bounded manifest, signature, exact file set, artifact sizes, and streamed SHA-256 digests during current-pack and fallback discovery.
+- Tests: `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.GemmaPackValidationTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
+- Device validation: NOT RUN; the safe fixture device is unavailable. Production device data and model state were not touched.
+- Next: commit and push this verified phase to `https://github.com/anup42/AskAlbum.git`.
