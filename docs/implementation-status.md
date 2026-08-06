@@ -937,3 +937,7 @@ People cluster summaries now expose both the user-selected representative face a
 
 - Follow-up patches now compare the previous and replacement plans so removed time, place, people, media, sort, grouping, and semantic constraints are represented as typed REMOVE operations.
 - Added coverage for removing a prior place scope while retaining the active result set.
+## 2026-08-06 - Preserve direct evidence in grounded-answer packets
+
+- Grounded answer packet construction now prioritizes media-specific visual verification and direct media/query evidence before applying the bounded evidence limit. This prevents a later high-trust record from being omitted behind lower-priority lexical context.
+- Added a regression test covering the evidence-limit case.

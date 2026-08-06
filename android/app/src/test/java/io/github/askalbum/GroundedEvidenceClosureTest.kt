@@ -7,6 +7,30 @@ import org.junit.Test
 
 class GroundedEvidenceClosureTest {
     @Test
+    fun answerPacketKeepsDirectVerificationInsideEvidenceLimit() {
+        val plan = GalleryQueryPlan(
+            originalQuery = "show beach photos",
+            intent = QueryIntent.FIND_MEDIA,
+            peopleClauses = emptyList(),
+            semanticClauses = emptyList(),
+        )
+        val lowPriority = (1..GroundedEvidencePacketBuilder.MAX_EVIDENCE).map { index ->
+            evidence("caption-$index", "m1", "semantic_caption", "A beach scene")
+        }
+        val hit = SearchHit(
+            item("m1"),
+            1.0,
+            lowPriority + evidence("verified", "m1", "visual_verification", "P1 is at the beach"),
+        )
+
+        val packet = GroundedEvidencePacketBuilder.build(
+            GroundedAnswerInput(plan, listOf(hit), baseline()),
+        )
+
+        assertTrue(packet.evidence.any { it.id == "verified" })
+    }
+
+    @Test
     fun personVisualAnswersUseOnlySameMediaVisualVerificationEvidence() {
         val plan = GalleryQueryPlan(
             originalQuery = "show wife wearing white",

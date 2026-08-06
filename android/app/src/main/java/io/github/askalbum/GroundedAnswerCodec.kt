@@ -26,10 +26,24 @@ object GroundedEvidencePacketBuilder {
                     .filter { GroundedEvidencePolicy.allow(it, input.plan) }
             }
             .distinctBy { it.id }
+            // Keep the strongest evidence inside the bounded prompt. A high-ranked
+            // candidate may still carry many lexical/context records before its
+            // media-specific verification record.
+            .sortedWith(
+                compareBy<EvidenceRecord> { answerEvidencePriority(it) }
+                    .thenByDescending { it.confidence },
+            )
             .take(MAX_EVIDENCE)
             .toList()
         require(evidence.map { it.id }.distinct().size == evidence.size) { "Evidence IDs must be unique" }
         return GroundedEvidencePacket(input.plan.originalQuery, baseline, evidence)
+    }
+
+    private fun answerEvidencePriority(record: EvidenceRecord): Int = when {
+        record.applicability == SemanticProvenanceApplicability.POSSIBLE_INFERENCE -> 3
+        record.sourceField == "visual_verification" -> 0
+        record.scope == SemanticFactScope.MEDIA || record.scope == SemanticFactScope.QUERY_VERIFICATION -> 1
+        else -> 2
     }
 }
 
