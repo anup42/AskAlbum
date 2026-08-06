@@ -231,6 +231,22 @@ class GroundedEvidenceClosureTest {
         assertEquals(listOf("occasion"), GroundedAnswerCodec().decode(uncertain, packet).evidenceIds)
     }
 
+    @Test
+    fun possibleInferenceCannotBeAssertedInHeadlineOrDetail() {
+        val possible = evidence("occasion", "m1", "semantic_caption", "possible birthday celebration")
+            .copy(applicability = SemanticProvenanceApplicability.POSSIBLE_INFERENCE)
+        val packet = GroundedEvidencePacket(
+            query = "birthday photos",
+            baseline = baseline(),
+            evidence = listOf(possible),
+        )
+        val certainHeader = """{"headline":"Birthday celebration","detail":"Birthday celebration","claims":[{"text":"Possible birthday celebration","evidenceIds":["occasion"],"confidence":0.8}]}"""
+
+        assertThrows(IllegalArgumentException::class.java) {
+            GroundedAnswerCodec().decode(certainHeader, packet)
+        }
+    }
+
     private fun evidence(id: String, mediaId: String, source: String, text: String) = EvidenceRecord(
         id = id,
         mediaId = mediaId,

@@ -591,6 +591,11 @@ media, databases, or logs.
 - Tests and build validation: NOT RUN in this phase.
 - Device validation: NOT RUN in this phase.
 
+### 2026-08-06 - Preserve possible-inference uncertainty in answer headers
+- `GroundedAnswerCodec` now validates headline and detail text against possible-inference evidence, preventing a definitive occasion header when only uncertain visual evidence exists.
+- Added a regression test covering a certain headline/detail paired with an uncertain claim.
+- Existing claim-level uncertainty validation remains unchanged.
+
 ### 2026-08-05 - Semantic scan and caption-vector completion hardening
 - Complete predicate scans now consume typed vector coverage and do not advance a batch on unavailable, failed, partial, or missing-vector results.
 - Caption-vector reconciliation failures are reported as `FAILED` and retried; they cannot be hidden behind `COMPLETE`.

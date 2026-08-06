@@ -65,6 +65,8 @@ class GroundedAnswerCodec {
             append(headline).append('\n').append(detail)
             claims.forEach { append('\n').append(it.text) }
         }
+        validatePossibleInferenceLanguage(headline, packet)
+        validatePossibleInferenceLanguage(detail, packet)
         require(FORBIDDEN_OUTPUT.none { it.containsMatchIn(outputText) }) { "Grounded answer emitted a path or URI" }
         val allSources = packet.query + " " + packet.baseline.headline + " " + packet.baseline.detail + " " +
             packet.evidence.joinToString(" ") { it.text }
@@ -104,6 +106,18 @@ class GroundedAnswerCodec {
         val allowedCalendarWords = CALENDAR_WORD.findAll(source).map { it.value.lowercase(Locale.ROOT) }.toSet()
         val outputCalendarWords = CALENDAR_WORD.findAll(text).map { it.value.lowercase(Locale.ROOT) }.toSet()
         require(outputCalendarWords.all { it in allowedCalendarWords }) { "Grounded answer introduced an unsupported calendar date" }
+    }
+
+    private fun validatePossibleInferenceLanguage(text: String, packet: GroundedEvidencePacket) {
+        val possibleEvidenceWords = packet.evidence.asSequence()
+            .filter(GroundedEvidencePolicy::requiresUncertainty)
+            .flatMap { tokenize(it.text).asSequence() }
+            .filterNot { it in GENERIC_EVIDENCE_WORDS }
+            .toSet()
+        if (possibleEvidenceWords.isEmpty() || tokenize(text).none { it in possibleEvidenceWords }) return
+        require(UNCERTAINTY_MARKER.containsMatchIn(text)) {
+            "Headline or detail must preserve uncertainty for possible-inference evidence"
+        }
     }
 
     private fun validateClaimOverlap(text: String, cited: List<EvidenceRecord>, packet: GroundedEvidencePacket) {
@@ -185,6 +199,9 @@ class GroundedAnswerCodec {
         private val SAFE_WORDS = setOf(
             "verified", "local", "locally", "visible", "photo", "photos", "result", "results", "candidate", "candidates",
             "condition", "conditions", "required", "supported", "ranked", "wears", "wearing", "satisfied", "checked",
+        )
+        private val GENERIC_EVIDENCE_WORDS = setOf(
+            "photo", "photos", "image", "images", "picture", "pictures", "scene", "visible", "shows", "showing",
         )
     }
 }
