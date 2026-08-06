@@ -136,6 +136,31 @@ internal object CaptionChunkFactProvenancePolicy {
     }
 }
 
+internal object CaptionChunkSearchPolicy {
+    fun matchesCaption(
+        caption: SemanticCaptionRecord,
+        chunk: SemanticCaptionChunkRecord,
+    ): Boolean =
+        chunk.captionId == caption.id &&
+            chunk.mediaId == caption.evidenceMediaId &&
+            chunk.scope == caption.scope &&
+            chunk.scopeId == caption.subjectId &&
+            chunk.evidenceMediaId == caption.evidenceMediaId &&
+            chunk.captionModelVersion == caption.modelVersion &&
+            chunk.captionPromptVersion == caption.promptVersion &&
+            chunk.generationId == caption.generationId
+
+    fun isSearchableVector(
+        caption: SemanticCaptionRecord,
+        chunk: SemanticCaptionChunkRecord,
+    ): Boolean =
+        matchesCaption(caption, chunk) &&
+            chunk.chunkPolicyVersion == SemanticCaptionChunker.POLICY_VERSION &&
+            chunk.embeddingState == CaptionEmbeddingState.COMPLETE &&
+            !chunk.embeddingModelVersion.isNullOrBlank() &&
+            chunk.applicability != SemanticProvenanceApplicability.STALE_PERSON_BINDING
+}
+
 internal object SemanticCaptionChunker {
     const val POLICY_VERSION = "caption-chunks-v3"
     const val MAX_CHUNKS_PER_CAPTION = 24

@@ -978,3 +978,9 @@ People cluster summaries now expose both the user-selected representative face a
 
 - The active Compose answer card now displays validated Gemma claims, cited evidence IDs, confidence, and coverage warnings alongside the deterministic headline/detail.
 - This closes the user-facing Q&A path without exposing raw sensitive evidence when the answer is authentication-locked.
+
+### 2026-08-06 - Enforce caption search provenance
+
+- Caption FTS and caption-vector eligibility now require each chunk to match its parent caption's scope, scope ID, evidence media, model, prompt, generation, and current chunk policy.
+- Vector hit resolution revalidates complete current chunks before turning them into evidence; stale or cross-generation rows cannot surface through an old vector-store entry.
+- Added unit coverage for cross-scope, cross-generation, stale-policy, and incomplete-vector rejection.

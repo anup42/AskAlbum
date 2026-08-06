@@ -4495,18 +4495,36 @@ class GalleryDatabase(
             val placeholders = ids.joinToString(",") { "?" }
             readableDatabase.rawQuery(
                 """
-                SELECT * FROM semantic_caption_chunk
-                WHERE media_id IN ($placeholders) AND embedding_state='COMPLETE' AND embedding_model_version=?
+                SELECT c.* FROM semantic_caption_chunk c
+                JOIN semantic_caption cap ON cap.id=c.caption_id
+                WHERE c.media_id IN ($placeholders) AND c.embedding_state='COMPLETE' AND c.embedding_model_version=?
+                  AND c.chunk_policy_version=?
+                  AND c.scope=cap.scope
+                  AND c.scope_id=cap.subject_id
+                  AND c.media_id=cap.evidence_media_id
+                  AND c.evidence_media_id=cap.evidence_media_id
+                  AND c.caption_model_version=cap.model_version
+                  AND c.caption_prompt_version=cap.prompt_version
+                  AND c.generation_id IS cap.generation_id
                 """.trimIndent(),
-                arrayOf(*ids.toTypedArray(), producerVersion),
+                arrayOf(*ids.toTypedArray(), producerVersion, SemanticCaptionChunker.POLICY_VERSION),
             ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
         }
         val contextual = readableDatabase.rawQuery(
             """
-            SELECT * FROM semantic_caption_chunk
-            WHERE scope IN ('VISUAL_GROUP','EVENT') AND embedding_state='COMPLETE' AND embedding_model_version=?
+            SELECT c.* FROM semantic_caption_chunk c
+            JOIN semantic_caption cap ON cap.id=c.caption_id
+            WHERE c.scope IN ('VISUAL_GROUP','EVENT') AND c.embedding_state='COMPLETE' AND c.embedding_model_version=?
+              AND c.chunk_policy_version=?
+              AND c.scope=cap.scope
+              AND c.scope_id=cap.subject_id
+              AND c.media_id=cap.evidence_media_id
+              AND c.evidence_media_id=cap.evidence_media_id
+              AND c.caption_model_version=cap.model_version
+              AND c.caption_prompt_version=cap.prompt_version
+              AND c.generation_id IS cap.generation_id
             """.trimIndent(),
-            arrayOf(producerVersion),
+            arrayOf(producerVersion, SemanticCaptionChunker.POLICY_VERSION),
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
             .filter { chunkTargets(it).any { target -> target in allowedMediaIds } }
         return (direct + contextual).asSequence()
@@ -4540,6 +4558,9 @@ class GalleryDatabase(
                 return@flatMap emptyList()
             }
             val caption = captions[chunk.captionId] ?: return@flatMap emptyList()
+            if (!CaptionChunkSearchPolicy.isSearchableVector(caption, chunk)) {
+                return@flatMap emptyList()
+            }
             chunkTargets(chunk).filter { it in allowedMediaIds }.map { mediaId ->
                 val direct = SemanticProvenanceApplicability.isDirect(
                     scope = chunk.scope,
@@ -4593,7 +4614,15 @@ class GalleryDatabase(
                     SELECT c.*,matchinfo(semantic_caption_chunk_fts,'pcnalx') AS fts_info
                     FROM semantic_caption_chunk_fts
                     JOIN semantic_caption_chunk c ON c.id=semantic_caption_chunk_fts.chunk_id
+                    JOIN semantic_caption cap ON cap.id=c.caption_id
                     WHERE semantic_caption_chunk_fts MATCH ? AND c.chunk_policy_version=?
+                      AND c.scope=cap.scope
+                      AND c.scope_id=cap.subject_id
+                      AND c.media_id=cap.evidence_media_id
+                      AND c.evidence_media_id=cap.evidence_media_id
+                      AND c.caption_model_version=cap.model_version
+                      AND c.caption_prompt_version=cap.prompt_version
+                      AND c.generation_id IS cap.generation_id
                     """.trimIndent(),
                     arrayOf(expression, SemanticCaptionChunker.POLICY_VERSION),
                 ).use { cursor ->

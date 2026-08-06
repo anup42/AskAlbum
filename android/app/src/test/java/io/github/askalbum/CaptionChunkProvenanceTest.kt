@@ -35,6 +35,43 @@ class CaptionChunkProvenanceTest {
         assertEquals(listOf(mediaFact), CaptionChunkFactProvenancePolicy.matchingPersonFacts(mediaCaption, listOf(mediaFact, staleBodyFact)))
     }
 
+    @Test
+    fun searchRejectsChunkFromDifferentScopeOrGeneration() {
+        val caption = caption()
+        val valid = chunk(caption)
+        assertTrue(CaptionChunkSearchPolicy.matchesCaption(caption, valid))
+        assertTrue(
+            !CaptionChunkSearchPolicy.matchesCaption(
+                caption,
+                valid.copy(scope = SemanticFactScope.EVENT, scopeId = "event-1"),
+            ),
+        )
+        assertTrue(!CaptionChunkSearchPolicy.matchesCaption(caption, valid.copy(generationId = "g2")))
+        assertTrue(!CaptionChunkSearchPolicy.matchesCaption(caption, valid.copy(captionPromptVersion = "prompt-2")))
+    }
+
+    @Test
+    fun vectorSearchRequiresCurrentCompleteChunk() {
+        val caption = caption()
+        val valid = chunk(caption).copy(
+            embeddingModelVersion = "siglip-v1",
+            embeddingState = CaptionEmbeddingState.COMPLETE,
+        )
+        assertTrue(CaptionChunkSearchPolicy.isSearchableVector(caption, valid))
+        assertTrue(
+            !CaptionChunkSearchPolicy.isSearchableVector(
+                caption,
+                valid.copy(chunkPolicyVersion = "caption-chunks-old"),
+            ),
+        )
+        assertTrue(
+            !CaptionChunkSearchPolicy.isSearchableVector(
+                caption,
+                valid.copy(embeddingState = CaptionEmbeddingState.PENDING),
+            ),
+        )
+    }
+
     private fun caption() = SemanticCaptionRecord(
         id = "caption-1",
         scope = SemanticFactScope.MEDIA,
@@ -80,5 +117,25 @@ class CaptionChunkProvenanceTest {
         promptVersion = "prompt-1",
         bodyRegionVersion = bodyRegionVersion,
         generationId = generationId,
+    )
+
+    private fun chunk(caption: SemanticCaptionRecord) = SemanticCaptionChunkRecord(
+        id = "chunk-1",
+        captionId = caption.id,
+        mediaId = caption.evidenceMediaId,
+        scope = caption.scope,
+        scopeId = caption.subjectId,
+        evidenceMediaId = caption.evidenceMediaId,
+        clusterId = null,
+        chunkType = CaptionChunkType.SCENE,
+        exactText = caption.text,
+        confidence = caption.confidence,
+        applicability = caption.applicability,
+        captionModelVersion = caption.modelVersion,
+        captionPromptVersion = caption.promptVersion,
+        chunkPolicyVersion = SemanticCaptionChunker.POLICY_VERSION,
+        embeddingModelVersion = null,
+        embeddingState = CaptionEmbeddingState.PENDING,
+        generationId = caption.generationId,
     )
 }
