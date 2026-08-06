@@ -187,7 +187,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         )
     }
 
-    private fun removeImported(context: Context, runId: String) {
+    fun removeImported(context: Context, runId: String) {
         val uris = seededUris(context, runId)
         writeStatus(context, runId, "db-cleanup-status.json", JSONObject().put("state", "RUNNING"))
         val repository = (context.applicationContext as AskAlbumApplication).repository
@@ -219,7 +219,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun prepareIndexInterruption(context: Context, runId: String) {
+    fun prepareIndexInterruption(context: Context, runId: String) {
         val uris = seededUris(context, runId)
         val expected = uris.map(Uri::toString).toSet()
         val repository = (context.applicationContext as AskAlbumApplication).repository
@@ -244,7 +244,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         )
     }
 
-    private fun verifyIndexRecovery(context: Context, runId: String) {
+    fun verifyIndexRecovery(context: Context, runId: String) {
         val uris = seededUris(context, runId)
         val expected = uris.map(Uri::toString).toSet()
         val repository = (context.applicationContext as AskAlbumApplication).repository

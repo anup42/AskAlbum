@@ -36,8 +36,12 @@ class SeededGalleryCorpusDriverTest {
         val safeRunId = requireNotNull(runId)
         when (arguments.getString("galleryDriverAction") ?: ACTION_PREPARE) {
             ACTION_PREPARE -> prepare(context, safeRunId, arguments)
+            ACTION_IMPORT -> importSeeded(context, safeRunId)
+            ACTION_REMOVE -> removeImported(context, safeRunId)
+            ACTION_CLEANUP -> cleanup(context, safeRunId, arguments)
+            ACTION_RECOVERY_PREPARE -> TestGallerySeederReceiver().prepareIndexInterruption(context, safeRunId)
+            ACTION_RECOVERY_VERIFY -> TestGallerySeederReceiver().verifyIndexRecovery(context, safeRunId)
             ACTION_INDEX -> index(context, safeRunId, arguments)
-            ACTION_CLEANUP -> cleanup(context, safeRunId)
             ACTION_REPORT -> report(context, safeRunId)
             ACTION_DIAGNOSE -> diagnose(context, safeRunId)
             else -> error("Unsupported galleryDriverAction")
@@ -74,6 +78,36 @@ class SeededGalleryCorpusDriverTest {
         val imported = waitForState(context, runId, "import-status.json")
         assertEquals("COMPLETE", imported.optString("state"))
         assertTrue(imported.optInt("importedCount", 0) > 0)
+    }
+
+    private fun importSeeded(context: android.content.Context, runId: String) {
+        clearStatus(context, runId, "import-status.json")
+        TestGallerySeederService.start(context, runId, TestGallerySeederService.ACTION_IMPORT)
+        val imported = waitForState(context, runId, "import-status.json")
+        assertEquals("COMPLETE", imported.optString("state"))
+        assertTrue(imported.optInt("importedCount", 0) > 0)
+    }
+
+    private fun removeImported(context: android.content.Context, runId: String) {
+        clearStatus(context, runId, "db-cleanup-status.json")
+        TestGallerySeederReceiver().removeImported(context, runId)
+        val removed = waitForState(context, runId, "db-cleanup-status.json")
+        assertEquals("COMPLETE", removed.optString("state"))
+        assertEquals(0, removed.optInt("remainingCount", -1))
+    }
+
+    private fun cleanup(context: android.content.Context, runId: String, arguments: Bundle) {
+        val operationId = requireNotNull(arguments.getString("galleryOperationId"))
+        clearStatus(context, runId, "cleanup-status.json")
+        TestGallerySeederService.start(
+            context,
+            runId,
+            TestGallerySeederService.ACTION_CLEANUP,
+            operationId = operationId,
+        )
+        val result = waitForState(context, runId, "cleanup-status.json")
+        assertEquals("COMPLETE", result.optString("state"))
+        assertEquals(0, result.optInt("remainingCount", -1))
     }
 
     private fun cleanup(context: android.content.Context, runId: String) {
@@ -195,6 +229,10 @@ class SeededGalleryCorpusDriverTest {
 
     private companion object {
         const val ACTION_PREPARE = "prepare"
+        const val ACTION_IMPORT = "import"
+        const val ACTION_REMOVE = "remove"
+        const val ACTION_RECOVERY_PREPARE = "recovery_prepare"
+        const val ACTION_RECOVERY_VERIFY = "recovery_verify"
         const val ACTION_INDEX = "index"
         const val ACTION_CLEANUP = "cleanup"
         const val ACTION_REPORT = "report"

@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-from common import adb, mask_serial, require_run_id, resolve_serial, run_as_read
+from common import mask_serial, require_run_id, resolve_serial, run_as_read, run_instrumentation_driver
 
 
 def parse_cleanup_status(payload: bytes | None, run_id: str, operation_id: str) -> dict[str, object] | None:
@@ -44,10 +44,13 @@ def main() -> None:
     serial = resolve_serial(args.serial)
     run_id = require_run_id(args.run_id)
     operation_id = uuid.uuid4().hex
-    adb(
-        serial, "shell", "am", "start-foreground-service", "-n", f"{args.package}/.TestGallerySeederService",
-        "-a", "io.github.anup42.askalbum.test.CLEANUP_GALLERY_FOREGROUND", "--es", "run_id", run_id,
-        "--es", "operation_id", operation_id,
+    run_instrumentation_driver(
+        serial,
+        args.package,
+        run_id,
+        "cleanup",
+        arguments={"galleryOperationId": operation_id},
+        timeout_seconds=900,
     )
     result = wait_for_cleanup(serial, args.package, run_id, operation_id, timeout_seconds=900)
     if result.get("remainingCount") != 0:

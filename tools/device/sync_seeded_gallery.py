@@ -4,12 +4,12 @@ import argparse
 import json
 from pathlib import Path
 
-from common import adb, mask_serial, require_run_id, resolve_serial, wait_for_json
+from common import mask_serial, require_run_id, resolve_serial, run_instrumentation_driver, wait_for_json
 
 
 ACTIONS = {
-    "import": ("io.github.anup42.askalbum.test.IMPORT_SEEDED", "import-status.json"),
-    "remove": ("io.github.anup42.askalbum.test.REMOVE_IMPORTED", "db-cleanup-status.json"),
+    "import": ("import", "import-status.json"),
+    "remove": ("remove", "db-cleanup-status.json"),
 }
 
 
@@ -23,11 +23,8 @@ def main() -> None:
     args = parser.parse_args()
     serial = resolve_serial(args.serial)
     run_id = require_run_id(args.run_id)
-    action, status_name = ACTIONS[args.action]
-    adb(
-        serial, "shell", "am", "broadcast", "-n", f"{args.package}/.TestGallerySeederReceiver",
-        "-a", action, "--es", "run_id", run_id,
-    )
+    driver_action, status_name = ACTIONS[args.action]
+    run_instrumentation_driver(serial, args.package, run_id, driver_action, timeout_seconds=180)
     result = wait_for_json(
         serial, args.package, f"files/test-seed/{run_id}/{status_name}", timeout_seconds=180,
     )

@@ -72,6 +72,39 @@ def adb(
     )
 
 
+def run_instrumentation_driver(
+    serial: str,
+    package: str,
+    run_id: str,
+    action: str,
+    *,
+    arguments: dict[str, str] | None = None,
+    timeout_seconds: float = 600,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run the debug-only driver inside the target app's UID.
+
+    Debug components intentionally remain non-exported or signature-protected. A shell caller
+    therefore cannot invoke their provider, receiver, or service directly; instrumentation can
+    use the target context and keeps this transport scoped to the installed test APK.
+    """
+    command = [
+        "shell", "am", "instrument", "-w", "-r",
+        "-e", "class", "io.github.anup42.askalbum.SeededGalleryCorpusDriverTest",
+        "-e", "galleryRunId", run_id,
+        "-e", "galleryDriverAction", action,
+    ]
+    for key, value in (arguments or {}).items():
+        command.extend(("-e", key, value))
+    command.append(f"{package}.test/androidx.test.runner.AndroidJUnitRunner")
+    result = adb(serial, *command, check=False, timeout_seconds=timeout_seconds)
+    output = result.stdout + result.stderr
+    if result.returncode or b"OK (1 test)" not in output:
+        raise RuntimeError(
+            f"Instrumentation driver failed for {action}: {output.decode(errors='replace')[-3000:]}"
+        )
+    return result
+
+
 def require_run_id(run_id: str) -> str:
     if not RUN_ID.fullmatch(run_id):
         raise RuntimeError("Run ID must contain only 6-64 letters, digits, underscores, or hyphens")

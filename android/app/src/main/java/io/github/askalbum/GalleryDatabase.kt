@@ -963,6 +963,31 @@ class GalleryDatabase(
         )
     }
 
+    fun releaseIndexingLeases(pipeline: IndexingPipeline, owner: String) {
+        val stages = IndexingRecoveryPolicy.stagesFor(pipeline)
+        if (stages.isEmpty()) return
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        val stageNames = stages.joinToString(",") { "'${it.name}'" }
+        val ownedMediaIds = "SELECT media_id FROM media_index_stage WHERE status='RUNNING' " +
+            "AND lease_owner=? AND stage IN ($stageNames)"
+        if (stages.intersect(IndexingRecoveryPolicy.mediaAnalysisStages).isNotEmpty()) {
+            db.execSQL(
+                "UPDATE media_item SET index_state='PENDING',index_error=NULL " +
+                    "WHERE index_state='INDEXING' AND id IN ($ownedMediaIds)",
+                arrayOf(owner),
+            )
+        }
+        db.execSQL(
+            "UPDATE media_index_stage SET status='PENDING'," +
+                "attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END," +
+                "updated_at=?,error='worker_cancelled',lease_owner=NULL,lease_expires_at=NULL," +
+                "next_attempt_at=0,last_progress_at=? " +
+                "WHERE status='RUNNING' AND lease_owner=? AND stage IN ($stageNames)",
+            arrayOf(now, now, owner),
+        )
+    }
+
     fun applyReconciliation(plan: MediaReconciliationPlan): Int {
         val db = writableDatabase
         var changed = 0

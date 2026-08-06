@@ -87,6 +87,22 @@ class PeopleIndexRecoveryDatabaseTest {
         assertEquals(StageStatus.PENDING, reopened.stageRecords(image.id).single { it.stage == IndexStage.OCR }.status)
     }
 
+    @Test
+    fun canceledWorkerReleasesOnlyItsOwnedEmbeddingLease() {
+        val database = GalleryDatabase(context, TEST_DATABASE).also { store = it }
+        database.seedDemoIfEmpty()
+        database.ensureStageRows()
+        val images = database.allItems().filter { it.kind == MediaKind.IMAGE }.take(2)
+        assertEquals(2, images.size)
+        assertTrue(database.markEmbedding(images[0].id, "embedding-test-v1", "embedding-owner-a"))
+        assertTrue(database.markEmbedding(images[1].id, "embedding-test-v1", "embedding-owner-b"))
+
+        database.releaseIndexingLeases(IndexingPipeline.EMBEDDINGS, "embedding-owner-a")
+
+        assertEquals(StageStatus.PENDING, database.stageRecords(images[0].id).single { it.stage == IndexStage.EMBEDDING }.status)
+        assertEquals(StageStatus.RUNNING, database.stageRecords(images[1].id).single { it.stage == IndexStage.EMBEDDING }.status)
+    }
+
     private companion object {
         const val TEST_DATABASE = "people-index-recovery-test.db"
     }

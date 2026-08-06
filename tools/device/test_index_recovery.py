@@ -4,14 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from common import adb, mask_serial, require_run_id, resolve_serial, wait_for_json
-
-
-def broadcast(serial: str, package: str, action: str, run_id: str) -> None:
-    adb(
-        serial, "shell", "am", "broadcast", "-n", f"{package}/.TestGallerySeederReceiver",
-        "-f", "0x20", "-a", action, "--es", "run_id", run_id,
-    )
+from common import adb, mask_serial, require_run_id, resolve_serial, run_instrumentation_driver, wait_for_json
 
 
 def main() -> None:
@@ -24,10 +17,10 @@ def main() -> None:
     serial = resolve_serial(args.serial)
     run_id = require_run_id(args.run_id)
     root = f"files/test-seed/{run_id}"
-    broadcast(serial, args.package, "io.github.anup42.askalbum.test.PREPARE_INDEX_INTERRUPTION", run_id)
+    run_instrumentation_driver(serial, args.package, run_id, "recovery_prepare", timeout_seconds=180)
     prepared = wait_for_json(serial, args.package, f"{root}/recovery-prepare-status.json", 180)
     adb(serial, "shell", "am", "force-stop", args.package)
-    broadcast(serial, args.package, "io.github.anup42.askalbum.test.VERIFY_INDEX_RECOVERY", run_id)
+    run_instrumentation_driver(serial, args.package, run_id, "recovery_verify", timeout_seconds=180)
     recovered = wait_for_json(serial, args.package, f"{root}/recovery-verify-status.json", 180)
     if recovered.get("runningStages") != 0 or recovered.get("indexingRows") != 0:
         raise RuntimeError(f"Incomplete recovery: {recovered}")

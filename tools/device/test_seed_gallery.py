@@ -40,7 +40,7 @@ class ExistingSeedResultTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             archive = Path(temporary) / "archive.zip"
             archive.write_bytes(b"askalbum-stress")
-            self.assertEqual("66552056b52576f7c98899c56a0366b3c5add5f1fc724844c80bd715b6bd872b", sha256_file(archive))
+            self.assertEqual("35a4b038d788a6a5746d6ff0f9bb5e6c2619ddb6ea4cc6a19813fcd12aae5aab", sha256_file(archive))
 
     def test_external_transport_accepts_only_the_canonical_provider_path(self) -> None:
         response = "Result: Bundle[{path=/storage/emulated/0/Android/data/io.github.anup42.askalbum/files/test-seed-transfer/stress_run.zip, state=READY}]"
@@ -59,8 +59,11 @@ class ExistingSeedResultTest(unittest.TestCase):
         validate_transport_mode("chunked", False)
         validate_transport_mode("external-file", True)
         validate_transport_mode("external-file", False)
+        validate_transport_mode("instrumentation", False)
         with self.assertRaises(RuntimeError):
             validate_transport_mode("chunked", True)
+        with self.assertRaises(RuntimeError):
+            validate_transport_mode("instrumentation", True)
 
     def test_console_summary_omits_large_uri_lists_but_keeps_the_count(self) -> None:
         output = io.StringIO()

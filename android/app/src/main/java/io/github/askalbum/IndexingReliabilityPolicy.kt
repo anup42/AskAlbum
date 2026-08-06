@@ -90,7 +90,13 @@ internal object IndexingRecoveryAdmissionPolicy {
     fun shouldReclaimOrphanedLeases(
         foregroundActive: Boolean,
         scheduledWorkActive: Boolean,
-    ): Boolean = !foregroundActive && !scheduledWorkActive
+    ): Boolean {
+        // initialize() runs once for a fresh application process. Any leases owned by the
+        // previous process are orphaned even when WorkManager persisted their work as active.
+        // ForegroundIndexRuntime is the only live-process guard needed here; polling never calls
+        // this policy.
+        return !foregroundActive
+    }
 }
 
 internal object IndexingResourceCoordinator {

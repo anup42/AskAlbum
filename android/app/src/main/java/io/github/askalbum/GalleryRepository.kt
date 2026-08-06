@@ -386,6 +386,8 @@ class GalleryRepository(context: Context) {
         database.recoverInterruptedJobs(pipeline)
     fun renewIndexingLeases(pipeline: IndexingPipeline, owner: String) =
         database.renewIndexingLeases(pipeline, owner)
+    fun releaseIndexingLeases(pipeline: IndexingPipeline, owner: String) =
+        database.releaseIndexingLeases(pipeline, owner)
     fun markIndexing(
         id: String,
         owner: String = "repository-direct",

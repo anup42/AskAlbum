@@ -12,7 +12,15 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from common import adb, mask_serial, require_run_id, resolve_serial, retry_transient, run_as_read
+from common import (
+    adb,
+    mask_serial,
+    require_run_id,
+    resolve_serial,
+    retry_transient,
+    run_as_read,
+    run_instrumentation_driver,
+)
 
 
 def parse_external_path(response: str, package: str, run_id: str) -> str:
@@ -29,6 +37,28 @@ def parse_external_path(response: str, package: str, run_id: str) -> str:
 def validate_transport_mode(transport: str, stage_only: bool) -> None:
     if stage_only and transport != "external-file":
         raise RuntimeError("--stage-only requires --transport external-file")
+
+
+def seed_via_instrumentation(
+    serial: str,
+    package: str,
+    run_id: str,
+    archive: Path,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    staging_directory = f"/sdcard/Android/data/{package}/files/test-seed-transfer"
+    target = f"{staging_directory}/{run_id}.zip"
+    adb(serial, "shell", "mkdir", "-p", staging_directory)
+    adb(serial, "push", str(archive), target, timeout_seconds=900)
+    run_instrumentation_driver(
+        serial,
+        package,
+        run_id,
+        "prepare",
+        arguments={"gallerySeedArchiveName": f"{run_id}.zip"},
+        timeout_seconds=timeout_seconds,
+    )
+    return wait_for_seed_completion(serial, package, run_id, timeout_seconds)
 
 
 def start_seed_service(serial: str, package: str, run_id: str) -> None:
@@ -125,7 +155,7 @@ def main() -> None:
     parser.add_argument("--run-id")
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts/device-runs"))
     parser.add_argument("--reset-transfer", action="store_true")
-    parser.add_argument("--transport", choices=("chunked", "external-file"), default="chunked")
+    parser.add_argument("--transport", choices=("chunked", "external-file", "instrumentation"), default="chunked")
     parser.add_argument("--stage-only", action="store_true")
     parser.add_argument("--timeout-seconds", type=int, default=900)
     args = parser.parse_args()
@@ -195,6 +225,13 @@ def main() -> None:
     transport = args.transport
     validate_transport_mode(transport, args.stage_only)
     try:
+        if transport == "instrumentation":
+            result = seed_via_instrumentation(serial, args.package, run_id, archive, args.timeout_seconds)
+            safe_result = {**result, "retriedCalls": 0, "transport": "instrumentation",
+                           "serial": mask_serial(serial), "package": args.package}
+            (host / "seed-result.json").write_text(json.dumps(safe_result, indent=2) + "\n", encoding="utf-8")
+            print_result_summary(safe_result)
+            return
         if transport == "external-file":
             if args.reset_transfer:
                 adb(serial, "shell", "content", "call", "--uri", provider_root, "--method", "abort", "--arg", run_id, check=False)
