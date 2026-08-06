@@ -1313,3 +1313,9 @@ People cluster summaries now expose both the user-selected representative face a
 - The fixture-device `VectorIndexBenchmarkTest` passed the native FP16 scan gate at both 5,000 and 20,000 vectors. This is a vector-index benchmark, not proof of a full 5,000/20,000 media import.
 - `consumerDebug` and `offlineDemoDebug` assembled successfully; the offline APK manifest contains no `INTERNET` permission.
 - The run-scoped connected corpus was cleaned 84/84. The production package and its gallery, People state, indexes, and model packs were not modified.
+
+### 2026-08-06 - Reclaim video-keyframe stages after process death
+
+- The forced-stop recovery gate exposed one orphaned `VIDEO_KEYFRAMES` stage: media analysis claimed it, but the recovery stage set omitted it.
+- Added `VIDEO_KEYFRAMES` to the media-analysis recovery scope and extended `IndexingReliabilityPolicyTest` to protect the ownership contract.
+- The failed recovery run was cleaned safely: 84 imported database rows and 84 MediaStore assets were removed; no production package data was touched.

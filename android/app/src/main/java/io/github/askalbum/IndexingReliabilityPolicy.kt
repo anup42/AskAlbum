@@ -25,6 +25,7 @@ internal object IndexingRetryPolicy {
 internal object IndexingRecoveryPolicy {
     val mediaAnalysisStages: Set<IndexStage> = setOf(
         IndexStage.THUMBNAIL,
+        IndexStage.VIDEO_KEYFRAMES,
         IndexStage.OCR,
         IndexStage.EVENTS,
         IndexStage.ENRICHMENT,

@@ -90,7 +90,13 @@ class IndexingReliabilityPolicyTest {
     @Test
     fun expiredLeaseRecoveryIsScopedToTheOwningPipeline() {
         assertEquals(
-            setOf(IndexStage.THUMBNAIL, IndexStage.OCR, IndexStage.EVENTS, IndexStage.ENRICHMENT),
+            setOf(
+                IndexStage.THUMBNAIL,
+                IndexStage.VIDEO_KEYFRAMES,
+                IndexStage.OCR,
+                IndexStage.EVENTS,
+                IndexStage.ENRICHMENT,
+            ),
             IndexingRecoveryPolicy.stagesFor(IndexingPipeline.MEDIA_ANALYSIS),
         )
         assertEquals(
