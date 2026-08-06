@@ -962,3 +962,8 @@ People cluster summaries now expose both the user-selected representative face a
 - People summaries, samples, paged cluster faces, reviewed-person resolution, and reviewed-identity expansion now use only accessible media rows.
 - Inaccessible face assignments remain stored for permission restoration but no longer make an unreviewed cluster pass the five-media visibility threshold or appear as an unopenable People image.
 - Added an isolated database regression for partial-gallery access.
+
+### 2026-08-06 - Normalize EXIF orientation before visual verification
+
+- `GalleryImageLoader` now applies the same EXIF transform used by gallery thumbnails and People crops before sending decoded media to Gemma verification or semantic enrichment.
+- Added an instrumented regression test proving a JPEG tagged with `ORIENTATION_ROTATE_90` is delivered upright.

@@ -42,11 +42,13 @@ class GalleryImageLoader(private val context: Context) {
         val bounds = BitmapFactory.Options().also { it.inJustDecodeBounds = true }
         open(item, keyframe).use { BitmapFactory.decodeStream(it, null, bounds) }
         require(bounds.outWidth > 0 && bounds.outHeight > 0) { "Image could not be decoded" }
+        val orientation = ExifBitmapOrientation.read { open(item, keyframe) }
         var sample = 1
         while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > MAX_EDGE_PX) sample *= 2
-        val bitmap = open(item, keyframe).use { stream ->
+        val decoded = open(item, keyframe).use { stream ->
             BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().also { it.inSampleSize = sample })
         } ?: error("Image could not be decoded")
+        val bitmap = ExifBitmapOrientation.apply(decoded, orientation)
         try {
             ByteArrayOutputStream().use { output ->
                 require(bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output)) { "Image preparation failed" }
