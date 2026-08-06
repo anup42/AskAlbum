@@ -3030,6 +3030,35 @@ private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
                 Spacer(Modifier.height(6.dp))
                 Text(outcome.answer.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp)
             }
+            if (outcome.answer.claims.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text("Grounded claims", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                outcome.answer.claims.forEachIndexed { index, claim ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "- ${claim.text}",
+                        modifier = Modifier.testTag("grounded-claim-$index"),
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                    )
+                    Text(
+                        "Evidence ${claim.evidenceIds.joinToString()} • ${(claim.confidence * 100).toInt()}% confidence",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 10.sp,
+                    )
+                }
+            }
+            if (outcome.answer.warnings.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                outcome.answer.warnings.forEach { warning ->
+                    Text(
+                        warning,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                    )
+                }
+            }
             if (outcome.resultSetId != null && outcome.hits.isNotEmpty()) {
                 TextButton(onClick = onRefine, modifier = Modifier.testTag("refine-results")) { Text("Refine") }
             }

@@ -973,3 +973,8 @@ People cluster summaries now expose both the user-selected representative face a
 - Person-conditioned verification now labels all visible faces in its composite. Reviewed identities use deterministic `P*` labels; unreviewed or hidden faces use `U*` context labels without identity terms.
 - Required identity checks still resolve only reviewed clusters, and the prompt explicitly prevents `U*` faces from satisfying a requested identity condition.
 - Added an isolated database regression test for reviewed versus unreviewed binding provenance.
+
+### 2026-08-06 - Show grounded claims in the active Ask answer card
+
+- The active Compose answer card now displays validated Gemma claims, cited evidence IDs, confidence, and coverage warnings alongside the deterministic headline/detail.
+- This closes the user-facing Q&A path without exposing raw sensitive evidence when the answer is authentication-locked.
