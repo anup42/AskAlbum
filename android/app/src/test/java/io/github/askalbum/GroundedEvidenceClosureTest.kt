@@ -31,6 +31,42 @@ class GroundedEvidenceClosureTest {
     }
 
     @Test
+    fun capabilityAnswerCitationsKeepDirectEvidenceAndRejectForeignMedia() {
+        val plan = GalleryQueryPlan(
+            originalQuery = "show beach photos",
+            intent = QueryIntent.FIND_MEDIA,
+            peopleClauses = emptyList(),
+            semanticClauses = emptyList(),
+        )
+        val lowPriority = (1..GroundedEvidencePacketBuilder.MAX_EVIDENCE).map { index ->
+            evidence("caption-$index", "m1", "semantic_caption", "A beach scene")
+        }
+        val hit = SearchHit(
+            item("m1"),
+            1.0,
+            lowPriority +
+                evidence("foreign", "m2", "visual_verification", "A different beach") +
+                evidence("verified", "m1", "visual_verification", "P1 is at the beach"),
+        )
+
+        val answer = CapabilityAnswerExecutor.execute(
+            CapabilityAnswerContext(
+                plan = plan,
+                hits = listOf(hit),
+                matchCount = 1,
+                exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+                indexedEligibleCount = 1,
+                totalEligibleCount = 1,
+                warnings = emptyList(),
+                channelReports = emptyList(),
+            ),
+        )
+
+        assertTrue(answer.evidenceIds.contains("verified"))
+        assertTrue("Foreign-media evidence must not be cited", "foreign" !in answer.evidenceIds)
+    }
+
+    @Test
     fun personVisualAnswersUseOnlySameMediaVisualVerificationEvidence() {
         val plan = GalleryQueryPlan(
             originalQuery = "show wife wearing white",

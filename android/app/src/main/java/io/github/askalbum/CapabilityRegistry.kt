@@ -84,7 +84,18 @@ data class CapabilityAnswerContext(
 
 object CapabilityAnswerExecutor {
     private fun collectEvidenceIds(hits: List<SearchHit>, limit: Int = 24): List<String> =
-        hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(limit)
+        hits.asSequence()
+            .flatMap { hit ->
+                hit.evidence.asSequence().filter { it.mediaId == hit.item.id }
+            }
+            .distinctBy(EvidenceRecord::id)
+            .sortedWith(
+                compareBy<EvidenceRecord> { GroundedEvidencePolicy.evidencePriority(it) }
+                    .thenByDescending { it.confidence },
+            )
+            .map(EvidenceRecord::id)
+            .take(limit)
+            .toList()
 
     fun execute(context: CapabilityAnswerContext): SearchAnswer {
         CapabilityRegistry.requireExecutable(context.plan.intent)

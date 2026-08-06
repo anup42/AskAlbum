@@ -38,4 +38,11 @@ internal object GroundedEvidencePolicy {
 
     fun requiresUncertainty(record: EvidenceRecord): Boolean =
         record.applicability == SemanticProvenanceApplicability.POSSIBLE_INFERENCE
+
+    fun evidencePriority(record: EvidenceRecord): Int = when {
+        record.applicability == SemanticProvenanceApplicability.POSSIBLE_INFERENCE -> 3
+        record.sourceField == "visual_verification" -> 0
+        record.scope == SemanticFactScope.MEDIA || record.scope == SemanticFactScope.QUERY_VERIFICATION -> 1
+        else -> 2
+    }
 }

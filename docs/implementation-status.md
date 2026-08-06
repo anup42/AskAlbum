@@ -941,3 +941,7 @@ People cluster summaries now expose both the user-selected representative face a
 
 - Grounded answer packet construction now prioritizes media-specific visual verification and direct media/query evidence before applying the bounded evidence limit. This prevents a later high-trust record from being omitted behind lower-priority lexical context.
 - Added a regression test covering the evidence-limit case.
+## 2026-08-06 - Close non-Gemma answer evidence to the cited media
+
+- Capability answer citation collection now rejects evidence whose media ID does not match the cited result and prioritizes direct visual/media evidence before the bounded citation limit.
+- Added regression coverage for both cross-media leakage and trusted-evidence truncation.

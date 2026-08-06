@@ -30,7 +30,7 @@ object GroundedEvidencePacketBuilder {
             // candidate may still carry many lexical/context records before its
             // media-specific verification record.
             .sortedWith(
-                compareBy<EvidenceRecord> { answerEvidencePriority(it) }
+                compareBy<EvidenceRecord> { GroundedEvidencePolicy.evidencePriority(it) }
                     .thenByDescending { it.confidence },
             )
             .take(MAX_EVIDENCE)
@@ -39,12 +39,6 @@ object GroundedEvidencePacketBuilder {
         return GroundedEvidencePacket(input.plan.originalQuery, baseline, evidence)
     }
 
-    private fun answerEvidencePriority(record: EvidenceRecord): Int = when {
-        record.applicability == SemanticProvenanceApplicability.POSSIBLE_INFERENCE -> 3
-        record.sourceField == "visual_verification" -> 0
-        record.scope == SemanticFactScope.MEDIA || record.scope == SemanticFactScope.QUERY_VERIFICATION -> 1
-        else -> 2
-    }
 }
 
 /** Strict evidence-only output boundary for the optional answer-wording call. */
