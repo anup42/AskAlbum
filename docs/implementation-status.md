@@ -1006,3 +1006,8 @@ People cluster summaries now expose both the user-selected representative face a
 - Added bounded known-identity detection for planner-free queries, including Unicode family terms and negative polarity.
 - Merged planner, deterministic, and reviewed-alias clauses without re-adding a reviewed database match as a positive clause when the query explicitly excludes it.
 - Added unit coverage for identity detection, arbitrary-name safety, negative polarity, and alternative-cluster merging.
+### 2026-08-06 - Force visual rejection for unsupported negative predicates
+
+- Negative visual clauses now force the bounded Kotlin/Gemma verification path even when a planner requests `NEVER` verification.
+- Screenshot exclusions remain deterministic only when the hard metadata predicate is provable.
+- Added regression coverage for unsupported negative predicates and deterministic screenshot exclusions.

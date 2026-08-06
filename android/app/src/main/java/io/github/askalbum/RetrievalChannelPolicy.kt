@@ -214,10 +214,20 @@ internal object DeterministicNegativeClausePolicy {
     )
 
     fun excludes(item: GalleryItem, clauses: Collection<SemanticClause>): Boolean = clauses.any { clause ->
-        clause.polarity == Polarity.NEGATIVE &&
-            clause.hardness == ConstraintStrength.HARD &&
+        isDeterministicallyHandled(clause) &&
             containsScreenshot(clause.text) &&
             containsScreenshot(listOf(item.filename, item.title, item.album).plus(item.tags).joinToString(" "))
+    }
+
+    fun requiresVisualRejection(clauses: Collection<SemanticClause>): Boolean = clauses.any { clause ->
+        clause.polarity == Polarity.NEGATIVE && !isDeterministicallyHandled(clause)
+    }
+
+    private fun isDeterministicallyHandled(clause: SemanticClause): Boolean {
+        val normalized = SemanticPolarityNormalizer.normalize(clause)
+        return normalized.polarity == Polarity.NEGATIVE &&
+            normalized.hardness == ConstraintStrength.HARD &&
+            containsScreenshot(normalized.text)
     }
 
     private fun containsScreenshot(text: String): Boolean = screenshotPredicate.containsMatchIn(

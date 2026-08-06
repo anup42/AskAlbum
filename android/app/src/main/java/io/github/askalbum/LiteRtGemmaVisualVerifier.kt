@@ -278,6 +278,10 @@ internal object VisualVerificationPolicy {
         // person-conditioned predicates. Face presence alone cannot prove clothing,
         // action, relation, or other visual attributes belong to the requested person.
         if (hasPersonCondition(plan)) return true
+        // Negative visual predicates need a Kotlin-owned rejection pass. Only metadata-backed
+        // screenshot exclusions are already deterministic; every other negative condition must
+        // fail closed if visual verification is unavailable.
+        if (DeterministicNegativeClausePolicy.requiresVisualRejection(plan.semanticClauses)) return true
         return when (plan.verification) {
             VerificationPolicy.NEVER -> false
             VerificationPolicy.REQUIRED -> true
