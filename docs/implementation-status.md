@@ -1054,3 +1054,10 @@ People cluster summaries now expose both the user-selected representative face a
 - `:app:testFixtureCiDebugUnitTest`: PASS.
 - `:app:assembleFixtureCiDebugAndroidTest :app:assembleConsumerDebug`: PASS.
 - Instrumentation execution: NOT RUN; the safe fixture device is disconnected. The production device was not used.
+
+## 2026-08-06 - Personal job coverage eligibility filter
+
+- Personal failed, pending, running, and authentication-required job counts now use distinct media IDs and are restricted to accessible, ready media containing reviewed, visible people included in personal semantic memory.
+- `:app:testFixtureCiDebugUnitTest`: PASS.
+- `:app:assembleFixtureCiDebugAndroidTest :app:assembleConsumerDebug`: PASS.
+- Instrumentation execution: NOT RUN; only the protected production device is connected, so it was not used.

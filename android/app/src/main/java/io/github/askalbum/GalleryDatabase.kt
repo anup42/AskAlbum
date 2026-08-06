@@ -3849,12 +3849,24 @@ class GalleryDatabase(
         val jobPersonalCounts = db.rawQuery(
             """
             SELECT
-                COALESCE(SUM(CASE WHEN status='COMPLETE' THEN 1 ELSE 0 END),0),
-                COALESCE(SUM(CASE WHEN status IN ('PENDING','RUNNING') THEN 1 ELSE 0 END),0),
-                COALESCE(SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END),0),
-                COALESCE(SUM(CASE WHEN status='AUTH_REQUIRED' THEN 1 ELSE 0 END),0)
-            FROM semantic_enrichment_job
+                COUNT(DISTINCT CASE WHEN j.status='COMPLETE' THEN j.representative_media_id END),
+                COUNT(DISTINCT CASE WHEN j.status IN ('PENDING','RUNNING') THEN j.representative_media_id END),
+                COUNT(DISTINCT CASE WHEN j.status='FAILED' THEN j.representative_media_id END),
+                COUNT(DISTINCT CASE WHEN j.status='AUTH_REQUIRED' THEN j.representative_media_id END)
+            FROM semantic_enrichment_job j
             WHERE $personalJobSelection
+              AND j.representative_media_id IN (
+                  SELECT DISTINCT m.id
+                  FROM media_item m
+                  JOIN face_instance f ON f.media_id=m.id
+                  JOIN person_cluster p ON p.id=f.cluster_id
+                  WHERE m.media_kind='IMAGE'
+                    AND m.access_state='ACCESSIBLE'
+                    AND m.index_state='READY'
+                    AND p.reviewed=1
+                    AND p.hidden=0
+                    AND p.include_in_personal_memory=1
+              )
             """.trimIndent(),
             personalJobArgs,
         ).use { cursor ->
