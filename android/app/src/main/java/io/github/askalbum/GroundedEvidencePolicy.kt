@@ -24,7 +24,8 @@ internal object GroundedEvidencePolicy {
             return false
         }
         if (record.scope == SemanticFactScope.EVENT || record.sourceField == "event") {
-            return plan.intent in eventAnswerIntents
+            return plan.intent in eventAnswerIntents ||
+                plan.intent == QueryIntent.LIST && plan.grouping == Grouping.EVENT
         }
         if (hasPersonVisualCondition(plan)) {
             return record.sourceField == "visual_verification"

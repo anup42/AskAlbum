@@ -83,10 +83,16 @@ data class CapabilityAnswerContext(
 )
 
 object CapabilityAnswerExecutor {
-    private fun collectEvidenceIds(hits: List<SearchHit>, limit: Int = 24): List<String> =
+    private fun collectEvidenceIds(
+        hits: List<SearchHit>,
+        plan: GalleryQueryPlan,
+        limit: Int = 24,
+    ): List<String> =
         hits.asSequence()
             .flatMap { hit ->
-                hit.evidence.asSequence().filter { it.mediaId == hit.item.id }
+                hit.evidence.asSequence().filter {
+                    it.mediaId == hit.item.id && GroundedEvidencePolicy.allow(it, plan)
+                }
             }
             .distinctBy(EvidenceRecord::id)
             .sortedWith(
@@ -99,7 +105,7 @@ object CapabilityAnswerExecutor {
 
     fun execute(context: CapabilityAnswerContext): SearchAnswer {
         CapabilityRegistry.requireExecutable(context.plan.intent)
-        val evidenceIds = collectEvidenceIds(context.hits + context.deterministicHits)
+        val evidenceIds = collectEvidenceIds(context.hits + context.deterministicHits, context.plan)
         val base = { headline: String, detail: String, ids: List<String> ->
             SearchAnswer(
                 headline,
@@ -163,7 +169,7 @@ object CapabilityAnswerExecutor {
                 else sourceHits.flatMap(SearchHit::evidence).filter { it.sourceField == requested.sourceField }.map(EvidenceRecord::text)
             }
         }.map(String::trim).filter(String::isNotBlank).distinct()
-        val ids = collectEvidenceIds(sourceHits)
+        val ids = collectEvidenceIds(sourceHits, context.plan)
         return base(
             "${values.size} distinct ${if (values.size == 1) "result" else "results"}",
             values.take(20).joinToString("; ").ifBlank { "No allowlisted value was present in the eligible evidence." },
@@ -188,7 +194,7 @@ object CapabilityAnswerExecutor {
             base(
                 "I found the document, but not a reliable ${field.key.replace('_', ' ')}",
                 "Open the OCR evidence to inspect the local document. The app will not invent the requested value.",
-                collectEvidenceIds(sourceHits, 12),
+                collectEvidenceIds(sourceHits, context.plan, 12),
             )
         } else {
             base(
@@ -215,7 +221,7 @@ object CapabilityAnswerExecutor {
                 "Exact sum unavailable",
                 "The current retrieval pass covered ${context.indexedEligibleCount} of ${context.totalEligibleCount} eligible items. " +
                     "A partial pass cannot produce a trustworthy total.",
-                collectEvidenceIds(context.hits + context.deterministicHits),
+                collectEvidenceIds(context.hits + context.deterministicHits, context.plan),
             )
         }
         val values = numericFacts(context.deterministicHits.ifEmpty { context.hits }, field)
@@ -251,7 +257,7 @@ object CapabilityAnswerExecutor {
                 "Exact minimum or maximum unavailable",
                 "The current retrieval pass covered ${context.indexedEligibleCount} of ${context.totalEligibleCount} eligible items. " +
                     "A partial pass cannot establish a trustworthy minimum or maximum.",
-                collectEvidenceIds(context.hits + context.deterministicHits),
+                collectEvidenceIds(context.hits + context.deterministicHits, context.plan),
             )
         }
         val values = numericFacts(context.deterministicHits.ifEmpty { context.hits }, field)
@@ -306,7 +312,7 @@ object CapabilityAnswerExecutor {
                 } else {
                     "This summary uses the current ranked retrieval pass and may not include every event member."
                 },
-            collectEvidenceIds(sourceHits),
+            collectEvidenceIds(sourceHits, context.plan),
         )
     }
 
@@ -328,7 +334,7 @@ object CapabilityAnswerExecutor {
                 } else {
                     " Dates are limited to the current retrieval pass."
                 },
-            collectEvidenceIds(sourceHits),
+            collectEvidenceIds(sourceHits, context.plan),
         )
     }
 
@@ -358,7 +364,7 @@ object CapabilityAnswerExecutor {
             } else {
                 " Comparison is based on the current ranked retrieval pass."
             },
-            collectEvidenceIds(grouped.flatMap { it.value }),
+            collectEvidenceIds(grouped.flatMap { it.value }, context.plan),
         )
     }
 
@@ -402,7 +408,7 @@ object CapabilityAnswerExecutor {
             } else {
                 " Comparison is based on the current ranked retrieval pass."
             },
-            collectEvidenceIds(grouped.flatMap { it.second }),
+            collectEvidenceIds(grouped.flatMap { it.second }, context.plan),
         )
     }
 

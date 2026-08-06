@@ -984,3 +984,9 @@ People cluster summaries now expose both the user-selected representative face a
 - Caption FTS and caption-vector eligibility now require each chunk to match its parent caption's scope, scope ID, evidence media, model, prompt, generation, and current chunk policy.
 - Vector hit resolution revalidates complete current chunks before turning them into evidence; stale or cross-generation rows cannot surface through an old vector-store entry.
 - Added unit coverage for cross-scope, cross-generation, stale-policy, and incomplete-vector rejection.
+
+### 2026-08-06 - Close capability citations to grounded evidence policy
+
+- Capability answer citations now apply the same typed scope, applicability, event, and person-condition policy used by grounded answer composition.
+- Ordinary media answers no longer cite visual-group or event context as direct sources; direct media/OCR evidence remains available.
+- Added regression coverage for contextual citation exclusion.

@@ -67,6 +67,45 @@ class GroundedEvidenceClosureTest {
     }
 
     @Test
+    fun capabilityAnswerCitationsRejectContextualEvidenceForOrdinaryMediaSearch() {
+        val plan = GalleryQueryPlan(
+            originalQuery = "show beach photos",
+            intent = QueryIntent.FIND_MEDIA,
+        )
+        val direct = evidence("direct", "m1", "semantic_caption", "A beach scene")
+        val groupContext = direct.copy(
+            id = "group-context",
+            sourceField = "semantic_caption_candidate_expansion",
+            scope = SemanticFactScope.VISUAL_GROUP,
+            scopeId = "group-1",
+            evidenceMediaId = "representative",
+        )
+        val eventContext = direct.copy(
+            id = "event-context",
+            sourceField = "event",
+            scope = SemanticFactScope.EVENT,
+            scopeId = "event-1",
+            evidenceMediaId = "representative",
+        )
+        val answer = CapabilityAnswerExecutor.execute(
+            CapabilityAnswerContext(
+                plan = plan,
+                hits = listOf(SearchHit(item("m1"), 1.0, listOf(direct, groupContext, eventContext))),
+                matchCount = 1,
+                exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+                indexedEligibleCount = 1,
+                totalEligibleCount = 1,
+                warnings = emptyList(),
+                channelReports = emptyList(),
+            ),
+        )
+
+        assertTrue(answer.evidenceIds.contains("direct"))
+        assertTrue("Visual-group context must remain candidate-only", "group-context" !in answer.evidenceIds)
+        assertTrue("Event context must not cite an ordinary media search", "event-context" !in answer.evidenceIds)
+    }
+
+    @Test
     fun groundedPromptPreservesVideoTimestampAndEvidenceRegion() {
         val record = evidence("video", "m1", "visual_verification", "Keyframe shows the beach")
             .copy(timestampMs = 12_500L, region = listOf(.1f, .2f, .7f, .9f))
