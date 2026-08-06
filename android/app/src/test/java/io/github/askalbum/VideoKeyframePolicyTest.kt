@@ -46,4 +46,43 @@ class VideoKeyframePolicyTest {
             ),
         )
     }
+
+    @Test
+    fun viewerKeepsKeyframeEvidenceForAnotherSearchResult() {
+        val initial = SearchHit(item("video-1"), 1.0, emptyList())
+        val next = SearchHit(
+            item("video-2"),
+            .9,
+            listOf(
+                EvidenceRecord(
+                    id = "frame-2",
+                    mediaId = "video-2",
+                    sourceField = "video_keyframe",
+                    text = "yellow bicycle at 7 seconds",
+                    confidence = .92f,
+                    timestampMs = 7_000L,
+                ),
+            ),
+        )
+
+        val selected = requireNotNull(findViewerEvidenceHit("video-2", initial, listOf(next)))
+        assertEquals(7_000L, VideoKeyframeSelectionPolicy.selectEvidenceTimestamp(selected.evidence))
+    }
+
+    private fun item(id: String) = GalleryItem(
+        id = id,
+        filename = "$id.mp4",
+        title = id,
+        creator = null,
+        location = "",
+        latitude = null,
+        longitude = null,
+        tags = emptyList(),
+        description = "",
+        license = "",
+        sourceUrl = "",
+        assetPath = null,
+        kind = MediaKind.VIDEO,
+        mimeType = "video/mp4",
+    )
 }

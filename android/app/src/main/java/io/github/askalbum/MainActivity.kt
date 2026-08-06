@@ -387,6 +387,7 @@ private fun AskAlbumApp(viewModel: GalleryViewModel) {
         EvidenceDialog(
             hit = hit,
             items = viewerItems,
+            searchHits = state.outcome?.hits.orEmpty(),
             metadata = state.selectedEvidenceMetadata,
             metadataLoading = state.selectedEvidenceMetadataLoading,
             metadataError = state.selectedEvidenceMetadataError,
@@ -3311,6 +3312,7 @@ private fun GalleryMenuScreen(
 internal fun EvidenceDialog(
     hit: SearchHit,
     items: List<GalleryItem> = listOf(hit.item),
+    searchHits: List<SearchHit> = emptyList(),
     metadata: IndexedMediaMetadata? = null,
     metadataLoading: Boolean = false,
     metadataError: String? = null,
@@ -3330,7 +3332,7 @@ internal fun EvidenceDialog(
     }
     val pagerState = rememberPagerState(initialPage = initialPage) { viewerItems.size }
     val currentItem = viewerItems.getOrElse(pagerState.currentPage) { hit.item }
-    val currentHit = if (currentItem.id == hit.item.id) hit else currentItem.asMetadataHit()
+    val currentHit = findViewerEvidenceHit(currentItem.id, hit, searchHits) ?: currentItem.asMetadataHit()
     val playbackTimestamp = VideoKeyframeSelectionPolicy.selectEvidenceTimestamp(currentHit.evidence)
     var playing by remember(currentItem.id, playbackTimestamp) { mutableStateOf(false) }
     var detailsVisible by remember(currentItem.id) { mutableStateOf(false) }
@@ -3340,7 +3342,7 @@ internal fun EvidenceDialog(
         if (detailsVisible) onLoadMetadata()
     }
     LaunchedEffect(currentItem.id) {
-        if (hit.item.id != currentItem.id) onSelect(currentItem.asMetadataHit())
+        if (hit.item.id != currentItem.id) onSelect(currentHit)
     }
     BackHandler {
         when {

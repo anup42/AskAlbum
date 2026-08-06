@@ -207,6 +207,17 @@ data class SearchHit(
     val duplicateIds: List<String> = emptyList(),
 )
 
+/** Keeps channel evidence when a result viewer moves to another search hit. */
+internal fun findViewerEvidenceHit(
+    currentMediaId: String,
+    initialHit: SearchHit,
+    searchHits: Collection<SearchHit>,
+): SearchHit? = if (initialHit.item.id == currentMediaId) {
+    initialHit
+} else {
+    searchHits.firstOrNull { it.item.id == currentMediaId }
+}
+
 data class RetrievalChannelReport<T>(
     val channel: RetrievalChannel,
     val status: ChannelStatus,
