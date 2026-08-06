@@ -1,12 +1,13 @@
 package io.github.anup42.askalbum
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DocumentFactDeterministicTest {
     @Test
-    fun documentAnswerResolvesGenericAmountEvidence() {
+    fun documentAnswerLocksGenericAmountEvidenceUntilAuthentication() {
         val amount = SearchHit(
             item = hit("amount-document", "Receipt amount", emptyList()).item,
             score = 0.0,
@@ -38,8 +39,10 @@ class DocumentFactDeterministicTest {
             ),
         )
 
-        assertEquals("INR 249.50", answer.headline)
-        assertTrue(answer.evidenceIds.contains("amount-document:amount"))
+        assertEquals(SensitiveEvidencePolicy.LOCKED_HEADLINE, answer.headline)
+        assertTrue(answer.requiresAuthentication)
+        assertTrue(answer.evidenceIds.isEmpty())
+        assertFalse(answer.detail.contains("INR 249.50"))
     }
 
     @Test

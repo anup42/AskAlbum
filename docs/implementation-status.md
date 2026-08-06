@@ -1296,3 +1296,5 @@ People cluster summaries now expose both the user-selected representative face a
 - The People UI now displays only clusters represented in at least five accessible media items.
 - Sparse cluster rows remain in the database and are not deleted, so indexing, corrections, and future review remain non-destructive.
 - Added JVM regression coverage for the display boundary.
+2026-08-06: Corrected the generic OCR amount regression test to reflect the existing financial-evidence authentication boundary. Amount selection remains covered by the deterministic document selector, while unauthenticated answer formatting stays locked and redacted.
+2026-08-06: Corrected the generic OCR amount regression test to reflect the existing financial-evidence authentication boundary. Amount selection remains covered by the deterministic document selector, while unauthenticated answer formatting stays locked and redacted.
