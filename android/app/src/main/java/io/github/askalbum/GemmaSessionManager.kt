@@ -119,10 +119,10 @@ class GemmaSessionManager internal constructor(
                     val selected = if (reused) {
                         requireNotNull(current)
                     } else {
-                        current?.engine?.closeSafely()
                         val started = System.nanoTime()
                         val engine = factory.create(modelPath, multimodal)
                         initializationCounter.incrementAndGet()
+                        current?.engine?.closeSafely()
                         ActiveEngine(
                             modelPath = modelPath,
                             multimodal = multimodal,

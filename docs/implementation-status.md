@@ -1079,3 +1079,12 @@ People cluster summaries now expose both the user-selected representative face a
 - `:app:testFixtureCiDebugUnitTest`: PASS.
 - `:app:assembleConsumerDebug`: PASS.
 - Device execution: NOT RUN; safe fixture unavailable and production device untouched.
+
+## 2026-08-06 - Gemma session replacement rollback
+
+- Shared Gemma session replacement now initializes the new verified generation before closing the active engine.
+- If replacement loading fails, the previous engine remains active and reusable; initialization counters do not report a failed load as an initialized engine.
+- Added regression coverage for failed E4B replacement while retaining the active E2B session.
+- Focused and full fixture unit tests: PASS.
+- `:app:assembleConsumerDebug :app:assembleOfflineDemoDebug`: PASS.
+- Device execution: NOT RUN; safe fixture unavailable and production device untouched.

@@ -3,6 +3,7 @@ package io.github.anup42.askalbum
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GemmaSessionManagerTest {
@@ -38,6 +39,34 @@ class GemmaSessionManagerTest {
 
         manager.evictNow()
         assertEquals(1, created.single().closeCount)
+    }
+
+    @Test
+    fun failedReplacementKeepsThePreviousEngineUsable() = runBlocking {
+        val first = FakeEngine()
+        var createCalls = 0
+        val manager = GemmaSessionManager(
+            resources = PassthroughResources(),
+            factory = SharedGemmaEngineFactory { _, _ ->
+                createCalls++
+                if (createCalls == 2) error("replacement load failed")
+                first
+            },
+            idleTimeoutMs = 60_000,
+        )
+
+        manager.withEngine("pack-e2b", multimodal = true) { }
+        var failed = false
+        try {
+            manager.withEngine("pack-e4b", multimodal = true) { }
+        } catch (_: IllegalStateException) {
+            failed = true
+        }
+
+        assertTrue(failed)
+        manager.withEngine("pack-e2b", multimodal = true) { lease -> assertSame(first, lease.engine) }
+        assertEquals(1, manager.initializationCount)
+        assertEquals(0, first.closeCount)
     }
 
     @Test
