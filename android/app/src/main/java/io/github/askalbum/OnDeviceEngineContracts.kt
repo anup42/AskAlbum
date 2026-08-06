@@ -131,6 +131,7 @@ data class ModelImage(
     val width: Int,
     val height: Int,
     val fixtureText: String? = null,
+    val fixtureKey: String? = null,
 )
 data class OcrDocument(val blocks: List<OcrBlock>, val language: String? = null)
 data class OcrBlock(val text: String, val confidence: Float, val bounds: List<Float>, val script: String? = null)

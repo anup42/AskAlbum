@@ -48,7 +48,8 @@ class SeededEventFollowUpAcceptanceTest {
         repository.rebuildEvents()
 
         val session = "event_${safeRunId.take(50)}"
-        val trip = repository.searchInSession("Show photos from my Singapore trip.", session)
+        val seededIds = seeded.mapTo(mutableSetOf(), GalleryItem::id)
+        val trip = repository.searchInSession("Show photos from my Singapore trip.", session, seededIds)
         val seededSingapore = trip.hits.filter { it.item.id in seeded.map(GalleryItem::id) && it.item.filename.contains("singapore", true) }
         assertTrue("Q01 did not return seeded Singapore media; terms=${trip.plan.terms}, hitCount=${trip.hits.size}", seededSingapore.isNotEmpty())
         assertTrue("Q01 did not carry compiled event evidence", seededSingapore.all { hit -> hit.evidence.any { it.sourceField == "event" } })

@@ -3434,7 +3434,15 @@ internal fun EvidenceDialog(
                                 ViewerAction("Open", R.drawable.ic_gallery_open) { openItemExternally(context, currentItem) }
                             }
                             if (currentItem.kind == MediaKind.VIDEO && currentItem.contentUri != null) {
-                                ViewerAction("Play", R.drawable.ic_gallery_video) { playing = true }
+                                val timestamp = playbackTimestamp
+                                if (timestamp != null) {
+                                    Button(
+                                        onClick = { playing = true },
+                                        modifier = Modifier.testTag("play-video-at-match"),
+                                    ) { Text("Play from ${formatPlaybackTime(timestamp)}") }
+                                } else {
+                                    ViewerAction("Play", R.drawable.ic_gallery_video) { playing = true }
+                                }
                             }
                             ViewerAction("Details", R.drawable.ic_gallery_info) {
                                 detailsVisible = true

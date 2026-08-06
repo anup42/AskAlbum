@@ -193,6 +193,7 @@ class GalleryRepository(context: Context) {
 
     fun tombstoneCount(): Int = database.tombstoneCount()
     fun stageRecords(mediaId: String): List<MediaIndexStageRecord> = database.stageRecords(mediaId)
+    fun itemById(mediaId: String): GalleryItem? = database.itemById(mediaId)
     fun videoKeyframes(mediaId: String): List<VideoKeyframeRecord> = database.videoKeyframes(mediaId)
     fun indexedMetadata(mediaId: String, includeSensitiveContent: Boolean = false): IndexedMediaMetadata {
         val item = requireNotNull(database.itemById(mediaId)) { "Media item is no longer available" }
@@ -1502,10 +1503,16 @@ class GalleryRepository(context: Context) {
                 plan.sort,
             )?.fact != null &&
             !verification.applied
+        val deterministicDocumentConstraint = plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) &&
+            plan.ocrClause?.merchant?.isNotBlank() == true &&
+            plan.terms.isEmpty() &&
+            plan.semanticClauses.isEmpty() &&
+            ocrCoverageComplete &&
+            !verification.applied
         val exactness = RetrievalExactnessPolicy.resolve(
             allEligibleIndexed = readyItems == totalItems && peopleCoverageComplete && ocrCoverageComplete,
             deterministicOperation = deterministicAggregation || deterministicResultSetFilter || deterministicDocumentFact ||
-                deterministicList || deterministicComparison,
+                deterministicDocumentConstraint || deterministicList || deterministicComparison,
             semanticReport = semanticReport,
             verificationApplied = verification.applied,
             completePredicateScan = completePredicateScan,

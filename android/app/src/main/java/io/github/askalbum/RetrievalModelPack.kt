@@ -278,6 +278,7 @@ class RetrievalModelPackManager(
     private val generations = File(root, "generations")
     private val generationPointer = RetrievalGenerationPointer(root)
     private val installedVerifier = RetrievalInstalledGenerationVerifier(verifier)
+    private val fixturePack = if (fixtureRetrievalPackEnabled()) FixtureRetrievalPack.install(context) else null
 
     fun status(): RetrievalPackStatus = runCatching {
         val installed = current() ?: return RetrievalPackStatus(installed = false)
@@ -292,6 +293,7 @@ class RetrievalModelPackManager(
     }.getOrElse { RetrievalPackStatus(installed = false, error = it.message) }
 
     fun current(): InstalledRetrievalPack? {
+        fixturePack?.let { return it }
         val activeAttempt = runCatching {
             generationPointer.currentName()?.let(::loadGeneration)
         }

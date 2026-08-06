@@ -16,7 +16,9 @@ class ReceiptDocumentAcceptanceTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val runId = InstrumentationRegistry.getArguments().getString("galleryRunId")
         assumeTrue("galleryRunId was not supplied", !runId.isNullOrBlank())
-        val repository = (instrumentation.targetContext.applicationContext as AskAlbumApplication).repository
+        val context = instrumentation.targetContext
+        val repository = (context.applicationContext as AskAlbumApplication).repository
+        val seededIds = seededMediaIds(repository, context, requireNotNull(runId))
 
         val deadline = System.currentTimeMillis() + INDEX_TIMEOUT_MS
         while (repository.pendingItems(1).isNotEmpty() && System.currentTimeMillis() < deadline) {
@@ -24,7 +26,7 @@ class ReceiptDocumentAcceptanceTest {
         }
         assertTrue("Seeded gallery did not finish indexing within the acceptance bound", repository.pendingItems(1).isEmpty())
 
-        val outcome = repository.search("What was the total on my latest Swiggy receipt?")
+        val outcome = repository.search("What was the total on my latest Swiggy receipt?", seededIds)
         val receipt = requireNotNull(outcome.hits.firstOrNull { it.item.filename == "synthetic_swiggy_receipt.png" }) {
             "Synthetic Swiggy receipt was not returned"
         }
@@ -36,7 +38,9 @@ class ReceiptDocumentAcceptanceTest {
         val region = requireNotNull(total.region)
         assertEquals(4, region.size)
         assertTrue(region.all { it in 0f..1f })
-        assertEquals(listOf(total.id), outcome.answer.evidenceIds)
+        assertEquals(SensitiveEvidencePolicy.LOCKED_HEADLINE, outcome.answer.headline)
+        assertTrue(outcome.answer.requiresAuthentication)
+        assertTrue(outcome.answer.evidenceIds.isEmpty() && outcome.answer.claims.isEmpty())
         assertEquals(ResultExactness.EXACT, outcome.answer.exactness)
         assertEquals(SortSpec.CAPTURE_TIME_DESC, outcome.plan.sort)
     }

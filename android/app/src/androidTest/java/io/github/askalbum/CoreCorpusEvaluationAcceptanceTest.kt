@@ -81,7 +81,9 @@ class CoreCorpusEvaluationAcceptanceTest {
         records.evaluate("Q04") {
             repository.search("What was the total on my latest Swiggy receipt?", seededIds).also { outcome ->
                 assertEquals(QueryIntent.ANSWER_FACT, outcome.plan.intent)
-                assertEquals("INR 1,248", outcome.answer.headline.uppercase())
+                assertEquals(SensitiveEvidencePolicy.LOCKED_HEADLINE.uppercase(), outcome.answer.headline.uppercase())
+                assertTrue(outcome.answer.requiresAuthentication)
+                assertTrue(outcome.answer.evidenceIds.isEmpty() && outcome.answer.claims.isEmpty())
                 val receipt = requireNotNull(outcome.hits.firstOrNull { it.item.filename == "synthetic_swiggy_receipt.png" })
                 assertTrue(receipt.evidence.any { it.sourceField == "document_total" })
                 assertEquals(ResultExactness.EXACT, outcome.answer.exactness)

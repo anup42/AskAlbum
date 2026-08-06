@@ -33,11 +33,15 @@ class FakeGenerativeEngine(
     }
 }
 
-class FakeEmbeddingEngine(private val dimension: Int = 32) : ImageTextEmbeddingEngine {
+class FakeEmbeddingEngine(private val dimension: Int = 128) : ImageTextEmbeddingEngine {
     override suspend fun embedImage(image: ModelImage): FloatArray =
-        embed(image.rgbBytes.fold(1) { acc, byte -> 31 * acc + byte })
+        embed(
+            image.fixtureKey?.let(::fixtureEmbeddingConcept)?.hashCode()
+                ?: image.rgbBytes.fold(1) { acc, byte -> 31 * acc + byte },
+        )
 
-    override suspend fun embedText(text: String): FloatArray = embed(text.lowercase().hashCode())
+    override suspend fun embedText(text: String): FloatArray =
+        embed(fixtureEmbeddingConcept(text)?.hashCode() ?: text.lowercase().hashCode())
 
     private fun embed(seed: Int): FloatArray {
         var value = seed.toLong() and 0xffffffffL
@@ -50,10 +54,21 @@ class FakeEmbeddingEngine(private val dimension: Int = 32) : ImageTextEmbeddingE
 }
 
 class FakeOcrEngine : OcrEngine {
-    override suspend fun recognize(image: ModelImage): OcrDocument = OcrDocument(
-        blocks = image.fixtureText?.let { listOf(OcrBlock(it, 1f, listOf(0f, 0f, 1f, 1f))) }.orEmpty(),
-        language = "fixture",
-    )
+    override suspend fun recognize(image: ModelImage): OcrDocument {
+        val lines = image.fixtureText.orEmpty().lineSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .toList()
+        val lineCount = lines.size.coerceAtLeast(1)
+        return OcrDocument(
+            blocks = lines.mapIndexed { index, line ->
+                val top = (index.toFloat() / lineCount).coerceIn(0f, .98f)
+                val bottom = ((index + 1).toFloat() / lineCount).coerceIn(top + .01f, 1f)
+                OcrBlock(line, 1f, listOf(0f, top, 1f, bottom))
+            },
+            language = "fixture",
+        )
+    }
 }
 
 class FakeFaceEngine : FaceEngine {

@@ -220,7 +220,7 @@ internal class EmbeddingIndexBatchProcessor(
                 appContext.contentResolver.loadThumbnail(uri, Size(512, 512), null)
             }
         }
-        return bitmap.useAsModelImage()
+        return bitmap.useAsModelImage(item.filename)
     }
 
     private fun renderFirstPdfPage(item: GalleryItem): Bitmap {
@@ -248,13 +248,14 @@ internal class EmbeddingIndexBatchProcessor(
         val file = File(frame.previewPath).canonicalFile
         require(file.toPath().startsWith(root.toPath()) && file.isFile) { "Keyframe preview is unavailable" }
         val bitmap = requireNotNull(BitmapFactory.decodeFile(file.absolutePath)) { "Keyframe preview is invalid" }
-        return bitmap.useAsModelImage()
+        val fixtureKey = if (fixtureBackendsEnabled()) repository.itemById(frame.mediaId)?.filename else null
+        return bitmap.useAsModelImage(fixtureKey)
     }
 
     private fun isPermanent(error: Throwable): Boolean =
         error is SecurityException || error is FileNotFoundException || error is IllegalArgumentException
 
-    private fun Bitmap.useAsModelImage(): ModelImage = try {
+    private fun Bitmap.useAsModelImage(fixtureKey: String? = null): ModelImage = try {
         val pixels = IntArray(width * height)
         getPixels(pixels, 0, width, 0, 0, width, height)
         val rgb = ByteArray(pixels.size * 3)
@@ -263,7 +264,7 @@ internal class EmbeddingIndexBatchProcessor(
             rgb[index * 3 + 1] = (color shr 8).toByte()
             rgb[index * 3 + 2] = color.toByte()
         }
-        ModelImage(rgb, width, height)
+        ModelImage(rgb, width, height, fixtureKey = fixtureKey)
     } finally {
         if (!isRecycled) recycle()
     }

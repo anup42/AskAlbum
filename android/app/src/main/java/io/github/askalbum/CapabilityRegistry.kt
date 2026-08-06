@@ -153,7 +153,19 @@ object CapabilityAnswerExecutor {
                 },
                 evidenceIds,
             )
-            QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA -> factAnswer(context, base)
+            QueryIntent.ANSWER_FACT -> factAnswer(context, base)
+            QueryIntent.DOCUMENT_QA -> if (
+                OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField) == null &&
+                context.hits.isEmpty()
+            ) {
+                base(
+                    "No supported matches found",
+                    "No eligible document matched the requested local constraints.",
+                    emptyList(),
+                )
+            } else {
+                factAnswer(context, base)
+            }
             QueryIntent.SUM -> sumAnswer(context, base)
             QueryIntent.MIN_MAX -> minMaxAnswer(context, base)
             QueryIntent.EVENT_SUMMARY -> eventSummary(context, base)

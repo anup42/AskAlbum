@@ -138,16 +138,19 @@ internal class GalleryIndexBatchProcessor(
         bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         val visual = precomputedVisual ?: VisualFeatureExtractor.extract(pixels, bitmap.width, bitmap.height)
         val input = InputImage.fromBitmap(bitmap, 0)
-        val labels = labeler.process(input).await()
+        val labels = (labeler.process(input).await()
             .filter { it.confidence >= .55f }
             .sortedByDescending { it.confidence }
             .take(12)
             .map { it.text.lowercase() }
+            .distinct() + fixtureVisualLabels(item.filename, timestampMs))
             .distinct()
         val ocrDecision = OcrLikelihoodGate.decide(item, labels, pixels, bitmap.width, bitmap.height)
-        val ocr = if (ocrDecision.shouldRun) {
+        val fixtureText = fixtureDocumentText(item.filename, pageIndex)
+        val shouldRunOcr = ocrDecision.shouldRun || fixtureText != null
+        val ocr = if (shouldRunOcr) {
             val lease = ocrLease ?: ocrRegistry.acquire().also { ocrLease = it }
-            lease to lease.engine.recognize(bitmap.toModelImage())
+            lease to lease.engine.recognize(bitmap.toModelImage(fixtureText, item.filename))
         } else null
         val blocks = ocr?.second?.blocks.orEmpty().mapNotNull { block ->
             if (block.bounds.size != 4 || block.bounds[0] >= block.bounds[2] || block.bounds[1] >= block.bounds[3]) return@mapNotNull null
@@ -172,7 +175,7 @@ internal class GalleryIndexBatchProcessor(
             labels = labels,
             ocrText = blocks.joinToString("\n") { it.text },
             blocks = blocks,
-            ocrAttempted = ocrDecision.shouldRun,
+            ocrAttempted = shouldRunOcr,
             ocrProducerVersion = ocr?.first?.descriptor?.producerVersion,
             visualFeatures = visual,
         )
@@ -192,7 +195,7 @@ internal class GalleryIndexBatchProcessor(
         return scaled
     }
 
-    private fun Bitmap.toModelImage(): ModelImage {
+    private fun Bitmap.toModelImage(fixtureText: String? = null, fixtureKey: String? = null): ModelImage {
         val pixels = IntArray(width * height)
         getPixels(pixels, 0, width, 0, 0, width, height)
         val rgb = ByteArray(pixels.size * 3)
@@ -201,7 +204,7 @@ internal class GalleryIndexBatchProcessor(
             rgb[index * 3 + 1] = android.graphics.Color.green(pixel).toByte()
             rgb[index * 3 + 2] = android.graphics.Color.blue(pixel).toByte()
         }
-        return ModelImage(rgb, width, height)
+        return ModelImage(rgb, width, height, fixtureText, fixtureKey)
     }
 
     private data class FrameAnalysis(

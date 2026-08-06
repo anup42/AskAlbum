@@ -26,11 +26,12 @@ class SeededVideoKeyframeAcceptanceTest {
         assumeTrue("galleryRunId was not supplied", !runId.isNullOrBlank())
         val context = instrumentation.targetContext
         val repository = (context.applicationContext as AskAlbumApplication).repository
+        val seededIds = seededMediaIds(repository, context, requireNotNull(runId))
         val deadline = System.currentTimeMillis() + INDEX_TIMEOUT_MS
-        var video = repository.allItems().firstOrNull { it.filename == VIDEO_FILENAME }
+        var video = repository.allItems().firstOrNull { it.id in seededIds && it.filename == VIDEO_FILENAME }
         while ((video == null || video.indexState != IndexState.READY) && System.currentTimeMillis() < deadline) {
             Thread.sleep(500)
-            video = repository.allItems().firstOrNull { it.filename == VIDEO_FILENAME }
+            video = repository.allItems().firstOrNull { it.id in seededIds && it.filename == VIDEO_FILENAME }
         }
         val indexedVideo = requireNotNull(video) { "Seeded video was not imported" }
         assertEquals(IndexState.READY, indexedVideo.indexState)
@@ -48,7 +49,7 @@ class SeededVideoKeyframeAcceptanceTest {
             repository.stageRecords(indexedVideo.id).single { it.stage == IndexStage.VIDEO_KEYFRAMES }.status,
         )
 
-        val outcome = repository.search("Find the yellow bicycle in my video")
+        val outcome = repository.search("Find the yellow bicycle in my video", seededIds)
         assertEquals(MediaScope.VIDEOS, outcome.plan.mediaScope)
         val hit = requireNotNull(outcome.hits.firstOrNull { it.item.id == indexedVideo.id }) {
             "Video keyframe query did not return the seeded video"

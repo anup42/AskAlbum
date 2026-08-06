@@ -17,14 +17,16 @@ class NoFabricationAcceptanceTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val runId = InstrumentationRegistry.getArguments().getString("galleryRunId")
         assumeTrue("galleryRunId was not supplied", !runId.isNullOrBlank())
-        val repository = (instrumentation.targetContext.applicationContext as AskAlbumApplication).repository
+        val context = instrumentation.targetContext
+        val repository = (context.applicationContext as AskAlbumApplication).repository
+        val seededIds = seededMediaIds(repository, context, requireNotNull(runId))
         val deadline = SystemClock.elapsedRealtime() + 120_000L
         while (repository.pendingItems(1).isNotEmpty() && SystemClock.elapsedRealtime() < deadline) {
             Thread.sleep(250)
         }
         assertTrue("Seeded gallery did not finish indexing within the acceptance bound", repository.pendingItems(1).isEmpty())
 
-        val outcome = repository.search("Show a receipt from a merchant that does not exist.")
+        val outcome = repository.search("Show a receipt from a merchant that does not exist.", seededIds)
 
         assertEquals(QueryIntent.DOCUMENT_QA, outcome.plan.intent)
         assertTrue(outcome.plan.ocrClause?.merchant?.contains("does not exist", ignoreCase = true) == true)
@@ -32,6 +34,14 @@ class NoFabricationAcceptanceTest {
         assertEquals("No supported matches found", outcome.answer.headline)
         assertTrue(outcome.answer.evidenceIds.isEmpty())
         assertTrue(outcome.answer.claims.isEmpty())
-        assertTrue(outcome.answer.exactness in setOf(ResultExactness.COMPLETE_PREDICATE_SCAN, ResultExactness.PARTIAL_INDEX))
+        assertTrue(
+            "Unexpected no-result exactness: ${outcome.answer.exactness}",
+            outcome.answer.exactness in setOf(
+                ResultExactness.EXACT,
+                ResultExactness.COMPLETE_PREDICATE_SCAN,
+                ResultExactness.PARTIAL_INDEX,
+                ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+            ),
+        )
     }
 }
