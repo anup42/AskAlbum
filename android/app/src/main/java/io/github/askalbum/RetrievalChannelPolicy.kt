@@ -145,6 +145,11 @@ internal object SemanticChannelReportFusion {
     }
 }
 
+internal object EventPredicateSemanticChannelPolicy {
+    fun project(report: RetrievalChannelReport<VectorHit>): RetrievalChannelReport<VectorHit> =
+        report.copy(channel = RetrievalChannel.EVENT_PREDICATE_SEMANTIC)
+}
+
 internal object RetrievalExactnessPolicy {
     fun resolve(
         allEligibleIndexed: Boolean,
@@ -177,7 +182,11 @@ internal object RetrievalAnswerWording {
 }
 
 internal object RetrievalCoverageWording {
-    private val boundedChannels = setOf(RetrievalChannel.SEMANTIC, RetrievalChannel.CAPTION_EMBEDDING)
+    private val boundedChannels = setOf(
+        RetrievalChannel.SEMANTIC,
+        RetrievalChannel.EVENT_PREDICATE_SEMANTIC,
+        RetrievalChannel.CAPTION_EMBEDDING,
+    )
 
     fun boundedSemanticNoResult(report: RetrievalChannelReport<*>): String {
         val coverage = "indexed coverage ${report.indexedCount} of ${report.eligibleCount} eligible local items"

@@ -8,7 +8,8 @@ internal object RetrievalChannelEvidence {
     }
 
     private fun evidenceBelongsTo(sourceField: String, channel: RetrievalChannel): Boolean = when (channel) {
-        RetrievalChannel.SEMANTIC -> sourceField == "image_text_embedding"
+        RetrievalChannel.SEMANTIC,
+        RetrievalChannel.EVENT_PREDICATE_SEMANTIC -> sourceField == "image_text_embedding"
         RetrievalChannel.CAPTION -> sourceField == "semantic_caption" ||
             sourceField == "semantic_caption_candidate_expansion"
         RetrievalChannel.CAPTION_EMBEDDING -> sourceField == "semantic_caption_embedding" ||

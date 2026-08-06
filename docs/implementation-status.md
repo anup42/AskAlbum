@@ -575,6 +575,11 @@ media, databases, or logs.
 - Added regression coverage for password evidence; no Room migration, data repair, or index mutation was introduced.
 - `CapabilityRegistryTest` PASS; `consumerDebug` and `offlineDemoDebug` assembly PASS.
 - Fresh offline manifest permission scan was NOT RUN because this AGP layout did not emit the expected merged-manifest path; device validation was NOT RUN.
+
+### 2026-08-06 - Preserve event predicate semantic failures
+- Replaced the auxiliary event-expansion semantic `runCatching(...).getOrDefault(emptySet())` path with a typed `EVENT_PREDICATE_SEMANTIC` channel report; failures and partial vector coverage remain visible while contextual expansion fails closed.
+- Cancellation is no longer converted into an empty event candidate set; the primary semantic channel and exactness calculation remain independent.
+- Focused retrieval tests, consumer/offlineDemo assemblies, and device validation status are recorded with this change after the gates complete.
 - `consumerDebug` and `fixtureCiDebug` APK assembly PASS; replacement install and launch smoke PASS on `SM-F731U`.
 - `fixtureCiDebug` INTERNET permission: ABSENT.
 - Long-running 5k/20k, Doze, process-death, foreground-service-timeout, E4B, and full acceptance-query gates remain unverified.

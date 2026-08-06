@@ -865,21 +865,22 @@ class GalleryRepository(context: Context) {
             .asSequence()
             .filter { it.directEvidence }
             .mapTo(mutableSetOf(), CaptionSearchHit::mediaId)
-        val predicateSemanticIds = if (
+        val predicateSemanticReport = if (
             itemPredicateQueries.isEmpty() ||
             (plan.place == null && plan.comparisonScopes.isEmpty())
         ) {
-            semanticById.keys
+            null
         } else {
-            runCatching {
-                semanticVectors.searchTextReport(
-                    query = itemPredicateQueries.joinToString(" "),
-                    topK = plan.limit.coerceIn(20, 100),
-                    eligibleCount = eligibleIds.size,
-                    allowedIds = eligibleVectorIds,
-                ).hits.mapTo(mutableSetOf(), VectorHit::mediaId)
-            }.getOrDefault(emptySet())
+            semanticVectors.searchTextReport(
+                query = itemPredicateQueries.joinToString(" "),
+                topK = plan.limit.coerceIn(20, 100),
+                eligibleCount = eligibleIds.size,
+                allowedIds = eligibleVectorIds,
+            )
         }
+        val predicateSemanticIds = predicateSemanticReport?.hits
+            ?.mapTo(mutableSetOf(), VectorHit::mediaId)
+            ?: semanticById.keys
         val itemPredicateIds = EventExpansionPolicy.itemPredicateIds(
             predicateTerms = itemPredicateTerms,
             lexicalIds = predicateLexicalIds,
@@ -1139,6 +1140,21 @@ class GalleryRepository(context: Context) {
                 else -> null
             },
         )
+        val eventPredicateSemanticChannelReport = predicateSemanticReport?.let { report ->
+            val projected = EventPredicateSemanticChannelPolicy.project(report)
+            RetrievalChannelReport(
+                channel = projected.channel,
+                status = projected.status,
+                eligibleCount = projected.eligibleCount,
+                indexedCount = projected.indexedCount,
+                searchedCount = projected.searchedCount,
+                hits = projected.hits.mapNotNull { vectorHit ->
+                    channelHit(vectorHit.mediaId, vectorHit.score.toDouble(), projected.channel)
+                },
+                modelVersion = projected.modelVersion,
+                errorCode = projected.errorCode,
+            )
+        }
         val captionCoverage = database.semanticCaptionEvidenceCount(eligibleIds)
         val captionStatus = when {
             captionSearch.status == ChannelStatus.NOT_REQUIRED -> ChannelStatus.NOT_REQUIRED
@@ -1267,12 +1283,13 @@ class GalleryRepository(context: Context) {
             modelVersion = verification.trace?.modelRevision,
             errorCode = verification.trace?.fallbackReason?.take(120),
         )
-        val channelReports = listOf(
+        val channelReports = listOfNotNull(
             lexicalChannelReport,
             semanticChannelReport,
             captionChannelReport,
             captionEmbeddingChannelReport,
             eventChannelReport,
+            eventPredicateSemanticChannelReport,
             ocrChannelReport,
             peopleChannelReport,
             visualChannelReport,

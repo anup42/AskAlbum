@@ -33,6 +33,21 @@ class RetrievalChannelPolicyTest {
     }
 
     @Test
+    fun eventPredicateSemanticFailureRemainsASeparateTypedChannel() = runBlocking {
+        val report = SemanticChannelReporter.execute(
+            "birthday cake", "siglip@test", 2, setOf("a", "b"), 20,
+            indexedIds = { setOf("a", "b") },
+            search = { _, _, _ -> error("embedding failed") },
+        )
+
+        val projected = EventPredicateSemanticChannelPolicy.project(report)
+
+        assertEquals(RetrievalChannel.EVENT_PREDICATE_SEMANTIC, projected.channel)
+        assertEquals(ChannelStatus.FAILED, projected.status)
+        assertEquals("TEXT_EMBEDDING_OR_VECTOR_SEARCH_FAILED", projected.errorCode)
+    }
+
+    @Test
     fun partialVectorCoverageAndZeroHitsRemainTyped() = runBlocking {
         val partial = SemanticChannelReporter.execute(
             "dog", "siglip@test", 2, setOf("a", "b"), 100,
