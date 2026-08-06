@@ -2212,7 +2212,8 @@ private fun PeopleScreen(
     onMoveFace: (String, String?) -> Unit,
 ) {
     var editingCluster by remember { mutableStateOf<PersonClusterReviewItem?>(null) }
-    val selectedCluster = selectedClusterId?.let { id -> clusters.firstOrNull { it.id == id } }
+    val displayClusters = PeopleClusterDisplayPolicy.visible(clusters)
+    val selectedCluster = selectedClusterId?.let { id -> displayClusters.firstOrNull { it.id == id } }
     BackHandler(selectedCluster != null) { onCloseCluster() }
     if (selectedCluster != null) {
         PersonClusterDetailScreen(
@@ -2227,9 +2228,9 @@ private fun PeopleScreen(
         )
         return
     }
-    val toReview = clusters.filter { !it.reviewed && !it.hidden }
-    val named = clusters.filter { it.reviewed && !it.hidden }
-    val hidden = clusters.filter(PersonClusterReviewItem::hidden)
+    val toReview = displayClusters.filter { !it.reviewed && !it.hidden }
+    val named = displayClusters.filter { it.reviewed && !it.hidden }
+    val hidden = displayClusters.filter(PersonClusterReviewItem::hidden)
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize().safeDrawingPadding(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp, 10.dp, 20.dp, 32.dp),
@@ -2244,6 +2245,11 @@ private fun PeopleScreen(
                     Text("People identity status", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Spacer(Modifier.height(8.dp))
                     Text("${toReview.size} to review • ${named.size} named • ${hidden.size} hidden")
+                    Text(
+                        "Showing people found in at least ${PeopleClusterDisplayPolicy.MIN_MEDIA_COUNT} photos.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                    )
                     Spacer(Modifier.height(6.dp))
                     if (!peopleIndex.enabled) {
                         Text("Face indexing is off. Enable it to create private, on-device people clusters.")

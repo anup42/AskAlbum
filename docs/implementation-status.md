@@ -1290,3 +1290,9 @@ People cluster summaries now expose both the user-selected representative face a
 
 - Personal semantic-memory defaults now use the shared NFKC and `Locale.ROOT` identity normalization instead of the device default locale.
 - Added regression coverage for uppercase `SISTER` under a Turkish device locale; no gallery data, People corrections, captions, or model state were changed.
+
+## 2026-08-06 - Hide sparse People clusters from the browser
+
+- The People UI now displays only clusters represented in at least five accessible media items.
+- Sparse cluster rows remain in the database and are not deleted, so indexing, corrections, and future review remain non-destructive.
+- Added JVM regression coverage for the display boundary.
