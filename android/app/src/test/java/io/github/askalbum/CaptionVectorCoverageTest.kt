@@ -44,6 +44,20 @@ class CaptionVectorCoverageTest {
     }
 
     @Test
+    fun completeChunksForOnlyPartOfEligibleMediaRemainPartial() {
+        assertEquals(
+            ChannelStatus.PARTIAL,
+            CaptionVectorCoveragePolicy.status(
+                queryRequired = true,
+                eligibleMediaCount = 12,
+                captionedMediaCount = 11,
+                eligibleChunkCount = 24,
+                indexedChunkCount = 24,
+            ),
+        )
+    }
+
+    @Test
     fun incompleteChunksRemainInCoverageDenominator() {
         val chunks = listOf(
             chunk("complete", CaptionEmbeddingState.COMPLETE, "pack@1"),

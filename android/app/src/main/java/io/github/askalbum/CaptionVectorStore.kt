@@ -33,6 +33,7 @@ class CaptionVectorStore(
         searchableChunkIds: Set<String>,
         eligibleMediaCount: Int,
         topK: Int,
+        captionedMediaCount: Int = eligibleMediaCount,
     ): CaptionVectorSearchReport {
         val normalizedQueries = queries
             .map(String::trim)
@@ -77,6 +78,7 @@ class CaptionVectorStore(
                     eligibleMediaCount = eligibleMediaCount,
                     eligibleChunkCount = 0,
                     indexedChunkCount = 0,
+                    captionedMediaCount = captionedMediaCount,
                 ),
                 eligibleChunkCount = 0,
                 indexedChunkCount = 0,
@@ -93,6 +95,7 @@ class CaptionVectorStore(
                     eligibleMediaCount = eligibleMediaCount,
                     eligibleChunkCount = eligibleChunkIds.size,
                     indexedChunkCount = 0,
+                    captionedMediaCount = captionedMediaCount,
                 ),
                 eligibleChunkCount = eligibleChunkIds.size,
                 indexedChunkCount = 0,
@@ -122,6 +125,7 @@ class CaptionVectorStore(
                     eligibleMediaCount = eligibleMediaCount,
                     eligibleChunkCount = eligibleChunkIds.size,
                     indexedChunkCount = indexed.size,
+                    captionedMediaCount = captionedMediaCount,
                 ),
                 eligibleChunkCount = eligibleChunkIds.size,
                 indexedChunkCount = indexed.size,
@@ -129,6 +133,7 @@ class CaptionVectorStore(
                 hits = fused.mapNotNull { best[it.first] }.take(topK.coerceIn(1, 100)),
                 modelVersion = modelVersion,
                 errorCode = when {
+                    captionedMediaCount < eligibleMediaCount -> "PARTIAL_CAPTION_MEDIA_COVERAGE"
                     indexed.size < eligibleChunkIds.size -> "PARTIAL_CAPTION_VECTOR_COVERAGE"
                     else -> null
                 },

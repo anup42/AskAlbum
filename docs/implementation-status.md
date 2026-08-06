@@ -1209,3 +1209,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Exclusion directives now remove positive terms and clauses derived from the directive before adding the normalized negative predicate. `Exclude screenshots` therefore cannot retrieve screenshots as a positive follow-up requirement.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.Phase4OrchestrationTest --tests io.github.anup42.askalbum.ResultSetPlanPatchResolverTest --tests io.github.anup42.askalbum.FollowUpLanguageTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Report caption-vector media coverage truthfully
+
+- Caption-vector status now remains `PARTIAL` when eligible media have no caption chunks, even if every existing chunk vector is complete.
+- Retrieval coverage separates media with at least one searchable chunk from media whose complete eligible chunk set is indexed; no image vectors or stored captions were changed.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.CaptionVectorCoverageTest --tests io.github.anup42.askalbum.CaptionEmbeddingRetrievalTest --tests io.github.anup42.askalbum.RetrievalCoverageWordingTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.

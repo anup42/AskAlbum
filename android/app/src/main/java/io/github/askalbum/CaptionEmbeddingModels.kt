@@ -108,8 +108,10 @@ internal object CaptionVectorCoveragePolicy {
         eligibleMediaCount: Int,
         eligibleChunkCount: Int,
         indexedChunkCount: Int,
+        captionedMediaCount: Int = eligibleMediaCount,
     ): ChannelStatus = when {
         !queryRequired || eligibleMediaCount == 0 -> ChannelStatus.NOT_REQUIRED
+        captionedMediaCount.coerceAtLeast(0) < eligibleMediaCount -> ChannelStatus.PARTIAL
         eligibleChunkCount == 0 -> ChannelStatus.PARTIAL
         indexedChunkCount < eligibleChunkCount -> ChannelStatus.PARTIAL
         else -> ChannelStatus.SUCCESS

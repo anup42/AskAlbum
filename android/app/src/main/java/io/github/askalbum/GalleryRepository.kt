@@ -763,12 +763,17 @@ class GalleryRepository(context: Context) {
         val searchableCaptionChunkIds = captionProducer?.let {
             CaptionVectorCoveragePolicy.searchableChunkIds(eligibleCaptionChunks, it)
         }.orEmpty()
+        val captionedMediaCount = eligibleCaptionChunks.asSequence()
+            .map(SemanticCaptionChunkRecord::mediaId)
+            .distinct()
+            .count()
         val captionVectorSearch = captionVectors.searchVariants(
             semanticQueries,
             eligibleCaptionChunks.mapTo(mutableSetOf(), SemanticCaptionChunkRecord::id),
             searchableCaptionChunkIds,
             eligibleIds.size,
             plan.limit.coerceIn(20, 100),
+            captionedMediaCount,
         )
         val captionEmbeddingRanked = database.resolveCaptionVectorHits(
             captionVectorSearch.hits,
@@ -1160,16 +1165,18 @@ class GalleryRepository(context: Context) {
                     null
                 },
         )
-        val captionEmbeddingSearchedMediaCount = eligibleCaptionChunks.asSequence()
-            .filter { it.id in searchableCaptionChunkIds }
-            .map(SemanticCaptionChunkRecord::mediaId)
-            .distinct()
-            .count()
+        val captionChunksByMedia = eligibleCaptionChunks.groupBy(SemanticCaptionChunkRecord::mediaId)
+        val captionEmbeddingSearchedMediaCount = captionChunksByMedia.count { (_, chunks) ->
+            chunks.any { it.id in searchableCaptionChunkIds }
+        }
+        val captionEmbeddingIndexedMediaCount = captionChunksByMedia.count { (_, chunks) ->
+            chunks.isNotEmpty() && chunks.all { it.id in searchableCaptionChunkIds }
+        }
         val captionEmbeddingChannelReport = RetrievalChannelReport(
             RetrievalChannel.CAPTION_EMBEDDING,
             captionVectorSearch.status,
             eligibleIds.size,
-            captionEmbeddingSearchedMediaCount,
+            captionEmbeddingIndexedMediaCount,
             captionEmbeddingSearchedMediaCount,
             captionEmbeddingRanked.mapNotNull { match ->
                 channelHit(match.mediaId, match.score, RetrievalChannel.CAPTION_EMBEDDING)
