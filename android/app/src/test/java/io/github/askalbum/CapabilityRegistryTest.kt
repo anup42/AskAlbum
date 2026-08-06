@@ -142,12 +142,14 @@ class CapabilityRegistryTest {
                 hits = base.hits.take(1),
                 deterministicHits = listOf(complete),
                 eventsByMedia = mapOf("three" to completeEvent),
+                eventCoverageComplete = true,
             ),
         )
         val timeline = CapabilityAnswerExecutor.execute(
             context(QueryIntent.TIMELINE).copy(
                 hits = base.hits.take(1),
                 deterministicHits = listOf(complete),
+                eventCoverageComplete = true,
             ),
         )
 

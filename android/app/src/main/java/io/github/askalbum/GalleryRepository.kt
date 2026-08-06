@@ -1563,6 +1563,7 @@ class GalleryRepository(context: Context) {
                 peopleByMedia = database.indexedPeopleForMediaIds(
                     (hits + deterministicAnswerHits).mapTo(mutableSetOf()) { it.item.id },
                 ),
+                eventCoverageComplete = eventCoverageComplete,
             ),
         )
 

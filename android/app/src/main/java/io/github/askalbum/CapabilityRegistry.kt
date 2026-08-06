@@ -83,6 +83,7 @@ data class CapabilityAnswerContext(
     val deterministicHits: List<SearchHit> = emptyList(),
     val comparisonScopes: List<String> = emptyList(),
     val peopleByMedia: Map<String, List<IndexedPersonMetadata>> = emptyMap(),
+    val eventCoverageComplete: Boolean = false,
 )
 
 object CapabilityAnswerExecutor {
@@ -342,7 +343,7 @@ object CapabilityAnswerExecutor {
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
         val sourceHits = context.deterministicHits.ifEmpty { context.hits }
-        val completeCoverage = context.hasCompleteEligibleCoverage()
+        val completeCoverage = context.eventCoverageComplete
         val events = sourceHits.mapNotNull { context.eventsByMedia[it.item.id] }.distinctBy(EventRecord::id)
         val captures = sourceHits.mapNotNull { it.item.capturedAt }
         val range = if (captures.isEmpty()) "date unavailable" else "${formatDate(captures.min())} to ${formatDate(captures.max())}"
@@ -367,7 +368,7 @@ object CapabilityAnswerExecutor {
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
         val sourceHits = context.deterministicHits.ifEmpty { context.hits }
-        val completeCoverage = context.hasCompleteEligibleCoverage()
+        val completeCoverage = context.eventCoverageComplete
         val buckets = sourceHits.filter { it.item.capturedAt != null }
             .groupBy { formatDate(requireNotNull(it.item.capturedAt)) }
             .toSortedMap()

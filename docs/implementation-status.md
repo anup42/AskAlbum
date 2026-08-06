@@ -604,6 +604,11 @@ media, databases, or logs.
 - `ANSWER_FACT` and `DOCUMENT_QA` now use the same device-authentication lock as sensitive OCR `LIST` answers before exposing a password or other sensitive allowlisted fact.
 - Added direct-executor coverage proving raw password text is absent from the locked answer.
 
+### 2026-08-06 - Bind event wording to event-channel coverage
+- `CapabilityAnswerContext` now carries the repository’s event-channel completion state into the executor.
+- Event summaries and timelines no longer claim complete event membership from generic `EXACT` result-set coverage.
+- Added executor coverage for incomplete and complete event-channel states.
+
 ### 2026-08-05 - Semantic scan and caption-vector completion hardening
 - Complete predicate scans now consume typed vector coverage and do not advance a batch on unavailable, failed, partial, or missing-vector results.
 - Caption-vector reconciliation failures are reported as `FAILED` and retried; they cannot be hidden behind `COMPLETE`.
