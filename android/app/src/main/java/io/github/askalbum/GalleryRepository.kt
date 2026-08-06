@@ -315,7 +315,10 @@ class GalleryRepository(context: Context) {
             ReviewedIdentityExpansionScheduler.schedule(appContext, targetId)
         }
     fun moveFaceToCluster(faceId: String, targetId: String? = null): String =
-        database.moveFaceToCluster(faceId, targetId).also { queuePersonalSemanticMemory(userRequested = true) }
+        database.moveFaceToCluster(faceId, targetId).also { resolvedTargetId ->
+            queuePersonalSemanticMemory(userRequested = true)
+            ReviewedIdentityExpansionScheduler.schedule(appContext, resolvedTargetId)
+        }
 
     fun pendingItems(limit: Int): List<GalleryItem> = database.pendingItems(limit)
     fun pendingItemsForIds(mediaIds: Set<String>, limit: Int): List<GalleryItem> = database.pendingItemsForIds(mediaIds, limit)

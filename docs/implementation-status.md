@@ -584,6 +584,13 @@ media, databases, or logs.
 - `fixtureCiDebug` INTERNET permission: ABSENT.
 - Long-running 5k/20k, Doze, process-death, foreground-service-timeout, E4B, and full acceptance-query gates remain unverified.
 
+### 2026-08-06 - Re-expand reviewed identities after face moves
+- Files changed: `android/app/src/main/java/io/github/askalbum/GalleryRepository.kt`.
+- Moving a face into an existing reviewed cluster now schedules the same asynchronous identity expansion used by tagging and merging, while retaining personal semantic-memory invalidation.
+- The revised cluster can therefore discover additional matching media without resetting completed indexes or People corrections.
+- Tests and build validation: NOT RUN in this phase.
+- Device validation: NOT RUN in this phase.
+
 ### 2026-08-05 - Semantic scan and caption-vector completion hardening
 - Complete predicate scans now consume typed vector coverage and do not advance a batch on unavailable, failed, partial, or missing-vector results.
 - Caption-vector reconciliation failures are reported as `FAILED` and retried; they cannot be hidden behind `COMPLETE`.
