@@ -35,6 +35,14 @@ class IndexingReliabilityPolicyTest {
     }
 
     @Test
+    fun foregroundServicePreventsOrphanLeaseReclamationDuringAppStartup() {
+        assertFalse(IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(true, false))
+        assertFalse(IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(true, true))
+        assertFalse(IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(false, true))
+        assertTrue(IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(false, false))
+    }
+
+    @Test
     fun unexpectedServiceDestructionSchedulesRecoveryButExplicitStopDoesNot() {
         assertTrue(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(false, true))
         assertFalse(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(true, true))

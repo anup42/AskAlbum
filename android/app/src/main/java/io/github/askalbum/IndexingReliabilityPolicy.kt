@@ -84,6 +84,13 @@ internal object IndexingSupervisorPolicy {
     ): Boolean = !foregroundActive && !pausedByUser
 }
 
+internal object IndexingRecoveryAdmissionPolicy {
+    fun shouldReclaimOrphanedLeases(
+        foregroundActive: Boolean,
+        scheduledWorkActive: Boolean,
+    ): Boolean = !foregroundActive && !scheduledWorkActive
+}
+
 internal object IndexingResourceCoordinator {
     private val backgroundInference = Mutex()
     private val interactiveQueries = java.util.concurrent.atomic.AtomicInteger()

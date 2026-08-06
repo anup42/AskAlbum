@@ -64,23 +64,38 @@ class GalleryRepository(context: Context) {
         val restartWorkersAfterUpdate = consumeWorkerUpdateRestart()
         database.recoverInterruptedJobs(
             pipeline = IndexingPipeline.MEDIA_ANALYSIS,
-            reclaimOrphanedLeases = !IndexScheduler.hasActiveWork(appContext),
+            reclaimOrphanedLeases = IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(
+                foregroundActive = ForegroundIndexRuntime.active,
+                scheduledWorkActive = IndexScheduler.hasActiveWork(appContext),
+            ),
         )
         database.recoverInterruptedJobs(
             pipeline = IndexingPipeline.EMBEDDINGS,
-            reclaimOrphanedLeases = !EmbeddingIndexScheduler.hasActiveWork(appContext),
+            reclaimOrphanedLeases = IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(
+                foregroundActive = ForegroundIndexRuntime.active,
+                scheduledWorkActive = EmbeddingIndexScheduler.hasActiveWork(appContext),
+            ),
         )
         database.recoverInterruptedJobs(
             pipeline = IndexingPipeline.PEOPLE,
-            reclaimOrphanedLeases = !PeopleIndexScheduler.hasActiveWork(appContext),
+            reclaimOrphanedLeases = IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(
+                foregroundActive = ForegroundIndexRuntime.active,
+                scheduledWorkActive = PeopleIndexScheduler.hasActiveWork(appContext),
+            ),
         )
         database.recoverInterruptedJobs(
             pipeline = IndexingPipeline.SEMANTIC_MEMORY,
-            reclaimOrphanedLeases = !SemanticEnrichmentScheduler.hasActiveWork(appContext),
+            reclaimOrphanedLeases = IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(
+                foregroundActive = ForegroundIndexRuntime.active,
+                scheduledWorkActive = SemanticEnrichmentScheduler.hasActiveWork(appContext),
+            ),
         )
         database.recoverInterruptedJobs(
             pipeline = IndexingPipeline.CAPTION_EMBEDDINGS,
-            reclaimOrphanedLeases = !CaptionEmbeddingScheduler.hasActiveWork(appContext),
+            reclaimOrphanedLeases = IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(
+                foregroundActive = ForegroundIndexRuntime.active,
+                scheduledWorkActive = CaptionEmbeddingScheduler.hasActiveWork(appContext),
+            ),
         )
         val legacyCaptionJobs = database.queueLegacySemanticCaptionJobs()
         if (legacyCaptionJobs > 0 && indexingJobControlsStore.load().semanticMemoryEnabled) {
