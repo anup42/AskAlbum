@@ -1203,3 +1203,9 @@ People cluster summaries now expose both the user-selected representative face a
 - SUM and MIN_MAX plans now require an allowlisted numeric field before execution.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.CapabilityRegistryTest --tests io.github.anup42.askalbum.GalleryQueryPlanValidatorTest --tests io.github.anup42.askalbum.QueryCompilerTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Keep exclusion follow-ups negative-only
+
+- Exclusion directives now remove positive terms and clauses derived from the directive before adding the normalized negative predicate. `Exclude screenshots` therefore cannot retrieve screenshots as a positive follow-up requirement.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.Phase4OrchestrationTest --tests io.github.anup42.askalbum.ResultSetPlanPatchResolverTest --tests io.github.anup42.askalbum.FollowUpLanguageTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.

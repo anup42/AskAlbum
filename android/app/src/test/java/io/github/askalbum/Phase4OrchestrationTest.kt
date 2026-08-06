@@ -48,6 +48,23 @@ class Phase4OrchestrationTest {
     }
 
     @Test
+    fun compilerExclusionDoesNotRetainPositiveDirectiveTerms() {
+        val state = ConversationSearchState(
+            sessionId = "s",
+            activeResultSetId = "rs_12345678",
+            activeResultIds = setOf("m1", "m2"),
+        )
+        val compiled = QueryCompiler().compile("Exclude screenshots.", state.activeResultIds)
+
+        val (_, applied) = ResultSetPlanPatchResolver().createAndApply(compiled, state)
+
+        assertTrue(applied.terms.isEmpty())
+        assertFalse(applied.semanticClauses.any { it.polarity == Polarity.POSITIVE })
+        assertEquals(listOf("screenshots"), applied.semanticClauses.map { it.text })
+        assertEquals(Polarity.NEGATIVE, applied.semanticClauses.single().polarity)
+    }
+
+    @Test
     fun negativePredicateCanNeverBecomePositiveRequirement() {
         val normalized = SemanticPolarityNormalizer.normalize(
             SemanticClause("without screenshots", hardness = ConstraintStrength.HARD),

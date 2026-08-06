@@ -59,9 +59,13 @@ class ResultSetPlanPatchResolver(
             hardness = ConstraintStrength.HARD,
         )
         return plan.copy(
-            semanticClauses = (plan.semanticClauses.map(SemanticPolarityNormalizer::normalize) + negative)
+            // An exclusion is a predicate-removal operation. Do not retain positive
+            // terms or clauses extracted from the directive itself.
+            semanticClauses = (plan.semanticClauses
+                .map(SemanticPolarityNormalizer::normalize)
+                .filter { it.polarity == Polarity.NEGATIVE } + negative)
                 .distinctBy { it.text.lowercase() to it.polarity },
-            terms = plan.terms.filterNot { it in EXCLUSION_WORDS },
+            terms = emptyList(),
             verification = VerificationPolicy.REQUIRED,
         )
     }
