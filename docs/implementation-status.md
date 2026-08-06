@@ -950,3 +950,9 @@ People cluster summaries now expose both the user-selected representative face a
 
 - Grounded evidence JSON now carries the existing keyframe timestamp and spatial region alongside source, scope, and media provenance.
 - Added a regression proving those fields reach the single grounded-answer call without another image encoding pass.
+
+## 2026-08-06 - Refresh People after asynchronous identity expansion
+
+- People cluster summaries now use a lightweight Room revision and refresh only after cluster or face membership changes, including background reviewed-identity expansion.
+- Face moves and exclusions update the affected cluster revision without changing media or face-index consent; unchanged polling no longer reloads the full People summary.
+- Added policy coverage for skipping unchanged revisions and forcing an explicit refresh.

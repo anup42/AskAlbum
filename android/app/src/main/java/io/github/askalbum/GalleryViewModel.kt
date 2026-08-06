@@ -117,6 +117,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private var queryJob: Job? = null
     private var indexMonitorJob: Job? = null
     private var semanticMemoryMonitorJob: Job? = null
+    private var peopleClusterRefreshJob: Job? = null
+    private var peopleClusterRevision: String? = null
     private var queryGeneration = 0L
     var state by mutableStateOf(GalleryUiState())
         private set
@@ -724,14 +726,32 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun loadPeopleReviewClusters() {
+    fun loadPeopleReviewClusters(force: Boolean = false) {
         if (!state.peopleIndex.enabled) {
+            peopleClusterRefreshJob?.cancel()
+            peopleClusterRevision = null
             state = state.copy(peopleReviewClusters = emptyList())
             return
         }
-        viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { repository.personClusterSummaries(includeHidden = true) } }
-                .onSuccess { clusters -> state = state.copy(peopleReviewClusters = clusters) }
+        if (peopleClusterRefreshJob?.isActive == true) return
+        val knownRevision = peopleClusterRevision
+        peopleClusterRefreshJob = viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val revision = repository.personClusterRevision()
+                    if (!PeopleClusterRefreshPolicy.shouldReload(knownRevision, revision, force)) {
+                        null
+                    } else {
+                        revision to repository.personClusterSummaries(includeHidden = true)
+                    }
+                }
+            }
+                .onSuccess { refreshed ->
+                    refreshed?.let { (revision, clusters) ->
+                        peopleClusterRevision = revision
+                        state = state.copy(peopleReviewClusters = clusters)
+                    }
+                }
                 .onFailure { error -> state = state.copy(operationMessage = error.message ?: "Could not load face review clusters") }
         }
     }
@@ -775,6 +795,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     peopleIndex = status,
                     operationMessage = "Saved identity for $safeLabel",
                 )
+                loadPeopleReviewClusters()
+                monitorIndexing()
             }.onFailure { error ->
                 state = state.copy(
                     peopleReviewClusters = previousClusters,
@@ -847,6 +869,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 withContext(Dispatchers.IO) { repository.setPersonClusterRepresentative(clusterId, faceId) }
             }.onSuccess {
                 state = state.copy(operationMessage = "Representative photo updated")
+                loadPeopleReviewClusters(force = true)
             }.onFailure { error ->
                 state = state.copy(
                     peopleReviewClusters = previousClusters,
@@ -939,6 +962,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 withContext(Dispatchers.IO) { repository.excludeFaceFromCluster(faceId) }
             }.onSuccess {
                 state = state.copy(operationMessage = "Photo excluded from this person")
+                loadPeopleReviewClusters(force = true)
             }.onFailure { error ->
                 state = state.copy(
                     peopleReviewClusters = previousClusters,
@@ -976,6 +1000,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 }
             }.onSuccess { (target, clusters) ->
                 state = state.copy(peopleReviewClusters = clusters, operationMessage = "Face moved to $target")
+                loadPeopleReviewClusters(force = true)
+                monitorIndexing()
             }.onFailure { error ->
                 state = state.copy(operationMessage = error.message ?: "Face assignment could not be changed")
             }
@@ -992,6 +1018,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 }
             }.onSuccess { (status, clusters, message) ->
                 state = state.copy(peopleIndex = status, peopleReviewClusters = clusters, operationMessage = message)
+                loadPeopleReviewClusters(force = true)
+                monitorIndexing()
             }.onFailure { error ->
                 state = state.copy(operationMessage = error.message ?: "People data could not be updated")
             }
@@ -1174,6 +1202,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             while (true) {
                 delay(2_500)
                 reloadIndexStatus()
+                if (state.destination == AppDestination.PEOPLE) loadPeopleReviewClusters()
                 val pipelines = withContext(Dispatchers.IO) {
                     IndexingRuntimeStatusReader(getApplication()).read(
                         state.index,

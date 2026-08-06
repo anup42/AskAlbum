@@ -1775,6 +1775,17 @@ class GalleryDatabase(
         }
     }
 
+    fun personClusterRevision(): String = readableDatabase.rawQuery(
+        "SELECT (SELECT COUNT(*) FROM person_cluster), " +
+            "COALESCE((SELECT MAX(updated_at) FROM person_cluster),0), " +
+            "(SELECT COUNT(*) FROM face_instance WHERE cluster_id IS NOT NULL)",
+        null,
+    ).use { cursor ->
+        if (!cursor.moveToFirst()) "0:0:0" else {
+            "${cursor.getLong(0)}:${cursor.getLong(1)}:${cursor.getLong(2)}"
+        }
+    }
+
     fun personFacesForCluster(clusterId: String, limit: Int = 60, offset: Int = 0): List<PersonFaceReviewItem> {
         require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
         require(offset >= 0) { "Invalid face page offset" }
@@ -2052,9 +2063,12 @@ class GalleryDatabase(
                 putNull("cluster_id")
                 put("user_corrected", 1)
             }, "id=?", arrayOf(faceId))
+            val now = System.currentTimeMillis()
+            db.update("person_cluster", ContentValues().apply {
+                put("updated_at", now)
+            }, "id=?", arrayOf(source.first))
             db.update("person_cluster", ContentValues().apply {
                 putNull("representative_face_id")
-                put("updated_at", System.currentTimeMillis())
             }, "id=? AND representative_face_id=?", arrayOf(source.first, faceId))
             invalidatePersonalSemanticEvidence(db, setOf(source.second))
             db.setTransactionSuccessful()
@@ -2178,11 +2192,17 @@ class GalleryDatabase(
                 put("cluster_id", target)
                 put("user_corrected", 1)
             }, "id=?", arrayOf(faceId))
+            val now = System.currentTimeMillis()
+            db.update("person_cluster", ContentValues().apply {
+                put("updated_at", now)
+            }, "id=?", arrayOf(target))
             invalidatePersonalSemanticEvidence(db, setOf(source.second))
             source.first?.let { sourceClusterId ->
                 db.update("person_cluster", ContentValues().apply {
+                    put("updated_at", now)
+                }, "id=?", arrayOf(sourceClusterId))
+                db.update("person_cluster", ContentValues().apply {
                     putNull("representative_face_id")
-                    put("updated_at", System.currentTimeMillis())
                 }, "id=? AND representative_face_id=?", arrayOf(sourceClusterId, faceId))
             }
             db.delete(

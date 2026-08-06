@@ -285,6 +285,7 @@ class GalleryRepository(context: Context) {
     fun personClustersPendingReview(): List<PersonClusterReviewItem> = database.personClustersPendingReview()
     fun personClusterSummaries(includeHidden: Boolean = true): List<PersonClusterReviewItem> =
         database.personClusterSummaries(includeHidden)
+    fun personClusterRevision(): String = database.personClusterRevision()
     fun personFacesForCluster(id: String, limit: Int, offset: Int): List<PersonFaceReviewItem> =
         database.personFacesForCluster(id, limit, offset)
     fun personFace(faceId: String): PersonFaceReviewItem? = database.personFace(faceId)
