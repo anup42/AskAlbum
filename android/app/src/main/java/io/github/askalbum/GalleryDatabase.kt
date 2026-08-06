@@ -3771,6 +3771,39 @@ class GalleryDatabase(
             counts[2] == 0
     }
 
+    private fun countValidPersonalSemanticCaptions(
+        db: GallerySqlDatabase,
+    ): Int {
+        val eligibleMediaSql = """
+            SELECT DISTINCT m.id
+            FROM media_item m
+            JOIN face_instance f ON f.media_id = m.id
+            JOIN person_cluster p ON p.id = f.cluster_id
+            WHERE m.media_kind = 'IMAGE'
+              AND m.access_state = 'ACCESSIBLE'
+              AND m.index_state = 'READY'
+              AND p.reviewed = 1
+              AND p.hidden = 0
+              AND p.include_in_personal_memory = 1
+        """.trimIndent()
+        val sql = """
+            SELECT COUNT(DISTINCT c.evidence_media_id)
+            FROM semantic_caption c
+            WHERE c.scope = 'MEDIA'
+              AND c.subject_id = c.evidence_media_id
+              AND c.source_type IN ('GEMMA_MEDIA_DIRECT', 'GEMMA_DIRECT', 'EXACT_DUPLICATE_REUSE')
+              AND c.prompt_version = ?
+              AND (c.applicability IS NULL OR c.applicability NOT IN (
+                  'STALE_PERSON_BINDING',
+                  'LEGACY_SCOPE_UNCERTAIN',
+                  'POSSIBLE_INFERENCE'
+              ))
+              AND c.evidence_media_id IN ($eligibleMediaSql)
+        """.trimIndent()
+        return db.rawQuery(sql, arrayOf(SemanticEnrichmentCodec.PROMPT_VERSION)).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
+    }
     fun semanticMemoryProgress(activeModelVersion: String? = null): SemanticMemoryProgress {
         val db = readableDatabase
         val personalJobSelection = if (activeModelVersion == null) {
@@ -3813,7 +3846,7 @@ class GalleryDatabase(
             if (cursor.moveToFirst()) cursor.getInt(0) else 0
         }
         val personalEligibleCount = personalSemanticMemoryEligibleMediaIds(db).size
-        val personalCounts = db.rawQuery(
+        val jobPersonalCounts = db.rawQuery(
             """
             SELECT
                 COALESCE(SUM(CASE WHEN status='COMPLETE' THEN 1 ELSE 0 END),0),
@@ -3831,12 +3864,48 @@ class GalleryDatabase(
             "SELECT COUNT(*) FROM semantic_enrichment_job WHERE status IN ('PENDING','RUNNING') AND user_requested=1",
             emptyArray(),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        val personalCounts = jobPersonalCounts.copyOf().also {
+            it[0] = countValidPersonalSemanticCaptions(db)
+            it[1] = (personalEligibleCount - it[0] - it[2] - it[3]).coerceAtLeast(0)
+        }
         val personalExactReuseCount = db.rawQuery(
-            "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption WHERE source_type='EXACT_DUPLICATE_REUSE'",
+            """
+                SELECT COUNT(DISTINCT c.evidence_media_id)
+                FROM semantic_caption c
+                JOIN (
+                    SELECT DISTINCT m.id
+                    FROM media_item m
+                    JOIN face_instance f ON f.media_id=m.id
+                    JOIN person_cluster p ON p.id=f.cluster_id
+                    WHERE m.media_kind='IMAGE'
+                      AND m.access_state='ACCESSIBLE'
+                      AND m.index_state='READY'
+                      AND p.reviewed=1
+                      AND p.hidden=0
+                      AND p.include_in_personal_memory=1
+                ) eligible ON eligible.id=c.evidence_media_id
+                WHERE c.scope='MEDIA' AND c.source_type='EXACT_DUPLICATE_REUSE'
+            """.trimIndent(),
             emptyArray(),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
         val personalStaleCount = db.rawQuery(
-            "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption WHERE applicability='STALE_PERSON_BINDING'",
+            """
+                SELECT COUNT(DISTINCT c.evidence_media_id)
+                FROM semantic_caption c
+                JOIN (
+                    SELECT DISTINCT m.id
+                    FROM media_item m
+                    JOIN face_instance f ON f.media_id=m.id
+                    JOIN person_cluster p ON p.id=f.cluster_id
+                    WHERE m.media_kind='IMAGE'
+                      AND m.access_state='ACCESSIBLE'
+                      AND m.index_state='READY'
+                      AND p.reviewed=1
+                      AND p.hidden=0
+                      AND p.include_in_personal_memory=1
+                ) eligible ON eligible.id=c.evidence_media_id
+                WHERE c.scope='MEDIA' AND c.applicability='STALE_PERSON_BINDING'
+            """.trimIndent(),
             emptyArray(),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
         val latestError = db.rawQuery(

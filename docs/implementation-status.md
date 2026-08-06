@@ -1045,3 +1045,12 @@ People cluster summaries now expose both the user-selected representative face a
 - Device: safe fixture recovery gate PASS with 84 rows, 756 stage rows, 0 running stages, and 0 indexing rows before the rescheduling adjustment.
 - Device: post-adjustment core acceptance NOT RUN to completion because `R3CY30QFWLP` disconnected from ADB; no production device was touched.
 - Blocker: safe fixture must reconnect before validating post-recovery continuation and the full query/evidence path.
+
+## 2026-08-06 - Personal semantic-memory coverage correction
+
+- Personal completed coverage now counts current, valid MEDIA-scoped captions for eligible reviewed Me/family media instead of relying only on enrichment-job rows.
+- Personal pending coverage is derived from eligible media after completed, failed, and authentication-required states; exact-reuse and stale counters are restricted to eligible personal media.
+- Added an instrumentation regression for a completed media caption counting as personal coverage.
+- `:app:testFixtureCiDebugUnitTest`: PASS.
+- `:app:assembleFixtureCiDebugAndroidTest :app:assembleConsumerDebug`: PASS.
+- Instrumentation execution: NOT RUN; the safe fixture device is disconnected. The production device was not used.

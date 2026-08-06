@@ -57,6 +57,47 @@ class PersonalSemanticMemoryDatabaseTest {
     }
 
     @Test
+    fun validMediaCaptionCountsAsPersonalCoverage() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "personal-semantic-caption-${UUID.randomUUID()}.db"
+        val store = GalleryDatabase(context, name)
+        try {
+            store.seedDemoIfEmpty()
+            val media = store.allItems().first()
+            store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+            store.ensureAutomaticPersonCluster("person_me")
+            store.completeEmbeddedFaces(media.id, listOf(face()), listOf("person_me"), "fixture-face")
+            store.saveReviewedPersonCluster("person_me", "Me", "Me", emptyList())
+
+            assertEquals(1, store.queueEligiblePersonalSemanticMemoryJobs("fixture-gemma", true))
+            val job = requireNotNull(store.claimSemanticEnrichmentJob(owner = "caption-owner"))
+            store.completeSemanticEnrichment(
+                job,
+                SemanticEnrichmentResult(
+                    facts = emptyList(),
+                    caption = SemanticCaptionRecord(
+                        scope = SemanticFactScope.MEDIA,
+                        subjectId = media.id,
+                        text = "Me is standing outdoors beside a lake.",
+                        confidence = .9f,
+                        evidenceMediaId = media.id,
+                        sourceType = "GEMMA_MEDIA_DIRECT",
+                        modelVersion = "fixture-gemma",
+                        promptVersion = SemanticEnrichmentCodec.PROMPT_VERSION,
+                    ),
+                ),
+            )
+
+            val progress = store.semanticMemoryProgress()
+            assertEquals(1, progress.personalEligibleCount)
+            assertEquals(1, progress.personalCompletedCount)
+            assertEquals(0, progress.personalPendingCount)
+        } finally {
+            store.close()
+            context.deleteDatabase(name)
+        }
+    }
+    @Test
     fun policyReplacementPreservesLiveLeaseAndRejectsStaleCompletion() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val name = "personal-semantic-live-${UUID.randomUUID()}.db"
