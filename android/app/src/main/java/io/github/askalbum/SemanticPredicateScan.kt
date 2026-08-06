@@ -142,6 +142,16 @@ internal object SemanticPredicateScanPolicy {
     fun requested(plan: GalleryQueryPlan): Boolean {
         if (plan.intent != QueryIntent.COUNT) return false
         if (plan.semanticClauses.none { it.polarity == Polarity.POSITIVE } && plan.terms.isEmpty()) return false
+        // This scan evaluates one whole-media positive embedding predicate. It
+        // cannot prove a negated predicate or bind a visual condition to a
+        // reviewed person, so those counts must remain estimated or verified by
+        // a different exhaustive executor.
+        if (plan.semanticClauses.any {
+                it.polarity == Polarity.NEGATIVE ||
+                    it.subject != SemanticSubject.WHOLE_MEDIA ||
+                    it.relationToPerson != null
+            }
+        ) return false
         return explicitFullScan.containsMatchIn(plan.originalQuery)
     }
 

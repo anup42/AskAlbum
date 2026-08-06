@@ -22,6 +22,30 @@ class SemanticPredicateScanPolicyTest {
     }
 
     @Test
+    fun negatedAndPersonBoundCountsNeverUseThePositiveOnlyExhaustiveScan() {
+        val base = GalleryQueryPlan(
+            originalQuery = "How many photos exactly match this condition?",
+            intent = QueryIntent.COUNT,
+            semanticClauses = listOf(SemanticClause("dog")),
+        )
+        val negative = base.copy(
+            semanticClauses = listOf(SemanticClause("dog", polarity = Polarity.NEGATIVE)),
+        )
+        val personBound = base.copy(
+            semanticClauses = listOf(
+                SemanticClause(
+                    text = "wearing white",
+                    subject = SemanticSubject.PERSON,
+                    relationToPerson = "wife",
+                ),
+            ),
+        )
+
+        assertFalse(SemanticPredicateScanPolicy.requested(negative))
+        assertFalse(SemanticPredicateScanPolicy.requested(personBound))
+    }
+
+    @Test
     fun scopeAndQueryKeysAreStableButDistinct() {
         val scopeA = SemanticPredicateScanPolicy.scopeHash(setOf("a", "b"))
         val scopeB = SemanticPredicateScanPolicy.scopeHash(setOf("b", "a"))

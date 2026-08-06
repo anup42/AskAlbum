@@ -1168,3 +1168,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Added regression coverage proving a missing forbidden predicate can match and that arbitrary model summary booleans cannot override Kotlin-owned polarity.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.GemmaVerificationCodecTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Keep unsupported semantic counts estimated
+
+- Exhaustive semantic predicate scans now refuse negative clauses and person-bound visual clauses because the current batch scanner evaluates only a positive whole-media embedding predicate.
+- Those queries remain on the bounded/estimated path instead of presenting a positive-only scan as an exact count.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.SemanticPredicateScanPolicyTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
