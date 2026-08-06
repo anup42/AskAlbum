@@ -160,7 +160,7 @@ internal object PersonalSemanticMemoryPolicy {
     )
 
     fun defaultEnabled(relationship: String?): Boolean =
-        relationship?.trim()?.lowercase() in familyRelationships
+        PersonIdentityNormalization.normalize(relationship.orEmpty()) in familyRelationships
 
     fun jobReason(modelVersion: String?): String {
         val model = modelVersion.orEmpty().ifBlank { "active-model" }

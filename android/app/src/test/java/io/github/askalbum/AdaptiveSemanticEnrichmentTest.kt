@@ -3,6 +3,7 @@ package io.github.anup42.askalbum
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Locale
 
 class AdaptiveSemanticEnrichmentTest {
     @Test
@@ -76,6 +77,17 @@ class AdaptiveSemanticEnrichmentTest {
         assertTrue(PersonalSemanticMemoryPolicy.defaultEnabled("grandmother"))
         assertEquals(false, PersonalSemanticMemoryPolicy.defaultEnabled("friend"))
         assertEquals(false, PersonalSemanticMemoryPolicy.defaultEnabled("photographer"))
+    }
+
+    @Test
+    fun familyRelationshipEligibilityIsIndependentOfDeviceLocale() {
+        val previous = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale("tr", "TR"))
+            assertTrue(PersonalSemanticMemoryPolicy.defaultEnabled("SISTER"))
+        } finally {
+            Locale.setDefault(previous)
+        }
     }
 
     @Test

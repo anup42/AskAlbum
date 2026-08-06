@@ -1285,3 +1285,8 @@ People cluster summaries now expose both the user-selected representative face a
 - Generic OCR search evidence now retains the matching allowlisted entity field, so passwords, contact values, order IDs, amounts, and similar protected entities cannot bypass the authentication gate outside document-answer intents.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.SensitiveContentClassifierTest --tests io.github.anup42.askalbum.SensitiveSearchProjectionTest --tests io.github.anup42.askalbum.CapabilityRegistryTest --tests io.github.anup42.askalbum.RetrievalChannelEvidenceTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+## 2026-08-06 - Make personal-memory relationship eligibility locale-safe
+
+- Personal semantic-memory defaults now use the shared NFKC and `Locale.ROOT` identity normalization instead of the device default locale.
+- Added regression coverage for uppercase `SISTER` under a Turkish device locale; no gallery data, People corrections, captions, or model state were changed.
