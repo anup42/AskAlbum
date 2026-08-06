@@ -43,7 +43,7 @@ internal object FaceEmbeddingAvailabilityPolicy {
 }
 
 data class FaceClusterReference(
-    val clusterId: String,
+    val clusterId: String?,
     val reviewed: Boolean,
     val hidden: Boolean,
     val userCorrected: Boolean = false,
@@ -75,9 +75,9 @@ internal object FaceClusterPolicy {
 
     fun matchingCluster(candidates: List<FaceClusterCandidate>): String? {
         val eligible = candidates.filter { candidate ->
-            candidate.reference != null && !candidate.reference.hidden
+            candidate.reference?.let { it.clusterId != null && !it.hidden } == true
         }
-        val ranked = eligible.groupBy { requireNotNull(it.reference).clusterId }
+        val ranked = eligible.groupBy { requireNotNull(it.reference?.clusterId) }
             .map { (clusterId, matches) -> clusterId to matches.map { it.hit.score }.sortedDescending() }
             .sortedWith(compareByDescending<Pair<String, List<Float>>> { it.second.first() }.thenBy { it.first })
         val best = ranked.firstOrNull() ?: return null

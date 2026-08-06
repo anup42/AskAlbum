@@ -1298,3 +1298,4 @@ People cluster summaries now expose both the user-selected representative face a
 - Added JVM regression coverage for the display boundary.
 2026-08-06: Corrected the generic OCR amount regression test to reflect the existing financial-evidence authentication boundary. Amount selection remains covered by the deterministic document selector, while unauthenticated answer formatting stays locked and redacted.
 2026-08-06: Corrected the generic OCR amount regression test to reflect the existing financial-evidence authentication boundary. Amount selection remains covered by the deterministic document selector, while unauthenticated answer formatting stays locked and redacted.
+- Fixed reviewed-identity expansion coverage: accessible faces with no cluster are now returned as nullable references, while automatic clustering still ignores unassigned candidates; added policy and database regressions.

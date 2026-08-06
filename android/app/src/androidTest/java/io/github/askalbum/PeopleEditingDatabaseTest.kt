@@ -172,6 +172,37 @@ class PeopleEditingDatabaseTest {
         assertNull(store.personFace("access-boundary-4:0"))
     }
 
+    @Test
+    fun accessibleUnassignedFaceIsReturnedForIdentityExpansion() {
+        val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
+        store.ensureStageRows()
+        val item = ImportedMedia(
+            stableId = "unassigned-expansion-face",
+            uri = "content://people-test/unassigned-expansion-face",
+            displayName = "unassigned.jpg",
+            mimeType = "image/jpeg",
+            source = MediaSource.MEDIA_STORE,
+            capturedAt = 1_700_000_000_000L,
+            modifiedAt = 1_700_000_000_000L,
+            durationMs = null,
+            width = 1200,
+            height = 900,
+            sizeBytes = 1_000L,
+        )
+        store.upsertImported(listOf(item))
+        store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+        store.ensureAutomaticPersonCluster("person_unassigned_source")
+        store.completeEmbeddedFaces(item.stableId, listOf(face()), listOf("person_unassigned_source"), "fixture-face-v1")
+        val faceId = "${item.stableId}:0"
+        store.excludeFaceFromCluster(faceId)
+
+        val reference = store.faceClusterReferences(listOf(faceId))[faceId]
+        assertTrue(reference != null)
+        assertNull(reference?.clusterId)
+        assertFalse(reference?.reviewed == true)
+        assertFalse(reference?.hidden == true)
+    }
+
     private fun face() = FaceInstance(
         bounds = listOf(.1f, .1f, .4f, .5f),
         embedding = FloatArray(FaceModelCatalog.sface.embeddingDimension).also { it[0] = 1f },

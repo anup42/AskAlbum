@@ -42,4 +42,17 @@ class ReviewedIdentityExpansionPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun unassignedFaceCanBeAcceptedWithStrongEvidence() {
+        assertEquals(
+            setOf("face-1"),
+            ReviewedIdentityExpansionPolicy.acceptedFaces(
+                scoresByCandidate = mapOf("face-1" to listOf(.95f)),
+                references = mapOf(
+                    "face-1" to FaceClusterReference(clusterId = null, reviewed = false, hidden = false),
+                ),
+            ),
+        )
+    }
 }

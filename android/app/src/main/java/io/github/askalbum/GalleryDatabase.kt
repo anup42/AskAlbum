@@ -1578,7 +1578,7 @@ class GalleryDatabase(
             val placeholders = ids.joinToString(",") { "?" }
             readableDatabase.rawQuery(
                 "SELECT f.id,c.id,c.reviewed,c.hidden,f.user_corrected FROM face_instance f " +
-                    "JOIN person_cluster c ON c.id=f.cluster_id " +
+                    "LEFT JOIN person_cluster c ON c.id=f.cluster_id " +
                     "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
                     "WHERE f.id IN ($placeholders)",
                 ids.toTypedArray(),
@@ -1587,9 +1587,9 @@ class GalleryDatabase(
                     while (cursor.moveToNext()) {
                         add(
                             cursor.getString(0) to FaceClusterReference(
-                                clusterId = cursor.getString(1),
-                                reviewed = cursor.getInt(2) != 0,
-                                hidden = cursor.getInt(3) != 0,
+                                clusterId = if (cursor.isNull(1)) null else cursor.getString(1),
+                                reviewed = !cursor.isNull(2) && cursor.getInt(2) != 0,
+                                hidden = !cursor.isNull(3) && cursor.getInt(3) != 0,
                                 userCorrected = cursor.getInt(4) != 0,
                             ),
                         )
