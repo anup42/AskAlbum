@@ -1182,3 +1182,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Added regression coverage for pending and exhausted caption chunks; no captions, image vectors, People data, or model packs were changed.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.CaptionVectorCoverageTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Gate free-form activity facts by validated activity state
+
+- Semantic enrichment now discards activity predicates from the generic `facts` array and persists activity facts only from the validated top-level `activityState`/activity fields. Static, ambiguous, or state-omitted images cannot retain a positive typed activity fact from contradictory model text.
+- Added regression coverage for a `NONE_VISIBLE` image whose generic facts claim an activity; valid `OBSERVED` person actions remain covered by the existing activity-aware tests.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.ActivityStateSafetyTest --tests io.github.anup42.askalbum.ActivityAwareSemanticCaptionValidationTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.

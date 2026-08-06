@@ -116,9 +116,6 @@ internal object SemanticEnrichmentCodec {
             extractFirstJsonObject(raw)
                 ?: throw SemanticEnrichmentOutputException("Enrichment must return one JSON object"),
         )
-        val baseFacts = SemanticFactCodec.decode(job, raw, modelVersion, generation)
-        val bindingByLabel = bindings.distinctBy(PersonVerificationBinding::clusterId)
-            .associateBy(PersonVerificationBinding::stableLabel)
         val sceneSummary = root.safeText("sceneSummary", 600)
         val detailedCaption = root.safeText("detailedCaption", MAX_CAPTION_LENGTH)
         val activityState = root.safeText("activityState", 40)
@@ -126,6 +123,10 @@ internal object SemanticEnrichmentCodec {
             .replace('-', '_')
             .replace(' ', '_')
         val activityIsObserved = activityState == "OBSERVED"
+        val baseFacts = SemanticFactCodec.decode(job, raw, modelVersion, generation)
+            .filterNot { it.predicate in ACTIVITY_FACT_PREDICATES }
+        val bindingByLabel = bindings.distinctBy(PersonVerificationBinding::clusterId)
+            .associateBy(PersonVerificationBinding::stableLabel)
         if (detailedCaption.isNotBlank() && sceneSummary.isBlank()) {
             throw SemanticEnrichmentOutputException("Enrichment omitted a safe sceneSummary")
         }
@@ -753,6 +754,13 @@ internal object SemanticEnrichmentCodec {
         }
 
     private val ACTIVITY_STATES = setOf("OBSERVED", "NONE_VISIBLE", "AMBIGUOUS", "NOT_APPLICABLE")
+    private val ACTIVITY_FACT_PREDICATES = setOf(
+        "activity",
+        "activity_state",
+        "observed_activity",
+        "primary_activity",
+        "activity_indicator",
+    )
 
     private fun extractFirstJsonObject(raw: String): String? {
         var start = -1
