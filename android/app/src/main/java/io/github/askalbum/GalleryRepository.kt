@@ -1395,14 +1395,18 @@ class GalleryRepository(context: Context) {
             if (term in ocrText) {
                 score += 10.0
                 val matchingBlock = database.ocrBlocks(item.id).firstOrNull { term in it.text.lowercase(Locale.ROOT) }
+                val matchingEntity = database.ocrEntities(item.id).firstOrNull { entity ->
+                    term in entity.rawText.lowercase(Locale.ROOT) || term in entity.normalizedValue.lowercase(Locale.ROOT)
+                }
                 evidence += EvidenceRecord(
                 id = "${item.id}:ocr:${StableDerivedId.sha256(term)}",
                     mediaId = item.id,
-                    sourceField = "ocr_text",
-                    text = matchingBlock?.text ?: term,
-                    confidence = matchingBlock?.confidence ?: .8f,
-                    producerVersion = "mlkit-text-v2",
-                    region = matchingBlock?.let { listOf(it.left, it.top, it.right, it.bottom) },
+                    sourceField = ocrEvidenceSourceField(matchingEntity?.type),
+                    text = matchingEntity?.rawText ?: matchingBlock?.text ?: term,
+                    confidence = matchingEntity?.confidence ?: matchingBlock?.confidence ?: .8f,
+                    producerVersion = matchingEntity?.producerVersion ?: "mlkit-text-v2",
+                    region = matchingEntity?.let { listOf(it.left, it.top, it.right, it.bottom) }
+                        ?: matchingBlock?.let { listOf(it.left, it.top, it.right, it.bottom) },
                     timestampMs = matchingBlock?.timestampMs,
                     pageIndex = matchingBlock?.pageIndex,
                 )
@@ -1630,6 +1634,10 @@ class GalleryRepository(context: Context) {
 
 internal fun resolveExecutionScope(planResultIds: Set<String>?, explicitScopeIds: Set<String>?): Set<String>? =
     planResultIds ?: explicitScopeIds
+
+internal fun ocrEvidenceSourceField(entityType: OcrEntityType?): String =
+    entityType?.let { type -> OcrFactAllowlist.fields.firstOrNull { it.type == type }?.sourceField }
+        ?: "ocr_text"
 
 internal fun matchesMerchantIdentity(
     required: String,

@@ -1239,3 +1239,8 @@ People cluster summaries now expose both the user-selected representative face a
 - Re-requesting an existing personal semantic-memory job now updates its durable priority as well as `user_requested`, so the claim order can promote it immediately.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.SemanticEnrichmentPriorityTest --tests io.github.anup42.askalbum.IndexingReliabilityPolicyTest --tests io.github.anup42.askalbum.IndexingJobControlsTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Preserve typed OCR sensitivity in ordinary search
+- Generic OCR search evidence now retains the matching allowlisted entity field, so passwords, contact values, order IDs, amounts, and similar protected entities cannot bypass the authentication gate outside document-answer intents.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.SensitiveContentClassifierTest --tests io.github.anup42.askalbum.SensitiveSearchProjectionTest --tests io.github.anup42.askalbum.CapabilityRegistryTest --tests io.github.anup42.askalbum.RetrievalChannelEvidenceTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
