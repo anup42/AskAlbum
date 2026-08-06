@@ -30,10 +30,22 @@ class CaptionVectorStoreTest {
                 },
             )
 
-            val emptyQuery = store.searchVariants(listOf("  ", ""), setOf("chunk-1"), 1, 10)
+            val emptyQuery = store.searchVariants(
+                queries = listOf("  ", ""),
+                eligibleChunkIds = setOf("chunk-1"),
+                searchableChunkIds = setOf("chunk-1"),
+                eligibleMediaCount = 1,
+                topK = 10,
+            )
             assertEquals(ChannelStatus.NOT_REQUIRED, emptyQuery.status)
 
-            val noEligibleChunks = store.searchVariants(listOf("birthday"), emptySet(), 0, 10)
+            val noEligibleChunks = store.searchVariants(
+                queries = listOf("birthday"),
+                eligibleChunkIds = emptySet(),
+                searchableChunkIds = emptySet(),
+                eligibleMediaCount = 0,
+                topK = 10,
+            )
             assertEquals(ChannelStatus.NOT_REQUIRED, noEligibleChunks.status)
             assertEquals(null, noEligibleChunks.errorCode)
         } finally {
