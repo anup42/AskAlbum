@@ -1001,3 +1001,8 @@ People cluster summaries now expose both the user-selected representative face a
 - Query-plan validation now accepts bounded Unicode person labels and aliases such as Hindi names while retaining strict validation for OCR fields and structural IDs.
 - Unsafe URI, path-separator, control-character, and comment-like person references remain rejected before People resolution or retrieval.
 - Added Hindi person-reference validation coverage.
+### 2026-08-06 - Make deterministic People fallback fail closed
+
+- Added bounded known-identity detection for planner-free queries, including Unicode family terms and negative polarity.
+- Merged planner, deterministic, and reviewed-alias clauses without re-adding a reviewed database match as a positive clause when the query explicitly excludes it.
+- Added unit coverage for identity detection, arbitrary-name safety, negative polarity, and alternative-cluster merging.

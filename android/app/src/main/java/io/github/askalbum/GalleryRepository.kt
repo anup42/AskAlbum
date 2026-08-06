@@ -591,21 +591,14 @@ class GalleryRepository(context: Context) {
         val sanitizedPatchedPlan = patchedPlan.copy(
             peopleClauses = PeopleClauseSanitizer.sanitize(patchedPlan.peopleClauses),
         )
-        val resolvedPersonGroups = database.resolveReviewedPersonGroups(query)
-        val plan = if (resolvedPersonGroups.isEmpty()) {
-            sanitizedPatchedPlan
-        } else {
-            sanitizedPatchedPlan.copy(
-                peopleClauses = (
-                    sanitizedPatchedPlan.peopleClauses + resolvedPersonGroups.flatMap { group ->
-                        group.personIds.map { personId ->
-                            PersonClause(personId = personId, alternativeGroup = group.alternativeGroup)
-                        }
-                    }
-                )
-                    .distinctBy { it.personId to it.mustBePresent },
-            )
-        }
+        val plan = sanitizedPatchedPlan.copy(
+            peopleClauses = PeopleClauseMergePolicy.merge(
+                plannerClauses = sanitizedPatchedPlan.peopleClauses,
+                detectedClauses = PeopleQueryReferenceDetector.detect(query),
+                reviewedGroups = database.resolveReviewedPersonGroups(query),
+                resolveReviewedIds = database::resolveReviewedPersonIds,
+            ),
+        )
         sessionId?.let { sessionPlans[it] = plan }
         emit(QueryProgress.PlanReady(plan))
         val peopleStatus = database.peopleIndexStatus()
