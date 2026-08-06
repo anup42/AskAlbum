@@ -121,6 +121,15 @@ object CapabilityAnswerExecutor {
                 channelReports = context.channelReports,
             )
         }
+        if (listRequiresAuthentication(context)) {
+            return SensitiveEvidencePolicy.lock(
+                base(
+                    SensitiveEvidencePolicy.LOCKED_HEADLINE,
+                    SensitiveEvidencePolicy.LOCKED_DETAIL,
+                    emptyList(),
+                ),
+            )
+        }
         val answer = when (context.plan.intent) {
             QueryIntent.FIND_MEDIA -> base(
                 "Found ${context.hits.size} ${if (context.hits.size == 1) "match" else "matches"}",
@@ -150,11 +159,7 @@ object CapabilityAnswerExecutor {
             QueryIntent.TIMELINE -> timeline(context, base)
             QueryIntent.COMPARE -> compare(context, base)
         }
-        return if (listRequiresAuthentication(context)) {
-            SensitiveEvidencePolicy.lock(answer)
-        } else {
-            answer
-        }
+        return answer
     }
 
     private fun listRequiresAuthentication(context: CapabilityAnswerContext): Boolean {
