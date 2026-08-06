@@ -945,3 +945,8 @@ People cluster summaries now expose both the user-selected representative face a
 
 - Capability answer citation collection now rejects evidence whose media ID does not match the cited result and prioritizes direct visual/media evidence before the bounded citation limit.
 - Added regression coverage for both cross-media leakage and trusted-evidence truncation.
+
+## 2026-08-06 - Preserve video and spatial evidence in grounded prompts
+
+- Grounded evidence JSON now carries the existing keyframe timestamp and spatial region alongside source, scope, and media provenance.
+- Added a regression proving those fields reach the single grounded-answer call without another image encoding pass.

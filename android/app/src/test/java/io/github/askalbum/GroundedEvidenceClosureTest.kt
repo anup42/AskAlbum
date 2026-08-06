@@ -67,6 +67,25 @@ class GroundedEvidenceClosureTest {
     }
 
     @Test
+    fun groundedPromptPreservesVideoTimestampAndEvidenceRegion() {
+        val record = evidence("video", "m1", "visual_verification", "Keyframe shows the beach")
+            .copy(timestampMs = 12_500L, region = listOf(.1f, .2f, .7f, .9f))
+        val packet = GroundedEvidencePacket(
+            query = "show the beach video",
+            baseline = baseline(),
+            evidence = listOf(record),
+        )
+
+        val encoded = packet.toPromptJson().getJSONArray("evidence").getJSONObject(0)
+
+        assertEquals(12_500L, encoded.getLong("timestampMs"))
+        val region = encoded.getJSONArray("region")
+        listOf(.1, .2, .7, .9).forEachIndexed { index, expected ->
+            assertEquals(expected, region.getDouble(index), 0.000001)
+        }
+    }
+
+    @Test
     fun personVisualAnswersUseOnlySameMediaVisualVerificationEvidence() {
         val plan = GalleryQueryPlan(
             originalQuery = "show wife wearing white",

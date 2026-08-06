@@ -211,6 +211,10 @@ internal fun GroundedEvidencePacket.toPromptJson(): JSONObject = JSONObject().ap
                 record.clusterId?.let { put("clusterId", it) }
                 record.applicability?.let { put("applicability", it) }
                 record.pageIndex?.let { put("pageIndex", it) }
+                record.timestampMs?.let { put("timestampMs", it) }
+                record.region?.let { bounds ->
+                    put("region", JSONArray().apply { bounds.forEach(::put) })
+                }
             })
         }
     })
