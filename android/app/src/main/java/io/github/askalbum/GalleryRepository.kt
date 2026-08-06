@@ -606,7 +606,12 @@ class GalleryRepository(context: Context) {
         sessionId?.let { sessionPlans[it] = plan }
         emit(QueryProgress.PlanReady(plan))
         val peopleStatus = database.peopleIndexStatus()
-        val peopleUnavailable = PeopleQueryGate.unavailableReason(plan, peopleStatus)
+        val identityReadiness = mutableMapOf<String, Boolean>()
+        val peopleUnavailable = PeopleQueryGate.unavailableReason(plan, peopleStatus) { requested ->
+            identityReadiness.getOrPut(requested) {
+                database.identityReadyReviewedPersonIds(listOf(requested)).isNotEmpty()
+            }
+        }
         if (peopleUnavailable != null) {
             val peopleReport = RetrievalChannelReport<SearchHit>(
                 RetrievalChannel.PEOPLE,

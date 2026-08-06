@@ -1744,6 +1744,28 @@ class GalleryDatabase(
         return clusterSets.reduceOrNull { current, next -> current intersect next }.orEmpty()
     }
 
+    fun identityReadyReviewedPersonIds(personIds: Collection<String>): Set<String> {
+        if (personIds.isEmpty()) return emptySet()
+        val resolved = personIds.flatMap { requested ->
+            resolveReviewedPersonIds(requested).ifEmpty {
+                if (PERSON_ID.matches(requested)) setOf(requested) else emptySet()
+            }
+        }.distinct()
+        if (resolved.isEmpty()) return emptySet()
+        return resolved.chunked(SQLITE_ID_CHUNK).flatMapTo(linkedSetOf()) { clusterChunk ->
+            val placeholders = clusterChunk.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT DISTINCT f.cluster_id FROM face_instance f " +
+                    "JOIN person_cluster p ON p.id=f.cluster_id " +
+                    "WHERE p.reviewed=1 AND p.hidden=0 AND f.embedding_dimension=? " +
+                    "AND f.embedding_offset IS NOT NULL AND f.cluster_id IN ($placeholders)",
+                arrayOf(FaceModelCatalog.sface.embeddingDimension.toString(), *clusterChunk.toTypedArray()),
+            ).use { cursor ->
+                buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) }
+            }
+        }
+    }
+
     fun personClustersPendingReview(): List<PersonClusterReviewItem> =
         personClusterSummaries(includeHidden = false).filterNot(PersonClusterReviewItem::reviewed)
 

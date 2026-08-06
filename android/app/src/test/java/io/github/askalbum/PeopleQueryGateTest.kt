@@ -27,4 +27,16 @@ class PeopleQueryGateTest {
         assertNull(PeopleQueryGate.unavailableReason(peoplePlan, PeopleIndexStatus(enabled = true, identityReadyFaceCount = 1)))
         assertNull(PeopleQueryGate.unavailableReason(QueryCompiler().compile("Show beach photos"), PeopleIndexStatus()))
     }
+
+    @Test
+    fun anotherClusterCannotUnlockARequestedClusterWithoutAnIdentityEmbedding() {
+        val status = PeopleIndexStatus(enabled = true, identityReadyFaceCount = 1)
+        val reason = PeopleQueryGate.unavailableReason(
+            peoplePlan,
+            status,
+            identityReadyFor = { requested -> requested != "dad" },
+        )
+
+        assertTrue(reason.orEmpty().contains("requested identity"))
+    }
 }

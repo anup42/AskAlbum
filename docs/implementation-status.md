@@ -1132,3 +1132,11 @@ People cluster summaries now expose both the user-selected representative face a
 - Tests: `EventExpansionPolicyTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
 - Device validation: NOT RUN; the safe fixture device is unavailable. The protected production device was not touched.
 - Remaining: connected acceptance queries, process-death/Doze/foreground-service timeout, and 5k/20k workload gates remain NOT RUN.
+
+## 2026-08-06 - Require the requested People cluster to be identity-ready
+
+- Fixed the People query gate so a ready embedding in one reviewed cluster cannot unlock searches for a different reviewed cluster that has only face boxes or missing SFace embeddings.
+- Required and excluded person clauses now fail closed per requested identity; alternative groups open only when at least one alternative has a usable reviewed identity embedding. No consent, face records, or completed indexes were changed.
+- Tests: `PeopleQueryGateTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
+- Device/instrumentation validation: NOT RUN; the safe fixture device is unavailable. The protected production device was not touched.
+- Remaining: database-level/device People acceptance, connected acceptance queries, process-death/Doze/foreground-service timeout, and 5k/20k workload gates remain NOT RUN.
