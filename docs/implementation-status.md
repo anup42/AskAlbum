@@ -1029,3 +1029,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Automatic model candidates now try Gemma E2B first on every compatible device.
 - E4B remains an optional device-recommended fallback; the shared selected pack is still used by planning, verification, and answer composition.
 - Updated the candidate-order regression test.
+### 2026-08-06 - Safe-device vector scale gate
+
+- `VectorIndexBenchmarkTest.exactFp16ScanMeetsReferenceDeviceGateAt5kAnd20k` PASS on fixture device `R3CY30QFWLP` using the native vector backend.
+- 5,000 vectors: build `3,792 ms`, exact-scan p95 `38 ms`, snapshot `7.4 MB`.
+- 20,000 vectors: build `18,067 ms`, exact-scan p95 `48 ms`, snapshot `29.6 MB`.
+- The benchmark used app-private synthetic vectors only; it did not modify user gallery media or production-device data.
+- Full run-scoped gallery ingestion, real E2B grounded-answer composition, and 20,000-item end-to-end indexing remain separate acceptance gates.
