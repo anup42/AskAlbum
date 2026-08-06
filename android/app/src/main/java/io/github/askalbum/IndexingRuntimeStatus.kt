@@ -24,6 +24,8 @@ internal data class IndexingWorkProgress(
     val quarantinedCount: Int,
     val ratePerMinute: Double? = null,
     val etaMillis: Long? = null,
+    val unavailable: Boolean = false,
+    val errorCode: String? = null,
 ) {
     companion object {
         fun from(data: androidx.work.Data?): IndexingWorkProgress {
@@ -31,6 +33,7 @@ internal data class IndexingWorkProgress(
             val nextAttemptAt = data?.getLong("next_attempt_at", 0L)?.takeIf { it > 0L }
             val retryableFailures = data?.getInt("retryable_failures", 0) ?: 0
             val delayedRetryCount = data?.getInt("delayed_retries", retryableFailures) ?: retryableFailures
+            val status = data?.getString("status")
             return IndexingWorkProgress(
                 lastProgressAt = lastProgressAt,
                 nextAttemptAt = nextAttemptAt,
@@ -38,6 +41,8 @@ internal data class IndexingWorkProgress(
                 quarantinedCount = data?.getInt("quarantined", 0) ?: 0,
                 ratePerMinute = data?.getDouble("rate_per_minute", 0.0)?.takeIf { it > 0.0 },
                 etaMillis = data?.getLong("eta_millis", 0L)?.takeIf { it > 0L },
+                unavailable = data?.getBoolean("unavailable", false) == true || status == "UNAVAILABLE",
+                errorCode = data?.getString("error_code")?.takeIf { it.isNotBlank() },
             )
         }
     }
@@ -182,6 +187,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
         unavailable: Boolean = false,
         errorCode: String? = null,
     ): IndexingPipelineSnapshot {
+        val workUnavailable = work.unavailable && pending > 0
         val state = IndexingRuntimeStatePolicy.resolve(
             enabled = enabled,
             pending = pending,
@@ -192,7 +198,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             runAttemptCount = work.runAttemptCount,
             foregroundActive = foregroundActive,
             pausedByUser = pausedByUser,
-            unavailable = unavailable,
+            unavailable = unavailable || workUnavailable,
         )
         val message = when (state) {
             IndexingPipelineState.RUNNING -> "$completed / $eligible indexed"
@@ -218,7 +224,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             ratePerMinute = work.ratePerMinute,
             etaMillis = work.etaMillis,
             stopReason = work.stopReason,
-            errorCode = errorCode,
+            errorCode = errorCode ?: work.errorCode,
             message = message,
         )
     }
@@ -257,6 +263,8 @@ internal class IndexingRuntimeStatusReader(context: Context) {
         val etaMillis: Long? get() = progress.etaMillis
         val delayedRetryCount: Int get() = progress.delayedRetryCount
         val quarantinedCount: Int get() = progress.quarantinedCount
+        val unavailable: Boolean get() = progress.unavailable
+        val errorCode: String? get() = progress.errorCode
     }
 }
 

@@ -1017,3 +1017,9 @@ People cluster summaries now expose both the user-selected representative face a
 - Fixed `EmbeddingIndexWorker` so a missing verified SigLIP2/retrieval pack is not reported as successful completion.
 - Propagated batch availability and error-code state into the shared worker-result policy and WorkManager progress.
 - Added a regression test; existing media, vectors, People data, semantic facts, and model packs remain unchanged.
+
+### 2026-08-06 - Preserve unavailable status in indexing snapshots
+
+- Decoded worker `status=UNAVAILABLE`, boolean availability, and error codes into the shared runtime snapshot.
+- Caption-vector and image-vector pack failures now remain visible as `UNAVAILABLE` while pending work exists instead of collapsing into generic queued or complete text.
+- Added parser coverage; no indexed data or device state changed.

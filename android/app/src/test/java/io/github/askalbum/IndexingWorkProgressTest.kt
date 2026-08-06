@@ -3,6 +3,7 @@ package io.github.anup42.askalbum
 import androidx.work.workDataOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IndexingWorkProgressTest {
@@ -53,6 +54,19 @@ class IndexingWorkProgressTest {
         assertEquals(90_000L, progress.etaMillis)
         assertNull(IndexingWorkProgress.from(null).ratePerMinute)
         assertNull(IndexingWorkProgress.from(null).etaMillis)
+    }
+
+    @Test
+    fun preservesUnavailableStatusAndErrorCodeFromWorkerProgress() {
+        val progress = IndexingWorkProgress.from(
+            workDataOf(
+                "status" to "UNAVAILABLE",
+                "error_code" to "NO_VERIFIED_RETRIEVAL_PACK",
+            ),
+        )
+
+        assertTrue(progress.unavailable)
+        assertEquals("NO_VERIFIED_RETRIEVAL_PACK", progress.errorCode)
     }
 
     @Test
