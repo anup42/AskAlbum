@@ -990,3 +990,8 @@ People cluster summaries now expose both the user-selected representative face a
 - Capability answer citations now apply the same typed scope, applicability, event, and person-condition policy used by grounded answer composition.
 - Ordinary media answers no longer cite visual-group or event context as direct sources; direct media/OCR evidence remains available.
 - Added regression coverage for contextual citation exclusion.
+
+### 2026-08-06 - Serialize Gemma idle eviction with active leases
+
+- Gemma engine reuse now cancels and reschedules idle eviction while holding the session mutex, preventing a queued planner, verifier, answer, or enrichment call from being closed by an older request's cleanup.
+- Memory-pressure eviction clears the pending idle job under the same mutex; model generation selection and one-heavy-call serialization remain unchanged.

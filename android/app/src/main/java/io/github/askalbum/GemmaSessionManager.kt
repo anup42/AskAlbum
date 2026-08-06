@@ -108,10 +108,10 @@ class GemmaSessionManager internal constructor(
         priority: InferencePriority = InferencePriority.BACKGROUND,
         block: suspend (SharedGemmaLease) -> T,
     ): T {
-        idleEviction?.cancel()
-        return try {
-            resources.withModel(ModelCapability.GENERATIVE, priority) {
-                sessionLock.withLock {
+        return resources.withModel(ModelCapability.GENERATIVE, priority) {
+            sessionLock.withLock {
+                idleEviction?.cancel()
+                try {
                     val current = active
                     val reused = current != null &&
                         current.modelPath == modelPath &&
@@ -131,10 +131,10 @@ class GemmaSessionManager internal constructor(
                         ).also { active = it }
                     }
                     block(SharedGemmaLease(selected.engine, if (reused) 0L else selected.loadMs))
+                } finally {
+                    scheduleIdleEvictionLocked()
                 }
             }
-        } finally {
-            scheduleIdleEviction()
         }
     }
 
@@ -145,12 +145,15 @@ class GemmaSessionManager internal constructor(
 
     internal suspend fun evictNow() {
         sessionLock.withLock {
+            idleEviction?.cancel()
+            idleEviction = null
             active?.engine?.closeSafely()
             active = null
         }
     }
 
-    private fun scheduleIdleEviction() {
+    /** Must be called while [sessionLock] is held so queued calls cannot race the schedule. */
+    private fun scheduleIdleEvictionLocked() {
         idleEviction?.cancel()
         idleEviction = scope.launch {
             delay(idleTimeoutMs)
