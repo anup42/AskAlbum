@@ -569,6 +569,12 @@ media, databases, or logs.
 ### 2026-08-05 - JSON boundary hardening and deployment gate
 - Added typed JSON string decoding for optional metadata, tags, and semantic attribute arrays; null, non-string, empty, and placeholder values are omitted instead of persisted as text.
 - `JsonValuePolicyTest` PASS; `consumerDebug` and `fixtureCiDebug` compilation PASS.
+
+### 2026-08-06 - Protect direct sensitive LIST answers
+- Hardened `CapabilityAnswerExecutor` so an explicit `LIST` request for a sensitive allowlisted OCR field is locked before protected values can be formatted into answer text, even when the executor is called directly.
+- Added regression coverage for password evidence; no Room migration, data repair, or index mutation was introduced.
+- `CapabilityRegistryTest` PASS; `consumerDebug` and `offlineDemoDebug` assembly PASS.
+- Fresh offline manifest permission scan was NOT RUN because this AGP layout did not emit the expected merged-manifest path; device validation was NOT RUN.
 - `consumerDebug` and `fixtureCiDebug` APK assembly PASS; replacement install and launch smoke PASS on `SM-F731U`.
 - `fixtureCiDebug` INTERNET permission: ABSENT.
 - Long-running 5k/20k, Doze, process-death, foreground-service-timeout, E4B, and full acceptance-query gates remain unverified.

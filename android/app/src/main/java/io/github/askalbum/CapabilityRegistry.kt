@@ -121,7 +121,7 @@ object CapabilityAnswerExecutor {
                 channelReports = context.channelReports,
             )
         }
-        return when (context.plan.intent) {
+        val answer = when (context.plan.intent) {
             QueryIntent.FIND_MEDIA -> base(
                 "Found ${context.hits.size} ${if (context.hits.size == 1) "match" else "matches"}",
                 "Hybrid local ranking used only the eligible media scope and the retrieval channels shown below.",
@@ -150,6 +150,23 @@ object CapabilityAnswerExecutor {
             QueryIntent.TIMELINE -> timeline(context, base)
             QueryIntent.COMPARE -> compare(context, base)
         }
+        return if (listRequiresAuthentication(context)) {
+            SensitiveEvidencePolicy.lock(answer)
+        } else {
+            answer
+        }
+    }
+
+    private fun listRequiresAuthentication(context: CapabilityAnswerContext): Boolean {
+        if (context.plan.intent != QueryIntent.LIST) return false
+        val requested = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField) ?: return false
+        if (!requested.sensitive) return false
+        return (context.hits + context.deterministicHits)
+            .asSequence()
+            .flatMap(SearchHit::evidence)
+            .any { evidence ->
+                evidence.sourceField == requested.sourceField && SensitiveEvidencePolicy.requiresAuthentication(evidence)
+            }
     }
 
     private fun listAnswer(

@@ -209,6 +209,26 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun capabilityExecutorLocksSensitiveValuesEvenWhenCalledDirectly() {
+        val password = hit("secret", "Wi-Fi", "INR 10.00", 1_700_000_000_000).copy(
+            evidence = listOf(EvidenceRecord("secret:password", "secret", "document_password", "mango-tree-2048", .95f)),
+        )
+        val answer = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.LIST).copy(
+                hits = listOf(password),
+                deterministicHits = listOf(password),
+                plan = context(QueryIntent.LIST).plan.copy(
+                    ocrClause = OcrClause(requestedField = "password"),
+                ),
+            ),
+        )
+
+        assertEquals(SensitiveEvidencePolicy.LOCKED_HEADLINE, answer.headline)
+        assertTrue(answer.requiresAuthentication)
+        assertFalse(answer.detail.contains("mango-tree-2048"))
+    }
+
+    @Test
     fun deterministicAnswerEvidenceAlsoRequiresAuthentication() {
         val password = hit("secret", "Wi-Fi", "INR 10.00", 1_700_000_000_000).copy(
             evidence = listOf(EvidenceRecord("secret:password", "secret", "document_password", "mango-tree-2048", .95f)),
