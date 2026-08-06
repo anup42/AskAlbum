@@ -24,13 +24,28 @@ class PeopleQueryGateTest {
 
     @Test
     fun identityReadyRecordsOpenGateAndNonPeopleQueriesBypassIt() {
-        assertNull(PeopleQueryGate.unavailableReason(peoplePlan, PeopleIndexStatus(enabled = true, identityReadyFaceCount = 1)))
+        assertNull(
+            PeopleQueryGate.unavailableReason(
+                peoplePlan,
+                PeopleIndexStatus(enabled = true, reviewedClusterCount = 1, identityReadyFaceCount = 1),
+            ),
+        )
         assertNull(PeopleQueryGate.unavailableReason(QueryCompiler().compile("Show beach photos"), PeopleIndexStatus()))
     }
 
     @Test
+    fun hiddenOnlyIdentityCannotUnlockPeopleSearch() {
+        val reason = PeopleQueryGate.unavailableReason(
+            peoplePlan,
+            PeopleIndexStatus(enabled = true, reviewedClusterCount = 0, identityReadyFaceCount = 1),
+        )
+
+        assertTrue(reason.orEmpty().contains("Hidden or ignored"))
+    }
+
+    @Test
     fun anotherClusterCannotUnlockARequestedClusterWithoutAnIdentityEmbedding() {
-        val status = PeopleIndexStatus(enabled = true, identityReadyFaceCount = 1)
+        val status = PeopleIndexStatus(enabled = true, reviewedClusterCount = 1, identityReadyFaceCount = 1)
         val reason = PeopleQueryGate.unavailableReason(
             peoplePlan,
             status,

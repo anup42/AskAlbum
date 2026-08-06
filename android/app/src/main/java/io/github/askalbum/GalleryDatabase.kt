@@ -1098,7 +1098,7 @@ class GalleryDatabase(
             reviewedClusterCount = count("SELECT COUNT(*) FROM person_cluster WHERE reviewed=1 AND hidden=0"),
             identityReadyFaceCount = count(
                 "SELECT COUNT(*) FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
-                    "WHERE p.reviewed=1 AND f.embedding_dimension>0 AND f.embedding_offset IS NOT NULL",
+                    "WHERE p.reviewed=1 AND p.hidden=0 AND f.embedding_dimension>0 AND f.embedding_offset IS NOT NULL",
             ),
             pendingMediaCount = count("SELECT COUNT(*) FROM media_index_stage WHERE stage='FACES' AND status IN ('PENDING','RUNNING','FAILED_RETRYABLE')"),
         )

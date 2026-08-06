@@ -1223,3 +1223,9 @@ People cluster summaries now expose both the user-selected representative face a
 - Existing media and derived People data are untouched; this changes only the durable worker control and preserves the separate consent gate in the worker.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.IndexingJobControlsTest --tests io.github.anup42.askalbum.PeopleQueryGateTest --tests io.github.anup42.askalbum.IndexingReliabilityPolicyTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Exclude hidden identities from People readiness
+- People readiness now counts usable face embeddings only for visible reviewed clusters, and the query gate rejects a hidden-only identity state.
+- This is a read-only status correction; gallery media, face vectors, reviewed labels, and hidden-cluster data are preserved.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.PeopleQueryGateTest --tests io.github.anup42.askalbum.IndexingJobControlsTest --tests io.github.anup42.askalbum.PeopleClauseMergePolicyTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.

@@ -10,6 +10,9 @@ internal object PeopleQueryGate {
         if (!status.enabled) {
             return "People search is off. Enable it explicitly in Privacy before creating local face records."
         }
+        if (status.reviewedClusterCount == 0) {
+            return "People search needs a visible reviewed cluster. Hidden or ignored people cannot unlock identity search."
+        }
         if (status.identityReadyFaceCount == 0) {
             return "People search needs a compatible local identity-embedding pack and a reviewed cluster. Face detection alone does not prove identity."
         }
