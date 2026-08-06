@@ -95,9 +95,10 @@ class LiteRtGemmaGroundedAnswerComposer(
         Word a concise personal-gallery answer using only the supplied local evidence packet.
         Return exactly one JSON object and no markdown.
         Required shape: {"headline":"Short answer","detail":"Evidence-only detail","claims":[{"text":"Supported claim","evidenceIds":["EV1"],"confidence":0.95}]}
-        Every factual claim must cite one or more evidenceIds copied exactly from the packet.
+        Emit at most one claim for each direct evidence record, and cite the exact evidenceIds copied from the packet.
+        Use the exact text of the cited evidence as the claim text whenever possible; use only simple connective wording when needed.
         Do not invent media, IDs, facts, people, places, numbers, dates, paths, URIs, or unsupported interpretations.
-        Preserve deterministic numbers, dates, exactness, and coverage. If a paraphrase might alter a fact, copy the baseline wording.
+        Preserve deterministic numbers, dates, exactness, and coverage. If a paraphrase might alter a fact, copy the baseline or evidence wording exactly.
         Evidence packet: ${packet.toPromptJson()}
     """.trimIndent()
 
