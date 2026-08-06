@@ -1147,3 +1147,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Tests: `PeopleQueryGateTest` and full `:app:testFixtureCiDebugUnitTest` PASS; Android-test source compilation PASS via `:app:compileFixtureCiDebugAndroidTestKotlin`; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
 - Device/database instrumentation: NOT RUN; only the protected production device is connected. No production data, People state, or models were touched.
 - Remaining: execute the new database regression on the safe fixture, connected acceptance queries, process-death/Doze/foreground-service timeout, and 5k/20k workload gates remain NOT RUN.
+### 2026-08-06 - Document fact answers now require complete OCR coverage
+
+- Changed `CapabilityAnswerExecutor.factAnswer()` to refuse values from bounded or partial OCR retrieval passes.
+- Exact document answers still use the existing deterministic selector when eligible OCR coverage is complete.
+- Added `CapabilityRegistryTest.boundedDocumentFactDoesNotReturnAValueFromPartialOcrCoverage`.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.CapabilityRegistryTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.

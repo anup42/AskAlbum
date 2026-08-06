@@ -187,6 +187,14 @@ object CapabilityAnswerExecutor {
                 "The requested document field is not in the local allowlist, so no value was selected.",
                 emptyList(),
             )
+        if (!context.hasCompleteEligibleCoverage()) {
+            return base(
+                "Document fact unavailable",
+                "The current retrieval pass covered ${context.indexedEligibleCount} of ${context.totalEligibleCount} eligible items. " +
+                    "A partial OCR pass cannot establish a trustworthy ${field.key.replace('_', ' ')} value.",
+                collectEvidenceIds(context.hits + context.deterministicHits, context.plan, 12),
+            )
+        }
         val sourceHits = context.deterministicHits.ifEmpty { context.hits }
         val selection = DocumentAnswerSelector.select(sourceHits, setOf(field.sourceField), context.plan.sort)
         val fact = selection?.fact

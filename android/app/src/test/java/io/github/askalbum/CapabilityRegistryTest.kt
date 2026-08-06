@@ -94,6 +94,21 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun boundedDocumentFactDoesNotReturnAValueFromPartialOcrCoverage() {
+        val partial = context(QueryIntent.DOCUMENT_QA).copy(
+            exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+            indexedEligibleCount = 2,
+            totalEligibleCount = 10,
+        )
+
+        val answer = CapabilityAnswerExecutor.execute(partial)
+
+        assertEquals("Document fact unavailable", answer.headline)
+        assertTrue(answer.detail.contains("partial OCR", ignoreCase = true))
+        assertFalse(answer.headline.contains("INR", ignoreCase = true))
+    }
+
+    @Test
     fun listUsesCompleteDeterministicEvidenceInsteadOfRankedTopK() {
         val complete = hit("three", "Trip C", "INR 30.00", 1_720_000_000_000)
         val base = context(QueryIntent.LIST)
