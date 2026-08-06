@@ -609,6 +609,11 @@ media, databases, or logs.
 - Event summaries and timelines no longer claim complete event membership from generic `EXACT` result-set coverage.
 - Added executor coverage for incomplete and complete event-channel states.
 
+### 2026-08-06 - Prioritize user-requested personal captions
+- User-requested semantic enrichment now replaces a stale queued semantic WorkRequest so charging/idle constraints from representative backlog work cannot delay newly tagged Me/family captions.
+- Non-user-requested background enrichment continues to use `KEEP`, preserving healthy existing work.
+- Added scheduling-policy unit coverage; durable job leases and database priority remain authoritative.
+
 ### 2026-08-05 - Semantic scan and caption-vector completion hardening
 - Complete predicate scans now consume typed vector coverage and do not advance a batch on unavailable, failed, partial, or missing-vector results.
 - Caption-vector reconciliation failures are reported as `FAILED` and retried; they cannot be hidden behind `COMPLETE`.

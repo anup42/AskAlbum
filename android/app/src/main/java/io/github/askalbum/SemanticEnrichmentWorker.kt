@@ -254,7 +254,7 @@ object SemanticEnrichmentScheduler {
         if (!controls.semanticMemoryEnabled || controls.foregroundPaused) return
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK,
-            ExistingWorkPolicy.KEEP,
+            SemanticEnrichmentSchedulingPolicy.workPolicy(userRequested),
             request(context, userRequested, USER_REQUESTED_START_DELAY_SECONDS),
         )
     }
@@ -310,4 +310,9 @@ object SemanticEnrichmentScheduler {
         }
         .addTag(UNIQUE_WORK)
         .build()
+}
+
+internal object SemanticEnrichmentSchedulingPolicy {
+    fun workPolicy(userRequested: Boolean): ExistingWorkPolicy =
+        if (userRequested) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
 }
