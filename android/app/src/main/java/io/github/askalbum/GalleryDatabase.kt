@@ -840,9 +840,11 @@ class GalleryDatabase(
                         "WHERE index_state='INDEXING' AND id IN ($orphanedMediaIds)",
                     leaseArgs,
                 )
+                val orphanedThumbnailMediaIds =
+                    "SELECT media_id FROM media_index_stage WHERE stage='THUMBNAIL' AND $leasePredicate"
                 val resetThumbnailSql =
                     "UPDATE media_index_stage SET status='PENDING',updated_at=?,error=? " +
-                        "WHERE stage='THUMBNAIL' AND status IN ('COMPLETE','RUNNING') AND media_id IN ($orphanedMediaIds)"
+                        "WHERE stage='THUMBNAIL' AND status IN ('COMPLETE','RUNNING') AND media_id IN ($orphanedThumbnailMediaIds)"
                 db.execSQL(resetThumbnailSql, arrayOf(now, recoveryError, *leaseArgs))
             }
             if (stages.isNotEmpty()) {

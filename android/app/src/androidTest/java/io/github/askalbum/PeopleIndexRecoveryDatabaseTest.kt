@@ -57,6 +57,36 @@ class PeopleIndexRecoveryDatabaseTest {
         assertEquals(StageStatus.RUNNING, reopened.stageRecords(image.id).single { it.stage == IndexStage.EMBEDDING }.status)
     }
 
+    @Test
+    fun expiredOcrLeaseDoesNotResetCompletedThumbnailStage() {
+        val database = GalleryDatabase(context, TEST_DATABASE).also { store = it }
+        database.seedDemoIfEmpty()
+        database.ensureStageRows()
+        val image = database.allItems().first { it.kind == MediaKind.IMAGE }
+
+        database.close()
+        store = null
+        SQLiteDatabase.openDatabase(
+            context.getDatabasePath(TEST_DATABASE).path,
+            null,
+            SQLiteDatabase.OPEN_READWRITE,
+        ).use { raw ->
+            raw.execSQL(
+                "UPDATE media_index_stage SET status='COMPLETE',lease_owner=NULL,lease_expires_at=NULL WHERE media_id=? AND stage='THUMBNAIL'",
+                arrayOf<Any>(image.id),
+            )
+            raw.execSQL(
+                "UPDATE media_index_stage SET status='RUNNING',lease_owner=?,lease_expires_at=? WHERE media_id=? AND stage='OCR'",
+                arrayOf<Any>("ocr-owner", System.currentTimeMillis() - 1L, image.id),
+            )
+        }
+
+        val reopened = GalleryDatabase(context, TEST_DATABASE).also { store = it }
+        reopened.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
+        assertEquals(StageStatus.COMPLETE, reopened.stageRecords(image.id).single { it.stage == IndexStage.THUMBNAIL }.status)
+        assertEquals(StageStatus.PENDING, reopened.stageRecords(image.id).single { it.stage == IndexStage.OCR }.status)
+    }
+
     private companion object {
         const val TEST_DATABASE = "people-index-recovery-test.db"
     }
