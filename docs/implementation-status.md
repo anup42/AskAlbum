@@ -1070,3 +1070,12 @@ People cluster summaries now expose both the user-selected representative face a
 - `:app:assembleConsumerDebug :app:assembleOfflineDemoDebug`: PASS.
 - Merged offline APK permission audit: PASS, no `INTERNET` permission.
 - Device execution: NOT RUN; safe fixture unavailable and production device untouched.
+
+## 2026-08-06 - Fail-closed reviewed-identity expansion
+
+- Reviewed-person auto-expansion now rejects candidate faces whose cluster reference is missing, reviewed, hidden, or user-corrected; missing metadata can no longer satisfy a vector threshold.
+- Added unit coverage for missing-reference rejection and protected-face rejection while preserving strong-evidence acceptance for referenced unreviewed faces.
+- Focused policy test: PASS.
+- `:app:testFixtureCiDebugUnitTest`: PASS.
+- `:app:assembleConsumerDebug`: PASS.
+- Device execution: NOT RUN; safe fixture unavailable and production device untouched.

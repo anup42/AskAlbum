@@ -127,7 +127,7 @@ internal object ReviewedIdentityExpansionPolicy {
         references: Map<String, FaceClusterReference>,
     ): Set<String> = scoresByCandidate.mapNotNullTo(linkedSetOf()) { (faceId, rawScores) ->
         val reference = references[faceId]
-        if (reference?.reviewed == true || reference?.hidden == true || reference?.userCorrected == true) {
+        if (reference == null || reference.reviewed || reference.hidden || reference.userCorrected) {
             return@mapNotNullTo null
         }
         val scores = rawScores.sortedDescending()
