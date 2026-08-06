@@ -1110,3 +1110,10 @@ People cluster summaries now expose both the user-selected representative face a
 - If the current pointer is missing or its generation fails validation after process death, a valid previous generation is restored without deleting model generations.
 - Tests: `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.RetrievalPackValidationTest --tests io.github.anup42.askalbum.RetrievalGenerationPointerTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
 - Device validation: NOT RUN; safe fixture unavailable. Production device and installed packs were not touched.
+
+### 2026-08-06 - Recover interrupted OCR-pack activation
+
+- PaddleOCR activation now renames the active pack instead of deleting it, retains prior generations under app-private recovery names, and restores a valid staged or previous pack after process death before activation completes.
+- Tests: `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.OcrPackActivationTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
+- Device validation: NOT RUN; safe fixture unavailable. Production OCR pack and gallery data were not touched.
+- Remaining related gap: SFace activation still needs the same migration-safe recovery treatment.

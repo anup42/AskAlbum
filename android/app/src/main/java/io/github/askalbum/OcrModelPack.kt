@@ -114,9 +114,43 @@ data class OcrModelStatus(
     val error: String? = null,
 )
 
+internal class OcrPackActivation(private val modelRoot: File) {
+    val activeRoot: File = File(modelRoot, "active")
+
+    fun activate(staging: File) {
+        require(staging.isDirectory) { "OCR staging directory is unavailable" }
+        require(modelRoot.mkdirs() || modelRoot.isDirectory) { "Could not create OCR model directory" }
+        val backup = File(modelRoot, "active.previous-${UUID.randomUUID()}")
+        if (activeRoot.exists()) require(activeRoot.renameTo(backup)) {
+            "Could not preserve the previous PaddleOCR pack"
+        }
+        try {
+            require(staging.renameTo(activeRoot)) { "Could not activate the verified PaddleOCR pack" }
+        } catch (failure: Throwable) {
+            if (!activeRoot.exists() && backup.isDirectory) backup.renameTo(activeRoot)
+            throw failure
+        }
+    }
+
+    fun recoverIfMissing(isValid: (File) -> Boolean): Boolean {
+        if (activeRoot.exists()) return false
+        val candidates = modelRoot.listFiles()
+            ?.filter { it.isDirectory && (it.name == "active.next" || it.name.startsWith("active.previous-")) }
+            ?.sortedByDescending(File::lastModified)
+            .orEmpty()
+        candidates.forEach { candidate ->
+            if (runCatching { isValid(candidate) }.getOrDefault(false) && candidate.renameTo(activeRoot)) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
 class OcrModelPackManager(private val context: Context) {
     private val modelRoot = File(context.filesDir, "models/ocr/paddle-v5-multilingual")
-    private val activeRoot = File(modelRoot, "active")
+    private val activation = OcrPackActivation(modelRoot)
+    private val activeRoot = activation.activeRoot
     private val marker = File(activeRoot, "verified.pack")
 
     fun status(): OcrModelStatus = runCatching {
@@ -126,6 +160,11 @@ class OcrModelPackManager(private val context: Context) {
 
     fun current(): InstalledOcrModelPack? {
         val spec = OcrModelCatalog.paddleV5Multilingual
+        activation.recoverIfMissing { directory ->
+            val candidateMarker = File(directory, "verified.pack")
+            candidateMarker.isFile && candidateMarker.readText().trim() == spec.producerVersion &&
+                runCatching { verifyOcrModelDirectory(directory, spec) }.isSuccess
+        }
         if (!marker.isFile || marker.readText().trim() != spec.producerVersion) return null
         verifyOcrModelDirectory(activeRoot, spec)
         return InstalledOcrModelPack(activeRoot, spec)
@@ -177,8 +216,7 @@ class OcrModelPackManager(private val context: Context) {
             File(sourceDirectory, artifact.targetName).copyTo(File(next, artifact.targetName), overwrite = true)
         }
         File(next, "verified.pack").writeText(spec.producerVersion)
-        activeRoot.deleteRecursively()
-        require(next.renameTo(activeRoot)) { "Could not activate the verified PaddleOCR pack" }
+        activation.activate(next)
         return InstalledOcrModelPack(activeRoot, spec)
     }
 
