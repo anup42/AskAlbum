@@ -141,7 +141,13 @@ internal object SemanticPredicateScanPolicy {
 
     fun requested(plan: GalleryQueryPlan): Boolean {
         if (plan.intent != QueryIntent.COUNT) return false
-        if (plan.semanticClauses.none { it.polarity == Polarity.POSITIVE } && plan.terms.isEmpty()) return false
+        val positiveClauses = plan.semanticClauses.filter { it.polarity == Polarity.POSITIVE }
+        if (positiveClauses.isEmpty() && plan.terms.isEmpty()) return false
+        // The runner evaluates one text-embedding predicate per media item. A
+        // multi-clause plan needs a conjunction executor; otherwise an exact
+        // scan could report the count for one embedding as the count for all
+        // requested conditions.
+        if (positiveClauses.size > 1) return false
         // This scan evaluates one whole-media positive embedding predicate. It
         // cannot prove a negated predicate or bind a visual condition to a
         // reviewed person, so those counts must remain estimated or verified by

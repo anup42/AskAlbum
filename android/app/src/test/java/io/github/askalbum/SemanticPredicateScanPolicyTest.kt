@@ -46,6 +46,20 @@ class SemanticPredicateScanPolicyTest {
     }
 
     @Test
+    fun multiClauseSemanticCountsRemainEstimatedUntilConjunctionExecutorExists() {
+        val multiClause = GalleryQueryPlan(
+            originalQuery = "How many photos exactly contain a dog and a beach?",
+            intent = QueryIntent.COUNT,
+            semanticClauses = listOf(
+                SemanticClause("dog"),
+                SemanticClause("beach"),
+            ),
+        )
+
+        assertFalse(SemanticPredicateScanPolicy.requested(multiClause))
+    }
+
+    @Test
     fun scopeAndQueryKeysAreStableButDistinct() {
         val scopeA = SemanticPredicateScanPolicy.scopeHash(setOf("a", "b"))
         val scopeB = SemanticPredicateScanPolicy.scopeHash(setOf("b", "a"))

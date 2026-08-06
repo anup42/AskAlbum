@@ -596,6 +596,10 @@ media, databases, or logs.
 - Added a regression test covering a certain headline/detail paired with an uncertain claim.
 - Existing claim-level uncertainty validation remains unchanged.
 
+### 2026-08-06 - Keep multi-clause semantic counts estimated
+- The resumable exact semantic scan now rejects plans with multiple positive semantic clauses because its executor evaluates one embedding predicate, not a deterministic conjunction.
+- Added a regression test ensuring multi-condition counts remain estimated until a conjunction scan executor exists.
+
 ### 2026-08-05 - Semantic scan and caption-vector completion hardening
 - Complete predicate scans now consume typed vector coverage and do not advance a batch on unavailable, failed, partial, or missing-vector results.
 - Caption-vector reconciliation failures are reported as `FAILED` and retried; they cannot be hidden behind `COMPLETE`.
