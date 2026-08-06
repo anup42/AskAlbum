@@ -1736,8 +1736,9 @@ class GalleryDatabase(
                 db.rawQuery(
                     "SELECT DISTINCT f.media_id FROM face_instance f " +
                         "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
-                        "WHERE f.cluster_id IN ($placeholders)",
-                    clusterIds.toTypedArray(),
+                        "WHERE f.cluster_id IN ($placeholders) AND f.embedding_dimension=? " +
+                        "AND f.embedding_offset IS NOT NULL",
+                    clusterIds.toTypedArray() + FaceModelCatalog.sface.embeddingDimension.toString(),
                 ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
             }
         }
@@ -2332,9 +2333,10 @@ class GalleryDatabase(
         return readableDatabase.rawQuery(
             "SELECT f.id,f.cluster_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,p.label,p.relationship,p.aliases " +
                 "FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
-                "WHERE f.media_id=? AND p.reviewed=1 AND p.hidden=0 AND f.cluster_id IN ($placeholders) " +
+                "WHERE f.media_id=? AND p.reviewed=1 AND p.hidden=0 AND f.embedding_dimension=? " +
+                "AND f.embedding_offset IS NOT NULL AND f.cluster_id IN ($placeholders) " +
                 "ORDER BY f.cluster_id,f.quality DESC,f.id",
-            (listOf(mediaId) + resolved).toTypedArray(),
+            arrayOf(mediaId, FaceModelCatalog.sface.embeddingDimension.toString(), *resolved.toTypedArray()),
         ).use { cursor ->
             val stable = resolved.withIndex().associate { (index, id) -> id to "P${index + 1}" }
             buildList {
@@ -2367,8 +2369,9 @@ class GalleryDatabase(
     fun reviewedFaceBindingsForMedia(mediaId: String): List<PersonVerificationBinding> {
         val clusterIds = readableDatabase.rawQuery(
             "SELECT DISTINCT f.cluster_id FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
-                "WHERE f.media_id=? AND p.reviewed=1 AND p.hidden=0 ORDER BY f.cluster_id",
-            arrayOf(mediaId),
+                "WHERE f.media_id=? AND p.reviewed=1 AND p.hidden=0 AND f.embedding_dimension=? " +
+                "AND f.embedding_offset IS NOT NULL ORDER BY f.cluster_id",
+            arrayOf(mediaId, FaceModelCatalog.sface.embeddingDimension.toString()),
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
         return reviewedFaceBindings(mediaId, clusterIds.toSet()).distinctBy(PersonVerificationBinding::clusterId)
     }
@@ -2392,7 +2395,7 @@ class GalleryDatabase(
 
         val rows = readableDatabase.rawQuery(
             "SELECT f.id,f.cluster_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos," +
-                "p.reviewed,p.hidden,p.label,p.relationship,p.aliases " +
+                "p.reviewed,p.hidden,p.label,p.relationship,p.aliases,f.embedding_dimension,f.embedding_offset " +
                 "FROM face_instance f " +
                 "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
                 "LEFT JOIN person_cluster p ON p.id=f.cluster_id " +
@@ -2404,7 +2407,8 @@ class GalleryDatabase(
                     val faceId = cursor.getString(0)
                     val clusterId = if (cursor.isNull(1)) null else cursor.getString(1)
                     val reviewed = !cursor.isNull(6) && cursor.getInt(6) == 1 &&
-                        !cursor.isNull(7) && cursor.getInt(7) == 0 && clusterId != null
+                        !cursor.isNull(7) && cursor.getInt(7) == 0 && clusterId != null &&
+                        cursor.getInt(11) == FaceModelCatalog.sface.embeddingDimension && !cursor.isNull(12)
                     val terms = if (reviewed) {
                         buildSet {
                             if (!cursor.isNull(8)) add(sensitiveDataAtRest.reveal(cursor.getString(8)))

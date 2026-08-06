@@ -56,6 +56,37 @@ class PersonVerificationBindingsDatabaseTest {
         assertTrue(bindings[1].identityTerms.isEmpty())
     }
 
+    @Test
+    fun missingIdentityEmbeddingCannotSatisfyPeopleSearchOrReceiveReviewedLabel() {
+        val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
+        store.seedDemoIfEmpty()
+        store.ensureStageRows()
+        store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+        store.ensureAutomaticPersonCluster("person_ready")
+        store.ensureAutomaticPersonCluster("person_waiting")
+        val item = store.allItems().first { it.kind == MediaKind.IMAGE }
+        store.completeEmbeddedFaces(
+            item.id,
+            listOf(
+                face(.08f, .1f, .28f, .5f),
+                face(.55f, .12f, .76f, .52f),
+            ),
+            listOf("person_ready", "person_waiting"),
+            "fixture-face-verification",
+        )
+        store.saveReviewedPersonCluster("person_ready", "Ready", "friend", emptyList())
+        store.saveReviewedPersonCluster("person_waiting", "Waiting", "friend", emptyList())
+        store.requestFaceEmbeddingRepair(setOf("${item.id}:1"), "fixture-face-repair")
+
+        val bindings = store.verificationFaceBindingsForMedia(item.id)
+
+        assertEquals(listOf("P1", "U1"), bindings.map(PersonVerificationBinding::stableLabel))
+        assertEquals("person_ready", bindings.first().clusterId)
+        assertTrue(bindings[1].clusterId?.startsWith("unreviewed-face-") == true)
+        assertTrue(bindings[1].identityTerms.isEmpty())
+        assertTrue(store.mediaIdsForReviewedPeople(listOf("person_waiting")).isEmpty())
+    }
+
     private fun face(left: Float, top: Float, right: Float, bottom: Float) = FaceInstance(
         bounds = listOf(left, top, right, bottom),
         embedding = FloatArray(FaceModelCatalog.sface.embeddingDimension).also { it[0] = 1f },

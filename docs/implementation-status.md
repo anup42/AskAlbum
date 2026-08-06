@@ -1140,3 +1140,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Tests: `PeopleQueryGateTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
 - Device/instrumentation validation: NOT RUN; the safe fixture device is unavailable. The protected production device was not touched.
 - Remaining: database-level/device People acceptance, connected acceptance queries, process-death/Doze/foreground-service timeout, and 5k/20k workload gates remain NOT RUN.
+
+## 2026-08-06 - Exclude face rows without usable identity embeddings
+
+- Person media filtering and Gemma verification bindings now require the current SFace embedding dimension and a non-null vector offset. A reviewed face whose embedding is missing is retained as visible correction data but is labelled as an unreviewed/context face and cannot satisfy People search.
+- Tests: `PeopleQueryGateTest` and full `:app:testFixtureCiDebugUnitTest` PASS; Android-test source compilation PASS via `:app:compileFixtureCiDebugAndroidTestKotlin`; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
+- Device/database instrumentation: NOT RUN; only the protected production device is connected. No production data, People state, or models were touched.
+- Remaining: execute the new database regression on the safe fixture, connected acceptance queries, process-death/Doze/foreground-service timeout, and 5k/20k workload gates remain NOT RUN.
