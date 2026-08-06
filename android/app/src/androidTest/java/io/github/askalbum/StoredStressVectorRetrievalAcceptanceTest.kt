@@ -24,7 +24,8 @@ class StoredStressVectorRetrievalAcceptanceTest {
         val runId = arguments.getString("galleryRunId")
         val expectedCount = arguments.getString("galleryExpectedCount")?.toIntOrNull()
         assumeTrue("galleryRunId was not supplied", !runId.isNullOrBlank())
-        assumeTrue("This acceptance gate requires exactly 5,000 items", expectedCount == EXPECTED_COUNT)
+        assumeTrue("This acceptance gate requires 5,000 or 20,000 items", expectedCount in SUPPORTED_COUNTS)
+        val requiredCount = requireNotNull(expectedCount)
 
         val application = instrumentation.targetContext.applicationContext as AskAlbumApplication
         val safeRunId = requireNotNull(runId)
@@ -34,12 +35,12 @@ class StoredStressVectorRetrievalAcceptanceTest {
         val seededUris = seedResult.getJSONArray("createdUris").let { array ->
             (0 until array.length()).mapTo(mutableSetOf()) { array.getString(it) }
         }
-        assertEquals(EXPECTED_COUNT, seedResult.getInt("createdCount"))
+        assertEquals(requiredCount, seedResult.getInt("createdCount"))
 
         val itemsById = application.repository.allItems()
             .filter { it.contentUri in seededUris }
             .associateBy(GalleryItem::id)
-        assertEquals("Every recorded 5k URI must resolve to one database row", EXPECTED_COUNT, itemsById.size)
+        assertEquals("Every recorded stress URI must resolve to one database row", requiredCount, itemsById.size)
         val allowedIds = itemsById.keys
         val indexedIds = application.services.semanticVectorStore.indexedIds()
         assertEquals(
@@ -149,7 +150,7 @@ class StoredStressVectorRetrievalAcceptanceTest {
 
     private companion object {
         val STRESS_FILENAME = Regex("stress_(\\d{5})(?:_[a-z0-9_-]+)?\\.jpg")
-        const val EXPECTED_COUNT = 5_000
+        val SUPPORTED_COUNTS = setOf(5_000, 20_000)
         const val SOURCE_COUNT = 82
         const val TOP_K = 20
         const val PRECISION_K = 10

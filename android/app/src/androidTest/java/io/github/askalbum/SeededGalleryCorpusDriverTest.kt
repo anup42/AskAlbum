@@ -192,15 +192,31 @@ class SeededGalleryCorpusDriverTest {
         }
     }
 
-    private fun waitForState(context: android.content.Context, runId: String, filename: String): JSONObject {
+    private fun waitForState(
+        context: android.content.Context,
+        runId: String,
+        filename: String,
+        timeoutMs: Long = TIMEOUT_MS,
+    ): JSONObject {
         val file = File(context.filesDir, "test-seed/$runId/$filename")
-        val deadline = SystemClock.elapsedRealtime() + TIMEOUT_MS
+        var deadline = SystemClock.elapsedRealtime() + timeoutMs
+        var adaptiveIndexTimeoutApplied = false
         var last: JSONObject? = null
         while (SystemClock.elapsedRealtime() < deadline) {
             if (file.isFile) {
                 val current = runCatching { JSONObject(file.readText()) }.getOrNull()
                 if (current != null) {
                     last = current
+                    if (!adaptiveIndexTimeoutApplied && filename == "foreground-index-status.json") {
+                        val expectedCount = current.optInt("expectedCount", 0)
+                        if (expectedCount > 0) {
+                            deadline = maxOf(
+                                deadline,
+                                SystemClock.elapsedRealtime() + indexTimeoutMillis(expectedCount),
+                            )
+                            adaptiveIndexTimeoutApplied = true
+                        }
+                    }
                     when (current.optString("state")) {
                         "COMPLETE", "RECOVERED" -> return current
                         "FAILED" -> error("$filename failed: ${current.optString("error")}")
@@ -210,6 +226,11 @@ class SeededGalleryCorpusDriverTest {
             SystemClock.sleep(250)
         }
         error("Timed out waiting for $filename; last=$last")
+    }
+
+    private fun indexTimeoutMillis(expectedCount: Int): Long {
+        val estimatedMinutes = (expectedCount + INDEX_ITEMS_PER_MINUTE - 1) / INDEX_ITEMS_PER_MINUTE
+        return (estimatedMinutes + INDEX_TIMEOUT_BUFFER_MINUTES) * 60_000L
     }
 
     private fun clearStatus(context: android.content.Context, runId: String, filename: String) {
@@ -244,6 +265,8 @@ class SeededGalleryCorpusDriverTest {
         const val ACTION_REPORT = "report"
         const val ACTION_DIAGNOSE = "diagnose"
         const val TIMEOUT_MS = 30 * 60_000L
+        const val INDEX_ITEMS_PER_MINUTE = 250
+        const val INDEX_TIMEOUT_BUFFER_MINUTES = 15
         const val DEFAULT_INDEX_CYCLES = 5_000
         const val MAX_INDEX_CYCLES = 5_000
         val ARCHIVE_NAME = Regex("[A-Za-z0-9._-]{1,180}")

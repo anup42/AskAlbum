@@ -1334,3 +1334,11 @@ People cluster summaries now expose both the user-selected representative face a
 - The forced-stop recovery gate exposed one orphaned `VIDEO_KEYFRAMES` stage: media analysis claimed it, but the recovery stage set omitted it.
 - Added `VIDEO_KEYFRAMES` to the media-analysis recovery scope and extended `IndexingReliabilityPolicyTest` to protect the ownership contract.
 - The failed recovery run was cleaned safely: 84 imported database rows and 84 MediaStore assets were removed; no production package data was touched.
+## 2026-08-06 - Source-aware 20K fixture retrieval gate
+
+- Updated `SeededGalleryCorpusDriverTest` so foreground indexing waits adapt to the reported corpus size instead of failing healthy 20K runs at a fixed 30-minute deadline.
+- Fixture validation on `R3CW408WE4J` imported `20,000/20,000` source-aware items, indexed `20,000` rows and vectors, and completed with zero retryable or permanent failures.
+- Stored-vector retrieval passed for Singapore/Marina Bay, Goa beach sunset, dog, and children/football domains at precision@20 `1.0`; warm retrieval p95 was `142 ms`.
+- Run-scoped cleanup deleted `20,000/20,000` items and left `0` rows, with no orphan recovery required.
+- `:app:assembleFixtureCiDebugAndroidTest`, `:app:testFixtureCiDebugUnitTest`, and 9 host acceptance-helper tests passed.
+- The next push is targeted to `anup42/AskAlbum`; the legacy Agentic Gallery repository is not a push destination.
