@@ -10,6 +10,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.max
@@ -150,20 +151,26 @@ class ReviewedIdentityExpansionWorker(
         val application = applicationContext as AskAlbumApplication
         if (!application.repository.peopleIndexStatus().enabled) return@withContext Result.success()
         val clusterId = inputData.getString(KEY_CLUSTER_ID) ?: return@withContext Result.failure()
-        runCatching { ReviewedIdentityClusterExpander(application).expand(clusterId) }.fold(
-            onSuccess = { Result.success(workDataOf(KEY_MATCHED_COUNT to it)) },
-            onFailure = { error ->
-                if (error is FaceEmbeddingRepairException ||
-                    error is SecurityException ||
-                    error is java.io.FileNotFoundException
-                ) {
-                    Result.failure(workDataOf(KEY_ERROR to (error.message ?: error::class.java.simpleName).take(300)))
-                } else {
-                    Result.retry()
-                }
-            },
-        )
+        try {
+            Result.success(
+                workDataOf(KEY_MATCHED_COUNT to ReviewedIdentityClusterExpander(application).expand(clusterId)),
+            )
+        } catch (error: Throwable) {
+            if (ReviewedIdentityExpansionFailurePolicy.shouldPropagate(error)) throw error
+            if (error is FaceEmbeddingRepairException ||
+                error is SecurityException ||
+                error is java.io.FileNotFoundException
+            ) {
+                Result.failure(workDataOf(KEY_ERROR to (error.message ?: error::class.java.simpleName).take(300)))
+            } else {
+                Result.retry()
+            }
+        }
     }
+}
+
+internal object ReviewedIdentityExpansionFailurePolicy {
+    fun shouldPropagate(error: Throwable): Boolean = error is CancellationException
 }
 
 internal object ReviewedIdentityExpansionScheduler {

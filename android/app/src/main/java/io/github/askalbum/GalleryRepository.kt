@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filterIsInstance
@@ -500,9 +501,24 @@ class GalleryRepository(context: Context) {
     suspend fun beginInteractiveQuery() {
         IndexingResourceCoordinator.beginInteractiveQuery()
         withContext(Dispatchers.IO) {
-            runCatching { SemanticEnrichmentScheduler.cancelAndWait(appContext) }
-            runCatching { CaptionEmbeddingScheduler.cancelAndWait(appContext) }
-            runCatching { EmbeddingIndexScheduler.cancelAndWait(appContext) }
+            try {
+                SemanticEnrichmentScheduler.cancelAndWait(appContext)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+            }
+            try {
+                CaptionEmbeddingScheduler.cancelAndWait(appContext)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+            }
+            try {
+                EmbeddingIndexScheduler.cancelAndWait(appContext)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+            }
         }
     }
 
