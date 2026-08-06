@@ -179,10 +179,25 @@ internal object RetrievalAnswerWording {
 internal object RetrievalCoverageWording {
     private val boundedChannels = setOf(RetrievalChannel.SEMANTIC, RetrievalChannel.CAPTION_EMBEDDING)
 
-    fun boundedSemanticNoResult(report: RetrievalChannelReport<*>): String =
-        "The semantic channel was ${report.status.name.lowercase()} with indexed coverage " +
-            "${report.indexedCount} of ${report.eligibleCount} eligible local items. " +
-            "Its bounded top-K retrieval pass found no supported matches; this is not a complete gallery predicate scan."
+    fun boundedSemanticNoResult(report: RetrievalChannelReport<*>): String {
+        val coverage = "indexed coverage ${report.indexedCount} of ${report.eligibleCount} eligible local items"
+        return when (report.status) {
+            ChannelStatus.UNAVAILABLE ->
+                "The semantic channel was unavailable ($coverage), so its required search did not run. " +
+                    "No semantic no-result conclusion can be drawn and this is not a complete gallery predicate scan."
+            ChannelStatus.FAILED ->
+                "The semantic channel failed ($coverage), so its required search did not produce usable results. " +
+                    "This is not a complete gallery predicate scan."
+            ChannelStatus.PARTIAL ->
+                "The semantic channel was partial ($coverage). Its bounded top-K retrieval pass found no supported matches; " +
+                    "this is not a complete gallery predicate scan."
+            ChannelStatus.SUCCESS ->
+                "The semantic channel completed with $coverage. Its bounded top-K retrieval pass found no supported matches; " +
+                    "this is not a complete gallery predicate scan."
+            ChannelStatus.NOT_REQUIRED ->
+                "The semantic channel was not required for this query; no semantic no-result conclusion was drawn."
+        }
+    }
 
     fun uiText(report: RetrievalChannelReport<*>): String = if (report.channel in boundedChannels) {
         "indexed ${report.indexedCount}/${report.eligibleCount}; bounded top-K"

@@ -148,6 +148,30 @@ class RetrievalChannelPolicyTest {
     }
 
     @Test
+    fun noResultWordingDistinguishesSearchFailureFromCompletedZeroHits() {
+        fun report(status: ChannelStatus) = RetrievalChannelReport<VectorHit>(
+            channel = RetrievalChannel.SEMANTIC,
+            status = status,
+            eligibleCount = 10,
+            indexedCount = if (status == ChannelStatus.UNAVAILABLE || status == ChannelStatus.FAILED) 0 else 8,
+            searchedCount = if (status == ChannelStatus.UNAVAILABLE || status == ChannelStatus.FAILED) 0 else 8,
+            hits = emptyList(),
+        )
+
+        val unavailable = RetrievalCoverageWording.boundedSemanticNoResult(report(ChannelStatus.UNAVAILABLE))
+        val failed = RetrievalCoverageWording.boundedSemanticNoResult(report(ChannelStatus.FAILED))
+        val partial = RetrievalCoverageWording.boundedSemanticNoResult(report(ChannelStatus.PARTIAL))
+        val success = RetrievalCoverageWording.boundedSemanticNoResult(report(ChannelStatus.SUCCESS))
+
+        assertTrue(unavailable.contains("did not run"))
+        assertTrue(failed.contains("failed"))
+        assertTrue(partial.contains("bounded top-K retrieval pass found no supported matches"))
+        assertTrue(success.contains("bounded top-K retrieval pass found no supported matches"))
+        assertFalse(unavailable.contains("found no supported matches"))
+        assertFalse(failed.contains("found no supported matches"))
+    }
+
+    @Test
     fun totalEclipseDoesNotBecomeDocumentFactIntent() {
         val plan = QueryCompiler().compile("Show total eclipse photos.")
 

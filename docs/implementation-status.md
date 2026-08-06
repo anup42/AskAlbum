@@ -2,6 +2,16 @@
 
 Last reviewed: 2026-08-06
 
+## 2026-08-06 - Truthful semantic no-result wording
+
+- Semantic `UNAVAILABLE` and `FAILED` results no longer claim that a bounded
+  search found no matches when the required search did not run or produced no
+  usable results.
+- `PARTIAL` and `SUCCESS` retain bounded top-K wording, with indexed coverage
+  shown in the answer detail.
+- Added focused regression coverage; no gallery data, vectors, captions,
+  People data, or model packs are changed.
+
 ## 2026-08-06 - Complete semantic count uses durable scan results
 
 - Explicit complete semantic counts now read the persisted full-scan hit set,
