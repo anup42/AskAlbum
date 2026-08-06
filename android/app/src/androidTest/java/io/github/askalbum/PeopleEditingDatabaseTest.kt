@@ -134,6 +134,44 @@ class PeopleEditingDatabaseTest {
         assertEquals(0, reset.personClusterCount)
     }
 
+    @Test
+    fun inaccessibleFacesDoNotCountTowardPeopleVisibilityOrExpansion() {
+        val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
+        store.ensureStageRows()
+        val imported = (0 until 5).map { index ->
+            ImportedMedia(
+                stableId = "access-boundary-$index",
+                uri = "content://people-test/access-$index",
+                displayName = "access-$index.jpg",
+                mimeType = "image/jpeg",
+                source = MediaSource.MEDIA_STORE,
+                capturedAt = 1_700_000_000_000L + index,
+                modifiedAt = 1_700_000_000_000L + index,
+                durationMs = null,
+                width = 1200,
+                height = 900,
+                sizeBytes = 1_000L,
+            )
+        }
+        store.upsertImported(imported)
+        store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+        store.ensureAutomaticPersonCluster("person_access")
+        imported.forEach { item ->
+            store.completeEmbeddedFaces(item.stableId, listOf(face()), listOf("person_access"), "fixture-face-v1")
+        }
+        store.applyReconciliation(
+            MediaReconciliationPlan(
+                seenUris = emptySet(),
+                inaccessibleUris = setOf(imported.last().uri),
+                deletedUris = emptySet(),
+            ),
+        )
+
+        assertTrue(store.personClusterSummaries(includeHidden = true).none { it.id == "person_access" })
+        assertEquals(4, store.personFacesForCluster("person_access", limit = 20).size)
+        assertNull(store.personFace("access-boundary-4:0"))
+    }
+
     private fun face() = FaceInstance(
         bounds = listOf(.1f, .1f, .4f, .5f),
         embedding = FloatArray(FaceModelCatalog.sface.embeddingDimension).also { it[0] = 1f },

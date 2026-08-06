@@ -1553,7 +1553,9 @@ class GalleryDatabase(
             val placeholders = ids.joinToString(",") { "?" }
             readableDatabase.rawQuery(
                 "SELECT f.id,c.id,c.reviewed,c.hidden,f.user_corrected FROM face_instance f " +
-                    "JOIN person_cluster c ON c.id=f.cluster_id WHERE f.id IN ($placeholders)",
+                    "JOIN person_cluster c ON c.id=f.cluster_id " +
+                    "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                    "WHERE f.id IN ($placeholders)",
                 ids.toTypedArray(),
             ).use { cursor ->
                 buildList {
@@ -1574,7 +1576,9 @@ class GalleryDatabase(
     fun faceClusterMemberships(clusterId: String): List<FaceClusterMembership> {
         require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
         return readableDatabase.rawQuery(
-            "SELECT id,user_corrected FROM face_instance WHERE cluster_id=? ORDER BY quality DESC,id",
+            "SELECT f.id,f.user_corrected FROM face_instance f " +
+                "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                "WHERE f.cluster_id=? ORDER BY f.quality DESC,f.id",
             arrayOf(clusterId),
         ).use { cursor ->
             buildList {
@@ -1598,6 +1602,7 @@ class GalleryDatabase(
                 val placeholders = ids.joinToString(",") { "?" }
                 db.rawQuery(
                     "SELECT f.id,f.media_id,f.cluster_id FROM face_instance f " +
+                        "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
                         "LEFT JOIN person_cluster c ON c.id=f.cluster_id " +
                         "WHERE f.id IN ($placeholders) AND f.user_corrected=0 " +
                         "AND (f.cluster_id IS NULL OR (c.reviewed=0 AND c.hidden=0))",
@@ -1704,7 +1709,9 @@ class GalleryDatabase(
             if (clusterIds.isEmpty()) emptySet() else {
                 val placeholders = clusterIds.joinToString(",") { "?" }
                 db.rawQuery(
-                    "SELECT DISTINCT media_id FROM face_instance WHERE cluster_id IN ($placeholders)",
+                    "SELECT DISTINCT f.media_id FROM face_instance f " +
+                        "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                        "WHERE f.cluster_id IN ($placeholders)",
                     clusterIds.toTypedArray(),
                 ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
             }
@@ -1717,15 +1724,16 @@ class GalleryDatabase(
 
     fun personClusterSummaries(includeHidden: Boolean = false): List<PersonClusterReviewItem> {
         val summaries = readableDatabase.rawQuery(
-            "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(f.id) AS face_count, " +
-                "COUNT(DISTINCT f.media_id) AS media_count, " +
+            "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(fm.id) AS face_count, " +
+                "COUNT(DISTINCT fm.id) AS media_count, " +
                 "(SELECT latest_face.media_id FROM face_instance latest_face " +
                 "JOIN media_item latest_media ON latest_media.id=latest_face.media_id " +
-                "WHERE latest_face.cluster_id=c.id " +
+                "WHERE latest_face.cluster_id=c.id AND latest_media.access_state='ACCESSIBLE' " +
                 "ORDER BY COALESCE(latest_media.captured_at,latest_media.modified_at,0) DESC, " +
                 "COALESCE(latest_media.modified_at,0) DESC, latest_face.created_at DESC, latest_face.id LIMIT 1) AS sample_media_id " +
                 ", c.reviewed, c.hidden, c.representative_face_id, c.include_in_personal_memory " +
                 "FROM person_cluster c LEFT JOIN face_instance f ON c.id = f.cluster_id " +
+                "LEFT JOIN media_item fm ON fm.id=f.media_id AND fm.access_state='ACCESSIBLE' " +
                 (if (includeHidden) "" else "WHERE c.hidden = 0 ") +
                 "GROUP BY c.id, c.label, c.relationship, c.aliases, c.reviewed, c.hidden, c.representative_face_id, c.include_in_personal_memory " +
                 "ORDER BY c.hidden ASC, c.reviewed ASC, face_count DESC, c.updated_at DESC, c.id",
@@ -1778,7 +1786,8 @@ class GalleryDatabase(
     fun personClusterRevision(): String = readableDatabase.rawQuery(
         "SELECT (SELECT COUNT(*) FROM person_cluster), " +
             "COALESCE((SELECT MAX(updated_at) FROM person_cluster),0), " +
-            "(SELECT COUNT(*) FROM face_instance WHERE cluster_id IS NOT NULL)",
+            "(SELECT COUNT(*) FROM face_instance f JOIN media_item m ON m.id=f.media_id " +
+                "WHERE f.cluster_id IS NOT NULL AND m.access_state='ACCESSIBLE')",
         null,
     ).use { cursor ->
         if (!cursor.moveToFirst()) "0:0:0" else {
@@ -1802,7 +1811,8 @@ class GalleryDatabase(
         )
         val pending = readableDatabase.rawQuery(
             "SELECT f.id,f.media_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,f.quality,f.user_corrected " +
-                "FROM face_instance f JOIN media_item m ON m.id=f.media_id WHERE f.cluster_id=? " +
+                "FROM face_instance f JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                "WHERE f.cluster_id=? " +
                 "ORDER BY COALESCE(m.captured_at,m.modified_at,0) DESC, COALESCE(m.modified_at,0) DESC, " +
                 "f.created_at DESC, f.quality DESC, f.id " +
                 "LIMIT ? OFFSET ?",
@@ -1857,7 +1867,9 @@ class GalleryDatabase(
             val userCorrected: Boolean,
         )
         val face = readableDatabase.rawQuery(
-            "SELECT media_id,left_pos,top_pos,right_pos,bottom_pos,quality,user_corrected FROM face_instance WHERE id=?",
+            "SELECT f.media_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,f.quality,f.user_corrected " +
+                "FROM face_instance f JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                "WHERE f.id=?",
             arrayOf(faceId),
         ).use { cursor ->
             if (!cursor.moveToFirst()) return null
@@ -1911,7 +1923,7 @@ class GalleryDatabase(
                     "FROM face_instance f " +
                     "JOIN person_cluster c ON c.id=f.cluster_id " +
                     "JOIN media_item m ON m.id=f.media_id " +
-                    "WHERE f.cluster_id IN ($placeholders) " +
+                    "WHERE f.cluster_id IN ($placeholders) AND m.access_state='ACCESSIBLE' " +
                     "ORDER BY f.cluster_id,COALESCE(m.captured_at,m.modified_at,0) DESC, " +
                     "COALESCE(m.modified_at,0) DESC,f.created_at DESC,f.quality DESC,f.id",
                 clusterChunk.toTypedArray(),

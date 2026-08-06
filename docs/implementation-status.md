@@ -956,3 +956,9 @@ People cluster summaries now expose both the user-selected representative face a
 - People cluster summaries now use a lightweight Room revision and refresh only after cluster or face membership changes, including background reviewed-identity expansion.
 - Face moves and exclusions update the affected cluster revision without changing media or face-index consent; unchanged polling no longer reloads the full People summary.
 - Added policy coverage for skipping unchanged revisions and forcing an explicit refresh.
+
+## 2026-08-06 - Respect accessible gallery scope in People
+
+- People summaries, samples, paged cluster faces, reviewed-person resolution, and reviewed-identity expansion now use only accessible media rows.
+- Inaccessible face assignments remain stored for permission restoration but no longer make an unreviewed cluster pass the five-media visibility threshold or appear as an unopenable People image.
+- Added an isolated database regression for partial-gallery access.
