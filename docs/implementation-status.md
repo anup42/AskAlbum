@@ -1124,3 +1124,11 @@ People cluster summaries now expose both the user-selected representative face a
 - Existing legacy SFace model and marker paths remain readable as a non-destructive fallback; replacement installation never deletes them.
 - Tests: `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.FaceGenerationPointerTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
 - Device validation: NOT RUN; safe fixture unavailable. Production SFace files, gallery data, People data, and consent were not touched.
+
+## 2026-08-06 - Keep event expansion item-predicate grounded
+
+- Fixed event-member expansion so typed place and comparison terms remain scope-only and cannot make unrelated event members look like matches for an item predicate.
+- Event gating now uses predicate-only lexical hits, direct media-scoped caption evidence, direct caption-vector evidence, and a bounded predicate-only image-vector lookup when a scope term is present. Event summaries and explicit event grouping retain contextual member expansion.
+- Tests: `EventExpansionPolicyTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
+- Device validation: NOT RUN; the safe fixture device is unavailable. The protected production device was not touched.
+- Remaining: connected acceptance queries, process-death/Doze/foreground-service timeout, and 5k/20k workload gates remain NOT RUN.

@@ -838,12 +838,42 @@ class GalleryRepository(context: Context) {
         val eventByMedia = eventRanked.flatMap { hit -> hit.mediaIds.map { it to hit.event } }.toMap()
         val lexicalById = lexicalRanked.associateBy { it.item.id }
         val semanticById = semanticRanked.associateBy { it.mediaId }
+        val itemPredicateTerms = EventExpansionPolicy.itemPredicateTerms(plan)
+        val itemPredicateQueries = EventExpansionPolicy.itemPredicateQueries(plan)
+        val predicateLexicalIds = if (itemPredicateTerms.isEmpty()) {
+            emptySet()
+        } else {
+            database.fullTextMatches(itemPredicateTerms).ids
+        }
+        val directCaptionIds = captionRanked
+            .asSequence()
+            .filter { it.directEvidence }
+            .mapTo(mutableSetOf(), CaptionSearchHit::mediaId)
+        val directCaptionEmbeddingIds = captionEmbeddingRanked
+            .asSequence()
+            .filter { it.directEvidence }
+            .mapTo(mutableSetOf(), CaptionSearchHit::mediaId)
+        val predicateSemanticIds = if (
+            itemPredicateQueries.isEmpty() ||
+            (plan.place == null && plan.comparisonScopes.isEmpty())
+        ) {
+            semanticById.keys
+        } else {
+            runCatching {
+                semanticVectors.searchTextReport(
+                    query = itemPredicateQueries.joinToString(" "),
+                    topK = plan.limit.coerceIn(20, 100),
+                    eligibleCount = eligibleIds.size,
+                    allowedIds = eligibleVectorIds,
+                ).hits.mapTo(mutableSetOf(), VectorHit::mediaId)
+            }.getOrDefault(emptySet())
+        }
         val itemPredicateIds = EventExpansionPolicy.itemPredicateIds(
-            terms = terms,
-            lexicalIds = lexicalById.keys,
-            semanticIds = semanticById.keys,
-            captionIds = captionById.keys,
-            captionEmbeddingIds = captionEmbeddingById.keys,
+            predicateTerms = itemPredicateTerms,
+            lexicalIds = predicateLexicalIds,
+            semanticIds = predicateSemanticIds,
+            captionIds = directCaptionIds,
+            captionEmbeddingIds = directCaptionEmbeddingIds,
         )
         val allowContextualEventExpansion =
             plan.intent == QueryIntent.EVENT_SUMMARY || plan.grouping == Grouping.EVENT ||

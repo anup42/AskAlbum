@@ -5,9 +5,22 @@ import org.junit.Test
 
 class EventExpansionPolicyTest {
     @Test
+    fun typedScopeTermsDoNotBecomeItemPredicateTerms() {
+        val plan = GalleryQueryPlan(
+            originalQuery = "show dog photos from Goa",
+            intent = QueryIntent.FIND_MEDIA,
+            terms = listOf("dog", "goa"),
+            place = "goa",
+        )
+
+        assertEquals(listOf("dog"), EventExpansionPolicy.itemPredicateTerms(plan))
+        assertEquals(listOf("dog"), EventExpansionPolicy.itemPredicateQueries(plan))
+    }
+
+    @Test
     fun semanticOnlySearchDoesNotTreatEveryEventMemberAsPredicateEvidence() {
         val predicateIds = EventExpansionPolicy.itemPredicateIds(
-            terms = emptyList(),
+            predicateTerms = emptyList(),
             lexicalIds = setOf("event-member-without-dog"),
             semanticIds = setOf("dog-match"),
             captionIds = emptySet(),
