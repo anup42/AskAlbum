@@ -156,13 +156,17 @@ internal object SemanticFactCodec {
                     else -> null
                 } ?: continue
                 if (!confidence.isFinite() || confidence !in 0f..1f) continue
-                val applicability = when (predicate) {
+                val requestedApplicability = when (predicate) {
                     // A visual model cannot authenticate an occasion. Keep both
                     // legacy spellings non-confirming even if the model emits a
                     // direct-looking applicability value.
                     "occasion", "possible_occasion" -> SemanticProvenanceApplicability.POSSIBLE_INFERENCE
                     else -> canonicalApplicability(fact.opt("applicability") as? String)
                 }
+                val applicability = SemanticProvenanceApplicability.forGeneratedScope(
+                    job.scope,
+                    requestedApplicability,
+                )
                 add(
                     SemanticFactRecord(
                         scope = job.scope,
@@ -246,6 +250,7 @@ internal object SemanticFactCodec {
         )
         val APPLICABILITY = setOf(
             "EVIDENCE_MEDIA_ONLY",
+            SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY,
             "SAFE_FOR_EXACT_DUPLICATES",
             SemanticProvenanceApplicability.POSSIBLE_INFERENCE,
         )

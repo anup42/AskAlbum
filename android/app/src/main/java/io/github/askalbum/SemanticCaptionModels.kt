@@ -153,11 +153,14 @@ internal object SemanticEnrichmentCodec {
                         job.scope == SemanticFactScope.EVENT -> "GEMMA_EVENT_REPRESENTATIVE"
                         else -> "GEMMA_MEDIA_DIRECT"
                     },
-                    applicability = if (job.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP) {
-                        SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES
-                    } else {
-                        "EVIDENCE_MEDIA_ONLY"
-                    },
+                    applicability = SemanticProvenanceApplicability.forGeneratedScope(
+                        job.scope,
+                        if (job.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP) {
+                            SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES
+                        } else {
+                            "EVIDENCE_MEDIA_ONLY"
+                        },
+                    ),
                     bodyRegionVersion = PersonalSemanticMemoryPolicy.BODY_REGION_VERSION,
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
@@ -298,7 +301,7 @@ internal object SemanticEnrichmentCodec {
                     value = safe,
                     confidence = (confidence ?: defaultConfidence ?: 0.6f).coerceIn(0f, 1f),
                     evidenceMediaId = job.representativeMediaId,
-                    applicability = applicability,
+                    applicability = SemanticProvenanceApplicability.forGeneratedScope(job.scope, applicability),
                     modelVersion = modelVersion,
                     promptVersion = PROMPT_VERSION,
                     generationId = generation?.generationId,

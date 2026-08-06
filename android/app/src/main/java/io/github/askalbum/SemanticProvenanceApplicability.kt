@@ -1,5 +1,7 @@
 package io.github.anup42.askalbum
 
+import java.util.Locale
+
 /** Applicability values that must not be treated as direct, deterministic media truth. */
 internal object SemanticProvenanceApplicability {
     const val GROUP_CONTEXT_ONLY = "GROUP_CONTEXT_ONLY"
@@ -22,6 +24,24 @@ internal object SemanticProvenanceApplicability {
     val CONTEXTUAL = NON_CONFIRMING + LEGACY_UNCORRELATED
 
     fun isContextual(value: String?): Boolean = value in CONTEXTUAL
+
+    /** Normalizes newly generated evidence so non-media scopes cannot look like item truth. */
+    fun forGeneratedScope(scope: SemanticFactScope, requested: String?): String {
+        val value = requested?.trim()?.uppercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
+            ?: "EVIDENCE_MEDIA_ONLY"
+        return when (scope) {
+            SemanticFactScope.EVENT,
+            SemanticFactScope.VISUAL_GROUP,
+            -> if (value == POSSIBLE_INFERENCE) value else GROUP_CONTEXT_ONLY
+            SemanticFactScope.EXACT_DUPLICATE_GROUP -> when (value) {
+                SAFE_FOR_EXACT_DUPLICATES,
+                POSSIBLE_INFERENCE,
+                -> value
+                else -> GROUP_CONTEXT_ONLY
+            }
+            else -> value
+        }
+    }
 
     /** Only facts explicitly authored for pixel-equivalent reuse may be propagated. */
     fun isSafeForExactDuplicateSharing(value: String?): Boolean =

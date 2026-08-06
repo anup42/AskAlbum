@@ -1189,3 +1189,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Added regression coverage for a `NONE_VISIBLE` image whose generic facts claim an activity; valid `OBSERVED` person actions remain covered by the existing activity-aware tests.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.ActivityStateSafetyTest --tests io.github.anup42.askalbum.ActivityAwareSemanticCaptionValidationTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Preserve contextual applicability for event and visual-group enrichment
+
+- Generated EVENT and VISUAL_GROUP captions and facts now normalize to `GROUP_CONTEXT_ONLY`; `POSSIBLE_INFERENCE` remains uncertain, and exact-duplicate sharing still requires `SAFE_FOR_EXACT_DUPLICATES`.
+- Added integration coverage proving non-media enrichment cannot be persisted with media-only applicability even when the model requests it.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.SemanticScopeApplicabilityTest --tests io.github.anup42.askalbum.SemanticProvenanceApplicabilityTest --tests io.github.anup42.askalbum.ComprehensiveSemanticCaptionTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
