@@ -30,6 +30,7 @@ class CaptionVectorStore(
     suspend fun searchVariants(
         queries: List<String>,
         eligibleChunkIds: Set<String>,
+        searchableChunkIds: Set<String>,
         eligibleMediaCount: Int,
         topK: Int,
     ): CaptionVectorSearchReport {
@@ -85,9 +86,25 @@ class CaptionVectorStore(
                 errorCode = if (eligibleMediaCount > 0) "NO_ELIGIBLE_CAPTION_CHUNKS" else null,
             )
         }
+        if (searchableChunkIds.isEmpty()) {
+            return CaptionVectorSearchReport(
+                status = CaptionVectorCoveragePolicy.status(
+                    queryRequired = true,
+                    eligibleMediaCount = eligibleMediaCount,
+                    eligibleChunkCount = eligibleChunkIds.size,
+                    indexedChunkCount = 0,
+                ),
+                eligibleChunkCount = eligibleChunkIds.size,
+                indexedChunkCount = 0,
+                searchedChunkCount = 0,
+                hits = emptyList(),
+                modelVersion = modelVersion,
+                errorCode = "NO_SEARCHABLE_CAPTION_CHUNKS",
+            )
+        }
         return try {
             val current = currentIndex()
-            val indexed = current.index.ids() intersect eligibleChunkIds
+            val indexed = current.index.ids() intersect searchableChunkIds intersect eligibleChunkIds
             val perVariant = normalizedQueries.map { query ->
                 val vector = embeddings.embedTextInteractive(query)
                 query to current.index.search(vector, topK.coerceIn(1, 100), indexed)
@@ -111,7 +128,10 @@ class CaptionVectorStore(
                 searchedChunkCount = indexed.size,
                 hits = fused.mapNotNull { best[it.first] }.take(topK.coerceIn(1, 100)),
                 modelVersion = modelVersion,
-                errorCode = if (indexed.size < eligibleChunkIds.size) "PARTIAL_CAPTION_VECTOR_COVERAGE" else null,
+                errorCode = when {
+                    indexed.size < eligibleChunkIds.size -> "PARTIAL_CAPTION_VECTOR_COVERAGE"
+                    else -> null
+                },
             )
         } catch (error: Throwable) {
             if (CaptionVectorSearchFailurePolicy.shouldPropagate(error)) throw error

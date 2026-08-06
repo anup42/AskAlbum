@@ -4629,8 +4629,7 @@ class GalleryDatabase(
                 """
                 SELECT c.* FROM semantic_caption_chunk c
                 JOIN semantic_caption cap ON cap.id=c.caption_id
-                WHERE c.media_id IN ($placeholders) AND c.embedding_state='COMPLETE' AND c.embedding_model_version=?
-                  AND c.chunk_policy_version=?
+                WHERE c.media_id IN ($placeholders) AND c.chunk_policy_version=?
                   AND c.scope=cap.scope
                   AND c.scope_id=cap.subject_id
                   AND c.media_id=cap.evidence_media_id
@@ -4639,15 +4638,14 @@ class GalleryDatabase(
                   AND c.caption_prompt_version=cap.prompt_version
                   AND c.generation_id IS cap.generation_id
                 """.trimIndent(),
-                arrayOf(*ids.toTypedArray(), producerVersion, SemanticCaptionChunker.POLICY_VERSION),
+                arrayOf(*ids.toTypedArray(), SemanticCaptionChunker.POLICY_VERSION),
             ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
         }
         val contextual = readableDatabase.rawQuery(
             """
             SELECT c.* FROM semantic_caption_chunk c
             JOIN semantic_caption cap ON cap.id=c.caption_id
-            WHERE c.scope IN ('VISUAL_GROUP','EVENT') AND c.embedding_state='COMPLETE' AND c.embedding_model_version=?
-              AND c.chunk_policy_version=?
+            WHERE c.scope IN ('VISUAL_GROUP','EVENT') AND c.chunk_policy_version=?
               AND c.scope=cap.scope
               AND c.scope_id=cap.subject_id
               AND c.media_id=cap.evidence_media_id
@@ -4656,7 +4654,7 @@ class GalleryDatabase(
               AND c.caption_prompt_version=cap.prompt_version
               AND c.generation_id IS cap.generation_id
             """.trimIndent(),
-            arrayOf(producerVersion, SemanticCaptionChunker.POLICY_VERSION),
+            arrayOf(SemanticCaptionChunker.POLICY_VERSION),
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
             .filter { chunkTargets(it).any { target -> target in allowedMediaIds } }
         return (direct + contextual).asSequence()

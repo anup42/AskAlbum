@@ -1175,3 +1175,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Those queries remain on the bounded/estimated path instead of presenting a positive-only scan as an exact count.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.SemanticPredicateScanPolicyTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Report incomplete caption-vector coverage truthfully
+
+- Caption-vector eligibility now includes provenance-valid pending, retryable, exhausted, and wrong-version chunks in the coverage denominator while vector search uses only complete chunks from the active retrieval pack. Missing caption vectors therefore report `PARTIAL` instead of a successful empty search.
+- Added regression coverage for pending and exhausted caption chunks; no captions, image vectors, People data, or model packs were changed.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.CaptionVectorCoverageTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.

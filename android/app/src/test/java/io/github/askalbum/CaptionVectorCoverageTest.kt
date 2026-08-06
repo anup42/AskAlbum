@@ -42,4 +42,50 @@ class CaptionVectorCoverageTest {
             ),
         )
     }
+
+    @Test
+    fun incompleteChunksRemainInCoverageDenominator() {
+        val chunks = listOf(
+            chunk("complete", CaptionEmbeddingState.COMPLETE, "pack@1"),
+            chunk("pending", CaptionEmbeddingState.PENDING, null),
+            chunk("failed", CaptionEmbeddingState.FAILED_EXHAUSTED, "pack@1"),
+        )
+
+        assertEquals(
+            setOf("complete"),
+            CaptionVectorCoveragePolicy.searchableChunkIds(chunks, "pack@1"),
+        )
+        assertEquals(
+            ChannelStatus.PARTIAL,
+            CaptionVectorCoveragePolicy.status(
+                queryRequired = true,
+                eligibleMediaCount = 3,
+                eligibleChunkCount = chunks.size,
+                indexedChunkCount = 1,
+            ),
+        )
+    }
+
+    private fun chunk(
+        id: String,
+        state: CaptionEmbeddingState,
+        modelVersion: String?,
+    ) = SemanticCaptionChunkRecord(
+        id = id,
+        captionId = "caption-$id",
+        mediaId = "media-$id",
+        scope = SemanticFactScope.MEDIA,
+        scopeId = "media-$id",
+        evidenceMediaId = "media-$id",
+        clusterId = null,
+        chunkType = CaptionChunkType.SCENE,
+        exactText = id,
+        confidence = 1f,
+        applicability = "DIRECT",
+        captionModelVersion = "caption-model",
+        captionPromptVersion = "prompt-v1",
+        chunkPolicyVersion = SemanticCaptionChunker.POLICY_VERSION,
+        embeddingModelVersion = modelVersion,
+        embeddingState = state,
+    )
 }

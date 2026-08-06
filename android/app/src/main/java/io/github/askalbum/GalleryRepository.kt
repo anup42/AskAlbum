@@ -760,9 +760,13 @@ class GalleryRepository(context: Context) {
         } else {
             database.eligibleCaptionChunksForSearch(eligibleIds, requiredPersonChunkClusters, captionProducer)
         }
+        val searchableCaptionChunkIds = captionProducer?.let {
+            CaptionVectorCoveragePolicy.searchableChunkIds(eligibleCaptionChunks, it)
+        }.orEmpty()
         val captionVectorSearch = captionVectors.searchVariants(
             semanticQueries,
             eligibleCaptionChunks.mapTo(mutableSetOf(), SemanticCaptionChunkRecord::id),
+            searchableCaptionChunkIds,
             eligibleIds.size,
             plan.limit.coerceIn(20, 100),
         )
@@ -1157,10 +1161,7 @@ class GalleryRepository(context: Context) {
                 },
         )
         val captionEmbeddingSearchedMediaCount = eligibleCaptionChunks.asSequence()
-            .filter {
-                it.embeddingState == CaptionEmbeddingState.COMPLETE &&
-                    it.embeddingModelVersion == captionVectorSearch.modelVersion
-            }
+            .filter { it.id in searchableCaptionChunkIds }
             .map(SemanticCaptionChunkRecord::mediaId)
             .distinct()
             .count()

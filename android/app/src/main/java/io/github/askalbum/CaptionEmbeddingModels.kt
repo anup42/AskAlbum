@@ -91,6 +91,18 @@ data class CaptionVectorSearchReport(
 )
 
 internal object CaptionVectorCoveragePolicy {
+    fun searchableChunkIds(
+        chunks: Collection<SemanticCaptionChunkRecord>,
+        modelVersion: String,
+    ): Set<String> = chunks.asSequence()
+        .filter {
+            it.embeddingState == CaptionEmbeddingState.COMPLETE &&
+                it.embeddingModelVersion == modelVersion &&
+                it.applicability != SemanticProvenanceApplicability.STALE_PERSON_BINDING
+        }
+        .map(SemanticCaptionChunkRecord::id)
+        .toSet()
+
     fun status(
         queryRequired: Boolean,
         eligibleMediaCount: Int,
