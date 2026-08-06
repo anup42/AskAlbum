@@ -17,6 +17,8 @@ class CaptionEmbeddingWorkerTest {
 
     @Test
     fun unavailablePackRetriesOnlyWhenCaptionWorkIsPending() {
+        assertEquals("UNAVAILABLE", CaptionEmbeddingAvailabilityPolicy.statusForUnavailablePack())
+        assertEquals("NO_VERIFIED_RETRIEVAL_PACK", CaptionEmbeddingAvailabilityPolicy.errorCodeForUnavailablePack())
         assertTrue(CaptionEmbeddingAvailabilityPolicy.shouldRetryForUnavailablePack(hasPendingWork = true))
         assertFalse(CaptionEmbeddingAvailabilityPolicy.shouldRetryForUnavailablePack(hasPendingWork = false))
     }

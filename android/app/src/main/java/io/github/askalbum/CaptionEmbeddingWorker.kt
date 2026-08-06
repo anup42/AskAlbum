@@ -31,8 +31,8 @@ class CaptionEmbeddingWorker(appContext: Context, params: WorkerParameters) : Co
                 val hasPendingWork = database.hasCaptionEmbeddingBackfillWork()
                 setProgress(
                     workDataOf(
-                        "status" to if (hasPendingWork) "UNAVAILABLE" else "COMPLETE",
-                        "error_code" to if (hasPendingWork) "NO_VERIFIED_RETRIEVAL_PACK" else "",
+                        "status" to CaptionEmbeddingAvailabilityPolicy.statusForUnavailablePack(),
+                        "error_code" to CaptionEmbeddingAvailabilityPolicy.errorCodeForUnavailablePack(),
                         "pending" to if (hasPendingWork) 1 else 0,
                         "last_progress_at" to System.currentTimeMillis(),
                     ),
@@ -221,6 +221,10 @@ internal object CaptionEmbeddingBatchPolicy {
 }
 
 internal object CaptionEmbeddingAvailabilityPolicy {
+    fun statusForUnavailablePack(): String = "UNAVAILABLE"
+
+    fun errorCodeForUnavailablePack(): String = "NO_VERIFIED_RETRIEVAL_PACK"
+
     fun shouldRetryForUnavailablePack(hasPendingWork: Boolean): Boolean = hasPendingWork
 }
 

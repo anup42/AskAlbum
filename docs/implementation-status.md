@@ -1061,3 +1061,12 @@ People cluster summaries now expose both the user-selected representative face a
 - `:app:testFixtureCiDebugUnitTest`: PASS.
 - `:app:assembleFixtureCiDebugAndroidTest :app:assembleConsumerDebug`: PASS.
 - Instrumentation execution: NOT RUN; only the protected production device is connected, so it was not used.
+
+## 2026-08-06 - Truthful caption-vector unavailable status
+
+- Caption embedding workers now publish `UNAVAILABLE` with `NO_VERIFIED_RETRIEVAL_PACK` whenever the verified text-embedding producer is absent, including when no pending rows remain; retry behavior is unchanged for pending work.
+- Focused `CaptionEmbeddingWorkerTest`: PASS.
+- `:app:testFixtureCiDebugUnitTest`: PASS.
+- `:app:assembleConsumerDebug :app:assembleOfflineDemoDebug`: PASS.
+- Merged offline APK permission audit: PASS, no `INTERNET` permission.
+- Device execution: NOT RUN; safe fixture unavailable and production device untouched.
