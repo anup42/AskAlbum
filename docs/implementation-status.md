@@ -1103,3 +1103,10 @@ People cluster summaries now expose both the user-selected representative face a
 - PaddleOCR active packs now recompute every catalog artifact digest on reactivation; SFace now recomputes the model digest instead of trusting only its marker and file length.
 - Tests: `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.RetrievalPackValidationTest --tests io.github.anup42.askalbum.InstalledModelPackIntegrityTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
 - Device validation: NOT RUN; the safe fixture device remains unavailable. No production model, gallery, People, or index data was touched.
+
+### 2026-08-06 - Recover interrupted retrieval-pack activation
+
+- Retrieval model activation now records the prior generation before replacing the current pointer and retains it for recovery.
+- If the current pointer is missing or its generation fails validation after process death, a valid previous generation is restored without deleting model generations.
+- Tests: `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.RetrievalPackValidationTest --tests io.github.anup42.askalbum.RetrievalGenerationPointerTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
+- Device validation: NOT RUN; safe fixture unavailable. Production device and installed packs were not touched.
