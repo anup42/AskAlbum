@@ -4,6 +4,7 @@ import json
 import unittest
 
 from index_seeded_gallery import (
+    component_name,
     parse_import_status,
     parse_operation_status,
     validate_coverage,
@@ -12,6 +13,16 @@ from index_seeded_gallery import (
 
 
 class SeededIndexHarnessTest(unittest.TestCase):
+    def test_component_name_keeps_flavor_id_separate_from_source_namespace(self) -> None:
+        self.assertEqual(
+            "io.github.anup42.askalbum.fixture/io.github.anup42.askalbum.TestGallerySeederService",
+            component_name(
+                "io.github.anup42.askalbum.fixture",
+                "io.github.anup42.askalbum",
+                "TestGallerySeederService",
+            ),
+        )
+
     def test_import_accepts_only_matching_complete_exact_counts(self) -> None:
         operation_id = "a" * 32
         payload = json.dumps({

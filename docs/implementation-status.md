@@ -2,6 +2,21 @@
 
 Last reviewed: 2026-08-06
 
+## 2026-08-06 - Source-aware 5K fixture retrieval gate
+
+- Stress-gallery derivatives now retain a sanitized source slug in their
+  deterministic filename, so fixture embeddings preserve the source concept
+  after MediaStore import instead of falling back to arbitrary image bytes.
+- The stored-vector acceptance contract now matches the current 82-raster
+  source corpus, while remaining compatible with the old filename shape.
+- Protected fixture indexing/import helpers now use the in-app instrumentation
+  driver for signature-protected foreground services and correlate operation
+  IDs through the status file.
+- Connected fixture validation passed 5,000/5,000 vectors, all four retrieval
+  domains at precision@10 1.0, and warm text retrieval p95 of 39 ms. The
+  run-scoped 5,000 MediaStore rows and assets were cleaned with zero leftovers.
+- `consumerDebug` production data and the production package were not touched.
+
 ## 2026-08-06 - Deterministic hard screenshot exclusions
 
 - Hard negative screenshot predicates now remove items identified by

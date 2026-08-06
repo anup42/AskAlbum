@@ -6,12 +6,16 @@ import time
 import uuid
 from pathlib import Path
 
-from common import adb, mask_serial, require_run_id, resolve_serial, run_as_read
+from common import adb, mask_serial, require_run_id, resolve_serial, run_as_read, run_instrumentation_driver
 
 EXPECTED_INDEX_STAGES = {
     "DISCOVERY", "METADATA", "THUMBNAIL", "VIDEO_KEYFRAMES", "EMBEDDING",
     "OCR", "FACES", "EVENTS", "ENRICHMENT",
 }
+
+
+def component_name(application_package: str, component_package: str, class_name: str) -> str:
+    return f"{application_package}/{component_package}.{class_name}"
 
 
 def validate_foreground_cycles(value: int) -> int:
@@ -113,6 +117,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Import, resume, or report one run-scoped seeded gallery index")
     parser.add_argument("--serial")
     parser.add_argument("--package", default="io.github.anup42.askalbum")
+    parser.add_argument("--component-package", default="io.github.anup42.askalbum")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--action", choices=("import", "resume", "status", "foreground"), required=True)
     parser.add_argument("--timeout-seconds", type=int, default=900)
@@ -126,20 +131,26 @@ def main() -> None:
     run_id = require_run_id(args.run_id)
     if args.action == "import":
         operation_id = uuid.uuid4().hex
-        adb(
-            serial, "shell", "am", "start-foreground-service", "-n", f"{args.package}/.TestGallerySeederService",
-            "-a", "io.github.anup42.askalbum.test.IMPORT_SEEDED_FOREGROUND", "--es", "run_id", run_id,
-            "--es", "operation_id", operation_id,
+        run_instrumentation_driver(
+            serial,
+            args.package,
+            run_id,
+            "import",
+            arguments={"galleryOperationId": operation_id},
+            timeout_seconds=args.timeout_seconds,
         )
         result = wait_for_import(serial, args.package, run_id, operation_id, args.timeout_seconds)
         filename = "index-import-result.json"
     elif args.action == "foreground":
         max_cycles = validate_foreground_cycles(args.max_cycles)
         operation_id = uuid.uuid4().hex
-        adb(
-            serial, "shell", "am", "start-foreground-service", "-n", f"{args.package}/.TestGallerySeederService",
-            "-a", "io.github.anup42.askalbum.test.INDEX_SEEDED_FOREGROUND", "--es", "run_id", run_id,
-            "--es", "operation_id", operation_id, "--ei", "max_cycles", str(max_cycles),
+        run_instrumentation_driver(
+            serial,
+            args.package,
+            run_id,
+            "index",
+            arguments={"galleryOperationId": operation_id, "galleryMaxCycles": str(max_cycles)},
+            timeout_seconds=args.timeout_seconds,
         )
         result = wait_for_operation(
             serial, args.package, run_id, operation_id, "foreground-index-status.json", args.timeout_seconds,
@@ -148,7 +159,8 @@ def main() -> None:
     elif args.action == "resume":
         operation_id = uuid.uuid4().hex
         adb(
-            serial, "shell", "am", "broadcast", "-n", f"{args.package}/.TestGallerySeederReceiver",
+            serial, "shell", "am", "broadcast", "-n",
+            component_name(args.package, args.component_package, "TestGallerySeederReceiver"),
             "-a", "io.github.anup42.askalbum.test.RESUME_INDEXING", "--es", "run_id", run_id,
             "--es", "operation_id", operation_id,
         )
@@ -161,7 +173,8 @@ def main() -> None:
             "io.github.anup42.askalbum.test.REPORT_INDEX_COVERAGE"
         )
         adb(
-            serial, "shell", "am", "broadcast", "-n", f"{args.package}/.TestGallerySeederReceiver",
+            serial, "shell", "am", "broadcast", "-n",
+            component_name(args.package, args.component_package, "TestGallerySeederReceiver"),
             "-a", action, "--es", "run_id", run_id,
         )
         status_name = "index-coverage-status.json"

@@ -36,7 +36,7 @@ class SeededGalleryCorpusDriverTest {
         val safeRunId = requireNotNull(runId)
         when (arguments.getString("galleryDriverAction") ?: ACTION_PREPARE) {
             ACTION_PREPARE -> prepare(context, safeRunId, arguments)
-            ACTION_IMPORT -> importSeeded(context, safeRunId)
+            ACTION_IMPORT -> importSeeded(context, safeRunId, arguments)
             ACTION_REMOVE -> removeImported(context, safeRunId)
             ACTION_CLEANUP -> cleanup(context, safeRunId, arguments)
             ACTION_RECOVERY_PREPARE -> TestGallerySeederReceiver().prepareIndexInterruption(context, safeRunId)
@@ -80,9 +80,15 @@ class SeededGalleryCorpusDriverTest {
         assertTrue(imported.optInt("importedCount", 0) > 0)
     }
 
-    private fun importSeeded(context: android.content.Context, runId: String) {
+    private fun importSeeded(context: android.content.Context, runId: String, arguments: Bundle) {
+        val operationId = arguments.getString("galleryOperationId")
         clearStatus(context, runId, "import-status.json")
-        TestGallerySeederService.start(context, runId, TestGallerySeederService.ACTION_IMPORT)
+        TestGallerySeederService.start(
+            context,
+            runId,
+            TestGallerySeederService.ACTION_IMPORT,
+            operationId = operationId,
+        )
         val imported = waitForState(context, runId, "import-status.json")
         assertEquals("COMPLETE", imported.optString("state"))
         assertTrue(imported.optInt("importedCount", 0) > 0)

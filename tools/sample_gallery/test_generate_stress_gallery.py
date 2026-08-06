@@ -49,7 +49,11 @@ class StressGalleryGeneratorTest(unittest.TestCase):
             mapping = json.loads((output / "stress-mapping.json").read_text(encoding="utf-8"))
             self.assertEqual("stress-3", manifest["profile"])
             self.assertEqual(3, len(manifest["items"]))
-            self.assertEqual({"stress_00000.jpg", "stress_00001.jpg", "stress_00002.jpg"}, {
+            self.assertEqual({
+                "stress_00000_licensed_source.jpg",
+                "stress_00001_licensed_source.jpg",
+                "stress_00002_licensed_source.jpg",
+            }, {
                 item["filename"] for item in manifest["items"]
             })
             self.assertTrue(all(item["kind"] == "IMAGE" for item in manifest["items"]))

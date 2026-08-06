@@ -61,14 +61,19 @@ def seed_via_instrumentation(
     return wait_for_seed_completion(serial, package, run_id, timeout_seconds)
 
 
-def start_seed_service(serial: str, package: str, run_id: str) -> None:
+def start_seed_service(
+    serial: str,
+    package: str,
+    run_id: str,
+    component_package: str = "io.github.anup42.askalbum",
+) -> None:
     result = adb(
         serial,
         "shell",
         "am",
         "start-foreground-service",
         "-n",
-        f"{package}/.TestGallerySeederService",
+        f"{package}/{component_package}.TestGallerySeederService",
         "-a",
         "io.github.anup42.askalbum.test.SEED_GALLERY_FOREGROUND",
         "--es",
@@ -151,6 +156,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--serial")
     parser.add_argument("--package", default="io.github.anup42.askalbum")
+    parser.add_argument("--component-package", default="io.github.anup42.askalbum")
     parser.add_argument("--gallery", type=Path, required=True)
     parser.add_argument("--run-id")
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts/device-runs"))
@@ -188,7 +194,7 @@ def main() -> None:
     except (json.JSONDecodeError, UnicodeDecodeError):
         status = None
     if not cleanup_complete and isinstance(status, dict) and status.get("state") == "RUNNING":
-        start_seed_service(serial, args.package, run_id)
+        start_seed_service(serial, args.package, run_id, args.component_package)
         resumed = wait_for_seed_completion(serial, args.package, run_id, args.timeout_seconds)
         safe_result = {**resumed, "resumedRunningSeed": True, "serial": mask_serial(serial), "package": args.package}
         (host / "seed-result.json").write_text(json.dumps(safe_result, indent=2) + "\n", encoding="utf-8")
@@ -263,7 +269,7 @@ def main() -> None:
                 (host / "staging-result.json").write_text(json.dumps(safe_result, indent=2) + "\n", encoding="utf-8")
                 print_result_summary(safe_result)
                 return
-            start_seed_service(serial, args.package, run_id)
+            start_seed_service(serial, args.package, run_id, args.component_package)
             result = wait_for_seed_completion(serial, args.package, run_id, args.timeout_seconds)
             safe_result = {**result, "retriedCalls": 0, "transport": "external_file",
                            "serial": mask_serial(serial), "package": args.package}
@@ -336,7 +342,7 @@ def main() -> None:
         finalized = (finalized_result.stdout + finalized_result.stderr).decode(errors="replace")
         if "Error while accessing provider" in finalized or "state=COMPLETE" not in finalized or archive_sha256 not in finalized or str(total_bytes) not in finalized:
             raise RuntimeError(f"Provider did not confirm complete transfer: {finalized[-1000:]}")
-        start_seed_service(serial, args.package, run_id)
+        start_seed_service(serial, args.package, run_id, args.component_package)
         result = wait_for_seed_completion(serial, args.package, run_id, args.timeout_seconds)
         result["retriedCalls"] = retry_count
     except BaseException:
