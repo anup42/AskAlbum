@@ -224,6 +224,7 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         val expected = uris.map(Uri::toString).toSet()
         val repository = (context.applicationContext as AskAlbumApplication).repository
         IndexScheduler.cancelAndWait(context)
+        EmbeddingIndexScheduler.cancelAndWait(context)
         val before = repository.indexCoverageForContentUris(expected)
         require(before.mediaCount == expected.size) {
             "Expected ${expected.size} indexed rows before interruption, found ${before.mediaCount}"
@@ -248,7 +249,20 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         val uris = seededUris(context, runId)
         val expected = uris.map(Uri::toString).toSet()
         val repository = (context.applicationContext as AskAlbumApplication).repository
-        repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
+        // The test has just force-stopped the process that owned these leases. Cancel any
+        // maintenance work scheduled by the new instrumentation process, then model that
+        // orphaned-owner state explicitly. Production recovery still uses expired leases unless
+        // startup has independently established that the previous owner is gone.
+        IndexScheduler.cancelAndWait(context)
+        EmbeddingIndexScheduler.cancelAndWait(context)
+        repository.recoverInterruptedJobs(
+            IndexingPipeline.MEDIA_ANALYSIS,
+            reclaimOrphanedLeases = true,
+        )
+        repository.recoverInterruptedJobs(
+            IndexingPipeline.EMBEDDINGS,
+            reclaimOrphanedLeases = true,
+        )
         val coverage = repository.indexCoverageForContentUris(expected)
         require(coverage.mediaCount == expected.size) { "Recovery changed row count: ${coverage.mediaCount}" }
         val stageRows = coverage.stageStatuses.values.sumOf { it.values.sum() }
@@ -267,6 +281,11 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
                 .put("uniqueRows", coverage.mediaCount).put("stageRows", stageRows)
                 .put("runningStages", 0).put("indexingRows", 0),
         )
+        // Recovery leaves durable work pending by design. Resume both independent pipelines so
+        // the following acceptance test exercises checkpoint continuation instead of waiting on
+        // an unscheduled queue.
+        IndexScheduler.schedule(context)
+        EmbeddingIndexScheduler.schedule(context)
     }
 
     private fun statusName(action: String?): String = when (action) {

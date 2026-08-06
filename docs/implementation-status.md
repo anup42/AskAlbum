@@ -1036,3 +1036,12 @@ People cluster summaries now expose both the user-selected representative face a
 - 20,000 vectors: build `18,067 ms`, exact-scan p95 `48 ms`, snapshot `29.6 MB`.
 - The benchmark used app-private synthetic vectors only; it did not modify user gallery media or production-device data.
 - Full run-scoped gallery ingestion, real E2B grounded-answer composition, and 20,000-item end-to-end indexing remain separate acceptance gates.
+
+## 2026-08-06 - Pipeline-scoped recovery acceptance
+
+- Files changed: `TestGallerySeederReceiver.kt`, `GalleryRepository.kt`.
+- Recovery verification now cancels and reclaims media-analysis and embedding pipelines independently, then reschedules durable pending work.
+- Tests: `IndexingReliabilityPolicyTest` PASS; `consumerDebug` and `consumerDebugAndroidTest` builds PASS.
+- Device: safe fixture recovery gate PASS with 84 rows, 756 stage rows, 0 running stages, and 0 indexing rows before the rescheduling adjustment.
+- Device: post-adjustment core acceptance NOT RUN to completion because `R3CY30QFWLP` disconnected from ADB; no production device was touched.
+- Blocker: safe fixture must reconnect before validating post-recovery continuation and the full query/evidence path.
