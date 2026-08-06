@@ -157,6 +157,41 @@ class GroundedEvidenceClosureTest {
     }
 
     @Test
+    fun personVisualAnswersMayUseOnlyDirectCachedEvidenceForTheRequestedCluster() {
+        val plan = GalleryQueryPlan(
+            originalQuery = "show wife wearing white",
+            intent = QueryIntent.FIND_MEDIA,
+            peopleClauses = listOf(PersonClause("wife")),
+            semanticClauses = listOf(
+                SemanticClause(
+                    text = "wearing white",
+                    subject = SemanticSubject.PERSON,
+                    relationToPerson = "wife",
+                    hardness = ConstraintStrength.HARD,
+                ),
+            ),
+        )
+        val valid = evidence("cached-wife", "m1", "semantic_caption", "Wife wears a white dress").copy(
+            scope = SemanticFactScope.MEDIA,
+            scopeId = "m1",
+            evidenceMediaId = "m1",
+            clusterId = "wife",
+        )
+        val foreignCluster = valid.copy(id = "cached-me", clusterId = "me")
+        val contextual = valid.copy(
+            id = "group-context",
+            scope = SemanticFactScope.VISUAL_GROUP,
+            scopeId = "group-1",
+            evidenceMediaId = "representative",
+            applicability = SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY,
+        )
+
+        assertTrue(GroundedEvidencePolicy.allow(valid, plan))
+        assertTrue(!GroundedEvidencePolicy.allow(foreignCluster, plan))
+        assertTrue(!GroundedEvidencePolicy.allow(contextual, plan))
+    }
+
+    @Test
     fun eventContextIsOnlyAnswerEvidenceForEventCapabilities() {
         val eventEvidence = evidence("event", "m1", "event", "Singapore trip")
             .copy(scope = SemanticFactScope.EVENT, scopeId = "event-1")

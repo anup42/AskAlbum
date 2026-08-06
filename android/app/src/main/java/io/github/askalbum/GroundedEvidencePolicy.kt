@@ -2,6 +2,10 @@ package io.github.anup42.askalbum
 
 /** Keeps candidate-only or cross-scope evidence out of factual answer composition. */
 internal object GroundedEvidencePolicy {
+    private val directPersonCaptionSources = setOf(
+        "semantic_caption",
+        "semantic_caption_embedding",
+    )
     private val contextualCaptionSources = setOf(
         "semantic_caption_candidate_expansion",
         "semantic_caption_embedding_context",
@@ -28,9 +32,35 @@ internal object GroundedEvidencePolicy {
                 plan.intent == QueryIntent.LIST && plan.grouping == Grouping.EVENT
         }
         if (hasPersonVisualCondition(plan)) {
-            return record.sourceField == "visual_verification"
+            return record.sourceField == "visual_verification" ||
+                isDirectCachedPersonEvidence(record, plan)
         }
         return true
+    }
+
+    private fun isDirectCachedPersonEvidence(record: EvidenceRecord, plan: GalleryQueryPlan): Boolean {
+        if (record.sourceField !in directPersonCaptionSources) return false
+        val clusterId = record.clusterId?.trim()?.takeIf(String::isNotBlank) ?: return false
+        val evidenceMediaId = record.evidenceMediaId?.trim()?.takeIf(String::isNotBlank) ?: return false
+        val directlyScoped = when (record.scope) {
+            SemanticFactScope.MEDIA,
+            SemanticFactScope.QUERY_VERIFICATION,
+            -> evidenceMediaId == record.mediaId
+            SemanticFactScope.EXACT_DUPLICATE_GROUP ->
+                record.applicability == SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED
+            else -> false
+        }
+        if (!directlyScoped) return false
+
+        val conditionedPeople = plan.semanticClauses.mapNotNull { it.relationToPerson?.trim()?.takeIf(String::isNotBlank) }
+        val requiredPeople = if (conditionedPeople.isNotEmpty()) {
+            conditionedPeople
+        } else {
+            plan.peopleClauses.filter(PersonClause::mustBePresent).map(PersonClause::personId)
+        }
+        return requiredPeople.isEmpty() || requiredPeople.any {
+            PersonIdentityNormalization.normalize(it) == PersonIdentityNormalization.normalize(clusterId)
+        }
     }
 
     fun hasPersonVisualCondition(plan: GalleryQueryPlan): Boolean = plan.semanticClauses.any {

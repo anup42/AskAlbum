@@ -1154,3 +1154,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Added `CapabilityRegistryTest.boundedDocumentFactDoesNotReturnAValueFromPartialOcrCoverage`.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.CapabilityRegistryTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Admit provenance-validated cached person evidence
+
+- Grounded person-conditioned answers now admit direct cached caption evidence only when it is media/query scoped or verified exact-duplicate evidence, points to the same evidence media, carries a cluster binding, and matches the requested reviewed identity.
+- Contextual group/event evidence, possible inference, legacy scope, foreign clusters, and unbound person chunks remain non-confirming; fresh visual verification remains accepted.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.GroundedEvidenceClosureTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
