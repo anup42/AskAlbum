@@ -22,6 +22,20 @@ class IndexingReliabilityPolicyTest {
     }
 
     @Test
+    fun unavailableIndexingPackCannotBeReportedAsSuccessfulCompletion() {
+        assertTrue(
+            IndexingWorkerResultPolicy.shouldRetryWorker(
+                processed = 0,
+                retryableFailures = 0,
+                stopped = false,
+                admissionAllowed = true,
+                hasImmediateWork = false,
+                unavailable = true,
+            ),
+        )
+    }
+
+    @Test
     fun backgroundWorkersYieldToTheForegroundIndexLane() {
         assertTrue(ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(true))
         assertFalse(ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(false))

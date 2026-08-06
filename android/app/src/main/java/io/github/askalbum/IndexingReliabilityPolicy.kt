@@ -62,8 +62,10 @@ internal object IndexingWorkerResultPolicy {
         stopped: Boolean,
         admissionAllowed: Boolean,
         hasImmediateWork: Boolean,
+        unavailable: Boolean = false,
     ): Boolean =
-        stopped ||
+        unavailable ||
+            stopped ||
             !admissionAllowed ||
             (processed == 0 && retryableFailures > 0 && hasImmediateWork)
 }

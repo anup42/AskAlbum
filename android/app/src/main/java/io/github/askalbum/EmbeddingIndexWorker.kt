@@ -47,6 +47,8 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
         var permanentFailures = 0
         var hasMore = true
         var stoppedDuringBatch = false
+        var unavailable = false
+        var errorCode: String? = null
         val progressStartedAt = System.currentTimeMillis()
         while (
             hasMore &&
@@ -73,6 +75,8 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
             permanentFailures += batch.permanentFailures
             hasMore = batch.hasMore
             stoppedDuringBatch = batch.stopped
+            unavailable = unavailable || batch.unavailable
+            errorCode = batch.errorCode ?: errorCode
             if (!batch.stopped) repository.renewIndexingLeases(IndexingPipeline.EMBEDDINGS, id.toString())
             val summary = repository.indexSummary()
             val estimate = IndexingProgressEstimate.calculate(
@@ -90,6 +94,8 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
                     "next_attempt_at" to (batch.nextAttemptAtMillis ?: 0L),
                     "delayed_retries" to retryableFailures,
                     "quarantined" to permanentFailures,
+                    "unavailable" to unavailable,
+                    "error_code" to (errorCode ?: ""),
                     "rate_per_minute" to (estimate.ratePerMinute ?: 0.0),
                     "eta_millis" to (estimate.etaMillis ?: 0L),
                 ),
@@ -108,6 +114,7 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
             stopped = isStopped || stoppedDuringBatch,
             admissionAllowed = admission.allowed,
             hasImmediateWork = hasMore,
+            unavailable = unavailable,
         )
         if (hasMore && enabled && !shouldRetry) {
             EmbeddingIndexScheduler.scheduleContinuation(applicationContext)
@@ -123,7 +130,8 @@ class EmbeddingIndexWorker(appContext: Context, params: WorkerParameters) : Coro
             TAG,
             "SigLIP2 embedding run finished batches=$batches processed=$processed hasMore=$hasMore " +
                 "stopped=${isStopped || stoppedDuringBatch} retryableFailures=$retryableFailures " +
-                "permanentFailures=$permanentFailures elapsedMs=${budget.elapsedMillis()}",
+                "permanentFailures=$permanentFailures unavailable=$unavailable " +
+                "errorCode=${errorCode ?: "none"} elapsedMs=${budget.elapsedMillis()}",
         )
         when {
             !enabled -> Result.success()

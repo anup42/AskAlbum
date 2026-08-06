@@ -1011,3 +1011,9 @@ People cluster summaries now expose both the user-selected representative face a
 - Negative visual clauses now force the bounded Kotlin/Gemma verification path even when a planner requests `NEVER` verification.
 - Screenshot exclusions remain deterministic only when the hard metadata predicate is provable.
 - Added regression coverage for unsupported negative predicates and deterministic screenshot exclusions.
+
+### 2026-08-06 - Keep unavailable embedding work retryable
+
+- Fixed `EmbeddingIndexWorker` so a missing verified SigLIP2/retrieval pack is not reported as successful completion.
+- Propagated batch availability and error-code state into the shared worker-result policy and WorkManager progress.
+- Added a regression test; existing media, vectors, People data, semantic facts, and model packs remain unchanged.
