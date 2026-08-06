@@ -600,6 +600,10 @@ media, databases, or logs.
 - The resumable exact semantic scan now rejects plans with multiple positive semantic clauses because its executor evaluates one embedding predicate, not a deterministic conjunction.
 - Added a regression test ensuring multi-condition counts remain estimated until a conjunction scan executor exists.
 
+### 2026-08-06 - Lock sensitive fact answers before formatting
+- `ANSWER_FACT` and `DOCUMENT_QA` now use the same device-authentication lock as sensitive OCR `LIST` answers before exposing a password or other sensitive allowlisted fact.
+- Added direct-executor coverage proving raw password text is absent from the locked answer.
+
 ### 2026-08-05 - Semantic scan and caption-vector completion hardening
 - Complete predicate scans now consume typed vector coverage and do not advance a batch on unavailable, failed, partial, or missing-vector results.
 - Caption-vector reconciliation failures are reported as `FAILED` and retried; they cannot be hidden behind `COMPLETE`.
