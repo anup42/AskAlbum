@@ -31,11 +31,11 @@ class GalleryQueryPlanValidator(
         plan.semanticClauses.forEach {
             validateText("semantic clause", it.text, errors, 240)
             it.canonicalText?.let { text -> validateText("canonical clause", text, errors, 240) }
-            it.relationToPerson?.let { person -> validateIdentifier("person relation", person, errors) }
+            it.relationToPerson?.let { person -> validatePersonReference("person relation", person, errors) }
         }
         if (plan.peopleClauses.size > 8) errors += "Too many people clauses"
         plan.peopleClauses.forEach {
-            validateIdentifier("person", it.personId, errors)
+            validatePersonReference("person", it.personId, errors)
             it.alternativeGroup?.let { group -> validateIdentifier("person alternative group", group, errors) }
         }
         plan.ocrClause?.let {
@@ -63,6 +63,18 @@ class GalleryQueryPlanValidator(
 
     private fun validateIdentifier(label: String, value: String, errors: MutableList<String>) {
         if (!value.matches(Regex("[A-Za-z0-9_-]{1,80}"))) errors += "Invalid $label reference"
+    }
+
+    /** Person labels and aliases are user data, so Unicode is valid but unsafe path/control text is not. */
+    private fun validatePersonReference(label: String, value: String, errors: MutableList<String>) {
+        val normalized = PersonIdentityNormalization.normalize(value)
+        if (normalized.isBlank() || normalized.length > 80) errors += "Invalid $label reference"
+        if (
+            unsafeText.containsMatchIn(value) ||
+            value.any { it.isISOControl() || it == '/' || it == '\\' }
+        ) {
+            errors += "Unsafe $label"
+        }
     }
 
     private fun validateFilter(filter: FilterExpression, errors: MutableList<String>, depth: Int) {

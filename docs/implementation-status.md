@@ -995,3 +995,9 @@ People cluster summaries now expose both the user-selected representative face a
 
 - Gemma engine reuse now cancels and reschedules idle eviction while holding the session mutex, preventing a queued planner, verifier, answer, or enrichment call from being closed by an older request's cleanup.
 - Memory-pressure eviction clears the pending idle job under the same mutex; model generation selection and one-heavy-call serialization remain unchanged.
+
+### 2026-08-06 - Preserve Unicode reviewed-person references
+
+- Query-plan validation now accepts bounded Unicode person labels and aliases such as Hindi names while retaining strict validation for OCR fields and structural IDs.
+- Unsafe URI, path-separator, control-character, and comment-like person references remain rejected before People resolution or retrieval.
+- Added Hindi person-reference validation coverage.

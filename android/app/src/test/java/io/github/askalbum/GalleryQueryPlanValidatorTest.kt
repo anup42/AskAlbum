@@ -51,6 +51,30 @@ class GalleryQueryPlanValidatorTest {
     }
 
     @Test
+    fun acceptsUnicodePersonReferencesButRejectsUnsafeLookupText() {
+        val valid = GalleryQueryPlan(
+            originalQuery = "मेरे भैया के साथ फोटो",
+            intent = QueryIntent.FIND_MEDIA,
+            peopleClauses = listOf(PersonClause("भैया")),
+            semanticClauses = listOf(
+                SemanticClause(
+                    text = "wearing blue",
+                    subject = SemanticSubject.PERSON,
+                    relationToPerson = "भैया",
+                ),
+            ),
+        )
+        assertTrue(validator.validate(valid).isValid)
+
+        val unsafe = valid.copy(
+            peopleClauses = listOf(PersonClause("भैया/content://not-a-person")),
+        )
+        val result = validator.validate(unsafe)
+        assertFalse(result.isValid)
+        assertTrue(result.errors.any { "unsafe" in it.lowercase() })
+    }
+
+    @Test
     fun rejectsContradictoryHardConstraints() {
         val positive = SemanticClause("yellow hat", "yellow hat", Polarity.POSITIVE, ConstraintStrength.HARD)
         val negative = positive.copy(polarity = Polarity.NEGATIVE)
