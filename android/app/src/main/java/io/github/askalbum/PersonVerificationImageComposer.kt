@@ -105,7 +105,8 @@ internal object PersonVerificationPromptBinding {
     ): List<VerificationConditionSpec> {
         if (bindings.isEmpty()) return conditions
         return conditions.map { condition ->
-            val explicit = bindings.firstOrNull { binding ->
+            val identityBindings = bindings.filterNot { it.clusterId.startsWith("unreviewed-face-") }
+            val explicit = identityBindings.firstOrNull { binding ->
                 condition.relationToPerson == binding.clusterId ||
                     binding.identityTerms.any { it.equals(condition.relationToPerson, ignoreCase = true) }
             }
@@ -121,7 +122,7 @@ internal object PersonVerificationPromptBinding {
                 }
             }
             text = expandOtherPersonPredicate(text, bindings)
-            val bound = explicit ?: bindings.singleOrNull()?.takeIf { condition.subject == SemanticSubject.PERSON }
+            val bound = explicit ?: identityBindings.singleOrNull()?.takeIf { condition.subject == SemanticSubject.PERSON }
             if (bound != null && bound.stableLabel.lowercase(Locale.ROOT) !in text.lowercase(Locale.ROOT)) {
                 text = "${bound.stableLabel}: $text"
             }

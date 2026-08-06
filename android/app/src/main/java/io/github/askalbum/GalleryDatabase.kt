@@ -2326,6 +2326,102 @@ class GalleryDatabase(
         return reviewedFaceBindings(mediaId, clusterIds.toSet()).distinctBy(PersonVerificationBinding::clusterId)
     }
 
+    /**
+     * Labels every visible face before person-conditioned visual verification. Only reviewed,
+     * non-hidden clusters receive identity terms; other faces are explicitly marked as U* so
+     * their bodies cannot be mistaken for a requested reviewed person.
+     */
+    fun verificationFaceBindingsForMedia(mediaId: String): List<PersonVerificationBinding> {
+        data class FaceRow(
+            val faceId: String,
+            val clusterId: String?,
+            val reviewed: Boolean,
+            val terms: Set<String>,
+            val left: Float,
+            val top: Float,
+            val right: Float,
+            val bottom: Float,
+        )
+
+        val rows = readableDatabase.rawQuery(
+            "SELECT f.id,f.cluster_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos," +
+                "p.reviewed,p.hidden,p.label,p.relationship,p.aliases " +
+                "FROM face_instance f " +
+                "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                "LEFT JOIN person_cluster p ON p.id=f.cluster_id " +
+                "WHERE f.media_id=? ORDER BY f.left_pos,f.top_pos,f.id",
+            arrayOf(mediaId),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val faceId = cursor.getString(0)
+                    val clusterId = if (cursor.isNull(1)) null else cursor.getString(1)
+                    val reviewed = !cursor.isNull(6) && cursor.getInt(6) == 1 &&
+                        !cursor.isNull(7) && cursor.getInt(7) == 0 && clusterId != null
+                    val terms = if (reviewed) {
+                        buildSet {
+                            if (!cursor.isNull(8)) add(sensitiveDataAtRest.reveal(cursor.getString(8)))
+                            if (!cursor.isNull(9)) add(sensitiveDataAtRest.reveal(cursor.getString(9)))
+                            if (!cursor.isNull(10)) {
+                                runCatching {
+                                    val aliases = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(10)))
+                                    repeat(aliases.length()) { index -> add(aliases.getString(index)) }
+                                }
+                            }
+                        }.filter(String::isNotBlank).toSet()
+                    } else {
+                        emptySet()
+                    }
+                    add(
+                        FaceRow(
+                            faceId = faceId,
+                            clusterId = clusterId,
+                            reviewed = reviewed,
+                            terms = terms,
+                            left = cursor.getFloat(2),
+                            top = cursor.getFloat(3),
+                            right = cursor.getFloat(4),
+                            bottom = cursor.getFloat(5),
+                        ),
+                    )
+                }
+            }
+        }
+        val reviewedLabels = rows.asSequence()
+            .filter { it.reviewed && it.clusterId != null }
+            .mapNotNull { it.clusterId }
+            .distinct()
+            .withIndex()
+            .associate { it.value to "P${it.index + 1}" }
+        var unreviewedIndex = 0
+        return rows.map { row ->
+            if (row.reviewed && row.clusterId != null) {
+                PersonVerificationBinding(
+                    faceId = row.faceId,
+                    clusterId = row.clusterId,
+                    stableLabel = requireNotNull(reviewedLabels[row.clusterId]),
+                    identityTerms = row.terms,
+                    left = row.left,
+                    top = row.top,
+                    right = row.right,
+                    bottom = row.bottom,
+                )
+            } else {
+                unreviewedIndex++
+                PersonVerificationBinding(
+                    faceId = row.faceId,
+                    clusterId = "unreviewed-face-$unreviewedIndex",
+                    stableLabel = "U$unreviewedIndex",
+                    identityTerms = emptySet(),
+                    left = row.left,
+                    top = row.top,
+                    right = row.right,
+                    bottom = row.bottom,
+                )
+            }
+        }
+    }
+
     fun reviewedPersonClusterIdsByMedia(): Map<String, Set<String>> = readableDatabase.rawQuery(
         "SELECT f.media_id,f.cluster_id FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
             "WHERE p.reviewed=1 AND p.hidden=0 ORDER BY f.media_id,f.cluster_id",

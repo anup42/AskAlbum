@@ -967,3 +967,9 @@ People cluster summaries now expose both the user-selected representative face a
 
 - `GalleryImageLoader` now applies the same EXIF transform used by gallery thumbnails and People crops before sending decoded media to Gemma verification or semantic enrichment.
 - Added an instrumented regression test proving a JPEG tagged with `ORIENTATION_ROTATE_90` is delivered upright.
+
+### 2026-08-06 - Label every visible face during person verification
+
+- Person-conditioned verification now labels all visible faces in its composite. Reviewed identities use deterministic `P*` labels; unreviewed or hidden faces use `U*` context labels without identity terms.
+- Required identity checks still resolve only reviewed clusters, and the prompt explicitly prevents `U*` faces from satisfying a requested identity condition.
+- Added an isolated database regression test for reviewed versus unreviewed binding provenance.

@@ -53,12 +53,12 @@ class LiteRtGemmaVisualVerifier(
                                 val requiredGroups = PeopleClauseResolver.requiredGroups(plan.peopleClauses)
                                 val conditionPeople = PersonVerificationBindingPolicy.conditionPersonIds(conditions)
                                 val requiredPeople = requiredGroups.flatten().map(PersonClause::personId).toSet() + conditionPeople
-                                val bindings = database.reviewedFaceBindings(hit.item.id, requiredPeople)
+                                val requestedBindings = database.reviewedFaceBindings(hit.item.id, requiredPeople)
                                 if (requiredPeople.isNotEmpty()) {
-                                    val grouped = bindings.groupBy(PersonVerificationBinding::clusterId)
+                                    val grouped = requestedBindings.groupBy(PersonVerificationBinding::clusterId)
                                     val everyRequestedIdentityBound = requiredGroups.all { alternatives ->
                                         alternatives.any { clause ->
-                                            bindings.any { binding ->
+                                            requestedBindings.any { binding ->
                                                 PersonVerificationBindingPolicy.matchesRequestedIdentity(
                                                     binding,
                                                     clause.personId,
@@ -70,8 +70,13 @@ class LiteRtGemmaVisualVerifier(
                                         "Required reviewed identities could not be bound unambiguously to visible faces"
                                     }
                                 }
-                                require(PersonVerificationBindingPolicy.allConditionPeopleBound(conditionPeople, bindings)) {
+                                require(PersonVerificationBindingPolicy.allConditionPeopleBound(conditionPeople, requestedBindings)) {
                                     "Person visual conditions could not be bound to exactly one reviewed visible face"
+                                }
+                                val bindings = if (requiredPeople.isNotEmpty() || conditions.any { it.subject == SemanticSubject.PERSON }) {
+                                    database.verificationFaceBindingsForMedia(hit.item.id)
+                                } else {
+                                    emptyList()
                                 }
                                 val boundConditions = PersonVerificationPromptBinding.bind(conditions, bindings)
                                 val loaded = imageLoader.loadForVerification(hit, database.videoKeyframes(hit.item.id))
@@ -196,7 +201,16 @@ class LiteRtGemmaVisualVerifier(
             }
         }
         val mapping = JSONObject().apply {
-            bindings.forEach { binding -> put(binding.stableLabel, "reviewed-cluster:${binding.clusterId}") }
+            bindings.forEach { binding ->
+                put(
+                    binding.stableLabel,
+                    if (binding.clusterId.startsWith("unreviewed-face-")) {
+                        "other-visible-face"
+                    } else {
+                        "reviewed-cluster:${binding.clusterId}"
+                    },
+                )
+            }
         }
         return """
             Inspect the supplied contact sheet. Its top panel is the full image with labelled face boxes; lower panels are expanded upper-body, full-body, and lower-body/feet crops.
@@ -206,6 +220,7 @@ class LiteRtGemmaVisualVerifier(
             Kotlin applies polarity after your response: a NEGATIVE condition matches only when its positive predicate is not visible. Never invert polarity yourself.
             Example: for polarity NEGATIVE and text "P2 is wearing a green hat", return VERIFIED_FALSE when P2 is not visibly wearing a green hat; do not return VERIFIED_TRUE merely because another labelled person has a different hat.
             Person labels are deterministic and must not be reassigned. Bind every person-specific condition only to the matching P-label.
+            U-labels identify other visible faces without a reviewed identity. They are context and must never satisfy a condition addressed to a P-label.
             Person mapping: $mapping
             For synthetic cards or diagrams, visible labels and illustrated clothing are valid image evidence.
             Query context: ${JSONObject.quote(plan.originalQuery)}
