@@ -19,4 +19,12 @@ class SemanticEnrichmentPriorityTest {
                 SemanticEnrichmentPriority.forJob("personal_media:fixture", userRequested = true),
         )
     }
+
+    @Test
+    fun explicitPersonalRequestPromotesAnExistingPersonalBacklogJob() {
+        assertTrue(
+            SemanticEnrichmentPriority.forJob("personal_media:fixture", userRequested = true) >
+                SemanticEnrichmentPriority.forJob("personal_media:fixture", userRequested = false),
+        )
+    }
 }

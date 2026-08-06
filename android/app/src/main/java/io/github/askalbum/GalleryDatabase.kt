@@ -3395,6 +3395,7 @@ class GalleryDatabase(
             if (userRequested) {
                 db.update("semantic_enrichment_job", ContentValues().apply {
                     put("user_requested", true)
+                    put("priority", SemanticEnrichmentPriority.forJob(reason, true))
                     put("updated_at", now)
                 }, "id=? AND status<>?", arrayOf(
                     UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString(),

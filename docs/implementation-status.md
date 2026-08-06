@@ -1234,3 +1234,8 @@ People cluster summaries now expose both the user-selected representative face a
 - The early People-unavailable answer now reports zero searched/indexed media instead of mixing face-instance counts with image counts.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.PeopleQueryGateTest --tests io.github.anup42.askalbum.RetrievalCoverageWordingTest --tests io.github.anup42.askalbum.RetrievalChannelEvidenceTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Promote explicitly requested personal jobs
+- Re-requesting an existing personal semantic-memory job now updates its durable priority as well as `user_requested`, so the claim order can promote it immediately.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.SemanticEnrichmentPriorityTest --tests io.github.anup42.askalbum.IndexingReliabilityPolicyTest --tests io.github.anup42.askalbum.IndexingJobControlsTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
