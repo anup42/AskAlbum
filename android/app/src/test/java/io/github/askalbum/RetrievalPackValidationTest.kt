@@ -1,9 +1,11 @@
 package io.github.anup42.askalbum
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.nio.file.Files
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
 import java.security.Signature
@@ -43,6 +45,44 @@ class RetrievalPackValidationTest {
         }.exceptionOrNull()
 
         assertTrue(failure is IllegalArgumentException)
+    }
+
+    @Test
+    fun installedGenerationRechecksSignatureAndArtifactDigest() {
+        val keys = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+        val artifacts = linkedMapOf(
+            "image_encoder.tflite" to byteArrayOf(1),
+            "text_encoder.tflite" to byteArrayOf(2),
+            "tokenizer.vocab" to byteArrayOf(3),
+            "LICENSE.txt" to byteArrayOf(4),
+        )
+        var manifestText = manifestBytes(sha256(keys.public.encoded)).toString(Charsets.UTF_8)
+        listOf("00".repeat(32), "11".repeat(32), "22".repeat(32), "33".repeat(32))
+            .zip(artifacts.values)
+            .forEach { (placeholder, bytes) -> manifestText = manifestText.replace(placeholder, sha256(bytes)) }
+        val manifestBytes = manifestText.toByteArray(Charsets.UTF_8)
+        val signature = Signature.getInstance("SHA256withRSA").run {
+            initSign(keys.private)
+            update(manifestBytes)
+            sign()
+        }
+        val directory = Files.createTempDirectory("retrieval-generation-").toFile()
+        try {
+            artifacts.forEach { (name, bytes) -> File(directory, name).writeBytes(bytes) }
+            File(directory, "manifest.json").writeBytes(manifestBytes)
+            File(directory, "manifest.sig").writeText(Base64.getEncoder().encodeToString(signature))
+            val verifier = RetrievalInstalledGenerationVerifier(RetrievalPackSignatureVerifier(keys.public))
+
+            assertEquals("test-1", verifier.verify(directory).packVersion)
+            File(directory, "image_encoder.tflite").writeBytes(byteArrayOf(9))
+            assertThrows(IllegalArgumentException::class.java) { verifier.verify(directory) }
+            File(directory, "image_encoder.tflite").writeBytes(artifacts.getValue("image_encoder.tflite"))
+            val changedSignature = signature.copyOf().also { it[0] = (it[0].toInt() xor 1).toByte() }
+            File(directory, "manifest.sig").writeText(Base64.getEncoder().encodeToString(changedSignature))
+            assertThrows(IllegalArgumentException::class.java) { verifier.verify(directory) }
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 
     @Test

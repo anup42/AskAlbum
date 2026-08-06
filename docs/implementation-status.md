@@ -1096,3 +1096,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Tests: `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.GemmaPackValidationTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
 - Device validation: NOT RUN; the safe fixture device is unavailable. Production device data and model state were not touched.
 - Next: commit and push this verified phase to `https://github.com/anup42/AskAlbum.git`.
+
+### 2026-08-06 - Revalidate all production model packs after restart
+
+- Retrieval generations now revalidate the bounded manifest, APK signature, exact installed file set, artifact sizes, and SHA-256 digests when the current pointer is reopened.
+- PaddleOCR active packs now recompute every catalog artifact digest on reactivation; SFace now recomputes the model digest instead of trusting only its marker and file length.
+- Tests: `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.RetrievalPackValidationTest --tests io.github.anup42.askalbum.InstalledModelPackIntegrityTest` PASS; full `:app:testFixtureCiDebugUnitTest` PASS; `:app:assembleConsumerDebug` PASS; `:app:assembleOfflineDemoDebug` PASS.
+- Device validation: NOT RUN; the safe fixture device remains unavailable. No production model, gallery, People, or index data was touched.

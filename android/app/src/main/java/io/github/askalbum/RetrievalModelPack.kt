@@ -189,6 +189,47 @@ class RetrievalPackSignatureVerifier(private val publicKey: PublicKey) {
     }
 }
 
+internal class RetrievalInstalledGenerationVerifier(
+    private val signatureVerifier: RetrievalPackSignatureVerifier,
+) {
+    fun verify(directory: File): RetrievalPackManifest {
+        require(directory.isDirectory) { "Retrieval generation is unavailable" }
+        val manifestFile = File(directory, MANIFEST_NAME)
+        require(manifestFile.isFile && manifestFile.length() in 1..MAX_MANIFEST_BYTES.toLong()) {
+            "Retrieval manifest is incomplete"
+        }
+        val manifestBytes = manifestFile.inputStream().use { it.readBytesLimited(MAX_MANIFEST_BYTES) }
+        val manifest = RetrievalPackManifest.parse(manifestBytes)
+        val signatureFile = File(directory, SIGNATURE_NAME)
+        require(signatureFile.isFile && signatureFile.length() in 1..MAX_SIGNATURE_BYTES.toLong()) {
+            "Retrieval signature is incomplete"
+        }
+        val signatureBytes = Base64.getDecoder().decode(
+            signatureFile.inputStream().use {
+                it.readBytesLimited(MAX_SIGNATURE_BYTES).toString(Charsets.US_ASCII).trim()
+            },
+        )
+        signatureVerifier.verify(manifestBytes, signatureBytes, manifest)
+
+        val expectedNames = manifest.files.mapTo(mutableSetOf()) { it.name }.apply {
+            add(MANIFEST_NAME)
+            add(SIGNATURE_NAME)
+        }
+        val actualFiles = directory.listFiles()?.toList() ?: error("Could not inspect retrieval generation")
+        require(actualFiles.all { it.isFile } && actualFiles.map { it.name }.toSet() == expectedNames) {
+            "Retrieval generation contains an unlisted or missing file"
+        }
+        manifest.files.forEach { spec ->
+            val artifact = File(directory, spec.name)
+            require(artifact.length() == spec.sizeBytes) { "Retrieval artifact is incomplete: ${spec.name}" }
+            require(artifact.sha256Hex() == spec.sha256) {
+                "Retrieval artifact checksum mismatch: ${spec.name}"
+            }
+        }
+        return manifest
+    }
+}
+
 class RetrievalModelPackManager(
     private val context: Context,
     private val verifier: RetrievalPackSignatureVerifier = RetrievalPackSignatureVerifier(context.apkSigningPublicKey()),
@@ -196,6 +237,7 @@ class RetrievalModelPackManager(
     private val root = File(context.filesDir, "models/retrieval")
     private val generations = File(root, "generations")
     private val pointer = File(root, "current")
+    private val installedVerifier = RetrievalInstalledGenerationVerifier(verifier)
 
     fun status(): RetrievalPackStatus = runCatching {
         val installed = current() ?: return RetrievalPackStatus(installed = false)
@@ -217,12 +259,7 @@ class RetrievalModelPackManager(
         require(directory.isDirectory && directory.canonicalPath.startsWith(generations.canonicalPath + File.separator)) {
             "Retrieval generation is unavailable"
         }
-        val manifestBytes = File(directory, MANIFEST_NAME).readBytes()
-        val manifest = RetrievalPackManifest.parse(manifestBytes)
-        manifest.files.forEach { spec ->
-            val artifact = File(directory, spec.name)
-            require(artifact.isFile && artifact.length() == spec.sizeBytes) { "Retrieval artifact is incomplete" }
-        }
+        val manifest = installedVerifier.verify(directory)
         return InstalledRetrievalPack(directory, manifest)
     }
 

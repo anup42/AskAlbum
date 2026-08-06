@@ -98,7 +98,7 @@ class FaceModelPackManager(private val context: Context) {
     fun current(): InstalledFaceModel? {
         if (!modelFile.isFile || !verificationMarker.isFile) return null
         val spec = FaceModelCatalog.sface
-        require(modelFile.length() == spec.sizeBytes) { "SFace model is incomplete" }
+        verifyFaceModelArtifact(modelFile, spec)
         require(verificationMarker.readText().trim() == spec.sha256) { "SFace verification marker is invalid" }
         return InstalledFaceModel(modelFile, spec)
     }
@@ -131,8 +131,7 @@ class FaceModelPackManager(private val context: Context) {
 
     internal fun installVerified(source: File): InstalledFaceModel {
         val spec = FaceModelCatalog.sface
-        require(source.isFile && source.length() == spec.sizeBytes) { "SFace model has the wrong size" }
-        require(sha256(source) == spec.sha256) { "SFace SHA-256 does not match the pinned OpenCV artifact" }
+        verifyFaceModelArtifact(source, spec)
         require(StatFs(context.filesDir.absolutePath).availableBytes > spec.sizeBytes + MIN_FREE_AFTER_FACE_INSTALL) {
             "Not enough app-private storage for SFace"
         }
@@ -151,18 +150,24 @@ class FaceModelPackManager(private val context: Context) {
         return InstalledFaceModel(modelFile, spec)
     }
 
-    private fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().buffered().use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
-            }
+}
+
+internal fun verifyFaceModelArtifact(file: File, spec: FaceModelSpec) {
+    require(file.isFile && file.length() == spec.sizeBytes) { "SFace model has the wrong size" }
+    require(sha256(file) == spec.sha256) { "SFace SHA-256 does not match the pinned OpenCV artifact" }
+}
+
+private fun sha256(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().buffered().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            digest.update(buffer, 0, count)
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
+    return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
 data class FaceModelDownloadProgress(

@@ -127,11 +127,7 @@ class OcrModelPackManager(private val context: Context) {
     fun current(): InstalledOcrModelPack? {
         val spec = OcrModelCatalog.paddleV5Multilingual
         if (!marker.isFile || marker.readText().trim() != spec.producerVersion) return null
-        spec.artifacts.forEach { artifact ->
-            require(File(activeRoot, artifact.targetName).let { it.isFile && it.length() == artifact.sizeBytes }) {
-                "PaddleOCR model pack is incomplete"
-            }
-        }
+        verifyOcrModelDirectory(activeRoot, spec)
         return InstalledOcrModelPack(activeRoot, spec)
     }
 
@@ -169,7 +165,7 @@ class OcrModelPackManager(private val context: Context) {
 
     internal fun installVerified(sourceDirectory: File): InstalledOcrModelPack {
         val spec = OcrModelCatalog.paddleV5Multilingual
-        verifyDirectory(sourceDirectory, spec)
+        verifyOcrModelDirectory(sourceDirectory, spec)
         require(StatFs(context.filesDir.absolutePath).availableBytes > spec.sizeBytes + MIN_FREE_AFTER_OCR_INSTALL) {
             "Not enough app-private storage for PaddleOCR"
         }
@@ -186,14 +182,6 @@ class OcrModelPackManager(private val context: Context) {
         return InstalledOcrModelPack(activeRoot, spec)
     }
 
-    private fun verifyDirectory(directory: File, spec: OcrModelSpec) {
-        spec.artifacts.forEach { artifact ->
-            val file = File(directory, artifact.targetName)
-            require(file.isFile && file.length() == artifact.sizeBytes) { "${artifact.targetName} has the wrong size" }
-            require(sha256(file) == artifact.sha256) { "${artifact.targetName} failed SHA-256 verification" }
-        }
-    }
-
     private fun copyBounded(input: ZipInputStream, output: FileOutputStream, expected: Long) {
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
         var total = 0L
@@ -205,6 +193,15 @@ class OcrModelPackManager(private val context: Context) {
             output.write(buffer, 0, count)
         }
         require(total == expected) { "OCR pack entry is incomplete" }
+    }
+}
+
+internal fun verifyOcrModelDirectory(directory: File, spec: OcrModelSpec) {
+    require(directory.isDirectory) { "PaddleOCR model directory is unavailable" }
+    spec.artifacts.forEach { artifact ->
+        val file = File(directory, artifact.targetName)
+        require(file.isFile && file.length() == artifact.sizeBytes) { "${artifact.targetName} has the wrong size" }
+        require(sha256(file) == artifact.sha256) { "${artifact.targetName} failed SHA-256 verification" }
     }
 }
 
