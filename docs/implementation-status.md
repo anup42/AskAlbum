@@ -1306,3 +1306,10 @@ People cluster summaries now expose both the user-selected representative face a
 2026-08-06: Fixture OCR now emits line-level bounded blocks so deterministic receipt totals preserve label context instead of mixing subtotal, tax, discount, and grand-total lines.
 2026-08-06: Seeded connected acceptance tests now scope searches to their recorded run URIs, preventing stale same-name device media from contaminating receipt, Wi-Fi, video, and event assertions. Unmatched merchant DOCUMENT_QA now returns a truthful no-result answer when no allowlisted fact field was requested.
 2026-08-06: Video evidence dialogs now expose a timestamp-specific Play action when keyframe evidence is available; the existing playback path seeks to that evidence timestamp. DOCUMENT_QA no-result handling now checks resolved allowlist fields rather than raw planner text.
+
+### 2026-08-06 - Connected fixture preservation and vector-scale gates
+
+- Fixture-device instrumentation passed `GalleryMigration23To24Test`, all `PeopleEditingDatabaseTest` cases, `CaptionVectorStoreTest`, and `NativeVectorIndexParityTest` without resetting production data.
+- The fixture-device `VectorIndexBenchmarkTest` passed the native FP16 scan gate at both 5,000 and 20,000 vectors. This is a vector-index benchmark, not proof of a full 5,000/20,000 media import.
+- `consumerDebug` and `offlineDemoDebug` assembled successfully; the offline APK manifest contains no `INTERNET` permission.
+- The run-scoped connected corpus was cleaned 84/84. The production package and its gallery, People state, indexes, and model packs were not modified.
