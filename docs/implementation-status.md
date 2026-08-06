@@ -1023,3 +1023,9 @@ People cluster summaries now expose both the user-selected representative face a
 - Decoded worker `status=UNAVAILABLE`, boolean availability, and error codes into the shared runtime snapshot.
 - Caption-vector and image-vector pack failures now remain visible as `UNAVAILABLE` while pending work exists instead of collapsing into generic queued or complete text.
 - Added parser coverage; no indexed data or device state changed.
+
+### 2026-08-06 - Prefer E2B for automatic Gemma provisioning
+
+- Automatic model candidates now try Gemma E2B first on every compatible device.
+- E4B remains an optional device-recommended fallback; the shared selected pack is still used by planning, verification, and answer composition.
+- Updated the candidate-order regression test.

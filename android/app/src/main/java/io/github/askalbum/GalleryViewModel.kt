@@ -93,7 +93,7 @@ private data class ModelInitialization(
 internal fun automaticGemmaCandidates(status: ModelPackStatus): List<GemmaModelTier> {
     if (status.installed) return emptyList()
     val recommended = status.deviceAssessment?.recommendedTier ?: GemmaModelTier.E2B
-    return listOf(recommended, GemmaModelTier.E2B).distinct()
+    return listOf(GemmaModelTier.E2B, recommended).distinct()
 }
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
     private val askPhotosApplication = application as AskAlbumApplication
