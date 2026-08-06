@@ -26,3 +26,17 @@ internal object PeopleQueryGate {
         return null
     }
 }
+
+internal object PeopleUnavailableCoveragePolicy {
+    fun report(eligibleMediaCount: Int): RetrievalChannelReport<SearchHit> {
+        return RetrievalChannelReport(
+            channel = RetrievalChannel.PEOPLE,
+            status = ChannelStatus.UNAVAILABLE,
+            eligibleCount = eligibleMediaCount.coerceAtLeast(0),
+            indexedCount = 0,
+            searchedCount = 0,
+            hits = emptyList(),
+            errorCode = "REVIEWED_IDENTITY_UNAVAILABLE",
+        )
+    }
+}

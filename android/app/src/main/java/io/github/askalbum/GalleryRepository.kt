@@ -618,15 +618,8 @@ class GalleryRepository(context: Context) {
             }
         }
         if (peopleUnavailable != null) {
-            val peopleReport = RetrievalChannelReport<SearchHit>(
-                RetrievalChannel.PEOPLE,
-                ChannelStatus.UNAVAILABLE,
-                database.allItems().count { it.kind == MediaKind.IMAGE },
-                peopleStatus.identityReadyFaceCount,
-                0,
-                emptyList(),
-                errorCode = "REVIEWED_IDENTITY_UNAVAILABLE",
-            )
+            val eligibleImageCount = database.allItems().count { it.kind == MediaKind.IMAGE }
+            val peopleReport = PeopleUnavailableCoveragePolicy.report(eligibleImageCount)
             emit(QueryProgress.InitialResults(plan, emptyList()))
             val outcome = finalizeOutcome(sessionId, parentResultSetId, SearchOutcome(
                 plan = plan,
@@ -636,8 +629,8 @@ class GalleryRepository(context: Context) {
                     detail = peopleUnavailable,
                     evidenceIds = emptyList(),
                     exactness = ResultExactness.PARTIAL_INDEX,
-                    indexedEligibleCount = peopleStatus.faceInstanceCount,
-                    totalEligibleCount = database.allItems().count { it.kind == MediaKind.IMAGE },
+                    indexedEligibleCount = peopleReport.indexedCount,
+                    totalEligibleCount = peopleReport.eligibleCount,
                     warnings = listOf(peopleUnavailable),
                     channelReports = listOf(peopleReport),
                 ),

@@ -1229,3 +1229,8 @@ People cluster summaries now expose both the user-selected representative face a
 - This is a read-only status correction; gallery media, face vectors, reviewed labels, and hidden-cluster data are preserved.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.PeopleQueryGateTest --tests io.github.anup42.askalbum.IndexingJobControlsTest --tests io.github.anup42.askalbum.PeopleClauseMergePolicyTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Keep unavailable People coverage in media units
+- The early People-unavailable answer now reports zero searched/indexed media instead of mixing face-instance counts with image counts.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.PeopleQueryGateTest --tests io.github.anup42.askalbum.RetrievalCoverageWordingTest --tests io.github.anup42.askalbum.RetrievalChannelEvidenceTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.

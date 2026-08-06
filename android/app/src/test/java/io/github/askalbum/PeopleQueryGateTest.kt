@@ -1,5 +1,6 @@
 package io.github.anup42.askalbum
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -41,6 +42,16 @@ class PeopleQueryGateTest {
         )
 
         assertTrue(reason.orEmpty().contains("Hidden or ignored"))
+    }
+
+    @Test
+    fun unavailablePeopleCoverageUsesMediaUnitsAndReportsNoSearch() {
+        val report = PeopleUnavailableCoveragePolicy.report(5_000)
+
+        assertEquals(5_000, report.eligibleCount)
+        assertEquals(0, report.indexedCount)
+        assertEquals(0, report.searchedCount)
+        assertEquals(ChannelStatus.UNAVAILABLE, report.status)
     }
 
     @Test
