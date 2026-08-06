@@ -14,7 +14,7 @@ data class IndexingJobControls(
     val mediaAnalysisEnabled: Boolean = true,
     val embeddingsEnabled: Boolean = true,
     val captionEmbeddingsEnabled: Boolean = true,
-    val peopleEnabled: Boolean = true,
+    val peopleEnabled: Boolean = false,
     val semanticMemoryEnabled: Boolean = true,
     val foregroundPaused: Boolean = false,
 ) {
@@ -42,7 +42,7 @@ class IndexingJobControlsStore(context: Context) {
         mediaAnalysisEnabled = preferences.getBoolean(IndexingJob.MEDIA_ANALYSIS.name, true),
         embeddingsEnabled = preferences.getBoolean(IndexingJob.EMBEDDINGS.name, true),
         captionEmbeddingsEnabled = preferences.getBoolean(IndexingJob.CAPTION_EMBEDDINGS.name, true),
-        peopleEnabled = preferences.getBoolean(IndexingJob.PEOPLE.name, true),
+        peopleEnabled = preferences.getBoolean(IndexingJob.PEOPLE.name, false),
         semanticMemoryEnabled = preferences.getBoolean(IndexingJob.SEMANTIC_MEMORY.name, true),
         foregroundPaused = preferences.getBoolean(FOREGROUND_PAUSED, false),
     )

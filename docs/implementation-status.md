@@ -1216,3 +1216,10 @@ People cluster summaries now expose both the user-selected representative face a
 - Retrieval coverage separates media with at least one searchable chunk from media whose complete eligible chunk set is indexed; no image vectors or stored captions were changed.
 - Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.CaptionVectorCoverageTest --tests io.github.anup42.askalbum.CaptionEmbeddingRetrievalTest --tests io.github.anup42.askalbum.RetrievalCoverageWordingTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
 - Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.
+
+### 2026-08-06 - Keep the People pipeline opt-in by default
+
+- The individual People indexing control now defaults off for new installations. Explicit consent enables the pipeline and schedules it; resetting People data disables the pipeline again.
+- Existing media and derived People data are untouched; this changes only the durable worker control and preserves the separate consent gate in the worker.
+- Tests/build: PASS - `:app:testFixtureCiDebugUnitTest --tests io.github.anup42.askalbum.IndexingJobControlsTest --tests io.github.anup42.askalbum.PeopleQueryGateTest --tests io.github.anup42.askalbum.IndexingReliabilityPolicyTest`, `:app:assembleConsumerDebug`, and `:app:assembleOfflineDemoDebug`.
+- Device validation: NOT RUN; the safe fixture device is unavailable and the protected production device remains untouched.

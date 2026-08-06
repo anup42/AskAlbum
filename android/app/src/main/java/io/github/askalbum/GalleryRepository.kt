@@ -239,14 +239,19 @@ class GalleryRepository(context: Context) {
     }
     fun peopleIndexStatus(): PeopleIndexStatus = database.peopleIndexStatus()
 
-    fun enablePeopleIndexing(): PeopleIndexStatus = database
-        .enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
-        .also { PeopleIndexScheduler.schedule(appContext) }
+    fun enablePeopleIndexing(): PeopleIndexStatus {
+        val status = database.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+        indexingJobControlsStore.setEnabled(IndexingJob.PEOPLE, true)
+        PeopleIndexScheduler.schedule(appContext)
+        return status
+    }
 
     fun resetPeopleIndex(): PeopleIndexStatus {
         PeopleIndexScheduler.cancelAndWait(appContext)
         kotlinx.coroutines.runBlocking { services.faceVectorStore.clear() }
-        return database.resetPeopleIndex()
+        val status = database.resetPeopleIndex()
+        indexingJobControlsStore.setEnabled(IndexingJob.PEOPLE, false)
+        return status
     }
 
     fun onFaceModelInstalled(): PeopleIndexStatus {

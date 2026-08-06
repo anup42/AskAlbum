@@ -12,4 +12,12 @@ class IndexingJobControlsTest {
         assertFalse(controls.isEnabled(IndexingJob.CAPTION_EMBEDDINGS))
         assertTrue(controls.isEnabled(IndexingJob.EMBEDDINGS))
     }
+
+    @Test
+    fun peoplePipelineDefaultsOffUntilExplicitConsentEnablesIt() {
+        val controls = IndexingJobControls()
+
+        assertFalse(controls.isEnabled(IndexingJob.PEOPLE))
+        assertTrue(controls.withJob(IndexingJob.PEOPLE, true).isEnabled(IndexingJob.PEOPLE))
+    }
 }
