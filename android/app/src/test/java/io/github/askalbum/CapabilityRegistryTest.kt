@@ -236,7 +236,47 @@ class CapabilityRegistryTest {
             evidence = listOf(EvidenceRecord("secret:password", "secret", "document_password", "mango-tree-2048", .95f)),
         )
 
-        assertTrue(requiresAuthenticationForAnswer(emptyList(), listOf(password)))
+        val plan = GalleryQueryPlan(
+            originalQuery = "What is the Wi-Fi password?",
+            intent = QueryIntent.ANSWER_FACT,
+            ocrClause = OcrClause(requestedField = "password"),
+        )
+
+        assertTrue(requiresAuthenticationForAnswer(plan, emptyList(), listOf(password)))
+    }
+
+    @Test
+    fun unrelatedSensitiveEvidenceDoesNotLockOrdinaryMediaAnswer() {
+        val password = hit("secret", "Wi-Fi", "INR 10.00", 1_700_000_000_000).copy(
+            evidence = listOf(EvidenceRecord("secret:password", "secret", "document_password", "mango-tree-2048", .95f)),
+        )
+        val ordinary = GalleryQueryPlan(
+            originalQuery = "Show screenshots",
+            intent = QueryIntent.FIND_MEDIA,
+            terms = listOf("screenshot"),
+        )
+        val differentProtectedField = GalleryQueryPlan(
+            originalQuery = "What is the latest phone number?",
+            intent = QueryIntent.ANSWER_FACT,
+            ocrClause = OcrClause(requestedField = "phone"),
+        )
+
+        assertFalse(requiresAuthenticationForAnswer(ordinary, listOf(password), emptyList()))
+        assertFalse(requiresAuthenticationForAnswer(differentProtectedField, listOf(password), emptyList()))
+    }
+
+    @Test
+    fun sensitiveAggregationStillRequiresAuthentication() {
+        val receipt = hit("receipt", "Swiggy", "INR 1,248.00", 1_700_000_000_000).copy(
+            evidence = listOf(EvidenceRecord("receipt:total", "receipt", "document_total", "INR 1,248.00", .95f)),
+        )
+        val plan = GalleryQueryPlan(
+            originalQuery = "Sum my receipt totals",
+            intent = QueryIntent.SUM,
+            aggregation = AggregationSpec(AggregationOperation.SUM, "total"),
+        )
+
+        assertTrue(requiresAuthenticationForAnswer(plan, emptyList(), listOf(receipt)))
     }
 
     @Test

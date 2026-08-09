@@ -12,6 +12,9 @@ Last reviewed: 2026-08-09
 - Connected-device testing exposed and corrected an executor double-lock: the
   repository now requests a separate internal authorized deterministic render
   for the one-time store while the public/default executor remains locked.
+- Authentication is scoped to the protected OCR field requested by fact, list,
+  sum, or min/max execution. Unrelated private OCR in a ranked media candidate
+  no longer locks an ordinary media answer or creates a misleading unlock flow.
 - Added focused one-use and eviction regressions; no persisted gallery data,
   People corrections, vectors, captions, consent, or model packs are modified.
 

@@ -59,6 +59,15 @@ class QueryCompilerTest {
     }
 
     @Test
+    fun wifiPasswordAcceptanceQueryUsesProtectedFactExecutorWithoutGemma() {
+        val plan = compiler.compile("What is the Wi-Fi password in the latest screenshot?")
+
+        assertEquals(QueryIntent.ANSWER_FACT, plan.intent)
+        assertEquals("password", plan.ocrClause?.requestedField)
+        assertEquals(SortSpec.CAPTURE_TIME_DESC, plan.sort)
+    }
+
+    @Test
     fun nonexistentReceiptMerchantIsARequiredDocumentConstraint() {
         val plan = compiler.compile("Show a receipt from a merchant that does not exist.")
 

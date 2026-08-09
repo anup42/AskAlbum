@@ -41,9 +41,27 @@ internal fun isDeterministicMetadataCount(
     !verificationApplied
 
 internal fun requiresAuthenticationForAnswer(
+    plan: GalleryQueryPlan,
     rankedHits: List<SearchHit>,
     deterministicAnswerHits: List<SearchHit>,
-): Boolean = (rankedHits + deterministicAnswerHits).any(SensitiveEvidencePolicy::requiresAuthentication)
+): Boolean {
+    val requested = when (plan.intent) {
+        QueryIntent.ANSWER_FACT,
+        QueryIntent.DOCUMENT_QA,
+        QueryIntent.LIST,
+        -> OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)
+        QueryIntent.SUM,
+        QueryIntent.MIN_MAX,
+        -> OcrFactAllowlist.resolve(plan.aggregation?.field)
+        else -> null
+    }?.takeIf(OcrFactField::sensitive) ?: return false
+    return (rankedHits + deterministicAnswerHits)
+        .asSequence()
+        .flatMap(SearchHit::evidence)
+        .any { evidence ->
+            evidence.sourceField == requested.sourceField && SensitiveEvidencePolicy.requiresAuthentication(evidence)
+        }
+}
 
 class GalleryRepository(context: Context) {
     private val appContext = context.applicationContext
@@ -1314,7 +1332,7 @@ class GalleryRepository(context: Context) {
             exactPredicateMatchCount != null -> exactPredicateMatchCount
             else -> ranked.size
         }
-        val requiresAuthentication = requiresAuthenticationForAnswer(hits, deterministicAnswerHits)
+        val requiresAuthentication = requiresAuthenticationForAnswer(plan, hits, deterministicAnswerHits)
         val deterministicAnswer = buildAnswer(
             plan,
             hits,
