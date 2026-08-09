@@ -2,6 +2,19 @@
 
 Last reviewed: 2026-08-09
 
+## 2026-08-09 - Multilingual retrieval parity acceptance gate
+
+- Connected fixture acceptance: **PASS** on `SM-F966B` for run `multi_20260809_122000`.
+- English, Hindi, and Hinglish each ranked an intended Goa fixture at position `1`; measured MRR was `1.0`.
+- Query latency was `179 ms` English, `102 ms` Hindi, and `107 ms` Hinglish for the isolated 84-item corpus.
+- Hard-filtered eligible coverage was `4/4` for lexical, semantic, caption, caption-embedding, and event channels in every language.
+- The Hindi deterministic planner now classifies Unicode image nouns as `MediaScope.IMAGES`; the acceptance gate caught the prior `ALL` scope regression.
+- Fixture database and MediaStore cleanup each removed `84/84` run-scoped items with zero remaining; the consumer package timestamp stayed unchanged.
+
+- Added a run-scoped English, Hindi, and Hinglish retrieval benchmark over the public Goa fixture, with top-10 recall, MRR, rank-spread, evidence-closure, truthful-exactness, and pre-top-K eligible-coverage assertions.
+- Extended the safe connected-acceptance runner with an isolated `fixtureCiDebug` package path and explicit source-namespace component resolution.
+- The fixture runner preserves existing fixture data across replacement installs and always removes only its run-scoped imported rows and MediaStore assets.
+
 ## 2026-08-09 - Truthful follow-up scope status
 
 - Replaced the idle `Refining N results` label with `Follow-up scope: N saved results`; the retained set is conversational context, not active work.

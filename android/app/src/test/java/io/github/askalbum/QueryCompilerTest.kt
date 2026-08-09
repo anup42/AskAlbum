@@ -99,6 +99,7 @@ class QueryCompilerTest {
 
         assertEquals(listOf("goa"), plan.terms)
         assertEquals("goa", plan.place)
+        assertEquals(MediaScope.IMAGES, plan.mediaScope)
         assertEquals(Grouping.EVENT, plan.grouping)
         val range = plan.filter as FilterExpression.TimeRange
         assertEquals(Instant.parse("2025-01-01T00:00:00Z").toEpochMilli(), range.startEpochMs)
@@ -111,6 +112,17 @@ class QueryCompilerTest {
         assertEquals(listOf("goa"), plan.terms)
         assertEquals("गोवा", plan.semanticClauses.single().text)
         assertEquals("goa", plan.semanticClauses.single().canonicalText)
+        assertEquals(MediaScope.IMAGES, plan.mediaScope)
+    }
+
+    @Test
+    fun hindiFamilyPhotoQueryUsesImageScope() {
+        val plan = compiler.compile(
+            "\u092a\u093f\u091b\u0932\u0947 \u0938\u093e\u0932 \u0915\u0940 \u0917\u094b\u0935\u093e " +
+                "\u092b\u0948\u092e\u093f\u0932\u0940 \u092b\u094b\u091f\u094b \u0926\u093f\u0916\u093e\u0913\u0964",
+        )
+
+        assertEquals(MediaScope.IMAGES, plan.mediaScope)
     }
 
     @Test

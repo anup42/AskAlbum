@@ -133,7 +133,7 @@ class QueryCompiler(
             mediaScope = when {
                 "video" in terms || "videos" in terms -> MediaScope.VIDEOS
                 "pdf" in terms || "receipt" in terms || "document" in terms || (intent == QueryIntent.LIST && requestedField == "merchant") -> MediaScope.DOCUMENTS
-                normalized.split(' ').any { it in setOf("photo", "photos", "picture", "pictures", "image", "images") } -> MediaScope.IMAGES
+                normalized.split(' ').any { it in IMAGE_SCOPE_WORDS } -> MediaScope.IMAGES
                 else -> MediaScope.ALL
             },
             filter = timeFilter,
@@ -181,6 +181,21 @@ class QueryCompiler(
     }
 
     private companion object {
+        val IMAGE_SCOPE_WORDS = setOf(
+            "photo",
+            "photos",
+            "picture",
+            "pictures",
+            "image",
+            "images",
+            "\u092b\u093c\u094b\u091f\u094b",
+            "\u092b\u094b\u091f\u094b",
+            "\u092b\u094b\u091f\u094b\u0938",
+            "\u0924\u0938\u094d\u0935\u0940\u0930",
+            "\u0924\u0938\u094d\u0935\u0940\u0930\u0947\u0902",
+            "\u091a\u093f\u0924\u094d\u0930",
+            "\u091a\u093f\u0924\u094d\u0930\u094b\u0902",
+        )
         val TEMPORAL_FOLLOW_UP_WORDS = setOf("about", "last", "previous", "year", "what", "now", "pichle", "saal")
     }
 }
