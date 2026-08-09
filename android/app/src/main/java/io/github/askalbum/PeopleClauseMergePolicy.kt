@@ -8,11 +8,25 @@ internal object PeopleClauseMergePolicy {
         reviewedGroups: List<ReviewedPersonMatchGroup>,
         resolveReviewedIds: (String) -> Set<String>,
     ): List<PersonClause> {
-        val explicit = plannerClauses + detectedClauses
-        val explicitIds = explicit.flatMapTo(linkedSetOf()) { clause ->
-            resolveReviewedIds(clause.personId) + clause.personId
+        val canonicalPlanner = plannerClauses.flatMap { clause ->
+            canonicalize(
+                clause = clause,
+                resolvedIds = resolveReviewedIds(clause.personId),
+                reviewedGroups = reviewedGroups,
+                retainUnresolved = clause.hardness == ConstraintStrength.HARD,
+            )
         }
-        return (explicit + reviewedGroups.flatMap { group ->
+        val canonicalDetected = detectedClauses.flatMap { clause ->
+            canonicalize(
+                clause = clause,
+                resolvedIds = resolveReviewedIds(clause.personId),
+                reviewedGroups = reviewedGroups,
+                retainUnresolved = true,
+            )
+        }
+        val explicit = canonicalPlanner + canonicalDetected
+        val explicitIds = explicit.mapTo(linkedSetOf(), PersonClause::personId)
+        val combined = explicit + reviewedGroups.flatMap { group ->
             if (group.personIds.any(explicitIds::contains)) {
                 emptyList()
             } else {
@@ -20,6 +34,31 @@ internal object PeopleClauseMergePolicy {
                     PersonClause(personId = personId, alternativeGroup = group.alternativeGroup)
                 }
             }
-        }).distinctBy { Triple(it.personId, it.mustBePresent, it.alternativeGroup) }
+        }
+        val strongest = linkedMapOf<Triple<String, Boolean, String?>, PersonClause>()
+        combined.forEach { clause ->
+            val key = Triple(clause.personId, clause.mustBePresent, clause.alternativeGroup)
+            val current = strongest[key]
+            if (current == null || current.hardness == ConstraintStrength.SOFT && clause.hardness == ConstraintStrength.HARD) {
+                strongest[key] = clause
+            }
+        }
+        return strongest.values.toList()
+    }
+
+    private fun canonicalize(
+        clause: PersonClause,
+        resolvedIds: Set<String>,
+        reviewedGroups: List<ReviewedPersonMatchGroup>,
+        retainUnresolved: Boolean,
+    ): List<PersonClause> {
+        if (resolvedIds.isEmpty()) return if (retainUnresolved) listOf(clause) else emptyList()
+        return resolvedIds.sorted().map { personId ->
+            val reviewedGroup = reviewedGroups.firstOrNull { personId in it.personIds }
+            clause.copy(
+                personId = personId,
+                alternativeGroup = clause.alternativeGroup ?: reviewedGroup?.alternativeGroup,
+            )
+        }
     }
 }

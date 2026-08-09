@@ -647,13 +647,17 @@ class GalleryRepository private constructor(
         val sanitizedPatchedPlan = patchedPlan.copy(
             peopleClauses = PeopleClauseSanitizer.sanitize(patchedPlan.peopleClauses),
         )
-        val plan = sanitizedPatchedPlan.copy(
+        val peopleMergedPlan = sanitizedPatchedPlan.copy(
             peopleClauses = PeopleClauseMergePolicy.merge(
                 plannerClauses = sanitizedPatchedPlan.peopleClauses,
                 detectedClauses = PeopleQueryReferenceDetector.detect(query),
                 reviewedGroups = database.resolveReviewedPersonGroups(query),
                 resolveReviewedIds = database::resolveReviewedPersonIds,
             ),
+        )
+        val plan = PeopleRetrievalConstraintPolicy.apply(
+            peopleMergedPlan,
+            database::resolveReviewedPersonIds,
         )
         sessionId?.let { sessionPlans[it] = plan }
         emit(QueryProgress.PlanReady(plan))

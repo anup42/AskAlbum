@@ -13,7 +13,10 @@ class PeopleClauseMergePolicyTest {
             resolveReviewedIds = { if (it == "wife") setOf("wife-cluster") else emptySet() },
         )
 
-        assertEquals(listOf(PersonClause("wife", mustBePresent = false)), result)
+        assertEquals(
+            listOf(PersonClause("wife-cluster", mustBePresent = false, alternativeGroup = "wife_group")),
+            result,
+        )
     }
 
     @Test
@@ -32,5 +35,49 @@ class PeopleClauseMergePolicyTest {
             ),
             result.toSet(),
         )
+    }
+
+    @Test
+    fun unresolvedSoftPlannerIdentityCannotBlockResolvedQueryReferences() {
+        val result = PeopleClauseMergePolicy.merge(
+            plannerClauses = listOf(
+                PersonClause("user", hardness = ConstraintStrength.SOFT),
+                PersonClause("wife", hardness = ConstraintStrength.SOFT),
+            ),
+            detectedClauses = listOf(PersonClause("me"), PersonClause("wife")),
+            reviewedGroups = listOf(
+                ReviewedPersonMatchGroup("me_group", setOf("me-cluster")),
+                ReviewedPersonMatchGroup("wife_group", setOf("wife-cluster")),
+            ),
+            resolveReviewedIds = {
+                when (it) {
+                    "me" -> setOf("me-cluster")
+                    "wife" -> setOf("wife-cluster")
+                    else -> emptySet()
+                }
+            },
+        )
+
+        assertEquals(
+            setOf(
+                PersonClause("me-cluster", alternativeGroup = "me_group"),
+                PersonClause("wife-cluster", alternativeGroup = "wife_group"),
+            ),
+            result.toSet(),
+        )
+    }
+
+    @Test
+    fun unresolvedHardPlannerIdentityRemainsFailClosed() {
+        val unresolved = PersonClause("unknown-person", hardness = ConstraintStrength.HARD)
+
+        val result = PeopleClauseMergePolicy.merge(
+            plannerClauses = listOf(unresolved),
+            detectedClauses = emptyList(),
+            reviewedGroups = emptyList(),
+            resolveReviewedIds = { emptySet() },
+        )
+
+        assertEquals(listOf(unresolved), result)
     }
 }

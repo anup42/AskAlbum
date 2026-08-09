@@ -2287,8 +2287,19 @@ class GalleryDatabase(
         return target
     }
 
-    fun resolveReviewedPersonIds(query: String): Set<String> =
-        resolveReviewedPersonGroups(query).flatMapTo(linkedSetOf(), ReviewedPersonMatchGroup::personIds)
+    fun resolveReviewedPersonIds(query: String): Set<String> {
+        val requested = query.trim()
+        if (requested.isBlank()) return emptySet()
+        val direct = readableDatabase.rawQuery(
+            "SELECT id FROM person_cluster WHERE id=? AND reviewed=1 AND hidden=0",
+            arrayOf(requested),
+        ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+        return if (direct.isNotEmpty()) {
+            direct
+        } else {
+            resolveReviewedPersonGroups(query).flatMapTo(linkedSetOf(), ReviewedPersonMatchGroup::personIds)
+        }
+    }
 
     internal fun resolveReviewedPersonGroups(query: String): List<ReviewedPersonMatchGroup> {
         val normalizedQuery = PersonIdentityNormalization.normalize(query)

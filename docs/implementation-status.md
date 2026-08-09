@@ -2,6 +2,32 @@
 
 Last reviewed: 2026-08-09
 
+## 2026-08-09 - Real multilingual People resolution
+
+- A real E2B query exposed two production defects. Gemma could add an
+  unsupported soft identity such as `user`, which made an otherwise resolvable
+  Me-and-Wife query fail the identity-readiness gate. A Hindi plan could then
+  restate only `me and wife` as a whole-media semantic clause, causing bounded
+  vector retrieval to discard the deterministically eligible image.
+- Reviewed labels, relationships, aliases, and direct cluster IDs are now
+  canonicalized to visible reviewed cluster IDs before People gating. Duplicate
+  clusters for one identity remain OR alternatives; different identities remain
+  AND requirements. Unsupported soft planner inventions are removed, while
+  unresolved hard or deterministic references still fail closed.
+- Once reviewed People are deterministic hard filters, identity-only terms and
+  whole-media clauses are removed from lexical/vector retrieval. Actual visual
+  predicates such as `wife cutting cake` and person-bound conditions such as
+  `Me is wearing red` remain intact.
+- PASS on `SM-F966B`: the retained E2B planner handled English, Hindi, and
+  Hinglish Me-and-Wife queries with one Gemma initialization. Each query reduced
+  a two-image scope to the single image containing both reviewed clusters; the
+  Me-only image never reached verification or final results. LiteRT-LM reported
+  `GPU`, `mtpSupported=true`, and `mtpEnabled=true`.
+- The full fixture unit suite, repository-level swapped-person verifier gate,
+  consumer/fixture/offline builds, and offline no-Internet manifest gate passed.
+  Replacement installation preserved the consumer marker and retained database,
+  index, caption, People, consent, and model stores.
+
 ## 2026-08-09 - Repository-level person verification closure
 
 - `ProductionPersonVerifierDeviceTest` now enters through
