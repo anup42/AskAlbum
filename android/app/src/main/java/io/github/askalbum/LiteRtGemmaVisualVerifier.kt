@@ -108,32 +108,36 @@ class LiteRtGemmaVisualVerifier(
                                 val candidate = CandidateVerification(hit.item.id, decoded.payload.conditions, overallMatch)
                                 evaluations += candidate
                                 if (candidate.overallMatch) accepted += hit.item.id
-                                decoded.payload.conditions.filter { evaluation ->
-                                    val spec = boundConditions.single { it.id == evaluation.id }
-                                    SemanticPolarityNormalizer.conditionMatched(spec, evaluation)
-                                }.forEach { evaluation ->
-                                    val spec = boundConditions.single { it.id == evaluation.id }
-                                    val binding = spec.relationToPerson?.let { clusterId ->
-                                        bindings.singleOrNull { it.clusterId == clusterId }
-                                    }
-                                    evidence += visualVerificationEvidence(
-                                        mediaId = hit.item.id,
-                                        spec = spec,
-                                        evaluation = evaluation,
-                                        binding = binding,
-                                        producerVersion = producerVersion(status),
-                                        timestampMs = loaded.timestampMs,
-                                    )
-                                    if (binding != null) {
+                                PersonVerificationResultPolicy.resolve(
+                                    conditions = boundConditions,
+                                    evaluations = decoded.payload.conditions,
+                                    bindings = bindings,
+                                ).forEach { resolved ->
+                                    if (resolved.binding != null) {
                                         database.saveVerifiedPersonAttributeFact(
                                             mediaId = hit.item.id,
-                                            clusterId = binding.clusterId,
-                                            predicate = spec.text,
-                                            value = evaluation.verdict.name,
-                                            confidence = evaluation.confidence,
-                                            region = listOf(binding.left, binding.top, binding.right, binding.bottom),
+                                            clusterId = resolved.binding.clusterId,
+                                            predicate = resolved.spec.text,
+                                            value = resolved.evaluation.verdict.name,
+                                            confidence = resolved.evaluation.confidence,
+                                            region = listOf(
+                                                resolved.binding.left,
+                                                resolved.binding.top,
+                                                resolved.binding.right,
+                                                resolved.binding.bottom,
+                                            ),
                                             modelVersion = producerVersion(status),
-                                            verdict = evaluation.verdict,
+                                            verdict = resolved.evaluation.verdict,
+                                        )
+                                    }
+                                    if (resolved.matched) {
+                                        evidence += visualVerificationEvidence(
+                                            mediaId = hit.item.id,
+                                            spec = resolved.spec,
+                                            evaluation = resolved.evaluation,
+                                            binding = resolved.binding,
+                                            producerVersion = producerVersion(status),
+                                            timestampMs = loaded.timestampMs,
                                         )
                                     }
                                 }

@@ -1421,3 +1421,12 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: merged `offlineDemoDebug` manifest contains no `android.permission.INTERNET` permission.
 - PASS: fixture cleanup removed 84/84 database rows and 84/84 MediaStore items with zero remaining; consumer `lastUpdateTime` remained `2026-08-09 11:30:02`.
 - NOT RUN: production-model Gemma planner/composer behavior was not exercised by this fixture executor gate.
+
+## 2026-08-09 - Identity-bound verification verdict cache
+
+- Person-conditioned visual verification now resolves every decoded verdict against the reviewed cluster before persistence. `VERIFIED_FALSE`, `AMBIGUOUS`, and `NOT_VISIBLE` are cached as well as `VERIFIED_TRUE`; only polarity-matching evaluations become returned evidence.
+- The connected acceptance runner now accepts any successful non-empty AndroidJUnit run instead of falsely rejecting classes with more than one test. Zero-test, failed, and non-success instrumentation results remain rejected.
+- PASS: focused verifier, prompt-binding, polarity, and video-keyframe JVM tests; full `testFixtureCiDebugUnitTest`; `assembleFixtureCiDebug`; `assembleFixtureCiDebugAndroidTest`; and `assembleOfflineDemoDebug`.
+- PASS: connected fixture run `identity_video_cache_20260809` executed both `PersonVerificationBindingsDatabaseTest` cases and `SeededVideoKeyframeAcceptanceTest`, including reviewed/unreviewed identity labels, parent-video return, timestamp evidence, and play-at-match behavior.
+- PASS: run-scoped fixture cleanup completed before success was reported. The consumer package, its gallery indexes, People corrections, consent, and model packs were not modified.
+- NOT RUN: a real Gemma model inference for the swapped-person clothing case; the connected gate validates deterministic identity binding and video evidence with fixture engines.
