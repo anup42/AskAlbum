@@ -2,6 +2,36 @@
 
 Last reviewed: 2026-08-09
 
+## 2026-08-09 - Real repository person-appearance binding
+
+- A retained-E2B `GalleryRepository.search()` acceptance test exposed two
+  production failures: the planner represented explicit first person as an
+  unresolved `user` identity while binding `wearing white` to Wife, and the
+  verifier rejected a correct conditions-only JSON response because Gemma
+  omitted the advisory `overallMatch` field.
+- Explicit `I`, `main`, `mai`, and `मैं` references now resolve to the reviewed
+  Me cluster. A deterministic visual-condition policy binds an explicit
+  wearing, holding, carrying, using, standing, sitting, or interacting clause
+  to the nearest unambiguous reviewed subject before retrieval and verification.
+  Unknown or ambiguous identities remain fail-closed.
+- The verifier schema now requires only the typed condition verdicts. It still
+  rejects unknown fields, missing/duplicate IDs, invalid confidence, and invalid
+  verdicts; Kotlin exclusively derives polarity and overall acceptance. Older
+  responses containing a boolean `overallMatch` remain compatible.
+- PASS on `SM-F966B` with the retained E2B pack and production planner/verifier:
+  `Show pictures with my wife where I am wearing white` bound white to Me,
+  cached `VERIFIED_FALSE`, and returned zero hits/evidence/claims. The matching
+  Wife-white-dress query cached `VERIFIED_TRUE` and returned the image with
+  Wife-bound query-verification evidence.
+- Both repository queries ran on `GPU`, required one vision call each, and used
+  one shared Gemma initialization across planning and verification. The fixture
+  unit suite, connected deterministic verifier test, consumer/fixture/offline
+  builds, and offline no-Internet manifest gate passed.
+- Validation used an isolated private database and synthetic image. Replacement
+  installs preserved the consumer sandbox exactly at `2072` database blocks and
+  `11612162` file blocks; no uninstall, clear-data, reset, consent change, or
+  model replacement occurred. This does not claim broad real-gallery acceptance.
+
 ## 2026-08-09 - Real multilingual People resolution
 
 - A real E2B query exposed two production defects. Gemma could add an

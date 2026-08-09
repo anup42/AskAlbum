@@ -80,4 +80,19 @@ class PeopleClauseMergePolicyTest {
 
         assertEquals(listOf(unresolved), result)
     }
+
+    @Test
+    fun hardPlannerUserCanonicalizesOnlyWhenQueryExplicitlyDetectedMe() {
+        val result = PeopleClauseMergePolicy.merge(
+            plannerClauses = listOf(PersonClause("user", hardness = ConstraintStrength.HARD)),
+            detectedClauses = listOf(PersonClause("me")),
+            reviewedGroups = listOf(ReviewedPersonMatchGroup("me_group", setOf("me-cluster"))),
+            resolveReviewedIds = { if (it == "me") setOf("me-cluster") else emptySet() },
+        )
+
+        assertEquals(
+            listOf(PersonClause("me-cluster", alternativeGroup = "me_group")),
+            result,
+        )
+    }
 }

@@ -8,7 +8,11 @@ class GemmaVerificationCodec {
         require(expected.isNotEmpty() && expected.size <= MAX_CONDITIONS) { "Invalid verification condition count" }
         require(expected.map { it.id }.distinct().size == expected.size) { "Duplicate expected condition ID" }
         val json = parseSingleObject(response)
-        json.requireExactKeys("conditions", "overallMatch")
+        val topLevelKeys = json.keys().asSequence().toSet()
+        require(
+            topLevelKeys == setOf("conditions") ||
+                topLevelKeys == setOf("conditions", "overallMatch"),
+        ) { "Verifier emitted missing or unsupported fields" }
         val array = json.getJSONArray("conditions")
         require(array.length() == expected.size) { "Verifier must return every condition exactly once" }
         val byId = buildMap {
@@ -39,9 +43,9 @@ class GemmaVerificationCodec {
             }
         }
         val ordered = expected.map { requireNotNull(byId[it.id]) { "Verifier omitted a condition" } }
-        // Keep the field in the strict schema, but never trust the model to apply
-        // clause polarity. Kotlin owns positive/negative matching below.
-        json.getBoolean("overallMatch")
+        // Older model responses may include this advisory field. Validate its type
+        // when present, but never trust it to apply clause polarity or acceptance.
+        if (json.has("overallMatch")) json.getBoolean("overallMatch")
         val kotlinOverall = expected.zip(ordered)
             .filter { (spec, _) -> spec.hardness == ConstraintStrength.HARD }
             .all { (spec, evaluation) -> SemanticPolarityNormalizer.conditionMatched(spec, evaluation) }
@@ -57,10 +61,10 @@ class GemmaVerificationCodec {
         Return exactly one JSON object and no markdown.
         Error: ${JSONObject.quote(error.take(240))}
         Required condition IDs in this exact set: ${expected.joinToString(prefix = "[", postfix = "]") { JSONObject.quote(it.id) }}
-        Required shape: {"conditions":[{"id":"c1","verdict":"VERIFIED_TRUE","confidence":0.95}],"overallMatch":true}
+        Required shape: {"conditions":[{"id":"c1","verdict":"VERIFIED_TRUE","confidence":0.95}]}
         verdict must be VERIFIED_TRUE, VERIFIED_FALSE, AMBIGUOUS, or NOT_VISIBLE.
         Include every required ID exactly once. confidence must be a finite number from 0 to 1.
-        overallMatch is advisory; Kotlin applies each condition's polarity and derives the accepted result.
+        Kotlin applies each condition's polarity and derives the accepted result.
         Do not add media IDs, paths, URIs, explanations, boxes, tools, or any other fields.
         Invalid response: ${JSONObject.quote(invalidResponse.take(1200))}
     """.trimIndent()

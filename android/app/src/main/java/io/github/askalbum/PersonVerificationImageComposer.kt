@@ -124,7 +124,12 @@ internal object PersonVerificationPromptBinding {
             text = expandOtherPersonPredicate(text, bindings)
             val bound = explicit ?: identityBindings.singleOrNull()?.takeIf { condition.subject == SemanticSubject.PERSON }
             if (bound != null && bound.stableLabel.lowercase(Locale.ROOT) !in text.lowercase(Locale.ROOT)) {
-                text = "${bound.stableLabel}: $text"
+                val predicate = text.trim()
+                text = if (GERUND_VISUAL_PREDICATE.containsMatchIn(predicate)) {
+                    "${bound.stableLabel} is $predicate"
+                } else {
+                    "${bound.stableLabel}: $predicate"
+                }
             }
             condition.copy(text = text, relationToPerson = bound?.clusterId ?: condition.relationToPerson)
         }
@@ -156,5 +161,8 @@ internal object PersonVerificationPromptBinding {
 
     private val OTHER_PERSON_PATTERN = Regex(
         "(?i)^(?:any\\s+)?(?:visible\\s+)?person\\s+other\\s+than\\s+(P\\d+)\\s+(?:is\\s+)?(.+)$",
+    )
+    private val GERUND_VISUAL_PREDICATE = Regex(
+        "(?i)^(wearing|holding|carrying|using|standing|sitting|interacting)\\b",
     )
 }

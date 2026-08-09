@@ -79,6 +79,26 @@ class PersonVerificationPromptBindingTest {
         )
     }
 
+    @Test
+    fun terseGerundPredicateBecomesGrammaticalLabelledCondition() {
+        val result = PersonVerificationPromptBinding.bind(
+            conditions = listOf(
+                VerificationConditionSpec(
+                    id = "c1",
+                    text = "wearing white",
+                    polarity = Polarity.POSITIVE,
+                    hardness = ConstraintStrength.HARD,
+                    subject = SemanticSubject.PERSON,
+                    relationToPerson = "me-cluster",
+                ),
+            ),
+            bindings = listOf(binding("me-cluster", "P1", setOf("Me"))),
+        ).single()
+
+        assertEquals("P1 is wearing white", result.text)
+        assertEquals("me-cluster", result.relationToPerson)
+    }
+
     private fun binding(clusterId: String, label: String, terms: Set<String>) = PersonVerificationBinding(
         faceId = "$clusterId:face",
         clusterId = clusterId,

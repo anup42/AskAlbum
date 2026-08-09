@@ -8,7 +8,7 @@ internal object PeopleQueryReferenceDetector {
     private data class Token(val value: String)
 
     private val tokenPattern = Regex("[\\p{L}\\p{M}\\p{N}]+")
-    private val knownReferences = listOf(
+    private val canonicalReferences = listOf(
         "me", "myself", "wife", "husband", "spouse", "partner", "mother", "mom", "mum",
         "father", "dad", "brother", "sister", "child", "son", "daughter", "friend",
         "\u092d\u0948\u092f\u093e", // bhaiya
@@ -25,7 +25,15 @@ internal object PeopleQueryReferenceDetector {
         "\u092c\u0947\u091f\u093e", // son
         "\u092c\u0947\u091f\u0940", // daughter
         "\u092c\u091a\u094d\u091a\u093e", // child
-    ).map(PersonIdentityNormalization::normalize).distinct()
+    ).associate { reference ->
+        PersonIdentityNormalization.normalize(reference) to PersonIdentityNormalization.normalize(reference)
+    }
+    private val referenceAliases = canonicalReferences + listOf(
+        "i",
+        "main",
+        "mai",
+        "\u092e\u0948\u0902", // I / me
+    ).associate { alias -> PersonIdentityNormalization.normalize(alias) to "me" }
 
     private val negationTerms = setOf(
         "not", "no", "without", "exclude", "excluding", "except",
@@ -43,9 +51,9 @@ internal object PeopleQueryReferenceDetector {
             .toList()
         if (tokens.isEmpty()) return emptyList()
 
-        return knownReferences.flatMap { reference ->
+        return referenceAliases.flatMap { (queryToken, personReference) ->
             val positions = tokens.withIndex()
-                .filter { (_, token) -> token.value == reference }
+                .filter { (_, token) -> token.value == queryToken }
                 .map { it.index }
             if (positions.isEmpty()) return@flatMap emptyList()
 
@@ -56,16 +64,19 @@ internal object PeopleQueryReferenceDetector {
                     tokens.subList(index + 1, end).none { it.value in postfixNegationTerms }
             }
             when {
-                polarities.all { !it } -> listOf(PersonClause(reference, mustBePresent = false))
-                polarities.all { it } -> listOf(PersonClause(reference))
+                polarities.all { !it } -> listOf(PersonClause(personReference, mustBePresent = false))
+                polarities.all { it } -> listOf(PersonClause(personReference))
                 else -> listOf(
                     // Contradictory mentions fail closed instead of broadening the search.
-                    PersonClause(reference),
-                    PersonClause(reference, mustBePresent = false),
+                    PersonClause(personReference),
+                    PersonClause(personReference, mustBePresent = false),
                 )
             }
         }.distinctBy { it.personId to it.mustBePresent }
     }
+
+    fun canonicalReference(token: String): String? =
+        referenceAliases[PersonIdentityNormalization.normalize(token)]
 
     private const val NEGATION_LOOKBACK = 3
 }

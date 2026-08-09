@@ -8,10 +8,20 @@ internal object PeopleClauseMergePolicy {
         reviewedGroups: List<ReviewedPersonMatchGroup>,
         resolveReviewedIds: (String) -> Set<String>,
     ): List<PersonClause> {
+        val firstPersonDetected = detectedClauses.any { clause ->
+            clause.mustBePresent && PeopleQueryReferenceDetector.canonicalReference(clause.personId) == "me"
+        }
         val canonicalPlanner = plannerClauses.flatMap { clause ->
+            val resolvedIds = resolveReviewedIds(clause.personId).ifEmpty {
+                if (firstPersonDetected && isGenericFirstPersonPlaceholder(clause.personId)) {
+                    resolveReviewedIds("me")
+                } else {
+                    emptySet()
+                }
+            }
             canonicalize(
                 clause = clause,
-                resolvedIds = resolveReviewedIds(clause.personId),
+                resolvedIds = resolvedIds,
                 reviewedGroups = reviewedGroups,
                 retainUnresolved = clause.hardness == ConstraintStrength.HARD,
             )
@@ -45,6 +55,9 @@ internal object PeopleClauseMergePolicy {
         }
         return strongest.values.toList()
     }
+
+    private fun isGenericFirstPersonPlaceholder(value: String): Boolean =
+        PersonIdentityNormalization.normalize(value) in setOf("user", "self", "myself", "me", "i")
 
     private fun canonicalize(
         clause: PersonClause,

@@ -18,6 +18,7 @@ class LiteRtGemmaVisualVerifier(
     private val imageLoader: GalleryImageLoader = GalleryImageLoader(context.applicationContext),
     private val compiler: BoundedGemmaVerificationCompiler = BoundedGemmaVerificationCompiler(),
     private val modelStatus: () -> ModelPackStatus = modelPacks::status,
+    private val candidateErrorObserver: ((Throwable) -> Unit)? = null,
 ) : CandidateVerifier {
     override suspend fun verifyWhenNeeded(plan: GalleryQueryPlan, candidates: List<SearchHit>): VerificationResult {
         if (!VisualVerificationPolicy.requiresVerification(plan)) {
@@ -144,6 +145,7 @@ class LiteRtGemmaVisualVerifier(
                                 }
                             }.onFailure { error ->
                                 if (error is CancellationException) throw error
+                                candidateErrorObserver?.invoke(error)
                                 failures += VerificationFailure(hit.item.id, sanitize(error))
                             }
                     }
@@ -225,13 +227,13 @@ class LiteRtGemmaVisualVerifier(
             For synthetic cards or diagrams, visible labels and illustrated clothing are valid image evidence.
             Query context: ${JSONObject.quote(plan.originalQuery)}
             Conditions: $array
-            Required shape: {"conditions":[{"id":"c1","verdict":"VERIFIED_TRUE","confidence":0.95}],"overallMatch":true}
+            Required shape: {"conditions":[{"id":"c1","verdict":"VERIFIED_TRUE","confidence":0.95}]}
             verdict must be VERIFIED_TRUE only when the predicate is visibly attached to the requested P-label.
             Use VERIFIED_FALSE only when the relevant body region is visible and contradicts the predicate.
             Use NOT_VISIBLE when the required head, torso, legs, feet, or hands are cropped, occluded, or too unclear.
             Use AMBIGUOUS when multiple bodies or objects could be associated with the labelled face.
             Include every supplied ID exactly once. confidence must be from 0 to 1.
-            overallMatch is advisory; Kotlin deterministically applies HARD constraints and polarity.
+            Kotlin deterministically applies HARD constraints and polarity.
             Never emit media IDs, paths, URIs, boxes, tools, or additional fields.
         """.trimIndent()
     }

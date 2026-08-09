@@ -38,6 +38,17 @@ class GemmaVerificationCodecTest {
     }
 
     @Test
+    fun acceptsConditionsOnlyAndDerivesOverallMatchInKotlin() {
+        val decoded = codec.decode(
+            """{"conditions":[{"id":"c1","verdict":"VERIFIED_FALSE","confidence":0.99}]}""",
+            listOf(condition("c1", ConstraintStrength.HARD)),
+        )
+
+        assertFalse(decoded.overallMatch)
+        assertEquals(PersonVisualVerdict.VERIFIED_FALSE, decoded.conditions.single().verdict)
+    }
+
+    @Test
     fun derivesNegativeHardConditionFromThePositivePredicateResult() {
         val expected = listOf(
             condition("c1", ConstraintStrength.HARD).copy(polarity = Polarity.NEGATIVE),

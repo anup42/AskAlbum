@@ -655,8 +655,13 @@ class GalleryRepository private constructor(
                 resolveReviewedIds = database::resolveReviewedPersonIds,
             ),
         )
+        val personConditionCanonicalizedPlan = PersonConditionCanonicalizationPolicy.apply(
+            query = query,
+            plan = peopleMergedPlan,
+            resolveReviewedIds = database::resolveReviewedPersonIds,
+        )
         val plan = PeopleRetrievalConstraintPolicy.apply(
-            peopleMergedPlan,
+            personConditionCanonicalizedPlan,
             database::resolveReviewedPersonIds,
         )
         sessionId?.let { sessionPlans[it] = plan }
