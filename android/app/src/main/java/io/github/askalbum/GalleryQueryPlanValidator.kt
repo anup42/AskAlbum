@@ -25,21 +25,26 @@ class GalleryQueryPlanValidator(
         if (plan.terms.size > 16) errors += "Too many retrieval terms"
         plan.terms.forEach { validateText("term", it, errors, 80) }
         plan.place?.let { validateText("place", it, errors, 120) }
+        if (plan.comparisonScopes.size > 4) errors += "Too many comparison scopes"
+        plan.comparisonScopes.forEach { validateText("comparison scope", it, errors, 120) }
         if (plan.semanticClauses.size > 16) errors += "Too many semantic clauses"
         plan.semanticClauses.forEach {
             validateText("semantic clause", it.text, errors, 240)
             it.canonicalText?.let { text -> validateText("canonical clause", text, errors, 240) }
-            it.relationToPerson?.let { person -> validateIdentifier("person relation", person, errors) }
+            it.relationToPerson?.let { person -> validatePersonReference("person relation", person, errors) }
         }
         if (plan.peopleClauses.size > 8) errors += "Too many people clauses"
         plan.peopleClauses.forEach {
-            validateIdentifier("person", it.personId, errors)
+            validatePersonReference("person", it.personId, errors)
             it.alternativeGroup?.let { group -> validateIdentifier("person alternative group", group, errors) }
         }
         plan.ocrClause?.let {
             it.query?.let { text -> validateText("OCR query", text, errors, 240) }
             it.merchant?.let { text -> validateText("merchant", text, errors, 120) }
-            it.requestedField?.let { field -> validateIdentifier("OCR field", field, errors) }
+            it.requestedField?.let { field ->
+                validateIdentifier("OCR field", field, errors)
+                if (OcrFactAllowlist.resolve(field) == null) errors += "Unsupported OCR field"
+            }
         }
         validateFilter(plan.filter, errors, 0)
         validateContradictions(plan, errors)
@@ -61,6 +66,18 @@ class GalleryQueryPlanValidator(
 
     private fun validateIdentifier(label: String, value: String, errors: MutableList<String>) {
         if (!value.matches(Regex("[A-Za-z0-9_-]{1,80}"))) errors += "Invalid $label reference"
+    }
+
+    /** Person labels and aliases are user data, so Unicode is valid but unsafe path/control text is not. */
+    private fun validatePersonReference(label: String, value: String, errors: MutableList<String>) {
+        val normalized = PersonIdentityNormalization.normalize(value)
+        if (normalized.isBlank() || normalized.length > 80) errors += "Invalid $label reference"
+        if (
+            unsafeText.containsMatchIn(value) ||
+            value.any { it.isISOControl() || it == '/' || it == '\\' }
+        ) {
+            errors += "Unsafe $label"
+        }
     }
 
     private fun validateFilter(filter: FilterExpression, errors: MutableList<String>, depth: Int) {
@@ -105,6 +122,15 @@ class GalleryQueryPlanValidator(
             else -> null
         }
         if (required != null && plan.aggregation?.operation != required) errors += "Intent requires $required aggregation"
+        if (plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX)) {
+            val field = plan.aggregation?.field
+            val resolved = OcrFactAllowlist.resolve(field)
+            if (resolved == null) {
+                errors += "Aggregation requires an allowlisted field"
+            } else if (!resolved.numeric) {
+                errors += "Aggregation field must be numeric"
+            }
+        }
     }
 
     private fun validateFollowUp(

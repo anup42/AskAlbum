@@ -189,13 +189,96 @@ class RetrievalPackSignatureVerifier(private val publicKey: PublicKey) {
     }
 }
 
+internal class RetrievalInstalledGenerationVerifier(
+    private val signatureVerifier: RetrievalPackSignatureVerifier,
+) {
+    fun verify(directory: File): RetrievalPackManifest {
+        require(directory.isDirectory) { "Retrieval generation is unavailable" }
+        val manifestFile = File(directory, MANIFEST_NAME)
+        require(manifestFile.isFile && manifestFile.length() in 1..MAX_MANIFEST_BYTES.toLong()) {
+            "Retrieval manifest is incomplete"
+        }
+        val manifestBytes = manifestFile.inputStream().use { it.readBytesLimited(MAX_MANIFEST_BYTES) }
+        val manifest = RetrievalPackManifest.parse(manifestBytes)
+        val signatureFile = File(directory, SIGNATURE_NAME)
+        require(signatureFile.isFile && signatureFile.length() in 1..MAX_SIGNATURE_BYTES.toLong()) {
+            "Retrieval signature is incomplete"
+        }
+        val signatureBytes = Base64.getDecoder().decode(
+            signatureFile.inputStream().use {
+                it.readBytesLimited(MAX_SIGNATURE_BYTES).toString(Charsets.US_ASCII).trim()
+            },
+        )
+        signatureVerifier.verify(manifestBytes, signatureBytes, manifest)
+
+        val expectedNames = manifest.files.mapTo(mutableSetOf()) { it.name }.apply {
+            add(MANIFEST_NAME)
+            add(SIGNATURE_NAME)
+        }
+        val actualFiles = directory.listFiles()?.toList() ?: error("Could not inspect retrieval generation")
+        require(actualFiles.all { it.isFile } && actualFiles.map { it.name }.toSet() == expectedNames) {
+            "Retrieval generation contains an unlisted or missing file"
+        }
+        manifest.files.forEach { spec ->
+            val artifact = File(directory, spec.name)
+            require(artifact.length() == spec.sizeBytes) { "Retrieval artifact is incomplete: ${spec.name}" }
+            require(artifact.sha256Hex() == spec.sha256) {
+                "Retrieval artifact checksum mismatch: ${spec.name}"
+            }
+        }
+        return manifest
+    }
+}
+
+internal class RetrievalGenerationPointer(private val root: File) {
+    private val current = File(root, "current")
+    private val previous = File(root, "previous")
+
+    fun currentName(): String? = readName(current)
+
+    fun previousName(): String? = readName(previous)
+
+    fun activate(generationName: String) {
+        require(GENERATION_NAME.matches(generationName)) { "Invalid retrieval generation name" }
+        require(root.mkdirs() || root.isDirectory) { "Could not create retrieval model directory" }
+        currentName()?.let { previous.writeTextAndSync(it) }
+        replaceCurrent(generationName)
+    }
+
+    fun restore(generationName: String) {
+        require(GENERATION_NAME.matches(generationName)) { "Invalid retrieval generation name" }
+        require(root.mkdirs() || root.isDirectory) { "Could not create retrieval model directory" }
+        replaceCurrent(generationName)
+    }
+
+    private fun replaceCurrent(generationName: String) {
+        val next = File(root, "current.next")
+        next.writeTextAndSync(generationName)
+        if (current.exists()) require(current.delete()) { "Could not replace retrieval generation pointer" }
+        require(next.renameTo(current)) { "Could not activate retrieval generation pointer" }
+    }
+
+    private fun readName(pointer: File): String? {
+        if (!pointer.isFile) return null
+        return pointer.readText().trim().also {
+            require(GENERATION_NAME.matches(it)) { "Invalid retrieval generation pointer" }
+        }
+    }
+
+    private companion object {
+        val GENERATION_NAME = Regex("generation-[A-Za-z0-9._-]+")
+    }
+}
+
 class RetrievalModelPackManager(
     private val context: Context,
     private val verifier: RetrievalPackSignatureVerifier = RetrievalPackSignatureVerifier(context.apkSigningPublicKey()),
 ) {
     private val root = File(context.filesDir, "models/retrieval")
     private val generations = File(root, "generations")
-    private val pointer = File(root, "current")
+    private val generationPointer = RetrievalGenerationPointer(root)
+    private val installedVerifier = RetrievalInstalledGenerationVerifier(verifier)
+    private val fixturePack = if (fixtureRetrievalPackEnabled()) FixtureRetrievalPack.install(context) else null
 
     fun status(): RetrievalPackStatus = runCatching {
         val installed = current() ?: return RetrievalPackStatus(installed = false)
@@ -210,20 +293,31 @@ class RetrievalModelPackManager(
     }.getOrElse { RetrievalPackStatus(installed = false, error = it.message) }
 
     fun current(): InstalledRetrievalPack? {
-        if (!pointer.isFile) return null
-        val generationName = pointer.readText().trim()
-        require(generationName.matches(Regex("generation-[A-Za-z0-9._-]+"))) { "Invalid retrieval generation pointer" }
+        fixturePack?.let { return it }
+        val activeAttempt = runCatching {
+            generationPointer.currentName()?.let(::loadGeneration)
+        }
+        activeAttempt.getOrNull()?.let { return it }
+
+        val previousAttempt = runCatching {
+            generationPointer.previousName()?.let(::loadGeneration)
+        }
+        previousAttempt.getOrNull()?.let { previous ->
+            generationPointer.restore(previous.directory.name)
+            return previous
+        }
+
+        activeAttempt.exceptionOrNull()?.let { throw it }
+        previousAttempt.exceptionOrNull()?.let { throw it }
+        return null
+    }
+
+    private fun loadGeneration(generationName: String): InstalledRetrievalPack {
         val directory = File(generations, generationName)
         require(directory.isDirectory && directory.canonicalPath.startsWith(generations.canonicalPath + File.separator)) {
             "Retrieval generation is unavailable"
         }
-        val manifestBytes = File(directory, MANIFEST_NAME).readBytes()
-        val manifest = RetrievalPackManifest.parse(manifestBytes)
-        manifest.files.forEach { spec ->
-            val artifact = File(directory, spec.name)
-            require(artifact.isFile && artifact.length() == spec.sizeBytes) { "Retrieval artifact is incomplete" }
-        }
-        return InstalledRetrievalPack(directory, manifest)
+        return InstalledRetrievalPack(directory, installedVerifier.verify(directory))
     }
 
     suspend fun import(uri: Uri): RetrievalPackStatus = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -328,10 +422,7 @@ class RetrievalModelPackManager(
                 File(staging, MANIFEST_NAME).writeBytesAndSync(manifestBytes)
                 File(staging, SIGNATURE_NAME).writeBytesAndSync(Base64.getEncoder().encode(signatureBytes))
                 require(staging.renameTo(installed)) { "Could not finalize retrieval generation" }
-                val nextPointer = File(root, "current.next")
-                nextPointer.writeTextAndSync(generationName)
-                if (pointer.exists()) require(pointer.delete()) { "Could not replace retrieval generation pointer" }
-                require(nextPointer.renameTo(pointer)) { "Could not activate retrieval generation" }
+                generationPointer.activate(generationName)
                 return InstalledRetrievalPack(installed, manifest)
             } finally {
                 if (staging.exists()) staging.deleteRecursively()

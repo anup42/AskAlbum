@@ -16,14 +16,16 @@ class SensitiveOcrRedactionAcceptanceTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val runId = InstrumentationRegistry.getArguments().getString("galleryRunId")
         assumeTrue("galleryRunId was not supplied", !runId.isNullOrBlank())
-        val repository = (instrumentation.targetContext.applicationContext as AskAlbumApplication).repository
-        val indexedWifi = requireNotNull(repository.allItems().firstOrNull { it.filename == "synthetic_wifi_card.png" }) {
+        val context = instrumentation.targetContext
+        val repository = (context.applicationContext as AskAlbumApplication).repository
+        val seededIds = seededMediaIds(repository, context, requireNotNull(runId))
+        val indexedWifi = requireNotNull(repository.allItems().firstOrNull { it.id in seededIds && it.filename == "synthetic_wifi_card.png" }) {
             "The retained core corpus has no synthetic Wi-Fi card row"
         }
         val indexedText = (indexedWifi.ocrText + " " + repository.ocrBlocks(indexedWifi.id).joinToString(" ") { it.text }).lowercase()
         assertTrue("The retained Wi-Fi card has no indexed credential OCR (state=${indexedWifi.indexState})", "mango-tree-2048" in indexedText)
 
-        val outcome = repository.search("What is the Wi-Fi password in my test card?")
+        val outcome = repository.search("What is the Wi-Fi password in my test card?", seededIds)
         val hit = requireNotNull(outcome.hits.firstOrNull { it.item.filename == "synthetic_wifi_card.png" }) {
             "The indexed synthetic Wi-Fi card was not retrieved; plan=${outcome.plan}; hits=${outcome.hits.map { it.item.filename }}"
         }

@@ -387,9 +387,11 @@ private fun AskAlbumApp(viewModel: GalleryViewModel) {
         EvidenceDialog(
             hit = hit,
             items = viewerItems,
+            searchHits = state.outcome?.hits.orEmpty(),
             metadata = state.selectedEvidenceMetadata,
             metadataLoading = state.selectedEvidenceMetadataLoading,
             metadataError = state.selectedEvidenceMetadataError,
+            sensitiveEvidenceUnlocked = state.selectedEvidenceMetadataUnlocked,
             onDismiss = viewModel::dismissEvidence,
             onSelect = viewModel::showEvidence,
             onLoadMetadata = { viewModel.loadSelectedEvidenceMetadata() },
@@ -847,10 +849,13 @@ private fun IndexManagerScreen(
         IndexMetric("Media discovered", index.discovered, index.discovered, "Asset manifest")
         IndexMetric("Metadata ready", index.metadataReady, index.discovered, "demo-metadata-v1", inProgress = indexingActive && index.metadataReady < index.discovered)
         IndexMetric(
-            "Cached Gemma fact coverage",
+            "Direct Gemma fact coverage",
             index.semanticFactsReady,
             index.discovered,
-            modelPack.packVersion ?: "No verified Gemma facts",
+            buildString {
+                append(modelPack.packVersion ?: "No verified Gemma facts")
+                append(" | media-scoped facts only")
+            },
             enabled = modelPack.installed && modelPack.multimodal,
             onClick = onOpenSemanticMemory,
         )
@@ -910,7 +915,7 @@ private fun IndexManagerScreen(
         IndexMetric(
             "SigLIP2 image vectors",
             index.siglipVectorsReady,
-            index.discovered,
+            index.siglipVectorsEligible,
             when {
                 !retrievalPack.installed -> "Retrieval model unavailable"
                 !indexingJobControls.embeddingsEnabled -> "SigLIP2 ${retrievalPack.packVersion ?: "Base"} - stopped"
@@ -919,7 +924,7 @@ private fun IndexManagerScreen(
             enabled = retrievalPack.installed,
             inProgress = indexingActive &&
                 indexingJobControls.embeddingsEnabled &&
-                index.siglipVectorsReady < index.discovered,
+                index.siglipVectorsPending > 0,
         )
         IndexMetric("Video keyframes", index.videoKeyframesReady, index.videoKeyframesReady, VideoKeyframePolicy.PRODUCER_VERSION)
         IndexMetric(
@@ -1191,7 +1196,13 @@ private fun IndexManagerScreen(
             Column(Modifier.padding(20.dp)) {
                 Text("Face identity model", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Spacer(Modifier.height(7.dp))
-                Text(if (faceModel.installed) "${faceModel.name} ${faceModel.version}" else "Not installed — face boxes only")
+                Text("${faceModel.name} ${faceModel.version}")
+                Text(
+                    if (faceModel.installed) "Installed and verified in app-private storage"
+                    else "Not installed — face boxes only",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
                 Text(
                     "Apache-2.0 • 128 dimensions • ${formatBytes(faceModel.sizeBytes)} • pinned SHA-256 ${faceModel.sha256.take(12)}…",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1337,6 +1348,16 @@ private fun IndexingJobsCard(
                 unavailableReason = "Retrieval model required",
                 snapshot = snapshots[IndexingJob.EMBEDDINGS],
                 onToggle = { onSetEnabled(IndexingJob.EMBEDDINGS, it) },
+            )
+            HorizontalDivider()
+            IndexingJobControlRow(
+                title = "Caption vectors",
+                description = "Chunk embeddings for comprehensive-caption and paraphrase search",
+                enabled = controls.captionEmbeddingsEnabled,
+                available = embeddingsAvailable,
+                unavailableReason = "Retrieval model required",
+                snapshot = snapshots[IndexingJob.CAPTION_EMBEDDINGS],
+                onToggle = { onSetEnabled(IndexingJob.CAPTION_EMBEDDINGS, it) },
             )
             HorizontalDivider()
             IndexingJobControlRow(
@@ -2191,7 +2212,8 @@ private fun PeopleScreen(
     onMoveFace: (String, String?) -> Unit,
 ) {
     var editingCluster by remember { mutableStateOf<PersonClusterReviewItem?>(null) }
-    val selectedCluster = selectedClusterId?.let { id -> clusters.firstOrNull { it.id == id } }
+    val displayClusters = PeopleClusterDisplayPolicy.visible(clusters)
+    val selectedCluster = selectedClusterId?.let { id -> displayClusters.firstOrNull { it.id == id } }
     BackHandler(selectedCluster != null) { onCloseCluster() }
     if (selectedCluster != null) {
         PersonClusterDetailScreen(
@@ -2206,9 +2228,9 @@ private fun PeopleScreen(
         )
         return
     }
-    val toReview = clusters.filter { !it.reviewed && !it.hidden }
-    val named = clusters.filter { it.reviewed && !it.hidden }
-    val hidden = clusters.filter(PersonClusterReviewItem::hidden)
+    val toReview = displayClusters.filter { !it.reviewed && !it.hidden }
+    val named = displayClusters.filter { it.reviewed && !it.hidden }
+    val hidden = displayClusters.filter(PersonClusterReviewItem::hidden)
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize().safeDrawingPadding(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp, 10.dp, 20.dp, 32.dp),
@@ -2223,6 +2245,11 @@ private fun PeopleScreen(
                     Text("People identity status", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Spacer(Modifier.height(8.dp))
                     Text("${toReview.size} to review • ${named.size} named • ${hidden.size} hidden")
+                    Text(
+                        "Showing people found in at least ${PeopleClusterDisplayPolicy.MIN_MEDIA_COUNT} photos.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                    )
                     Spacer(Modifier.height(6.dp))
                     if (!peopleIndex.enabled) {
                         Text("Face indexing is off. Enable it to create private, on-device people clusters.")
@@ -2597,7 +2624,7 @@ private fun PersonClusterCard(
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                cluster.representativeFace?.let {
+                (cluster.latestFace ?: cluster.representativeFace)?.let {
                     FaceCropImage(it, Modifier.size(82.dp).clip(RoundedCornerShape(18.dp)))
                     Spacer(Modifier.width(12.dp))
                 }
@@ -2794,8 +2821,12 @@ private fun OnboardingScreen(onContinue: () -> Unit) {
 }
 
 @Composable
-internal fun LegacyEvidenceDialog(hit: SearchHit, onDismiss: () -> Unit) {
-    val playbackTimestamp = hit.evidence.mapNotNull { it.timestampMs }.minOrNull()
+internal fun LegacyEvidenceDialog(
+    hit: SearchHit,
+    onDismiss: () -> Unit,
+    sensitiveEvidenceUnlocked: Boolean = false,
+) {
+    val playbackTimestamp = VideoKeyframeSelectionPolicy.selectEvidenceTimestamp(hit.evidence)
     var playing by remember(hit.item.id, playbackTimestamp) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2843,7 +2874,7 @@ internal fun LegacyEvidenceDialog(hit: SearchHit, onDismiss: () -> Unit) {
                     hit.evidence.forEachIndexed { index, evidence ->
                         if (index > 0) HorizontalDivider(Modifier.padding(vertical = 9.dp))
                         Text(evidence.sourceField.replace('_', ' ').uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(evidence.text, fontWeight = FontWeight.SemiBold)
+                        Text(displayEvidenceText(evidence, sensitiveEvidenceUnlocked), fontWeight = FontWeight.SemiBold)
                         evidence.pageIndex?.let { Text("PDF page ${it + 1}", fontSize = 11.sp, color = Forest) }
                         Text("Confidence ${(evidence.confidence * 100).toInt()}% • ${evidence.producerVersion}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         evidence.region?.let { region ->
@@ -3005,6 +3036,35 @@ private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
                 Spacer(Modifier.height(6.dp))
                 Text(outcome.answer.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp)
             }
+            if (outcome.answer.claims.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text("Grounded claims", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                outcome.answer.claims.forEachIndexed { index, claim ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "- ${claim.text}",
+                        modifier = Modifier.testTag("grounded-claim-$index"),
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                    )
+                    Text(
+                        "Evidence ${claim.evidenceIds.joinToString()} • ${(claim.confidence * 100).toInt()}% confidence",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 10.sp,
+                    )
+                }
+            }
+            if (outcome.answer.warnings.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                outcome.answer.warnings.forEach { warning ->
+                    Text(
+                        warning,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                    )
+                }
+            }
             if (outcome.resultSetId != null && outcome.hits.isNotEmpty()) {
                 TextButton(onClick = onRefine, modifier = Modifier.testTag("refine-results")) { Text("Refine") }
             }
@@ -3019,7 +3079,7 @@ private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
                 reports.forEach { report ->
                     Text(
                         "${report.channel.name.replace('_', ' ').lowercase()}: ${report.status.name.lowercase()} - " +
-                            "${report.searchedCount}/${report.eligibleCount} searched",
+                            RetrievalCoverageWording.uiText(report),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                     )
@@ -3287,9 +3347,11 @@ private fun GalleryMenuScreen(
 internal fun EvidenceDialog(
     hit: SearchHit,
     items: List<GalleryItem> = listOf(hit.item),
+    searchHits: List<SearchHit> = emptyList(),
     metadata: IndexedMediaMetadata? = null,
     metadataLoading: Boolean = false,
     metadataError: String? = null,
+    sensitiveEvidenceUnlocked: Boolean = false,
     onDismiss: () -> Unit,
     onSelect: (SearchHit) -> Unit = {},
     onLoadMetadata: () -> Unit = {},
@@ -3305,8 +3367,8 @@ internal fun EvidenceDialog(
     }
     val pagerState = rememberPagerState(initialPage = initialPage) { viewerItems.size }
     val currentItem = viewerItems.getOrElse(pagerState.currentPage) { hit.item }
-    val currentHit = if (currentItem.id == hit.item.id) hit else currentItem.asMetadataHit()
-    val playbackTimestamp = currentHit.evidence.mapNotNull { it.timestampMs }.minOrNull()
+    val currentHit = findViewerEvidenceHit(currentItem.id, hit, searchHits) ?: currentItem.asMetadataHit()
+    val playbackTimestamp = VideoKeyframeSelectionPolicy.selectEvidenceTimestamp(currentHit.evidence)
     var playing by remember(currentItem.id, playbackTimestamp) { mutableStateOf(false) }
     var detailsVisible by remember(currentItem.id) { mutableStateOf(false) }
     var controlsVisible by remember(currentItem.id) { mutableStateOf(true) }
@@ -3315,7 +3377,7 @@ internal fun EvidenceDialog(
         if (detailsVisible) onLoadMetadata()
     }
     LaunchedEffect(currentItem.id) {
-        if (hit.item.id != currentItem.id) onSelect(currentItem.asMetadataHit())
+        if (hit.item.id != currentItem.id) onSelect(currentHit)
     }
     BackHandler {
         when {
@@ -3372,7 +3434,15 @@ internal fun EvidenceDialog(
                                 ViewerAction("Open", R.drawable.ic_gallery_open) { openItemExternally(context, currentItem) }
                             }
                             if (currentItem.kind == MediaKind.VIDEO && currentItem.contentUri != null) {
-                                ViewerAction("Play", R.drawable.ic_gallery_video) { playing = true }
+                                val timestamp = playbackTimestamp
+                                if (timestamp != null) {
+                                    Button(
+                                        onClick = { playing = true },
+                                        modifier = Modifier.testTag("play-video-at-match"),
+                                    ) { Text("Play from ${formatPlaybackTime(timestamp)}") }
+                                } else {
+                                    ViewerAction("Play", R.drawable.ic_gallery_video) { playing = true }
+                                }
                             }
                             ViewerAction("Details", R.drawable.ic_gallery_info) {
                                 detailsVisible = true
@@ -3415,7 +3485,7 @@ internal fun EvidenceDialog(
                                 "Why this item matched",
                                 currentHit.evidence.map {
                                     it.sourceField.replace('_', ' ') to
-                                        "${it.text} (${(it.confidence * 100).toInt()}% confidence)"
+                                        "${displayEvidenceText(it, sensitiveEvidenceUnlocked)} (${(it.confidence * 100).toInt()}% confidence)"
                                 },
                             )
                         }
@@ -3426,7 +3496,12 @@ internal fun EvidenceDialog(
     }
 }
 
-@Composable
+private fun displayEvidenceText(evidence: EvidenceRecord, unlocked: Boolean): String =
+    if (!unlocked && SensitiveEvidencePolicy.requiresAuthentication(evidence)) {
+        "Hidden until device authentication"
+    } else {
+        evidence.text
+    }@Composable
 private fun ZoomableViewerMedia(item: GalleryItem, onToggleControls: () -> Unit) {
     var scale by remember(item.id) { mutableFloatStateOf(1f) }
     var offsetX by remember(item.id) { mutableFloatStateOf(0f) }

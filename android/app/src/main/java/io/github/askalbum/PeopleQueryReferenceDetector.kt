@@ -1,0 +1,71 @@
+package io.github.anup42.askalbum
+
+/**
+ * Adds only well-known identity references when a planner is unavailable. User-defined names
+ * and aliases remain database-resolved so an unreviewed cluster can never become an identity.
+ */
+internal object PeopleQueryReferenceDetector {
+    private data class Token(val value: String)
+
+    private val tokenPattern = Regex("[\\p{L}\\p{M}\\p{N}]+")
+    private val knownReferences = listOf(
+        "me", "myself", "wife", "husband", "spouse", "partner", "mother", "mom", "mum",
+        "father", "dad", "brother", "sister", "child", "son", "daughter", "friend",
+        "\u092d\u0948\u092f\u093e", // bhaiya
+        "\u092d\u093e\u0908", // bhai
+        "\u0926\u0940\u0926\u0940", // didi
+        "\u092c\u0939\u0928", // sister
+        "\u092a\u0924\u094d\u0928\u0940", // wife
+        "\u092c\u0940\u0935\u0940", // wife
+        "\u092a\u0924\u093f", // husband
+        "\u092a\u092a\u094d\u092a\u093e", // papa
+        "\u092a\u093f\u0924\u093e", // father
+        "\u092e\u092e\u094d\u092e\u0940", // mummy
+        "\u092e\u093e\u0901", // mother
+        "\u092c\u0947\u091f\u093e", // son
+        "\u092c\u0947\u091f\u0940", // daughter
+        "\u092c\u091a\u094d\u091a\u093e", // child
+    ).map(PersonIdentityNormalization::normalize).distinct()
+
+    private val negationTerms = setOf(
+        "not", "no", "without", "exclude", "excluding", "except",
+        "\u092c\u093f\u0928\u093e", // without
+        "\u0928\u0939\u0940\u0902", // not
+        "\u0928\u0939\u0940", // not
+    ).map(PersonIdentityNormalization::normalize).toSet()
+    private val postfixNegationTerms = setOf("\u092c\u093f\u0928\u093e", "bina")
+        .map(PersonIdentityNormalization::normalize)
+        .toSet()
+
+    fun detect(query: String): List<PersonClause> {
+        val tokens = tokenPattern.findAll(PersonIdentityNormalization.normalize(query))
+            .map { Token(it.value) }
+            .toList()
+        if (tokens.isEmpty()) return emptyList()
+
+        return knownReferences.flatMap { reference ->
+            val positions = tokens.withIndex()
+                .filter { (_, token) -> token.value == reference }
+                .map { it.index }
+            if (positions.isEmpty()) return@flatMap emptyList()
+
+            val polarities = positions.map { index ->
+                val start = maxOf(0, index - NEGATION_LOOKBACK)
+                val end = minOf(tokens.size, index + NEGATION_LOOKBACK + 1)
+                tokens.subList(start, index).none { it.value in negationTerms } &&
+                    tokens.subList(index + 1, end).none { it.value in postfixNegationTerms }
+            }
+            when {
+                polarities.all { !it } -> listOf(PersonClause(reference, mustBePresent = false))
+                polarities.all { it } -> listOf(PersonClause(reference))
+                else -> listOf(
+                    // Contradictory mentions fail closed instead of broadening the search.
+                    PersonClause(reference),
+                    PersonClause(reference, mustBePresent = false),
+                )
+            }
+        }.distinctBy { it.personId to it.mustBePresent }
+    }
+
+    private const val NEGATION_LOOKBACK = 3
+}

@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
 
 enum class AppDestination { ONBOARDING, GALLERY, ALBUMS, ASK, RESULTS, MENU, INDEX_MANAGER, SEMANTIC_MEMORY, EVENTS_INDEX, PRIVACY, PEOPLE }
 
-enum class QueryExecutionStage { UNDERSTANDING, SEARCHING, INITIAL_RESULTS, VERIFYING, COMPOSING }
+enum class QueryExecutionStage { UNDERSTANDING, SEARCHING, SCANNING, INITIAL_RESULTS, VERIFYING, COMPOSING }
 
 data class GalleryUiState(
     val loading: Boolean = true,
@@ -93,7 +93,7 @@ private data class ModelInitialization(
 internal fun automaticGemmaCandidates(status: ModelPackStatus): List<GemmaModelTier> {
     if (status.installed) return emptyList()
     val recommended = status.deviceAssessment?.recommendedTier ?: GemmaModelTier.E2B
-    return listOf(recommended, GemmaModelTier.E2B).distinct()
+    return listOf(GemmaModelTier.E2B, recommended).distinct()
 }
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
     private val askPhotosApplication = application as AskAlbumApplication
@@ -117,6 +117,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private var queryJob: Job? = null
     private var indexMonitorJob: Job? = null
     private var semanticMemoryMonitorJob: Job? = null
+    private var peopleClusterRefreshJob: Job? = null
+    private var peopleClusterRevision: String? = null
     private var queryGeneration = 0L
     var state by mutableStateOf(GalleryUiState())
         private set
@@ -337,10 +339,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    repository.recoverInterruptedJobs()
+                    repository.setForegroundIndexingPaused(false)
+                    repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
                     IndexScheduler.restart(getApplication())
-                    if (retrievalPacks.status().installed) EmbeddingIndexScheduler.restart(getApplication())
-                    if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.restart(getApplication())
+                    if (retrievalPacks.status().installed) {
+                        repository.recoverInterruptedJobs(IndexingPipeline.EMBEDDINGS)
+                        EmbeddingIndexScheduler.restart(getApplication())
+                    }
+                    if (repository.peopleIndexStatus().enabled) {
+                        repository.recoverInterruptedJobs(IndexingPipeline.PEOPLE)
+                        PeopleIndexScheduler.restart(getApplication())
+                    }
                     repository.indexingAdmission()
                 }
             }.onSuccess { admission ->
@@ -369,10 +378,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 withContext(Dispatchers.IO) {
                     val saved = repository.saveIndexingRunCriteria(criteria)
-                    repository.recoverInterruptedJobs()
+                    repository.setForegroundIndexingPaused(false)
+                    repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
                     IndexScheduler.restart(getApplication())
-                    if (retrievalPacks.status().installed) EmbeddingIndexScheduler.restart(getApplication())
-                    if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.restart(getApplication())
+                    if (retrievalPacks.status().installed) {
+                        repository.recoverInterruptedJobs(IndexingPipeline.EMBEDDINGS)
+                        EmbeddingIndexScheduler.restart(getApplication())
+                    }
+                    if (repository.peopleIndexStatus().enabled) {
+                        repository.recoverInterruptedJobs(IndexingPipeline.PEOPLE)
+                        PeopleIndexScheduler.restart(getApplication())
+                    }
                     Triple(saved, repository.indexingAdmission(), repository.indexSummary())
                 }
             }.onSuccess { (saved, admission, summary) ->
@@ -383,6 +399,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     indexingActive = admission.allowed && hasRunnableIndexing(
                         summary,
                         state.peopleIndex,
+                        state.semanticMemory,
                         state.indexingJobControls,
                         state.retrievalPack.installed,
                     ),
@@ -408,6 +425,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             state = state.copy(operationMessage = "The verified retrieval model is required before starting embeddings")
             return
         }
+        if (job == IndexingJob.CAPTION_EMBEDDINGS && enabled && !state.retrievalPack.installed) {
+            state = state.copy(operationMessage = "The verified retrieval model is required before starting caption vectors")
+            return
+        }
         if (job == IndexingJob.SEMANTIC_MEMORY && enabled && (!state.modelPack.installed || !state.modelPack.multimodal)) {
             state = state.copy(operationMessage = "A verified multimodal Gemma model is required before starting semantic memory")
             return
@@ -423,11 +444,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                             else IndexScheduler.cancelAndWait(getApplication())
                         }
                         IndexingJob.EMBEDDINGS -> {
-                            if (enabled) InitialImportService.startIndexing(getApplication())
+                            if (enabled) {
+                                InitialImportService.startIndexing(getApplication())
+                                if (controls.captionEmbeddingsEnabled) CaptionEmbeddingScheduler.schedule(getApplication())
+                            }
                             else {
                                 EmbeddingIndexScheduler.cancelAndWait(getApplication())
-                                CaptionEmbeddingScheduler.cancelAndWait(getApplication())
                             }
+                        }
+                        IndexingJob.CAPTION_EMBEDDINGS -> {
+                            if (enabled) CaptionEmbeddingScheduler.schedule(getApplication())
+                            else CaptionEmbeddingScheduler.cancelAndWait(getApplication())
                         }
                         IndexingJob.PEOPLE -> {
                             if (enabled) PeopleIndexScheduler.schedule(getApplication())
@@ -438,7 +465,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                             else SemanticEnrichmentScheduler.cancelAndWait(getApplication())
                         }
                     }
-                    repository.recoverInterruptedJobs()
+                    repository.recoverInterruptedJobs(IndexingRecoveryPolicy.pipelineFor(job))
                     Triple(controls, repository.indexSummary(), repository.semanticMemoryProgress())
                 }
             }.onSuccess { (controls, summary, semanticMemory) ->
@@ -447,7 +474,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     index = summary,
                     semanticMemory = semanticMemory,
                     indexingActive = state.indexingAdmission.allowed &&
-                        hasRunnableIndexing(summary, state.peopleIndex, controls, state.retrievalPack.installed),
+                        hasRunnableIndexing(summary, state.peopleIndex, semanticMemory, controls, state.retrievalPack.installed),
                     operationMessage = "${indexingJobLabel(job)} ${if (enabled) "started" else "stopped"}. Completed index data was kept.",
                 )
                 monitorIndexing()
@@ -699,14 +726,32 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun loadPeopleReviewClusters() {
+    fun loadPeopleReviewClusters(force: Boolean = false) {
         if (!state.peopleIndex.enabled) {
+            peopleClusterRefreshJob?.cancel()
+            peopleClusterRevision = null
             state = state.copy(peopleReviewClusters = emptyList())
             return
         }
-        viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { repository.personClusterSummaries(includeHidden = true) } }
-                .onSuccess { clusters -> state = state.copy(peopleReviewClusters = clusters) }
+        if (peopleClusterRefreshJob?.isActive == true) return
+        val knownRevision = peopleClusterRevision
+        peopleClusterRefreshJob = viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val revision = repository.personClusterRevision()
+                    if (!PeopleClusterRefreshPolicy.shouldReload(knownRevision, revision, force)) {
+                        null
+                    } else {
+                        revision to repository.personClusterSummaries(includeHidden = true)
+                    }
+                }
+            }
+                .onSuccess { refreshed ->
+                    refreshed?.let { (revision, clusters) ->
+                        peopleClusterRevision = revision
+                        state = state.copy(peopleReviewClusters = clusters)
+                    }
+                }
                 .onFailure { error -> state = state.copy(operationMessage = error.message ?: "Could not load face review clusters") }
         }
     }
@@ -750,6 +795,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     peopleIndex = status,
                     operationMessage = "Saved identity for $safeLabel",
                 )
+                loadPeopleReviewClusters()
+                monitorIndexing()
             }.onFailure { error ->
                 state = state.copy(
                     peopleReviewClusters = previousClusters,
@@ -822,6 +869,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 withContext(Dispatchers.IO) { repository.setPersonClusterRepresentative(clusterId, faceId) }
             }.onSuccess {
                 state = state.copy(operationMessage = "Representative photo updated")
+                loadPeopleReviewClusters(force = true)
             }.onFailure { error ->
                 state = state.copy(
                     peopleReviewClusters = previousClusters,
@@ -914,6 +962,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 withContext(Dispatchers.IO) { repository.excludeFaceFromCluster(faceId) }
             }.onSuccess {
                 state = state.copy(operationMessage = "Photo excluded from this person")
+                loadPeopleReviewClusters(force = true)
             }.onFailure { error ->
                 state = state.copy(
                     peopleReviewClusters = previousClusters,
@@ -951,6 +1000,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 }
             }.onSuccess { (target, clusters) ->
                 state = state.copy(peopleReviewClusters = clusters, operationMessage = "Face moved to $target")
+                loadPeopleReviewClusters(force = true)
+                monitorIndexing()
             }.onFailure { error ->
                 state = state.copy(operationMessage = error.message ?: "Face assignment could not be changed")
             }
@@ -967,6 +1018,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 }
             }.onSuccess { (status, clusters, message) ->
                 state = state.copy(peopleIndex = status, peopleReviewClusters = clusters, operationMessage = message)
+                loadPeopleReviewClusters(force = true)
+                monitorIndexing()
             }.onFailure { error ->
                 state = state.copy(operationMessage = error.message ?: "People data could not be updated")
             }
@@ -1125,16 +1178,18 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     private suspend fun reloadIndexStatus(message: String? = state.operationMessage) {
         val refreshed = withContext(Dispatchers.IO) {
-            Triple(
-                repository.indexSummary(),
-                repository.peopleIndexStatus(),
-                repository.indexingAdmission(),
+            IndexStatusRefresh(
+                summary = repository.indexSummary(),
+                peopleIndex = repository.peopleIndexStatus(),
+                admission = repository.indexingAdmission(),
+                semanticMemory = repository.semanticMemoryProgress(),
             )
         }
         state = state.copy(
-            index = refreshed.first,
-            peopleIndex = refreshed.second,
-            indexingAdmission = refreshed.third,
+            index = refreshed.summary,
+            peopleIndex = refreshed.peopleIndex,
+            indexingAdmission = refreshed.admission,
+            semanticMemory = refreshed.semanticMemory,
             operationMessage = message,
         )
     }
@@ -1147,6 +1202,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             while (true) {
                 delay(2_500)
                 reloadIndexStatus()
+                if (state.destination == AppDestination.PEOPLE) loadPeopleReviewClusters()
                 val pipelines = withContext(Dispatchers.IO) {
                     IndexingRuntimeStatusReader(getApplication()).read(
                         state.index,
@@ -1161,7 +1217,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     it.state !in setOf(
                         IndexingPipelineState.COMPLETE,
                         IndexingPipelineState.DEGRADED,
+                        IndexingPipelineState.UNAVAILABLE,
                         IndexingPipelineState.STOPPED_BY_USER,
+                        IndexingPipelineState.PAUSED_BY_USER,
                     )
                 }
                 if (!hasPending) {
@@ -1213,23 +1271,42 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val admission: BackgroundWorkAdmission,
     )
 
+    private data class IndexStatusRefresh(
+        val summary: IndexSummary,
+        val peopleIndex: PeopleIndexStatus,
+        val admission: BackgroundWorkAdmission,
+        val semanticMemory: SemanticMemoryProgress,
+    )
+
     private fun hasRunnableIndexing(
         summary: IndexSummary,
         peopleIndex: PeopleIndexStatus,
+        semanticMemory: SemanticMemoryProgress,
         controls: IndexingJobControls,
         retrievalPackInstalled: Boolean,
-    ): Boolean =
-        (summary.pending > 0 && controls.mediaAnalysisEnabled) ||
+    ): Boolean {
+        if (controls.foregroundPaused) return false
+        return (summary.pending > 0 && controls.mediaAnalysisEnabled) ||
             (peopleIndex.pendingMediaCount > 0 && controls.peopleEnabled) ||
             (
                 retrievalPackInstalled &&
                     controls.embeddingsEnabled &&
-                    summary.siglipVectorsReady < summary.discovered
-            )
+                    summary.siglipVectorsPending > 0
+            ) || (
+                retrievalPackInstalled &&
+                    controls.captionEmbeddingsEnabled &&
+                    (
+                        semanticMemory.captionCount > semanticMemory.captionChunkCount ||
+                            semanticMemory.pendingCaptionChunkCount > 0 ||
+                            semanticMemory.runningCaptionChunkCount > 0
+                        )
+                )
+    }
 
     private fun indexingJobLabel(job: IndexingJob): String = when (job) {
         IndexingJob.MEDIA_ANALYSIS -> "Media analysis"
         IndexingJob.EMBEDDINGS -> "SigLIP2 vectors"
+        IndexingJob.CAPTION_EMBEDDINGS -> "Caption vectors"
         IndexingJob.PEOPLE -> "People indexing"
         IndexingJob.SEMANTIC_MEMORY -> "Gemma semantic memory"
     }
@@ -1476,6 +1553,10 @@ internal object QueryProgressUiReducer {
             executionStage = QueryExecutionStage.INITIAL_RESULTS,
             progressivePlan = progress.plan,
             progressiveHits = progress.hits,
+        )
+        is QueryProgress.SemanticScan -> state.copy(
+            executionStatus = "Checking every eligible item (${progress.searchedCount} / ${progress.eligibleCount})…",
+            executionStage = QueryExecutionStage.SCANNING,
         )
         is QueryProgress.Verifying -> state.copy(
             executionStatus = "Checking ${progress.candidateCount} likely ${if (progress.candidateCount == 1) "match" else "matches"} with Gemma…",

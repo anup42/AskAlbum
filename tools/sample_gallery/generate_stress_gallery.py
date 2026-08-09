@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from PIL import Image, ImageEnhance
@@ -25,13 +26,15 @@ def generate(core: Path, output: Path, count: int) -> None:
     stress_items: list[dict[str, object]] = []
     for index in range(count):
         source = sources[index % len(sources)]
+        source_id = str(source.get("source_id", source["id"]))
+        source_slug = re.sub(r"[^a-z0-9]+", "_", source_id.lower()).strip("_") or "source"
         source_path = core / "media" / source["filename"]
         with Image.open(source_path) as opened:
             image = opened.convert("RGB")
             image.thumbnail((384, 384))
             factor = 0.88 + ((index * 17) % 25) / 100
             image = ImageEnhance.Brightness(image).enhance(factor)
-            filename = f"stress_{index:05d}.jpg"
+            filename = f"stress_{index:05d}_{source_slug}.jpg"
             save_raster_with_metadata(
                 image,
                 media / filename,
@@ -42,7 +45,6 @@ def generate(core: Path, output: Path, count: int) -> None:
                 optimize=True,
             )
         item_id = f"stress_{index:05d}"
-        source_id = source.get("source_id", source["id"])
         stress_items.append({
             "id": item_id,
             "filename": filename,

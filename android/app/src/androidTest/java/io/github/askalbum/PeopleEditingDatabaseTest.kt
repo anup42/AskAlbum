@@ -107,6 +107,10 @@ class PeopleEditingDatabaseTest {
                 .thenBy { it.modifiedAt ?: 0L },
         )
         assertEquals(expectedNewest.id, firstPage.single().mediaId)
+        val summaryBeforeRepresentative = store.personClusterSummaries(true).single { it.id == "person_me" }
+        assertEquals(expectedNewest.id, summaryBeforeRepresentative.sampleMediaId)
+        assertEquals(expectedNewest.id, summaryBeforeRepresentative.supportingFaces.first().mediaId)
+        assertEquals(expectedNewest.id, summaryBeforeRepresentative.latestFace?.mediaId)
         store.setPersonClusterRepresentative("person_me", secondPage.single().id)
         assertEquals(secondPage.single().id, store.personClusterSummaries(true).single { it.id == "person_me" }.representativeFaceId)
         assertEquals(
@@ -121,10 +125,82 @@ class PeopleEditingDatabaseTest {
         assertTrue(store.resolveReviewedPersonIds("Anup Kumar").contains("person_me"))
 
         store.removePersonLabel("person_brother")
-        assertFalse(store.personClusterSummaries(true).single { it.id == "person_brother" }.reviewed)
+        assertTrue(
+            "Unreviewed clusters with fewer than five media items should not be shown",
+            store.personClusterSummaries(true).none { it.id == "person_brother" },
+        )
         val reset = store.resetPeopleIndex()
         assertEquals(0, reset.faceInstanceCount)
         assertEquals(0, reset.personClusterCount)
+    }
+
+    @Test
+    fun inaccessibleFacesDoNotCountTowardPeopleVisibilityOrExpansion() {
+        val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
+        store.ensureStageRows()
+        val imported = (0 until 5).map { index ->
+            ImportedMedia(
+                stableId = "access-boundary-$index",
+                uri = "content://people-test/access-$index",
+                displayName = "access-$index.jpg",
+                mimeType = "image/jpeg",
+                source = MediaSource.MEDIA_STORE,
+                capturedAt = 1_700_000_000_000L + index,
+                modifiedAt = 1_700_000_000_000L + index,
+                durationMs = null,
+                width = 1200,
+                height = 900,
+                sizeBytes = 1_000L,
+            )
+        }
+        store.upsertImported(imported)
+        store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+        store.ensureAutomaticPersonCluster("person_access")
+        imported.forEach { item ->
+            store.completeEmbeddedFaces(item.stableId, listOf(face()), listOf("person_access"), "fixture-face-v1")
+        }
+        store.applyReconciliation(
+            MediaReconciliationPlan(
+                seenUris = emptySet(),
+                inaccessibleUris = setOf(imported.last().uri),
+                deletedUris = emptySet(),
+            ),
+        )
+
+        assertTrue(store.personClusterSummaries(includeHidden = true).none { it.id == "person_access" })
+        assertEquals(4, store.personFacesForCluster("person_access", limit = 20).size)
+        assertNull(store.personFace("access-boundary-4:0"))
+    }
+
+    @Test
+    fun accessibleUnassignedFaceIsReturnedForIdentityExpansion() {
+        val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
+        store.ensureStageRows()
+        val item = ImportedMedia(
+            stableId = "unassigned-expansion-face",
+            uri = "content://people-test/unassigned-expansion-face",
+            displayName = "unassigned.jpg",
+            mimeType = "image/jpeg",
+            source = MediaSource.MEDIA_STORE,
+            capturedAt = 1_700_000_000_000L,
+            modifiedAt = 1_700_000_000_000L,
+            durationMs = null,
+            width = 1200,
+            height = 900,
+            sizeBytes = 1_000L,
+        )
+        store.upsertImported(listOf(item))
+        store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+        store.ensureAutomaticPersonCluster("person_unassigned_source")
+        store.completeEmbeddedFaces(item.stableId, listOf(face()), listOf("person_unassigned_source"), "fixture-face-v1")
+        val faceId = "${item.stableId}:0"
+        store.excludeFaceFromCluster(faceId)
+
+        val reference = store.faceClusterReferences(listOf(faceId))[faceId]
+        assertTrue(reference != null)
+        assertNull(reference?.clusterId)
+        assertFalse(reference?.reviewed == true)
+        assertFalse(reference?.hidden == true)
     }
 
     private fun face() = FaceInstance(

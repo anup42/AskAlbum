@@ -17,6 +17,7 @@ class CaptionEmbeddingRetrievalTest {
         evidenceMediaId = "media-1",
         modelVersion = "gemma-e2b",
         promptVersion = "caption-v3",
+        generationId = "generation-1",
     )
 
     @Test
@@ -62,6 +63,7 @@ class CaptionEmbeddingRetrievalTest {
                     faceRegion = listOf(0.5f, 0.1f, 0.7f, 0.3f),
                     modelVersion = "gemma-e2b",
                     promptVersion = "caption-v3",
+                    generationId = "generation-1",
                 ),
             ),
         )
@@ -115,6 +117,56 @@ class CaptionEmbeddingRetrievalTest {
         assertTrue(chunks.all { it.applicability == "CONTEXT_ONLY" })
     }
 
+    @Test
+    fun eventCaptionCannotReceivePersonBoundChunks() {
+        val chunks = SemanticCaptionChunker.generate(
+            caption.copy(
+                id = "event-person-caption",
+                scope = SemanticFactScope.EVENT,
+                subjectId = "event-8",
+                applicability = "CONTEXT_ONLY",
+            ),
+            emptyList(),
+            listOf(
+                PersonVisualFactRecord(
+                    id = "event-person-fact",
+                    mediaId = "media-1",
+                    clusterId = "me-cluster",
+                    personRef = "P1",
+                    relation = PersonVisualRelation.ACTION,
+                    value = "holding a gift",
+                    bodyRegion = BodyRegion.HAND,
+                    confidence = 0.9f,
+                    faceRegion = listOf(0.1f, 0.1f, 0.3f, 0.3f),
+                    modelVersion = "gemma-e2b",
+                    promptVersion = "caption-v3",
+                    generationId = "generation-1",
+                ),
+            ),
+        )
+
+        assertTrue(chunks.isNotEmpty())
+        assertTrue(chunks.none { it.clusterId != null })
+    }
+
+    @Test
+    fun possibleOccasionChunkRetainsFactApplicability() {
+        val chunks = SemanticCaptionChunker.generate(
+            caption.copy(
+                id = "possible-occasion-caption",
+                text = "Two people are standing beside a decorated table.",
+            ),
+            listOf(
+                semanticFact("possible_occasion", "birthday celebration")
+                    .copy(applicability = "POSSIBLE_INFERENCE"),
+            ),
+            emptyList(),
+        )
+
+        val occasion = chunks.single { it.chunkType == CaptionChunkType.OCCASION }
+        assertEquals("POSSIBLE_INFERENCE", occasion.applicability)
+    }
+
     private fun semanticFact(predicate: String, value: String) = SemanticFactRecord(
         scope = SemanticFactScope.MEDIA,
         subjectId = "media-1",
@@ -124,5 +176,6 @@ class CaptionEmbeddingRetrievalTest {
         evidenceMediaId = "media-1",
         modelVersion = "gemma-e2b",
         promptVersion = "caption-v3",
+        generationId = "generation-1",
     )
 }

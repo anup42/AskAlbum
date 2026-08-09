@@ -24,7 +24,7 @@ class RealGemmaPlannerAcceptanceTest {
         val context = instrumentation.targetContext.applicationContext as AskAlbumApplication
         val status = context.modelPackManager.status()
         assumeTrue("A verified E2B pack is required", status.installed && status.tier == GemmaModelTier.E2B)
-        val planner = LiteRtLmQueryPlanner(context.modelPackManager, context.services.inferenceResources)
+        val planner = LiteRtLmQueryPlanner(context.modelPackManager, context.services.gemmaSessions)
         val previousYear = LocalDate.now().year - 1
         val cases = listOf(
             PlanCase("english", "Show beach sunset photos from 2024", listOf(setOf("beach"), setOf("sunset")), 2024),
@@ -36,6 +36,8 @@ class RealGemmaPlannerAcceptanceTest {
                 previousYear,
             ),
         )
+        val initializationsBefore = context.services.gemmaSessions.initializationCount
+        var observedEngineLoad = false
 
         cases.forEach { case ->
             val pssBeforeKb = Debug.getPss()
@@ -65,7 +67,8 @@ class RealGemmaPlannerAcceptanceTest {
             assertTrue("${case.id} invalid: ${validation.errors}", validation.isValid)
             assertTrue(trace.plan.intent in setOf(QueryIntent.FIND_MEDIA, QueryIntent.LIST))
             assertTrue(trace.plan.mediaScope in setOf(MediaScope.ALL, MediaScope.IMAGES))
-            assertTrue("${case.id} did not record model load", trace.engineLoadMs > 0)
+            observedEngineLoad = observedEngineLoad || trace.engineLoadMs > 0
+            assertTrue("${case.id} has invalid model-load timing", trace.engineLoadMs >= 0)
             assertTrue("${case.id} did not record generation", trace.generationMs > 0)
             assertTrue("${case.id} close timing is invalid", trace.engineCloseMs >= 0)
             assertTrue("${case.id} elapsed timing is incomplete", trace.elapsedMs >= trace.engineLoadMs + trace.generationMs + trace.engineCloseMs)
@@ -74,6 +77,8 @@ class RealGemmaPlannerAcceptanceTest {
                 assertTrue("${case.id} missing one of $alternatives in $searchable", alternatives.any(searchable::contains))
             }
         }
+        assertTrue("Gemma session initialized more than once", context.services.gemmaSessions.initializationCount - initializationsBefore <= 1)
+        assertTrue("No Gemma model-load timing was observed", observedEngineLoad || context.services.gemmaSessions.initializationCount > initializationsBefore)
     }
 
     private fun searchableText(plan: GalleryQueryPlan): String = buildList {

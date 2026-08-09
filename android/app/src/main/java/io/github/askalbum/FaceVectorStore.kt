@@ -10,6 +10,10 @@ class FaceVectorStore(context: Context) {
     )
 
     suspend fun ids(): Set<String> = index.ids()
+    suspend fun hasUsableVector(faceId: String): Boolean {
+        val dimension = runCatching { index.vector(faceId)?.size }.getOrNull()
+        return FaceEmbeddingAvailabilityPolicy.isUsable(dimension, FaceModelCatalog.sface.embeddingDimension)
+    }
     suspend fun nearest(vector: FloatArray, allowedIds: Set<String>? = null): VectorHit? =
         index.search(vector, 1, allowedIds).firstOrNull()
     suspend fun nearestNeighbors(vector: FloatArray, limit: Int, allowedIds: Set<String>? = null): List<VectorHit> =
@@ -26,8 +30,20 @@ class FaceVectorStore(context: Context) {
     suspend fun clear() = index.replaceAll(emptyMap())
 }
 
+internal object FaceVectorRepairPolicy {
+    fun missingVectorIds(persistedFaceIds: Set<String>, indexedFaceIds: Set<String>): Set<String> =
+        persistedFaceIds.asSequence()
+            .filterNot(indexedFaceIds::contains)
+            .toCollection(linkedSetOf())
+}
+
+internal object FaceEmbeddingAvailabilityPolicy {
+    fun isUsable(vectorDimension: Int?, expectedDimension: Int): Boolean =
+        vectorDimension == expectedDimension
+}
+
 data class FaceClusterReference(
-    val clusterId: String,
+    val clusterId: String?,
     val reviewed: Boolean,
     val hidden: Boolean,
     val userCorrected: Boolean = false,
@@ -59,9 +75,9 @@ internal object FaceClusterPolicy {
 
     fun matchingCluster(candidates: List<FaceClusterCandidate>): String? {
         val eligible = candidates.filter { candidate ->
-            candidate.reference != null && !candidate.reference.hidden
+            candidate.reference?.let { it.clusterId != null && !it.hidden } == true
         }
-        val ranked = eligible.groupBy { requireNotNull(it.reference).clusterId }
+        val ranked = eligible.groupBy { requireNotNull(it.reference?.clusterId) }
             .map { (clusterId, matches) -> clusterId to matches.map { it.hit.score }.sortedDescending() }
             .sortedWith(compareByDescending<Pair<String, List<Float>>> { it.second.first() }.thenBy { it.first })
         val best = ranked.firstOrNull() ?: return null

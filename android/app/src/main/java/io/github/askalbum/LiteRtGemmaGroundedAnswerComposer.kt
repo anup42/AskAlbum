@@ -1,11 +1,6 @@
 package io.github.anup42.askalbum
 
 import android.os.SystemClock
-import com.google.ai.edge.litertlm.Backend
-import com.google.ai.edge.litertlm.ConversationConfig
-import com.google.ai.edge.litertlm.Engine
-import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -51,13 +46,21 @@ class LiteRtGemmaGroundedAnswerComposer(
         if (status.deviceAssessment?.supported == false) return fallback(baseline, started, status.deviceAssessment.reason)
 
         return try {
-            sessions.withEngine(path, status.multimodal) { initialized ->
+            sessions.withEngine(path, status.multimodal, priority = InferencePriority.INTERACTIVE) { initialized ->
                 withContext(Dispatchers.IO) {
                     require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
                     var generationMs = 0L
                     val generationStarted = SystemClock.elapsedRealtime()
                     val result = compiler.compile(packet, prompt(packet)) {
-                        initialized.engine.generateText(it, seed = 29)
+                        initialized.engine.generateText(
+                            it,
+                            GemmaGenerationOptions(
+                                seed = 29,
+                                maximumOutputTokens = GemmaOutputBudget.GROUNDED_ANSWER,
+                                temperature = 0f,
+                                structuredOutput = true,
+                            ),
+                        )
                     }
                     generationMs = SystemClock.elapsedRealtime() - generationStarted
                     GroundedAnswerCompositionResult(
@@ -92,46 +95,12 @@ class LiteRtGemmaGroundedAnswerComposer(
         Word a concise personal-gallery answer using only the supplied local evidence packet.
         Return exactly one JSON object and no markdown.
         Required shape: {"headline":"Short answer","detail":"Evidence-only detail","claims":[{"text":"Supported claim","evidenceIds":["EV1"],"confidence":0.95}]}
-        Every factual claim must cite one or more evidenceIds copied exactly from the packet.
+        Emit at most one claim for each direct evidence record, and cite the exact evidenceIds copied from the packet.
+        Use the exact text of the cited evidence as the claim text whenever possible; use only simple connective wording when needed.
         Do not invent media, IDs, facts, people, places, numbers, dates, paths, URIs, or unsupported interpretations.
-        Preserve deterministic numbers, dates, exactness, and coverage. If a paraphrase might alter a fact, copy the baseline wording.
+        Preserve deterministic numbers, dates, exactness, and coverage. If a paraphrase might alter a fact, copy the baseline or evidence wording exactly.
         Evidence packet: ${packet.toPromptJson()}
     """.trimIndent()
-
-    private suspend fun generate(engine: Engine, prompt: String): String {
-        val config = ConversationConfig(
-            samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = 29),
-            extraContext = mapOf("enable_thinking" to false),
-        )
-        return engine.generateTextCancellable(config, prompt, mapOf("enable_thinking" to false))
-    }
-
-    private fun createEngine(path: String): InitializedAnswerEngine {
-        val started = SystemClock.elapsedRealtime()
-        val gpu = runCatching {
-            initializeEngine(EngineConfig(modelPath = path, backend = Backend.GPU(), maxNumTokens = 4096))
-                .let { InitializedAnswerEngine(it, PlannerInferenceBackend.GPU, SystemClock.elapsedRealtime() - started) }
-        }
-        return gpu.getOrElse { gpuFailure ->
-            runCatching {
-                initializeEngine(EngineConfig(modelPath = path, backend = Backend.CPU(), maxNumTokens = 4096))
-                    .let { InitializedAnswerEngine(it, PlannerInferenceBackend.CPU, SystemClock.elapsedRealtime() - started) }
-            }.getOrElse { cpuFailure ->
-                throw GemmaModelLoadFailure("Gemma answer composition failed on GPU and CPU", cpuFailure.also { it.addSuppressed(gpuFailure) })
-            }
-        }
-    }
-
-    private fun initializeEngine(config: EngineConfig): Engine {
-        val engine = Engine(config)
-        return try {
-            engine.initialize()
-            engine
-        } catch (error: Throwable) {
-            runCatching { engine.close() }
-            throw error
-        }
-    }
 
     private fun fallback(baseline: SearchAnswer, started: Long, reason: String): GroundedAnswerCompositionResult =
         GroundedAnswerCompositionResult(
@@ -144,9 +113,4 @@ class LiteRtGemmaGroundedAnswerComposer(
             ),
         )
 
-    private data class InitializedAnswerEngine(
-        val engine: Engine,
-        val backend: PlannerInferenceBackend,
-        val loadMs: Long,
-    )
 }

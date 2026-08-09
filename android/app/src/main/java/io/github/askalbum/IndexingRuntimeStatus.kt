@@ -8,11 +8,56 @@ import java.util.concurrent.TimeUnit
 enum class IndexingPipelineState {
     RUNNING,
     WAITING_CONSTRAINTS,
+    UNAVAILABLE,
     BACKOFF,
     STOPPED_BY_USER,
+    PAUSED_BY_USER,
     COMPLETE,
     DEGRADED,
     FAILED,
+}
+
+internal data class IndexingWorkProgress(
+    val lastProgressAt: Long?,
+    val nextAttemptAt: Long?,
+    val delayedRetryCount: Int,
+    val quarantinedCount: Int,
+    val ratePerMinute: Double? = null,
+    val etaMillis: Long? = null,
+    val unavailable: Boolean = false,
+    val errorCode: String? = null,
+) {
+    companion object {
+        fun from(data: androidx.work.Data?): IndexingWorkProgress {
+            val lastProgressAt = data?.getLong("last_progress_at", 0L)?.takeIf { it > 0L }
+            val nextAttemptAt = data?.getLong("next_attempt_at", 0L)?.takeIf { it > 0L }
+            val retryableFailures = data?.getInt("retryable_failures", 0) ?: 0
+            val delayedRetryCount = data?.getInt("delayed_retries", retryableFailures) ?: retryableFailures
+            val status = data?.getString("status")
+            return IndexingWorkProgress(
+                lastProgressAt = lastProgressAt,
+                nextAttemptAt = nextAttemptAt,
+                delayedRetryCount = delayedRetryCount,
+                quarantinedCount = data?.getInt("quarantined", 0) ?: 0,
+                ratePerMinute = data?.getDouble("rate_per_minute", 0.0)?.takeIf { it > 0.0 },
+                etaMillis = data?.getLong("eta_millis", 0L)?.takeIf { it > 0L },
+                unavailable = data?.getBoolean("unavailable", false) == true || status == "UNAVAILABLE",
+                errorCode = data?.getString("error_code")?.takeIf { it.isNotBlank() },
+            )
+        }
+    }
+}
+
+internal object IndexingCoverageMath {
+    fun peopleCompleted(faceScanned: Int, faceEligible: Int): Int =
+        faceScanned.coerceIn(0, faceEligible.coerceAtLeast(0))
+
+    fun peoplePending(pending: Int, faceEligible: Int): Int =
+        pending.coerceIn(0, faceEligible.coerceAtLeast(0))
+
+    fun peopleFailed(faceScanned: Int, pending: Int, faceEligible: Int): Int =
+        (faceEligible - peopleCompleted(faceScanned, faceEligible) - peoplePending(pending, faceEligible))
+            .coerceAtLeast(0)
 }
 
 data class IndexingPipelineSnapshot(
@@ -25,12 +70,16 @@ data class IndexingPipelineSnapshot(
     val quarantinedCount: Int = 0,
     val lastProgressAt: Long? = null,
     val nextAttemptAt: Long? = null,
+    val ratePerMinute: Double? = null,
+    val etaMillis: Long? = null,
     val stopReason: Int? = null,
+    val errorCode: String? = null,
     val message: String,
 )
 
 internal class IndexingRuntimeStatusReader(context: Context) {
-    private val workManager = WorkManager.getInstance(context.applicationContext)
+    private val appContext = context.applicationContext
+    private val workManager = WorkManager.getInstance(appContext)
 
     fun read(
         summary: IndexSummary,
@@ -41,9 +90,22 @@ internal class IndexingRuntimeStatusReader(context: Context) {
     ): Map<IndexingJob, IndexingPipelineSnapshot> {
         val media = workState("gallery-index")
         val embeddings = workState("gallery-image-embeddings")
+        val captionEmbeddings = workState("gallery-caption-embeddings")
         val peopleWork = workState("gallery-people-index")
         val semanticWork = workState("semantic-enrichment")
+        val retrievalAvailable = (appContext as AskAlbumApplication)
+            .services.retrievalModelPackManager.current() != null
         val mediaCompleted = (summary.discovered - summary.pending - summary.failed).coerceAtLeast(0)
+        val peopleCompleted = IndexingCoverageMath.peopleCompleted(summary.facesScanned, summary.faceEligible)
+        val peoplePending = IndexingCoverageMath.peoplePending(people.pendingMediaCount, summary.faceEligible)
+        val peopleFailed = IndexingCoverageMath.peopleFailed(
+            summary.facesScanned,
+            people.pendingMediaCount,
+            summary.faceEligible,
+        )
+        val captionBackfillPending = (semantic.captionCount - semantic.captionChunkCount).coerceAtLeast(0)
+        val captionPending = semantic.pendingCaptionChunkCount + semantic.runningCaptionChunkCount + captionBackfillPending
+        val captionEligible = semantic.captionChunkCount + captionBackfillPending
         return mapOf(
             IndexingJob.MEDIA_ANALYSIS to snapshot(
                 IndexingJob.MEDIA_ANALYSIS,
@@ -54,26 +116,48 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 summary.discovered,
                 media,
                 admission,
+                foregroundActive = ForegroundIndexRuntime.active,
+                pausedByUser = controls.foregroundPaused,
             ),
             IndexingJob.EMBEDDINGS to snapshot(
                 IndexingJob.EMBEDDINGS,
                 controls.embeddingsEnabled,
-                (summary.discovered - summary.siglipVectorsReady).coerceAtLeast(0),
-                0,
+                summary.siglipVectorsPending,
+                summary.siglipVectorsFailed,
                 summary.siglipVectorsReady,
-                summary.discovered,
+                summary.siglipVectorsEligible,
                 embeddings,
                 admission,
+                foregroundActive = ForegroundIndexRuntime.active,
+                pausedByUser = controls.foregroundPaused,
+                unavailable = controls.embeddingsEnabled && !retrievalAvailable && summary.siglipVectorsEligible > 0,
+                errorCode = if (controls.embeddingsEnabled && !retrievalAvailable && summary.siglipVectorsEligible > 0) {
+                    "NO_VERIFIED_RETRIEVAL_PACK"
+                } else {
+                    null
+                },
+            ),
+            IndexingJob.CAPTION_EMBEDDINGS to snapshot(
+                IndexingJob.CAPTION_EMBEDDINGS,
+                controls.captionEmbeddingsEnabled,
+                captionPending,
+                semantic.failedCaptionChunkCount,
+                semantic.embeddedCaptionChunkCount,
+                captionEligible,
+                captionEmbeddings,
+                admission,
+                pausedByUser = controls.foregroundPaused,
             ),
             IndexingJob.PEOPLE to snapshot(
                 IndexingJob.PEOPLE,
                 controls.peopleEnabled && people.enabled,
-                people.pendingMediaCount,
-                0,
-                (summary.discovered - people.pendingMediaCount).coerceAtLeast(0),
-                summary.discovered,
+                peoplePending,
+                peopleFailed,
+                peopleCompleted,
+                summary.faceEligible,
                 peopleWork,
                 admission,
+                pausedByUser = controls.foregroundPaused,
             ),
             IndexingJob.SEMANTIC_MEMORY to snapshot(
                 IndexingJob.SEMANTIC_MEMORY,
@@ -84,6 +168,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
                 semantic.totalJobs,
                 semanticWork,
                 admission,
+                pausedByUser = controls.foregroundPaused,
             ),
         )
     }
@@ -97,22 +182,31 @@ internal class IndexingRuntimeStatusReader(context: Context) {
         eligible: Int,
         work: WorkState,
         admission: BackgroundWorkAdmission,
+        foregroundActive: Boolean = false,
+        pausedByUser: Boolean = false,
+        unavailable: Boolean = false,
+        errorCode: String? = null,
     ): IndexingPipelineSnapshot {
-        val state = when {
-            !enabled -> IndexingPipelineState.STOPPED_BY_USER
-            work.running -> IndexingPipelineState.RUNNING
-            pending == 0 && failed > 0 -> IndexingPipelineState.DEGRADED
-            pending == 0 -> IndexingPipelineState.COMPLETE
-            !admission.allowed -> IndexingPipelineState.WAITING_CONSTRAINTS
-            work.enqueued && work.runAttemptCount > 0 -> IndexingPipelineState.BACKOFF
-            work.enqueued -> IndexingPipelineState.WAITING_CONSTRAINTS
-            else -> IndexingPipelineState.FAILED
-        }
+        val workUnavailable = work.unavailable && pending > 0
+        val state = IndexingRuntimeStatePolicy.resolve(
+            enabled = enabled,
+            pending = pending,
+            failed = failed,
+            admissionAllowed = admission.allowed,
+            workRunning = work.running,
+            workEnqueued = work.enqueued,
+            runAttemptCount = work.runAttemptCount,
+            foregroundActive = foregroundActive,
+            pausedByUser = pausedByUser,
+            unavailable = unavailable || workUnavailable,
+        )
         val message = when (state) {
             IndexingPipelineState.RUNNING -> "$completed / $eligible indexed"
             IndexingPipelineState.WAITING_CONSTRAINTS -> admission.reason ?: "Queued for the next available run"
+            IndexingPipelineState.UNAVAILABLE -> "Verified retrieval pack unavailable"
             IndexingPipelineState.BACKOFF -> "Retry backoff after ${work.runAttemptCount} worker attempts"
             IndexingPipelineState.STOPPED_BY_USER -> "Stopped"
+            IndexingPipelineState.PAUSED_BY_USER -> "Paused by user"
             IndexingPipelineState.COMPLETE -> "$completed / $eligible complete"
             IndexingPipelineState.DEGRADED -> "$completed complete; $failed quarantined"
             IndexingPipelineState.FAILED -> "$pending pending with no active worker"
@@ -123,9 +217,14 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             completedCount = completed,
             eligibleCount = eligible,
             inFlightCount = if (work.running) work.progressInFlight else 0,
-            delayedRetryCount = if (state == IndexingPipelineState.BACKOFF) pending else 0,
-            quarantinedCount = failed,
+            delayedRetryCount = work.delayedRetryCount,
+            quarantinedCount = work.quarantinedCount,
+            lastProgressAt = work.lastProgressAt,
+            nextAttemptAt = work.nextAttemptAt,
+            ratePerMinute = work.ratePerMinute,
+            etaMillis = work.etaMillis,
             stopReason = work.stopReason,
+            errorCode = errorCode ?: work.errorCode,
             message = message,
         )
     }
@@ -142,6 +241,7 @@ internal class IndexingRuntimeStatusReader(context: Context) {
             runAttemptCount = current.runAttemptCount,
             stopReason = current.stopReason.takeIf { it != WorkInfo.STOP_REASON_NOT_STOPPED },
             progressInFlight = current.progress.getInt("in_flight", 0),
+            progress = IndexingWorkProgress.from(current.progress),
         )
     }.getOrDefault(WorkState.EMPTY)
 
@@ -151,10 +251,47 @@ internal class IndexingRuntimeStatusReader(context: Context) {
         val runAttemptCount: Int,
         val stopReason: Int?,
         val progressInFlight: Int,
+        val progress: IndexingWorkProgress,
     ) {
         companion object {
-            val EMPTY = WorkState(false, false, 0, null, 0)
+            val EMPTY = WorkState(false, false, 0, null, 0, IndexingWorkProgress(null, null, 0, 0))
         }
+
+        val lastProgressAt: Long? get() = progress.lastProgressAt
+        val nextAttemptAt: Long? get() = progress.nextAttemptAt
+        val ratePerMinute: Double? get() = progress.ratePerMinute
+        val etaMillis: Long? get() = progress.etaMillis
+        val delayedRetryCount: Int get() = progress.delayedRetryCount
+        val quarantinedCount: Int get() = progress.quarantinedCount
+        val unavailable: Boolean get() = progress.unavailable
+        val errorCode: String? get() = progress.errorCode
+    }
+}
+
+internal object IndexingRuntimeStatePolicy {
+    fun resolve(
+        enabled: Boolean,
+        pending: Int,
+        failed: Int,
+        admissionAllowed: Boolean,
+        workRunning: Boolean,
+        workEnqueued: Boolean,
+        runAttemptCount: Int,
+        foregroundActive: Boolean,
+        pausedByUser: Boolean = false,
+        unavailable: Boolean = false,
+    ): IndexingPipelineState = when {
+        !enabled -> IndexingPipelineState.STOPPED_BY_USER
+        pausedByUser && pending > 0 -> IndexingPipelineState.PAUSED_BY_USER
+        unavailable -> IndexingPipelineState.UNAVAILABLE
+        foregroundActive && pending > 0 -> IndexingPipelineState.RUNNING
+        workRunning -> IndexingPipelineState.RUNNING
+        pending == 0 && failed > 0 -> IndexingPipelineState.DEGRADED
+        pending == 0 -> IndexingPipelineState.COMPLETE
+        !admissionAllowed -> IndexingPipelineState.WAITING_CONSTRAINTS
+        workEnqueued && runAttemptCount > 0 -> IndexingPipelineState.BACKOFF
+        workEnqueued -> IndexingPipelineState.WAITING_CONSTRAINTS
+        else -> IndexingPipelineState.FAILED
     }
 }
 
@@ -167,14 +304,31 @@ internal object IndexingSupervisor {
         controls: IndexingJobControls,
         retrievalAvailable: Boolean,
     ) {
+        if (!IndexingSupervisorPolicy.shouldScheduleBackgroundWork(
+                foregroundActive = ForegroundIndexRuntime.active,
+                pausedByUser = controls.foregroundPaused,
+            )
+        ) return
         if (!ForegroundIndexRuntime.active) {
             if (controls.mediaAnalysisEnabled && summary.pending > 0) IndexScheduler.schedule(context)
             if (
                 controls.embeddingsEnabled &&
                 retrievalAvailable &&
-                summary.siglipVectorsReady < summary.discovered
+                summary.siglipVectorsPending > 0
             ) {
                 EmbeddingIndexScheduler.schedule(context)
+            }
+            val captionBackfillPending = (semantic.captionCount - semantic.captionChunkCount).coerceAtLeast(0)
+            if (
+                controls.captionEmbeddingsEnabled &&
+                retrievalAvailable &&
+                (
+                    captionBackfillPending > 0 ||
+                        semantic.pendingCaptionChunkCount > 0 ||
+                        semantic.runningCaptionChunkCount > 0
+                    )
+            ) {
+                CaptionEmbeddingScheduler.schedule(context)
             }
         }
         if (controls.peopleEnabled && people.enabled && people.pendingMediaCount > 0) {
@@ -186,6 +340,7 @@ internal object IndexingSupervisor {
                 userRequested = semantic.userRequestedPendingJobs > 0,
             )
         }
+        SemanticPredicateScanScheduler.reconcile(context)
     }
 }
 

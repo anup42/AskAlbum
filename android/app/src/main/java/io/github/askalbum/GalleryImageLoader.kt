@@ -19,9 +19,10 @@ class GalleryImageLoader(private val context: Context) {
         keyframes: List<VideoKeyframeRecord>,
     ): LoadedVerificationImage {
         val keyframe = if (hit.item.kind == MediaKind.VIDEO) {
+            val preferredTimestamp = VideoKeyframeSelectionPolicy.selectEvidenceTimestamp(hit.evidence)
             val target = VideoKeyframeSelectionPolicy.selectTimestamp(
                 keyframes.map(VideoKeyframeRecord::timestampMs),
-                hit.evidence.mapNotNull(EvidenceRecord::timestampMs),
+                listOfNotNull(preferredTimestamp),
             )
             keyframes.singleOrNull { it.timestampMs == target }
                 ?: error("Matched video keyframe is unavailable")
@@ -41,11 +42,13 @@ class GalleryImageLoader(private val context: Context) {
         val bounds = BitmapFactory.Options().also { it.inJustDecodeBounds = true }
         open(item, keyframe).use { BitmapFactory.decodeStream(it, null, bounds) }
         require(bounds.outWidth > 0 && bounds.outHeight > 0) { "Image could not be decoded" }
+        val orientation = ExifBitmapOrientation.read { open(item, keyframe) }
         var sample = 1
         while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > MAX_EDGE_PX) sample *= 2
-        val bitmap = open(item, keyframe).use { stream ->
+        val decoded = open(item, keyframe).use { stream ->
             BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().also { it.inSampleSize = sample })
         } ?: error("Image could not be decoded")
+        val bitmap = ExifBitmapOrientation.apply(decoded, orientation)
         try {
             ByteArrayOutputStream().use { output ->
                 require(bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output)) { "Image preparation failed" }
@@ -101,6 +104,21 @@ data class LoadedVerificationImage(
 )
 
 internal object VideoKeyframeSelectionPolicy {
+    private val PREFERRED_TIMESTAMP_FIELDS = listOf(
+        "image_text_embedding",
+        "video_keyframe",
+        "ocr_text",
+    )
+
+    fun selectEvidenceTimestamp(evidence: Collection<EvidenceRecord>): Long? {
+        PREFERRED_TIMESTAMP_FIELDS.forEach { sourceField ->
+            evidence.firstOrNull { it.sourceField == sourceField && it.timestampMs != null }
+                ?.timestampMs
+                ?.let { return it }
+        }
+        return evidence.firstOrNull { it.timestampMs != null }?.timestampMs
+    }
+
     fun selectTimestamp(available: Collection<Long>, evidence: Collection<Long>): Long? {
         if (available.isEmpty()) return null
         val target = evidence.firstOrNull() ?: return available.minOrNull()

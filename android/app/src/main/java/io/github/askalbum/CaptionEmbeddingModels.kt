@@ -59,6 +59,7 @@ data class SemanticCaptionChunkRecord(
     val lastProgressAt: Long? = null,
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
+    val generationId: String? = null,
 )
 
 data class CaptionEmbeddingProgress(
@@ -89,6 +90,91 @@ data class CaptionVectorSearchReport(
     val errorCode: String? = null,
 )
 
+internal object CaptionVectorCoveragePolicy {
+    fun searchableChunkIds(
+        chunks: Collection<SemanticCaptionChunkRecord>,
+        modelVersion: String,
+    ): Set<String> = chunks.asSequence()
+        .filter {
+            it.embeddingState == CaptionEmbeddingState.COMPLETE &&
+                it.embeddingModelVersion == modelVersion &&
+                it.applicability != SemanticProvenanceApplicability.STALE_PERSON_BINDING
+        }
+        .map(SemanticCaptionChunkRecord::id)
+        .toSet()
+
+    fun status(
+        queryRequired: Boolean,
+        eligibleMediaCount: Int,
+        eligibleChunkCount: Int,
+        indexedChunkCount: Int,
+        captionedMediaCount: Int = eligibleMediaCount,
+    ): ChannelStatus = when {
+        !queryRequired || eligibleMediaCount == 0 -> ChannelStatus.NOT_REQUIRED
+        captionedMediaCount.coerceAtLeast(0) < eligibleMediaCount -> ChannelStatus.PARTIAL
+        eligibleChunkCount == 0 -> ChannelStatus.PARTIAL
+        indexedChunkCount < eligibleChunkCount -> ChannelStatus.PARTIAL
+        else -> ChannelStatus.SUCCESS
+    }
+}
+
+internal object CaptionChunkFactProvenancePolicy {
+    fun matchingFacts(
+        caption: SemanticCaptionRecord,
+        facts: List<SemanticFactRecord>,
+    ): List<SemanticFactRecord> {
+        val generationId = caption.generationId ?: return emptyList()
+        return facts.filter { fact ->
+            fact.generationId == generationId &&
+                fact.scope == caption.scope &&
+                fact.subjectId == caption.subjectId &&
+                fact.evidenceMediaId == caption.evidenceMediaId &&
+                fact.modelVersion == caption.modelVersion &&
+                fact.promptVersion == caption.promptVersion
+        }
+    }
+
+    fun matchingPersonFacts(
+        caption: SemanticCaptionRecord,
+        personFacts: List<PersonVisualFactRecord>,
+    ): List<PersonVisualFactRecord> {
+        val generationId = caption.generationId ?: return emptyList()
+        if (caption.scope != SemanticFactScope.MEDIA) return emptyList()
+        return personFacts.filter { fact ->
+            fact.generationId == generationId &&
+                fact.mediaId == caption.evidenceMediaId &&
+                fact.modelVersion == caption.modelVersion &&
+                fact.promptVersion == caption.promptVersion &&
+                fact.bodyRegionVersion == caption.bodyRegionVersion
+        }
+    }
+}
+
+internal object CaptionChunkSearchPolicy {
+    fun matchesCaption(
+        caption: SemanticCaptionRecord,
+        chunk: SemanticCaptionChunkRecord,
+    ): Boolean =
+        chunk.captionId == caption.id &&
+            chunk.mediaId == caption.evidenceMediaId &&
+            chunk.scope == caption.scope &&
+            chunk.scopeId == caption.subjectId &&
+            chunk.evidenceMediaId == caption.evidenceMediaId &&
+            chunk.captionModelVersion == caption.modelVersion &&
+            chunk.captionPromptVersion == caption.promptVersion &&
+            chunk.generationId == caption.generationId
+
+    fun isSearchableVector(
+        caption: SemanticCaptionRecord,
+        chunk: SemanticCaptionChunkRecord,
+    ): Boolean =
+        matchesCaption(caption, chunk) &&
+            chunk.chunkPolicyVersion == SemanticCaptionChunker.POLICY_VERSION &&
+            chunk.embeddingState == CaptionEmbeddingState.COMPLETE &&
+            !chunk.embeddingModelVersion.isNullOrBlank() &&
+            chunk.applicability != SemanticProvenanceApplicability.STALE_PERSON_BINDING
+}
+
 internal object SemanticCaptionChunker {
     const val POLICY_VERSION = "caption-chunks-v3"
     const val MAX_CHUNKS_PER_CAPTION = 24
@@ -104,8 +190,32 @@ internal object SemanticCaptionChunker {
     ): List<SemanticCaptionChunkRecord> {
         if (caption.text.isBlank() || SensitiveContentClassifier.isSensitive(caption.text)) return emptyList()
         val candidates = mutableListOf<Candidate>()
+        val generationId = caption.generationId
+        val scopedPersonFacts = personFacts.filter {
+            caption.scope in setOf(
+                SemanticFactScope.MEDIA,
+                SemanticFactScope.QUERY_VERIFICATION,
+                SemanticFactScope.EXACT_DUPLICATE_GROUP,
+            ) &&
+            generationId != null &&
+            it.generationId == generationId &&
+            it.mediaId == caption.evidenceMediaId &&
+            it.modelVersion == caption.modelVersion &&
+            it.promptVersion == caption.promptVersion &&
+            it.bodyRegionVersion == caption.bodyRegionVersion
+        }
+        val scopedFacts = facts.filter {
+            generationId != null &&
+            it.generationId == generationId &&
+            it.scope == caption.scope &&
+            it.subjectId == caption.subjectId &&
+            it.evidenceMediaId == caption.evidenceMediaId &&
+            it.modelVersion == caption.modelVersion &&
+            it.promptVersion == caption.promptVersion &&
+            it.applicability != SemanticProvenanceApplicability.LEGACY_SCOPE_UNCERTAIN
+        }
 
-        personFacts
+        scopedPersonFacts
             .filter {
                 it.mediaId == caption.evidenceMediaId &&
                     it.verdict == PersonVisualVerdict.VERIFIED_TRUE &&
@@ -129,6 +239,7 @@ internal object SemanticCaptionChunker {
                         },
                         appearance.maxOf(PersonVisualFactRecord::confidence),
                         clusterId,
+                        caption.applicability,
                     )
                 }
                 val actions = clusterFacts.filter { it.relation == PersonVisualRelation.ACTION }
@@ -138,6 +249,7 @@ internal object SemanticCaptionChunker {
                         actions.joinToString("; ") { it.value },
                         actions.maxOf(PersonVisualFactRecord::confidence),
                         clusterId,
+                        caption.applicability,
                     )
                 }
                 clusterFacts.filter {
@@ -152,28 +264,30 @@ internal object SemanticCaptionChunker {
                         "${it.relation.name.lowercase(Locale.ROOT).replace('_', ' ')} another reviewed person",
                         it.confidence,
                         clusterId,
+                        caption.applicability,
                     )
                 }
             }
 
-        facts
+        scopedFacts
             .filter {
                 it.evidenceMediaId == caption.evidenceMediaId &&
                     it.applicability !in setOf("STALE_PERSON_BINDING", "LEGACY_GROUP_CONTEXT_ONLY")
             }
-            .groupBy(::classifyFact)
-            .forEach { (type, grouped) ->
+            .groupBy { classifyFact(it) to it.applicability }
+            .forEach { (key, grouped) ->
                 candidates += Candidate(
-                    type,
+                    key.first,
                     grouped.joinToString("; ") { "${it.predicate.replace('_', ' ')}: ${it.value}" },
                     grouped.maxOf(SemanticFactRecord::confidence),
+                    applicability = key.second,
                 )
             }
 
         caption.text.split(sentenceBoundary)
             .flatMap(::boundedPieces)
             .filter(String::isNotBlank)
-            .forEach { candidates += Candidate(classify(it), it, caption.confidence) }
+            .forEach { candidates += Candidate(classify(it), it, caption.confidence, applicability = caption.applicability) }
 
         val accepted = mutableListOf<Candidate>()
         candidates.forEach { candidate ->
@@ -198,6 +312,7 @@ internal object SemanticCaptionChunker {
                 candidate.clusterId.orEmpty(),
                 candidate.type.name,
                 POLICY_VERSION,
+                generationId.orEmpty(),
                 index.toString(),
                 normalize(candidate.text),
             ).joinToString("|")
@@ -212,7 +327,11 @@ internal object SemanticCaptionChunker {
                 chunkType = candidate.type,
                 exactText = candidate.text,
                 confidence = candidate.confidence.coerceIn(0f, 1f),
-                applicability = caption.applicability,
+                applicability = if (caption.generationId == null) {
+                    SemanticProvenanceApplicability.LEGACY_UNCORRELATED
+                } else {
+                    candidate.applicability ?: caption.applicability
+                },
                 captionModelVersion = caption.modelVersion,
                 captionPromptVersion = caption.promptVersion,
                 chunkPolicyVersion = POLICY_VERSION,
@@ -220,6 +339,7 @@ internal object SemanticCaptionChunker {
                 embeddingState = CaptionEmbeddingState.PENDING,
                 createdAt = now,
                 updatedAt = now,
+                generationId = generationId,
             )
         }
     }
@@ -255,7 +375,7 @@ internal object SemanticCaptionChunker {
     }
 
     private fun classifyFact(fact: SemanticFactRecord): CaptionChunkType = when (fact.predicate) {
-        "scene_summary", "primary_activity", "activity", "activity_indicator" -> CaptionChunkType.SCENE_ACTIVITY
+        "scene_summary", "image_subject", "observed_activity", "activity_state", "primary_activity", "activity", "activity_indicator" -> CaptionChunkType.SCENE_ACTIVITY
         "possible_occasion", "occasion" -> CaptionChunkType.OCCASION
         "occasion_indicator" -> CaptionChunkType.OCCASION_INDICATOR
         else -> classify("${fact.predicate} ${fact.value}")
@@ -277,6 +397,7 @@ internal object SemanticCaptionChunker {
         val text: String,
         val confidence: Float,
         val clusterId: String? = null,
+        val applicability: String? = null,
     )
 }
 

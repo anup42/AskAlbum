@@ -2,12 +2,6 @@ package io.github.anup42.askalbum
 
 import android.content.Context
 import android.os.SystemClock
-import com.google.ai.edge.litertlm.Backend
-import com.google.ai.edge.litertlm.Contents
-import com.google.ai.edge.litertlm.ConversationConfig
-import com.google.ai.edge.litertlm.Engine
-import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -44,7 +38,7 @@ class LiteRtGemmaVisualVerifier(
         }
 
         return try {
-            sessions.withEngine(path, multimodal = true) { initialized ->
+            sessions.withEngine(path, multimodal = true, priority = InferencePriority.INTERACTIVE) { initialized ->
                 withContext(Dispatchers.IO) {
                     require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
                     val accepted = linkedSetOf<String>()
@@ -57,15 +51,18 @@ class LiteRtGemmaVisualVerifier(
                     bounded.forEach { hit ->
                             runCatching {
                                 val requiredGroups = PeopleClauseResolver.requiredGroups(plan.peopleClauses)
-                                val requiredPeople = requiredGroups.flatten().map(PersonClause::personId).toSet()
-                                val bindings = database.reviewedFaceBindings(hit.item.id, requiredPeople)
+                                val conditionPeople = PersonVerificationBindingPolicy.conditionPersonIds(conditions)
+                                val requiredPeople = requiredGroups.flatten().map(PersonClause::personId).toSet() + conditionPeople
+                                val requestedBindings = database.reviewedFaceBindings(hit.item.id, requiredPeople)
                                 if (requiredPeople.isNotEmpty()) {
-                                    val grouped = bindings.groupBy(PersonVerificationBinding::clusterId)
+                                    val grouped = requestedBindings.groupBy(PersonVerificationBinding::clusterId)
                                     val everyRequestedIdentityBound = requiredGroups.all { alternatives ->
                                         alternatives.any { clause ->
-                                            bindings.any { binding ->
-                                                binding.clusterId == clause.personId ||
-                                                    binding.identityTerms.any { it.equals(clause.personId, ignoreCase = true) }
+                                            requestedBindings.any { binding ->
+                                                PersonVerificationBindingPolicy.matchesRequestedIdentity(
+                                                    binding,
+                                                    clause.personId,
+                                                )
                                             }
                                         }
                                     }
@@ -73,12 +70,29 @@ class LiteRtGemmaVisualVerifier(
                                         "Required reviewed identities could not be bound unambiguously to visible faces"
                                     }
                                 }
+                                require(PersonVerificationBindingPolicy.allConditionPeopleBound(conditionPeople, requestedBindings)) {
+                                    "Person visual conditions could not be bound to exactly one reviewed visible face"
+                                }
+                                val bindings = if (requiredPeople.isNotEmpty() || conditions.any { it.subject == SemanticSubject.PERSON }) {
+                                    database.verificationFaceBindingsForMedia(hit.item.id)
+                                } else {
+                                    emptyList()
+                                }
                                 val boundConditions = PersonVerificationPromptBinding.bind(conditions, bindings)
                                 val loaded = imageLoader.loadForVerification(hit, database.videoKeyframes(hit.item.id))
                                 val bytes = PersonVerificationImageComposer.compose(loaded.bytes, bindings)
                                 val generationStarted = SystemClock.elapsedRealtime()
                                 val decoded = compiler.compile(boundConditions, prompt(plan, boundConditions, bindings)) { prompt ->
-                                    initialized.engine.generateVision(bytes, prompt, seed = 23)
+                                    initialized.engine.generateVision(
+                                        bytes,
+                                        prompt,
+                                        GemmaGenerationOptions(
+                                            seed = 23,
+                                            maximumOutputTokens = GemmaOutputBudget.VISUAL_VERIFIER,
+                                            temperature = 0f,
+                                            structuredOutput = true,
+                                        ),
+                                    )
                                 }
                                 generationMs += SystemClock.elapsedRealtime() - generationStarted
                                 generationCalls += decoded.generationCalls
@@ -124,6 +138,7 @@ class LiteRtGemmaVisualVerifier(
                                             confidence = evaluation.confidence,
                                             region = listOf(binding.left, binding.top, binding.right, binding.bottom),
                                             modelVersion = producerVersion(status),
+                                            verdict = evaluation.verdict,
                                         )
                                     }
                                 }
@@ -186,14 +201,26 @@ class LiteRtGemmaVisualVerifier(
             }
         }
         val mapping = JSONObject().apply {
-            bindings.forEach { binding -> put(binding.stableLabel, "reviewed-cluster:${binding.clusterId}") }
+            bindings.forEach { binding ->
+                put(
+                    binding.stableLabel,
+                    if (binding.clusterId.startsWith("unreviewed-face-")) {
+                        "other-visible-face"
+                    } else {
+                        "reviewed-cluster:${binding.clusterId}"
+                    },
+                )
+            }
         }
         return """
-            Inspect the supplied contact sheet. Its top panel is the full image with labelled face boxes; lower panels are expanded upper/full-body crops.
+            Inspect the supplied contact sheet. Its top panel is the full image with labelled face boxes; lower panels are expanded upper-body, full-body, and lower-body/feet crops.
             Return exactly one JSON object and no markdown or explanation.
             Every condition text is a positive visual predicate. Set satisfied=true only when that predicate is visibly present.
+            For a negative condition, Kotlin applies polarity after your response. If the text lists multiple labels joined by "or", set satisfied=true when any listed label visibly has the predicate; otherwise set satisfied=false.
             Kotlin applies polarity after your response: a NEGATIVE condition matches only when its positive predicate is not visible. Never invert polarity yourself.
+            Example: for polarity NEGATIVE and text "P2 is wearing a green hat", return VERIFIED_FALSE when P2 is not visibly wearing a green hat; do not return VERIFIED_TRUE merely because another labelled person has a different hat.
             Person labels are deterministic and must not be reassigned. Bind every person-specific condition only to the matching P-label.
+            U-labels identify other visible faces without a reviewed identity. They are context and must never satisfy a condition addressed to a P-label.
             Person mapping: $mapping
             For synthetic cards or diagrams, visible labels and illustrated clothing are valid image evidence.
             Query context: ${JSONObject.quote(plan.originalQuery)}
@@ -207,62 +234,6 @@ class LiteRtGemmaVisualVerifier(
             overallMatch is advisory; Kotlin deterministically applies HARD constraints and polarity.
             Never emit media IDs, paths, URIs, boxes, tools, or additional fields.
         """.trimIndent()
-    }
-
-    private suspend fun generate(engine: Engine, imageBytes: ByteArray, prompt: String): String {
-        val config = ConversationConfig(
-            samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = 23),
-            extraContext = mapOf("enable_thinking" to false),
-        )
-        return engine.generateTextCancellable(
-            config,
-            Contents.of(
-                com.google.ai.edge.litertlm.Content.ImageBytes(imageBytes),
-                com.google.ai.edge.litertlm.Content.Text(prompt),
-            ),
-            mapOf("enable_thinking" to false),
-        )
-    }
-
-    private fun createEngine(path: String): InitializedVerificationEngine {
-        val started = SystemClock.elapsedRealtime()
-        val gpu = runCatching {
-            initializeEngine(
-                EngineConfig(
-                    modelPath = path,
-                    backend = Backend.GPU(),
-                    visionBackend = Backend.GPU(),
-                    maxNumTokens = 4096,
-                    maxNumImages = 1,
-                ),
-            ).let { InitializedVerificationEngine(it, VerificationInferenceBackend.GPU, SystemClock.elapsedRealtime() - started) }
-        }
-        return gpu.getOrElse { gpuFailure ->
-            runCatching {
-                initializeEngine(
-                    EngineConfig(
-                        modelPath = path,
-                        backend = Backend.CPU(),
-                        visionBackend = Backend.CPU(),
-                        maxNumTokens = 4096,
-                        maxNumImages = 1,
-                    ),
-                ).let { InitializedVerificationEngine(it, VerificationInferenceBackend.CPU, SystemClock.elapsedRealtime() - started) }
-            }.getOrElse { cpuFailure ->
-                throw GemmaModelLoadFailure("Gemma visual verification failed on GPU and CPU", cpuFailure.also { it.addSuppressed(gpuFailure) })
-            }
-        }
-    }
-
-    private fun initializeEngine(config: EngineConfig): Engine {
-        val engine = Engine(config)
-        return try {
-            engine.initialize()
-            engine
-        } catch (error: Throwable) {
-            runCatching { engine.close() }
-            throw error
-        }
     }
 
     private fun failedBeforeInference(started: Long, count: Int, reason: String): VerificationResult {
@@ -293,12 +264,6 @@ class LiteRtGemmaVisualVerifier(
     private fun producerVersion(status: ModelPackStatus): String =
         "gemma-4-${status.tier?.name?.lowercase() ?: "unknown"}-${status.packVersion ?: "unknown"}"
 
-    private data class InitializedVerificationEngine(
-        val engine: Engine,
-        val backend: VerificationInferenceBackend,
-        val loadMs: Long,
-    )
-
     companion object {
         const val MAX_CANDIDATES = 8
     }
@@ -308,16 +273,30 @@ internal object VisualVerificationPolicy {
     private const val MAX_CONDITIONS = 16
     private val hardVisualTerms = setOf("only", "wearing", "behind", "in front", "taller", "shorter", "same person")
 
-    fun requiresVerification(plan: GalleryQueryPlan): Boolean = when (plan.verification) {
-        VerificationPolicy.NEVER -> false
-        VerificationPolicy.REQUIRED -> true
-        VerificationPolicy.AUTO -> plan.semanticClauses.any { clause ->
-            clause.hardness == ConstraintStrength.HARD ||
-                clause.polarity == Polarity.NEGATIVE ||
-                clause.subject == SemanticSubject.PERSON ||
-                clause.relationToPerson != null ||
-                hardVisualTerms.any { it in clause.text.lowercase() }
+    fun requiresVerification(plan: GalleryQueryPlan): Boolean {
+        // A planner must not be able to disable the identity/body binding check for
+        // person-conditioned predicates. Face presence alone cannot prove clothing,
+        // action, relation, or other visual attributes belong to the requested person.
+        if (hasPersonCondition(plan)) return true
+        // Negative visual predicates need a Kotlin-owned rejection pass. Only metadata-backed
+        // screenshot exclusions are already deterministic; every other negative condition must
+        // fail closed if visual verification is unavailable.
+        if (DeterministicNegativeClausePolicy.requiresVisualRejection(plan.semanticClauses)) return true
+        return when (plan.verification) {
+            VerificationPolicy.NEVER -> false
+            VerificationPolicy.REQUIRED -> true
+            VerificationPolicy.AUTO -> plan.semanticClauses.any { clause ->
+                clause.hardness == ConstraintStrength.HARD ||
+                    clause.polarity == Polarity.NEGATIVE ||
+                    clause.subject == SemanticSubject.PERSON ||
+                    clause.relationToPerson != null ||
+                    hardVisualTerms.any { it in clause.text.lowercase() }
+            }
         }
+    }
+
+    private fun hasPersonCondition(plan: GalleryQueryPlan): Boolean = plan.semanticClauses.any { clause ->
+        clause.subject == SemanticSubject.PERSON || clause.relationToPerson != null
     }
 
     fun conditions(plan: GalleryQueryPlan): List<VerificationConditionSpec> {

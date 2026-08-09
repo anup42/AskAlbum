@@ -10,6 +10,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.max
@@ -23,7 +24,7 @@ internal class ReviewedIdentityClusterExpander(
     private val imageLoader = GalleryImageLoader(application)
 
     suspend fun ensureEmbedding(face: PersonFaceReviewItem): Boolean {
-        if (face.id in vectors.ids()) return false
+        if (vectors.hasUsableVector(face.id)) return false
         val lease = application.services.faceEngines.acquireOrNull()
             ?: error("SFace is unavailable; the representative embedding will be repaired when the face model is ready")
         try {
@@ -126,7 +127,7 @@ internal object ReviewedIdentityExpansionPolicy {
         references: Map<String, FaceClusterReference>,
     ): Set<String> = scoresByCandidate.mapNotNullTo(linkedSetOf()) { (faceId, rawScores) ->
         val reference = references[faceId]
-        if (reference?.reviewed == true || reference?.hidden == true || reference?.userCorrected == true) {
+        if (reference == null || reference.reviewed || reference.hidden || reference.userCorrected) {
             return@mapNotNullTo null
         }
         val scores = rawScores.sortedDescending()
@@ -150,20 +151,26 @@ class ReviewedIdentityExpansionWorker(
         val application = applicationContext as AskAlbumApplication
         if (!application.repository.peopleIndexStatus().enabled) return@withContext Result.success()
         val clusterId = inputData.getString(KEY_CLUSTER_ID) ?: return@withContext Result.failure()
-        runCatching { ReviewedIdentityClusterExpander(application).expand(clusterId) }.fold(
-            onSuccess = { Result.success(workDataOf(KEY_MATCHED_COUNT to it)) },
-            onFailure = { error ->
-                if (error is FaceEmbeddingRepairException ||
-                    error is SecurityException ||
-                    error is java.io.FileNotFoundException
-                ) {
-                    Result.failure(workDataOf(KEY_ERROR to (error.message ?: error::class.java.simpleName).take(300)))
-                } else {
-                    Result.retry()
-                }
-            },
-        )
+        try {
+            Result.success(
+                workDataOf(KEY_MATCHED_COUNT to ReviewedIdentityClusterExpander(application).expand(clusterId)),
+            )
+        } catch (error: Throwable) {
+            if (ReviewedIdentityExpansionFailurePolicy.shouldPropagate(error)) throw error
+            if (error is FaceEmbeddingRepairException ||
+                error is SecurityException ||
+                error is java.io.FileNotFoundException
+            ) {
+                Result.failure(workDataOf(KEY_ERROR to (error.message ?: error::class.java.simpleName).take(300)))
+            } else {
+                Result.retry()
+            }
+        }
     }
+}
+
+internal object ReviewedIdentityExpansionFailurePolicy {
+    fun shouldPropagate(error: Throwable): Boolean = error is CancellationException
 }
 
 internal object ReviewedIdentityExpansionScheduler {

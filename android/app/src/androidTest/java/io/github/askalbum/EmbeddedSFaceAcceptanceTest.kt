@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -16,6 +17,7 @@ import java.security.MessageDigest
 class EmbeddedSFaceAcceptanceTest {
     @Test
     fun embeddedModelIsVerifiedAndActivatedInPrivateStorage() = runBlocking {
+        assumeTrue("Embedded SFace asset is not part of model-independent variants", !BuildConfig.MODEL_INDEPENDENT)
         val application = InstrumentationRegistry.getInstrumentation()
             .targetContext.applicationContext as AskAlbumApplication
         val services = application.services

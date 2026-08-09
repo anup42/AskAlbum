@@ -5,13 +5,13 @@ import org.junit.Test
 
 class GemmaAutoProvisionPolicyTest {
     @Test
-    fun e4bClassDeviceTriesE4bThenFallsBackToE2b() {
+    fun e4bClassDeviceTriesE2bBeforeOptionalE4bFallback() {
         val status = ModelPackStatus(
             installed = false,
             deviceAssessment = assessment(GemmaModelTier.E4B),
         )
 
-        assertEquals(listOf(GemmaModelTier.E4B, GemmaModelTier.E2B), automaticGemmaCandidates(status))
+        assertEquals(listOf(GemmaModelTier.E2B, GemmaModelTier.E4B), automaticGemmaCandidates(status))
     }
 
     @Test

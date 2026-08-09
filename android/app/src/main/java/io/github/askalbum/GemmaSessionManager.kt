@@ -28,9 +28,45 @@ internal interface SharedGemmaEngine : AutoCloseable {
     val mtpEnabled: Boolean
         get() = false
 
-    suspend fun generateText(prompt: String, seed: Int): String
+    suspend fun generateText(prompt: String, seed: Int): String =
+        generateText(prompt, GemmaGenerationOptions(seed = seed))
 
-    suspend fun generateVision(imageBytes: ByteArray, prompt: String, seed: Int): String
+    suspend fun generateText(prompt: String, options: GemmaGenerationOptions): String =
+        generateText(prompt, options.seed)
+
+    suspend fun generateVision(imageBytes: ByteArray, prompt: String, seed: Int): String =
+        generateVision(imageBytes, prompt, GemmaGenerationOptions(seed = seed))
+
+    suspend fun generateVision(
+        imageBytes: ByteArray,
+        prompt: String,
+        options: GemmaGenerationOptions,
+    ): String = generateVision(imageBytes, prompt, options.seed)
+}
+
+internal data class GemmaGenerationOptions(
+    val seed: Int,
+    val maximumOutputTokens: Int = GemmaOutputBudget.DEFAULT,
+    val temperature: Float = 0f,
+    val structuredOutput: Boolean = true,
+) {
+    init {
+        require(maximumOutputTokens in 32..GemmaOutputBudget.ENGINE_MAX) {
+            "maximumOutputTokens must be between 32 and ${GemmaOutputBudget.ENGINE_MAX}"
+        }
+        require(temperature.isFinite() && temperature in 0f..2f) {
+            "temperature must be finite and between 0 and 2"
+        }
+    }
+}
+
+internal object GemmaOutputBudget {
+    const val ENGINE_MAX = 4096
+    const val DEFAULT = 768
+    const val PLANNER = 768
+    const val VISUAL_VERIFIER = 768
+    const val GROUNDED_ANSWER = 768
+    const val CAPTION = 2048
 }
 
 internal fun interface SharedGemmaEngineFactory {
@@ -69,12 +105,13 @@ class GemmaSessionManager internal constructor(
     internal suspend fun <T> withEngine(
         modelPath: String,
         multimodal: Boolean,
+        priority: InferencePriority = InferencePriority.BACKGROUND,
         block: suspend (SharedGemmaLease) -> T,
     ): T {
-        idleEviction?.cancel()
-        return try {
-            resources.withModel(ModelCapability.GENERATIVE) {
-                sessionLock.withLock {
+        return resources.withModel(ModelCapability.GENERATIVE, priority) {
+            sessionLock.withLock {
+                idleEviction?.cancel()
+                try {
                     val current = active
                     val reused = current != null &&
                         current.modelPath == modelPath &&
@@ -82,10 +119,10 @@ class GemmaSessionManager internal constructor(
                     val selected = if (reused) {
                         requireNotNull(current)
                     } else {
-                        current?.engine?.closeSafely()
                         val started = System.nanoTime()
                         val engine = factory.create(modelPath, multimodal)
                         initializationCounter.incrementAndGet()
+                        current?.engine?.closeSafely()
                         ActiveEngine(
                             modelPath = modelPath,
                             multimodal = multimodal,
@@ -94,10 +131,10 @@ class GemmaSessionManager internal constructor(
                         ).also { active = it }
                     }
                     block(SharedGemmaLease(selected.engine, if (reused) 0L else selected.loadMs))
+                } finally {
+                    scheduleIdleEvictionLocked()
                 }
             }
-        } finally {
-            scheduleIdleEviction()
         }
     }
 
@@ -108,12 +145,15 @@ class GemmaSessionManager internal constructor(
 
     internal suspend fun evictNow() {
         sessionLock.withLock {
+            idleEviction?.cancel()
+            idleEviction = null
             active?.engine?.closeSafely()
             active = null
         }
     }
 
-    private fun scheduleIdleEviction() {
+    /** Must be called while [sessionLock] is held so queued calls cannot race the schedule. */
+    private fun scheduleIdleEvictionLocked() {
         idleEviction?.cancel()
         idleEviction = scope.launch {
             delay(idleTimeoutMs)
@@ -199,21 +239,32 @@ private class LiteRtSharedGemmaEngine(
     override val mtpSupported: Boolean,
     override val mtpEnabled: Boolean,
 ) : SharedGemmaEngine {
-    override suspend fun generateText(prompt: String, seed: Int): String =
-        engine.generateTextCancellable(conversation(seed), prompt, DISABLE_THINKING)
+    override suspend fun generateText(prompt: String, options: GemmaGenerationOptions): String =
+        engine.generateTextCancellable(conversation(options), prompt, DISABLE_THINKING)
 
-    override suspend fun generateVision(imageBytes: ByteArray, prompt: String, seed: Int): String =
+    override suspend fun generateVision(
+        imageBytes: ByteArray,
+        prompt: String,
+        options: GemmaGenerationOptions,
+    ): String =
         engine.generateTextCancellable(
-            conversation(seed),
+            conversation(options),
             Contents.of(Content.ImageBytes(imageBytes), Content.Text(prompt)),
             DISABLE_THINKING,
         )
 
     override fun close() = engine.close()
 
-    private fun conversation(seed: Int) = ConversationConfig(
-        samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = seed),
+    private fun conversation(options: GemmaGenerationOptions) = ConversationConfig(
+        samplerConfig = SamplerConfig(
+            topK = 1,
+            topP = 1.0,
+            temperature = options.temperature.toDouble(),
+            seed = options.seed,
+        ),
         extraContext = DISABLE_THINKING,
+        maxOutputToken = options.maximumOutputTokens,
+        enableResponseFormat = options.structuredOutput,
     )
 
     private companion object {

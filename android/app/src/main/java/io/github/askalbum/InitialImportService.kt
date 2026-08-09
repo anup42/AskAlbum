@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -17,12 +18,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class InitialImportService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var importJob: Job? = null
+    private var explicitUserStop = false
+    private var recoveryHandoffScheduled = false
 
     override fun onCreate() {
         super.onCreate()
@@ -30,48 +34,97 @@ class InitialImportService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        val action = intent?.action
+        if (action == ACTION_STOP) {
+            explicitUserStop = true
             importJob?.cancel()
-            stopForegroundAndSelf()
+            scope.launch {
+                runCatching {
+                    IndexScheduler.cancelAndWait(this@InitialImportService)
+                    EmbeddingIndexScheduler.cancelAndWait(this@InitialImportService)
+                }
+                stopForegroundAndSelf()
+            }
             return START_NOT_STICKY
         }
-        if (intent?.action != ACTION_IMPORT && intent?.action != ACTION_INDEX) {
+        if (action == ACTION_PAUSE) {
+            explicitUserStop = true
+            pauseIndexing()
+            return START_NOT_STICKY
+        }
+        if (action != ACTION_IMPORT && action != ACTION_INDEX && action != ACTION_RESUME) {
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            notification("Reading your permitted gallery", indeterminate = true),
-            if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
-            else if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            else 0,
-        )
+        explicitUserStop = false
+        recoveryHandoffScheduled = false
+        IndexingJobControlsStore(this).setForegroundPaused(false)
+        startIndexingForeground(notification("Reading your permitted gallery", indeterminate = true))
         if (importJob?.isActive != true) {
             ForegroundIndexRuntime.started()
+            ensureWorkManagerRecovery()
             importJob = scope.launch {
                 val app = application as AskAlbumApplication
                 val result = runCatching {
-                    val imported = if (intent.action == ACTION_IMPORT) app.repository.scanAccessibleGallery() else 0
+                    val imported = if (action == ACTION_IMPORT) app.repository.scanAccessibleGallery() else 0
+                    val progressStartedAt = SystemClock.elapsedRealtime()
                     val indexed = ForegroundIndexCoordinator(this@InitialImportService).run(
                         onProgress = { progress ->
                             val summary = app.repository.indexSummary()
+                            val discovered = summary.discovered
+                            val vectorEligible = summary.siglipVectorsEligible
+                            val completed = (discovered - summary.pending - summary.failed)
+                                .coerceIn(0, discovered)
+                            val processed = progress.galleryProcessed + progress.embeddingsProcessed
+                            val elapsedMs = (SystemClock.elapsedRealtime() - progressStartedAt).coerceAtLeast(1L)
+                            val ratePerMinute = processed * 60_000.0 / elapsedMs
+                            val remaining = (summary.pending +
+                                summary.siglipVectorsPending)
+                                .coerceAtLeast(0)
+                            val etaMillis = if (ratePerMinute > 0.0 && remaining > 0) {
+                                (remaining * 60_000.0 / ratePerMinute).toLong()
+                            } else {
+                                null
+                            }
+                            val pipeline = when {
+                                progress.galleryHasMore && progress.embeddingsHaveMore -> "media + vectors"
+                                progress.galleryHasMore -> "media analysis"
+                                progress.embeddingsHaveMore -> "SigLIP2 vectors"
+                                else -> "finalizing"
+                            }
+                            val rateText = if (ratePerMinute >= 1.0) {
+                                " | ${ratePerMinute.toInt()}/min"
+                            } else {
+                                ""
+                            }
+                            val etaText = etaMillis?.let { " | ETA ${formatDuration(it)}" } ?: ""
+                            val vectorFailureText = if (summary.siglipVectorsFailed > 0) {
+                                " (${summary.siglipVectorsFailed} quarantined)"
+                            } else {
+                                ""
+                            }
                             getSystemService(NotificationManager::class.java).notify(
                                 NOTIFICATION_ID,
                                 notification(
-                                    "Media ${summary.discovered - summary.pending}/${summary.discovered}; " +
-                                        "vectors ${summary.siglipVectorsReady}/${summary.discovered}",
-                                    indeterminate = true,
+                                    "$pipeline | media $completed/$discovered; vectors " +
+                                        "${summary.siglipVectorsReady}/$vectorEligible$vectorFailureText$rateText$etaText",
+                                    indeterminate = discovered <= 0,
+                                    progress = completed,
+                                    total = discovered,
                                 ),
                             )
                         },
                     )
                     imported to indexed
+                }.onFailure { error ->
+                    if (error is CancellationException) throw error
                 }
                 val message = result.fold(
                     onSuccess = { (imported, indexed) ->
                         when (indexed.reason) {
                             ForegroundIndexStopReason.COMPLETE -> "$imported gallery records indexed locally"
+                            ForegroundIndexStopReason.UNAVAILABLE ->
+                                "Indexed ${indexed.galleryProcessed}; retrieval pack unavailable (${indexed.errorCode ?: "unknown"})"
                             ForegroundIndexStopReason.THERMAL ->
                                 "Indexed ${indexed.galleryProcessed}; paused to keep your phone cool"
                             ForegroundIndexStopReason.RETRYABLE_FAILURE ->
@@ -98,6 +151,9 @@ class InitialImportService : Service() {
     }
 
     override fun onDestroy() {
+        if (ForegroundIndexHandoffPolicy.shouldScheduleRecovery(explicitUserStop, importJob?.isActive == true)) {
+            scheduleWorkManagerRecovery()
+        }
         ForegroundIndexRuntime.stopped()
         scope.cancel()
         super.onDestroy()
@@ -105,8 +161,7 @@ class InitialImportService : Service() {
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         importJob?.cancel()
-        IndexScheduler.schedule(this)
-        EmbeddingIndexScheduler.schedule(this)
+        scheduleWorkManagerRecovery()
         stopForegroundAndSelf()
     }
 
@@ -123,38 +178,89 @@ class InitialImportService : Service() {
         }
     }
 
-    private fun notification(message: String, indeterminate: Boolean): Notification {
+    private fun startIndexingForeground(notification: Notification) {
+        when {
+            Build.VERSION.SDK_INT >= 35 -> startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING,
+            )
+            Build.VERSION.SDK_INT >= 29 -> startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+            else -> startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun notification(
+        message: String,
+        indeterminate: Boolean,
+        progress: Int? = null,
+        total: Int? = null,
+        paused: Boolean = false,
+    ): Notification {
         val openApp = PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("AskAlbum local import")
-            .setContentText(message)
-            .setContentIntent(openApp)
-            .addAction(
-                android.R.drawable.ic_media_pause,
-                "Stop",
-                PendingIntent.getService(
-                    this,
-                    1,
-                    Intent(this, InitialImportService::class.java).setAction(ACTION_STOP),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                ),
+        return NotificationCompat.Builder(this, CHANNEL_ID).apply {
+            setSmallIcon(android.R.drawable.stat_sys_download)
+            setContentTitle("AskAlbum local import")
+            setContentText(message)
+            setContentIntent(openApp)
+            if (paused) {
+                addAction(
+                    android.R.drawable.ic_media_play,
+                    "Resume",
+                    serviceAction(ACTION_RESUME, 3),
+                )
+            } else {
+                addAction(
+                    android.R.drawable.ic_media_pause,
+                    "Pause",
+                    serviceAction(ACTION_PAUSE, 2),
+                )
+                addAction(
+                    android.R.drawable.ic_menu_close_clear_cancel,
+                    "Stop",
+                    serviceAction(ACTION_STOP, 1),
+                )
+            }
+            setOnlyAlertOnce(true)
+            setOngoing(indeterminate && !paused)
+            setProgress(
+                total?.takeIf { it > 0 } ?: 0,
+                progress?.coerceIn(0, total?.coerceAtLeast(0) ?: 0) ?: 0,
+                indeterminate || total == null || total <= 0,
             )
-            .setOnlyAlertOnce(true)
-            .setOngoing(indeterminate)
-            .setProgress(if (indeterminate) 0 else 1, if (indeterminate) 0 else 1, indeterminate)
-            .build()
+        }.build()
+    }
+
+    private fun serviceAction(action: String, requestCode: Int): PendingIntent =
+        PendingIntent.getService(
+            this,
+            requestCode,
+            Intent(this, InitialImportService::class.java).setAction(action),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+    private fun formatDuration(millis: Long): String {
+        val totalSeconds = (millis / 1_000L).coerceAtLeast(1L)
+        val minutes = totalSeconds / 60L
+        val seconds = totalSeconds % 60L
+        return if (minutes > 0L) "${minutes}m ${seconds}s" else "${seconds}s"
     }
 
     companion object {
         private const val ACTION_IMPORT = "io.github.anup42.askalbum.action.INITIAL_IMPORT"
         private const val ACTION_INDEX = "io.github.anup42.askalbum.action.INDEX"
         private const val ACTION_STOP = "io.github.anup42.askalbum.action.STOP_INDEX"
+        private const val ACTION_PAUSE = "io.github.anup42.askalbum.action.PAUSE_INDEX"
+        private const val ACTION_RESUME = "io.github.anup42.askalbum.action.RESUME_INDEX"
         private const val CHANNEL_ID = "gallery_initial_import"
         private const val NOTIFICATION_ID = 4102
 
@@ -173,9 +279,47 @@ class InitialImportService : Service() {
         }
     }
 
+    private fun pauseIndexing() {
+        explicitUserStop = true
+        IndexingJobControlsStore(this).setForegroundPaused(true)
+        importJob?.cancel()
+        scope.launch {
+            runCatching {
+                IndexScheduler.cancelAndWait(this@InitialImportService)
+                EmbeddingIndexScheduler.cancelAndWait(this@InitialImportService)
+                CaptionEmbeddingScheduler.cancelAndWait(this@InitialImportService)
+                PeopleIndexScheduler.cancelAndWait(this@InitialImportService)
+                SemanticEnrichmentScheduler.cancelAndWait(this@InitialImportService)
+            }
+            getSystemService(NotificationManager::class.java).notify(
+                NOTIFICATION_ID,
+                notification("Indexing paused. Your completed data is preserved.", indeterminate = false, paused = true),
+            )
+            stopForegroundAndSelf()
+        }
+    }
+
     private fun stopForegroundAndSelf() {
         ForegroundIndexRuntime.stopped()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
         stopSelf()
+    }
+
+    private fun scheduleWorkManagerRecovery() {
+        if (recoveryHandoffScheduled) return
+        recoveryHandoffScheduled = true
+        IndexScheduler.schedule(this)
+        EmbeddingIndexScheduler.schedule(this)
+        PeopleIndexScheduler.schedule(this)
+        CaptionEmbeddingScheduler.schedule(this)
+        SemanticEnrichmentScheduler.schedule(this)
+    }
+
+    private fun ensureWorkManagerRecovery() {
+        IndexScheduler.schedule(this)
+        EmbeddingIndexScheduler.schedule(this)
+        PeopleIndexScheduler.schedule(this)
+        CaptionEmbeddingScheduler.schedule(this)
+        SemanticEnrichmentScheduler.schedule(this)
     }
 }

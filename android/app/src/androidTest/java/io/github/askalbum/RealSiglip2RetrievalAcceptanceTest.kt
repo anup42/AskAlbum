@@ -15,6 +15,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -26,14 +27,19 @@ class RealSiglip2RetrievalAcceptanceTest {
         val application = instrumentation.targetContext.applicationContext as AskAlbumApplication
         val incoming = File(application.filesDir, "host-import/siglip2-base-p16-224-q8.agretrieval")
         val e2bBefore = application.modelPackManager.status()
+        val retained = application.repository.allItems().associateBy(GalleryItem::filename)
+        assumeTrue(
+            "Required SigLIP2 retained fixtures are not present on the device",
+            retained["domesticated_dog_01_v0.jpg"] != null && retained["children_football_01_v0.jpg"] != null,
+        )
 
         try {
             val installed = if (incoming.isFile) {
                 application.services.retrievalModelPackManager.installVerified(incoming)
             } else {
-                requireNotNull(application.services.retrievalModelPackManager.current()) {
-                    "No verified retrieval model pack is installed"
-                }
+                val current = application.services.retrievalModelPackManager.current()
+                assumeTrue("No verified retrieval model pack is installed", current != null)
+                requireNotNull(current)
             }
             val status = application.services.retrievalModelPackManager.status()
             assertTrue(status.installed)
@@ -82,7 +88,6 @@ class RealSiglip2RetrievalAcceptanceTest {
             assertTrue("Red text did not prefer the red image: $redCorrect <= $redWrong", redCorrect > redWrong)
             assertTrue("Blue text did not prefer the blue image: $blueCorrect <= $blueWrong", blueCorrect > blueWrong)
 
-            val retained = application.repository.allItems().associateBy(GalleryItem::filename)
             val dog = decodeModelImage(application, requireNotNull(retained["domesticated_dog_01_v0.jpg"]))
             val football = decodeModelImage(application, requireNotNull(retained["children_football_01_v0.jpg"]))
             val engine = application.services.embeddingEngine as LiteRtImageTextEmbeddingEngine

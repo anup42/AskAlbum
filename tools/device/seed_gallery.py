@@ -12,7 +12,15 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from common import adb, mask_serial, require_run_id, resolve_serial, retry_transient, run_as_read
+from common import (
+    adb,
+    mask_serial,
+    require_run_id,
+    resolve_serial,
+    retry_transient,
+    run_as_read,
+    run_instrumentation_driver,
+)
 
 
 def parse_external_path(response: str, package: str, run_id: str) -> str:
@@ -31,14 +39,41 @@ def validate_transport_mode(transport: str, stage_only: bool) -> None:
         raise RuntimeError("--stage-only requires --transport external-file")
 
 
-def start_seed_service(serial: str, package: str, run_id: str) -> None:
+def seed_via_instrumentation(
+    serial: str,
+    package: str,
+    run_id: str,
+    archive: Path,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    staging_directory = f"/sdcard/Android/data/{package}/files/test-seed-transfer"
+    target = f"{staging_directory}/{run_id}.zip"
+    adb(serial, "shell", "mkdir", "-p", staging_directory)
+    adb(serial, "push", str(archive), target, timeout_seconds=900)
+    run_instrumentation_driver(
+        serial,
+        package,
+        run_id,
+        "prepare",
+        arguments={"gallerySeedArchiveName": f"{run_id}.zip"},
+        timeout_seconds=timeout_seconds,
+    )
+    return wait_for_seed_completion(serial, package, run_id, timeout_seconds)
+
+
+def start_seed_service(
+    serial: str,
+    package: str,
+    run_id: str,
+    component_package: str = "io.github.anup42.askalbum",
+) -> None:
     result = adb(
         serial,
         "shell",
         "am",
         "start-foreground-service",
         "-n",
-        f"{package}/.TestGallerySeederService",
+        f"{package}/{component_package}.TestGallerySeederService",
         "-a",
         "io.github.anup42.askalbum.test.SEED_GALLERY_FOREGROUND",
         "--es",
@@ -121,11 +156,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--serial")
     parser.add_argument("--package", default="io.github.anup42.askalbum")
+    parser.add_argument("--component-package", default="io.github.anup42.askalbum")
     parser.add_argument("--gallery", type=Path, required=True)
     parser.add_argument("--run-id")
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts/device-runs"))
     parser.add_argument("--reset-transfer", action="store_true")
-    parser.add_argument("--transport", choices=("chunked", "external-file"), default="chunked")
+    parser.add_argument("--transport", choices=("chunked", "external-file", "instrumentation"), default="chunked")
     parser.add_argument("--stage-only", action="store_true")
     parser.add_argument("--timeout-seconds", type=int, default=900)
     args = parser.parse_args()
@@ -158,7 +194,7 @@ def main() -> None:
     except (json.JSONDecodeError, UnicodeDecodeError):
         status = None
     if not cleanup_complete and isinstance(status, dict) and status.get("state") == "RUNNING":
-        start_seed_service(serial, args.package, run_id)
+        start_seed_service(serial, args.package, run_id, args.component_package)
         resumed = wait_for_seed_completion(serial, args.package, run_id, args.timeout_seconds)
         safe_result = {**resumed, "resumedRunningSeed": True, "serial": mask_serial(serial), "package": args.package}
         (host / "seed-result.json").write_text(json.dumps(safe_result, indent=2) + "\n", encoding="utf-8")
@@ -195,6 +231,13 @@ def main() -> None:
     transport = args.transport
     validate_transport_mode(transport, args.stage_only)
     try:
+        if transport == "instrumentation":
+            result = seed_via_instrumentation(serial, args.package, run_id, archive, args.timeout_seconds)
+            safe_result = {**result, "retriedCalls": 0, "transport": "instrumentation",
+                           "serial": mask_serial(serial), "package": args.package}
+            (host / "seed-result.json").write_text(json.dumps(safe_result, indent=2) + "\n", encoding="utf-8")
+            print_result_summary(safe_result)
+            return
         if transport == "external-file":
             if args.reset_transfer:
                 adb(serial, "shell", "content", "call", "--uri", provider_root, "--method", "abort", "--arg", run_id, check=False)
@@ -226,7 +269,7 @@ def main() -> None:
                 (host / "staging-result.json").write_text(json.dumps(safe_result, indent=2) + "\n", encoding="utf-8")
                 print_result_summary(safe_result)
                 return
-            start_seed_service(serial, args.package, run_id)
+            start_seed_service(serial, args.package, run_id, args.component_package)
             result = wait_for_seed_completion(serial, args.package, run_id, args.timeout_seconds)
             safe_result = {**result, "retriedCalls": 0, "transport": "external_file",
                            "serial": mask_serial(serial), "package": args.package}
@@ -299,7 +342,7 @@ def main() -> None:
         finalized = (finalized_result.stdout + finalized_result.stderr).decode(errors="replace")
         if "Error while accessing provider" in finalized or "state=COMPLETE" not in finalized or archive_sha256 not in finalized or str(total_bytes) not in finalized:
             raise RuntimeError(f"Provider did not confirm complete transfer: {finalized[-1000:]}")
-        start_seed_service(serial, args.package, run_id)
+        start_seed_service(serial, args.package, run_id, args.component_package)
         result = wait_for_seed_completion(serial, args.package, run_id, args.timeout_seconds)
         result["retriedCalls"] = retry_count
     except BaseException:

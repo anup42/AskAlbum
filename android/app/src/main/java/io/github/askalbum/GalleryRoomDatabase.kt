@@ -144,6 +144,7 @@ data class OcrEntityEntity(
     indices = [
         Index(name = "video_keyframe_media_time_idx", value = ["media_id", "timestamp_ms"], unique = true),
         Index(name = "video_keyframe_embedding_idx", value = ["embedding_version"]),
+        Index(name = "video_keyframe_embedding_queue_idx", value = ["embedding_state", "embedding_next_attempt_at"]),
     ],
 )
 data class VideoKeyframeEntity(
@@ -157,6 +158,10 @@ data class VideoKeyframeEntity(
     @ColumnInfo(name = "quality_score") val qualityScore: Float,
     @ColumnInfo(name = "producer_version") val producerVersion: String,
     @ColumnInfo(name = "embedding_version") val embeddingVersion: String?,
+    @ColumnInfo(name = "embedding_state", defaultValue = "'PENDING'") val embeddingState: String,
+    @ColumnInfo(name = "embedding_attempt_count", defaultValue = "0") val embeddingAttemptCount: Int,
+    @ColumnInfo(name = "embedding_error") val embeddingError: String?,
+    @ColumnInfo(name = "embedding_next_attempt_at", defaultValue = "0") val embeddingNextAttemptAt: Long,
 )
 
 @Entity(
@@ -266,6 +271,7 @@ data class FaceInstanceEntity(
     indices = [
         Index(name = "person_attribute_media_idx", value = ["media_id"]),
         Index(name = "person_attribute_cluster_idx", value = ["cluster_id"]),
+        Index(name = "person_attribute_generation_idx", value = ["generation_id"]),
     ],
 )
 data class PersonAttributeFactEntity(
@@ -289,6 +295,8 @@ data class PersonAttributeFactEntity(
     @ColumnInfo(defaultValue = "'VERIFIED_TRUE'") val verdict: String = "VERIFIED_TRUE",
     @ColumnInfo(name = "target_cluster_id") val targetClusterId: String? = null,
     @ColumnInfo(name = "prompt_version", defaultValue = "'legacy-person-attribute-v1'") val promptVersion: String = "legacy-person-attribute-v1",
+    @ColumnInfo(name = "generation_id") val generationId: String? = null,
+    @ColumnInfo(name = "body_region_version", defaultValue = "'person-body-regions-v1'") val bodyRegionVersion: String = "person-body-regions-v1",
 )
 
 @Entity(tableName = "query_turn")
@@ -303,6 +311,13 @@ data class QueryTurnEntity(
     @ColumnInfo(name = "result_set_id") val resultSetId: String?,
     @ColumnInfo(name = "base_result_set_id") val baseResultSetId: String?,
     @ColumnInfo(name = "plan_patch_summary") val planPatchSummary: String?,
+)
+
+@Entity(tableName = "sensitive_data_migration")
+data class SensitiveDataMigrationEntity(
+    @PrimaryKey val id: Int = 1,
+    val version: Int,
+    @ColumnInfo(name = "completed_at") val completedAt: Long,
 )
 
 @Entity(tableName = "query_session")
@@ -424,6 +439,7 @@ data class EventRepresentativeEntity(
         Index(name = "semantic_fact_subject_idx", value = ["scope", "subject_id"]),
         Index(name = "semantic_fact_evidence_idx", value = ["evidence_media_id"]),
         Index(name = "semantic_fact_predicate_idx", value = ["predicate"]),
+        Index(name = "semantic_fact_generation_idx", value = ["generation_id"]),
     ],
     foreignKeys = [
         ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["evidence_media_id"], onDelete = ForeignKey.CASCADE),
@@ -442,6 +458,27 @@ data class SemanticFactEntity(
     @ColumnInfo(name = "model_version") val modelVersion: String,
     @ColumnInfo(name = "prompt_version") val promptVersion: String,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "generation_id") val generationId: String?,
+)
+
+@Entity(
+    tableName = "semantic_generation",
+    indices = [Index(name = "semantic_generation_evidence_idx", value = ["evidence_media_id"])],
+    foreignKeys = [
+        ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["evidence_media_id"], onDelete = ForeignKey.CASCADE),
+    ],
+)
+data class SemanticGenerationEntity(
+    @PrimaryKey @ColumnInfo(name = "generation_id") val generationId: String,
+    @ColumnInfo(name = "caption_id") val captionId: String?,
+    @ColumnInfo(name = "job_id") val jobId: String,
+    val scope: String,
+    @ColumnInfo(name = "scope_id") val scopeId: String,
+    @ColumnInfo(name = "evidence_media_id") val evidenceMediaId: String,
+    @ColumnInfo(name = "model_version") val modelVersion: String,
+    @ColumnInfo(name = "prompt_version") val promptVersion: String,
+    @ColumnInfo(name = "body_region_version") val bodyRegionVersion: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
 )
 
 @Entity(
@@ -449,6 +486,7 @@ data class SemanticFactEntity(
     indices = [
         Index(name = "semantic_caption_subject_idx", value = ["scope", "subject_id"]),
         Index(name = "semantic_caption_evidence_idx", value = ["evidence_media_id"]),
+        Index(name = "semantic_caption_generation_idx", value = ["generation_id"]),
     ],
     foreignKeys = [
         ForeignKey(entity = MediaItemEntity::class, parentColumns = ["id"], childColumns = ["evidence_media_id"], onDelete = ForeignKey.CASCADE),
@@ -471,6 +509,7 @@ data class SemanticCaptionEntity(
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
     @ColumnInfo(name = "chunk_policy_version") val chunkPolicyVersion: String?,
     @ColumnInfo(name = "chunked_at") val chunkedAt: Long?,
+    @ColumnInfo(name = "generation_id") val generationId: String?,
 )
 
 @Entity(
@@ -499,6 +538,7 @@ data class SemanticCaptionPersonRefEntity(
         Index(name = "semantic_caption_chunk_evidence_idx", value = ["evidence_media_id"]),
         Index(name = "semantic_caption_chunk_cluster_idx", value = ["cluster_id"]),
         Index(name = "semantic_caption_chunk_queue_idx", value = ["embedding_state", "next_attempt_at"]),
+        Index(name = "semantic_caption_chunk_generation_idx", value = ["generation_id"]),
     ],
     foreignKeys = [
         ForeignKey(entity = SemanticCaptionEntity::class, parentColumns = ["id"], childColumns = ["caption_id"], onDelete = ForeignKey.CASCADE),
@@ -532,6 +572,7 @@ data class SemanticCaptionChunkEntity(
     @ColumnInfo(name = "last_progress_at") val lastProgressAt: Long?,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "generation_id") val generationId: String?,
 )
 
 @Fts4
@@ -547,6 +588,7 @@ data class SemanticCaptionChunkFtsEntity(
         Index(name = "semantic_enrichment_status_idx", value = ["status", "updated_at"]),
         Index(name = "semantic_enrichment_media_idx", value = ["representative_media_id"]),
         Index(name = "semantic_enrichment_queue_idx", value = ["status", "next_attempt_at"]),
+        Index(name = "semantic_enrichment_priority_idx", value = ["status", "priority", "next_attempt_at", "updated_at"]),
         Index(
             name = "semantic_enrichment_unique_idx",
             value = ["scope", "subject_id", "representative_media_id", "reason"],
@@ -573,6 +615,7 @@ data class SemanticEnrichmentJobEntity(
     @ColumnInfo(name = "lease_expires_at") val leaseExpiresAt: Long?,
     @ColumnInfo(name = "next_attempt_at", defaultValue = "0") val nextAttemptAt: Long,
     @ColumnInfo(name = "last_progress_at") val lastProgressAt: Long?,
+    @ColumnInfo(name = "priority", defaultValue = "100") val priority: Int,
 )
 
 @Database(
@@ -603,9 +646,14 @@ data class SemanticEnrichmentJobEntity(
         SemanticCaptionPersonRefEntity::class,
         SemanticCaptionChunkEntity::class,
         SemanticCaptionChunkFtsEntity::class,
+        SemanticGenerationEntity::class,
         SemanticEnrichmentJobEntity::class,
+        SemanticPredicateScanEntity::class,
+        SemanticPredicateScanScopeEntity::class,
+        SemanticPredicateScanHitEntity::class,
+        SensitiveDataMigrationEntity::class,
     ],
-    version = 18,
+    version = 28,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -634,6 +682,16 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_15_16,
             MIGRATION_16_17,
             MIGRATION_17_18,
+            MIGRATION_18_19,
+            MIGRATION_19_20,
+            MIGRATION_20_21,
+            MIGRATION_21_22,
+            MIGRATION_22_23,
+            MIGRATION_23_24,
+            MIGRATION_24_25,
+            MIGRATION_25_26,
+            MIGRATION_26_27,
+            MIGRATION_27_28,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -954,6 +1012,483 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_cluster_idx ON semantic_caption_chunk(cluster_id)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_queue_idx ON semantic_caption_chunk(embedding_state,next_attempt_at)")
                 db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS semantic_caption_chunk_fts USING FTS4(chunk_id,exact_text)")
+            }
+        }
+
+        internal val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS semantic_predicate_scan (
+                        id TEXT NOT NULL,
+                        query_key TEXT NOT NULL,
+                        query_text TEXT NOT NULL,
+                        model_version TEXT NOT NULL,
+                        scope_hash TEXT NOT NULL,
+                        eligible_count INTEGER NOT NULL,
+                        indexed_count INTEGER NOT NULL DEFAULT 0,
+                        searched_count INTEGER NOT NULL DEFAULT 0,
+                        next_ordinal INTEGER NOT NULL DEFAULT 0,
+                        hit_count INTEGER NOT NULL DEFAULT 0,
+                        status TEXT NOT NULL,
+                        attempt_count INTEGER NOT NULL DEFAULT 0,
+                        error TEXT,
+                        lease_owner TEXT,
+                        lease_expires_at INTEGER,
+                        next_attempt_at INTEGER NOT NULL DEFAULT 0,
+                        last_progress_at INTEGER,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS semantic_predicate_scan_key_idx ON semantic_predicate_scan(query_key)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_predicate_scan_queue_idx ON semantic_predicate_scan(status,next_attempt_at)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS semantic_predicate_scan_scope (
+                        scan_id TEXT NOT NULL,
+                        media_id TEXT NOT NULL,
+                        ordinal INTEGER NOT NULL,
+                        PRIMARY KEY(scan_id,media_id),
+                        FOREIGN KEY(scan_id) REFERENCES semantic_predicate_scan(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS semantic_predicate_scan_scope_ordinal_idx ON semantic_predicate_scan_scope(scan_id,ordinal)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS semantic_predicate_scan_hit (
+                        scan_id TEXT NOT NULL,
+                        media_id TEXT NOT NULL,
+                        score REAL NOT NULL,
+                        PRIMARY KEY(scan_id,media_id),
+                        FOREIGN KEY(scan_id) REFERENCES semantic_predicate_scan(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_predicate_scan_hit_score_idx ON semantic_predicate_scan_hit(scan_id,score)")
+            }
+        }
+
+        internal val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `sensitive_data_migration` (" +
+                        "`id` INTEGER NOT NULL, `version` INTEGER NOT NULL, " +
+                        "`completed_at` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+            }
+        }
+
+        internal val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE semantic_fact ADD COLUMN generation_id TEXT")
+                db.execSQL("ALTER TABLE semantic_caption ADD COLUMN generation_id TEXT")
+                db.execSQL("ALTER TABLE semantic_caption_chunk ADD COLUMN generation_id TEXT")
+                db.execSQL("ALTER TABLE person_attribute_fact ADD COLUMN generation_id TEXT")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS semantic_generation (
+                        generation_id TEXT NOT NULL,
+                        caption_id TEXT,
+                        job_id TEXT NOT NULL,
+                        scope TEXT NOT NULL,
+                        scope_id TEXT NOT NULL,
+                        evidence_media_id TEXT NOT NULL,
+                        model_version TEXT NOT NULL,
+                        prompt_version TEXT NOT NULL,
+                        body_region_version TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        PRIMARY KEY(generation_id),
+                        FOREIGN KEY(evidence_media_id) REFERENCES media_item(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_generation_evidence_idx ON semantic_generation(evidence_media_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_fact_generation_idx ON semantic_fact(generation_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_generation_idx ON semantic_caption(generation_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS semantic_caption_chunk_generation_idx ON semantic_caption_chunk(generation_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS person_attribute_generation_idx ON person_attribute_fact(generation_id)")
+            }
+        }
+
+        internal val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE semantic_enrichment_job ADD COLUMN priority INTEGER NOT NULL DEFAULT 100")
+                db.execSQL(
+                    """
+                    UPDATE semantic_enrichment_job SET priority=CASE
+                        WHEN lower(reason) LIKE '%interactive%' OR lower(reason) LIKE '%query_verification%' THEN 1000
+                        WHEN lower(reason) LIKE 'personal_media:%' AND user_requested=1 THEN 900
+                        WHEN lower(reason) LIKE 'personal_media:%' THEN 800
+                        WHEN lower(reason) LIKE '%frequent%' THEN 600
+                        WHEN lower(reason) LIKE '%event%' THEN 500
+                        WHEN lower(reason) LIKE '%group%' OR lower(reason) LIKE '%burst%' OR lower(reason) LIKE '%duplicate%' THEN 400
+                        WHEN user_requested=1 THEN 700
+                        ELSE 100
+                    END
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS semantic_enrichment_priority_idx " +
+                        "ON semantic_enrichment_job(status,priority,next_attempt_at,updated_at)",
+                )
+            }
+        }
+
+        internal val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Repair only rows that can be proven to belong to an event or visual group.
+                // Other legacy propagation is retained but excluded from direct truth.
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET scope = 'EVENT', applicability = '${SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY}'
+                    WHERE scope = 'MEDIA'
+                      AND applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND EXISTS (
+                        SELECT 1 FROM event_media em
+                        WHERE CAST(em.event_id AS TEXT) = semantic_fact.subject_id
+                          AND em.media_id = semantic_fact.evidence_media_id
+                      )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET scope = 'VISUAL_GROUP', applicability = '${SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY}'
+                    WHERE scope = 'MEDIA'
+                      AND applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND EXISTS (
+                        SELECT 1 FROM visual_group_member vgm
+                        WHERE vgm.group_id = semantic_fact.subject_id
+                          AND vgm.media_id = semantic_fact.evidence_media_id
+                      )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET applicability = '${SemanticProvenanceApplicability.LEGACY_SCOPE_UNCERTAIN}'
+                    WHERE applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM media_item source
+                        JOIN media_item target ON target.id = semantic_fact.evidence_media_id
+                        WHERE source.id = semantic_fact.subject_id
+                          AND source.exact_content_digest IS NOT NULL
+                          AND source.exact_content_digest = target.exact_content_digest
+                      )
+                    """.trimIndent(),
+                )
+
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET scope = 'EVENT', applicability = '${SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY}'
+                    WHERE scope = 'MEDIA'
+                      AND applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND EXISTS (
+                        SELECT 1 FROM event_media em
+                        WHERE CAST(em.event_id AS TEXT) = semantic_caption.subject_id
+                          AND em.media_id = semantic_caption.evidence_media_id
+                      )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET scope = 'VISUAL_GROUP', applicability = '${SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY}'
+                    WHERE scope = 'MEDIA'
+                      AND applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND EXISTS (
+                        SELECT 1 FROM visual_group_member vgm
+                        WHERE vgm.group_id = semantic_caption.subject_id
+                          AND vgm.media_id = semantic_caption.evidence_media_id
+                      )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET applicability = '${SemanticProvenanceApplicability.LEGACY_SCOPE_UNCERTAIN}'
+                    WHERE applicability = '${SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED}'
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM media_item source
+                        JOIN media_item target ON target.id = semantic_caption.evidence_media_id
+                        WHERE source.id = semantic_caption.subject_id
+                          AND source.exact_content_digest IS NOT NULL
+                          AND source.exact_content_digest = target.exact_content_digest
+                      )
+                    """.trimIndent(),
+                )
+
+                // Legacy chunks are rebuilt from caption text only. Generated chunks must match
+                // the complete caption generation, scope, and evidence identity.
+                db.execSQL("DROP TABLE IF EXISTS semantic_provenance_repair_caption")
+                db.execSQL(
+                    """
+                    CREATE TEMP TABLE semantic_provenance_repair_caption AS
+                    SELECT DISTINCT chunk.caption_id
+                    FROM semantic_caption_chunk chunk
+                    JOIN semantic_caption caption ON caption.id = chunk.caption_id
+                    WHERE caption.generation_id IS NULL
+                       OR chunk.scope IS NOT caption.scope
+                       OR chunk.scope_id IS NOT caption.subject_id
+                       OR chunk.evidence_media_id IS NOT caption.evidence_media_id
+                       OR chunk.caption_model_version IS NOT caption.model_version
+                       OR chunk.caption_prompt_version IS NOT caption.prompt_version
+                       OR chunk.generation_id IS NOT caption.generation_id
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    DELETE FROM semantic_caption_chunk_fts
+                    WHERE chunk_id IN (
+                        SELECT chunk.id
+                        FROM semantic_caption_chunk chunk
+                        WHERE chunk.caption_id IN (SELECT caption_id FROM semantic_provenance_repair_caption)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    DELETE FROM semantic_caption_chunk
+                    WHERE caption_id IN (SELECT caption_id FROM semantic_provenance_repair_caption)
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET chunk_policy_version = NULL, chunked_at = NULL
+                    WHERE id IN (SELECT caption_id FROM semantic_provenance_repair_caption)
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE semantic_provenance_repair_caption")
+            }
+        }
+
+        internal val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Keep historical result sets readable while removing the ambiguous
+                // model-scan wording from persisted exactness values.
+                db.execSQL(
+                    "UPDATE result_set SET exactness='COMPLETE_PREDICATE_SCAN' " +
+                        "WHERE exactness='COMPLETE_MODEL_SCAN'",
+                )
+            }
+        }
+
+        internal val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE video_keyframe ADD COLUMN embedding_state TEXT NOT NULL DEFAULT 'PENDING'")
+                db.execSQL("ALTER TABLE video_keyframe ADD COLUMN embedding_attempt_count INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE video_keyframe ADD COLUMN embedding_error TEXT")
+                db.execSQL("ALTER TABLE video_keyframe ADD COLUMN embedding_next_attempt_at INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "UPDATE video_keyframe SET embedding_state=CASE WHEN embedding_version IS NULL THEN 'PENDING' ELSE 'COMPLETE' END " +
+                        "WHERE embedding_state='PENDING'",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS video_keyframe_embedding_queue_idx " +
+                        "ON video_keyframe(embedding_state,embedding_next_attempt_at)",
+                )
+            }
+        }
+
+        internal val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE person_attribute_fact ADD COLUMN body_region_version TEXT NOT NULL DEFAULT 'person-body-regions-v1'",
+                )
+            }
+        }
+
+        internal val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE semantic_predicate_scan ADD COLUMN indexed_coverage_hash TEXT")
+            }
+        }
+
+        internal val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val exactShared = SemanticProvenanceApplicability.EXACT_DUPLICATE_SHARED
+                val groupContext = SemanticProvenanceApplicability.GROUP_CONTEXT_ONLY
+                val legacyUncertain = SemanticProvenanceApplicability.LEGACY_SCOPE_UNCERTAIN
+
+                // Keep the source records, but force every affected caption's derived chunks
+                // through the normal provenance-aware rebuild path.
+                db.execSQL("DROP TABLE IF EXISTS semantic_provenance_repair_caption")
+                db.execSQL(
+                    """
+                    CREATE TEMP TABLE semantic_provenance_repair_caption AS
+                    SELECT id
+                    FROM semantic_caption
+                    WHERE applicability=?
+                       OR generation_id IS NULL
+                    """.trimIndent(),
+                    arrayOf(exactShared),
+                )
+
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET scope='EVENT', applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND EXISTS (
+                        SELECT 1 FROM event_media em
+                        WHERE CAST(em.event_id AS TEXT)=semantic_fact.subject_id
+                          AND em.media_id=semantic_fact.evidence_media_id
+                      )
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET scope='VISUAL_GROUP', applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND EXISTS (
+                        SELECT 1 FROM visual_group_member vgm
+                        WHERE vgm.group_id=semantic_fact.subject_id
+                          AND vgm.media_id=semantic_fact.evidence_media_id
+                      )
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET applicability=?
+                    WHERE scope IN ('EVENT','VISUAL_GROUP') AND applicability=?
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_fact
+                    SET applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM semantic_generation generation
+                        JOIN media_item source ON source.id=generation.evidence_media_id
+                        JOIN media_item target ON target.id=semantic_fact.evidence_media_id
+                        WHERE generation.generation_id=semantic_fact.generation_id
+                          AND generation.scope='MEDIA'
+                          AND generation.evidence_media_id<>semantic_fact.evidence_media_id
+                          AND generation.model_version=semantic_fact.model_version
+                          AND generation.prompt_version=semantic_fact.prompt_version
+                          AND source.exact_content_digest IS NOT NULL
+                          AND source.exact_content_digest=target.exact_content_digest
+                      )
+                    """.trimIndent(),
+                    arrayOf(legacyUncertain, exactShared),
+                )
+
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET scope='EVENT', applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND EXISTS (
+                        SELECT 1 FROM event_media em
+                        WHERE CAST(em.event_id AS TEXT)=semantic_caption.subject_id
+                          AND em.media_id=semantic_caption.evidence_media_id
+                      )
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET scope='VISUAL_GROUP', applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND EXISTS (
+                        SELECT 1 FROM visual_group_member vgm
+                        WHERE vgm.group_id=semantic_caption.subject_id
+                          AND vgm.media_id=semantic_caption.evidence_media_id
+                      )
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET applicability=?
+                    WHERE scope IN ('EVENT','VISUAL_GROUP') AND applicability=?
+                    """.trimIndent(),
+                    arrayOf(groupContext, exactShared),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET applicability=?
+                    WHERE scope='MEDIA' AND applicability=?
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM semantic_generation generation
+                        JOIN media_item source ON source.id=semantic_caption.representative_media_id
+                        JOIN media_item target ON target.id=semantic_caption.evidence_media_id
+                        WHERE generation.generation_id=semantic_caption.generation_id
+                          AND generation.scope='MEDIA'
+                          AND generation.evidence_media_id=source.id
+                          AND source.id<>target.id
+                          AND generation.model_version=semantic_caption.model_version
+                          AND generation.prompt_version=semantic_caption.prompt_version
+                          AND source.exact_content_digest IS NOT NULL
+                          AND source.exact_content_digest=target.exact_content_digest
+                      )
+                    """.trimIndent(),
+                    arrayOf(legacyUncertain, exactShared),
+                )
+
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO semantic_provenance_repair_caption(id)
+                    SELECT DISTINCT chunk.caption_id
+                    FROM semantic_caption_chunk chunk
+                    JOIN semantic_caption caption ON caption.id=chunk.caption_id
+                    WHERE caption.generation_id IS NULL
+                       OR chunk.scope IS NOT caption.scope
+                       OR chunk.scope_id IS NOT caption.subject_id
+                       OR chunk.evidence_media_id IS NOT caption.evidence_media_id
+                       OR chunk.caption_model_version IS NOT caption.model_version
+                       OR chunk.caption_prompt_version IS NOT caption.prompt_version
+                       OR chunk.generation_id IS NOT caption.generation_id
+                       OR caption.applicability=?
+                    """.trimIndent(),
+                    arrayOf(legacyUncertain),
+                )
+                db.execSQL(
+                    """
+                    DELETE FROM semantic_caption_chunk_fts
+                    WHERE chunk_id IN (
+                        SELECT chunk.id
+                        FROM semantic_caption_chunk chunk
+                        WHERE chunk.caption_id IN (SELECT id FROM semantic_provenance_repair_caption)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    DELETE FROM semantic_caption_chunk
+                    WHERE caption_id IN (SELECT id FROM semantic_provenance_repair_caption)
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption
+                    SET chunk_policy_version=NULL, chunked_at=NULL
+                    WHERE id IN (SELECT id FROM semantic_provenance_repair_caption)
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE semantic_provenance_repair_caption")
             }
         }
 

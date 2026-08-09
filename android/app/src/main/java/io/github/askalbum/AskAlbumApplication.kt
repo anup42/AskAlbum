@@ -18,17 +18,29 @@ class AppServices(private val application: AskAlbumApplication) {
     val embeddedFaceModelProvisioner by lazy { EmbeddedFaceModelProvisioner(application, faceModelPackManager) }
     val faceVectorStore by lazy { FaceVectorStore(application) }
     val ocrEngines by lazy {
-        PluggableModelEngineRegistry<OcrEngine>(
-            listOf(PaddleOcrEngineProvider(application, ocrModelPackManager), MlKitOcrEngineProvider()),
-        )
+        if (fixtureBackendsEnabled()) {
+            PluggableModelEngineRegistry<OcrEngine>(listOf(FixtureOcrEngineProvider()))
+        } else {
+            PluggableModelEngineRegistry<OcrEngine>(
+                listOf(PaddleOcrEngineProvider(application, ocrModelPackManager), MlKitOcrEngineProvider()),
+            )
+        }
     }
     val faceEngines by lazy {
-        PluggableModelEngineRegistry<FaceEngine>(listOf(SFaceEngineProvider(faceModelPackManager)))
+        if (fixtureBackendsEnabled()) {
+            PluggableModelEngineRegistry<FaceEngine>(listOf(FixtureFaceEngineProvider()))
+        } else {
+            PluggableModelEngineRegistry<FaceEngine>(listOf(SFaceEngineProvider(faceModelPackManager)))
+        }
     }
     val inferenceResources: InferenceResourceManager by lazy { SerializedInferenceResourceManager() }
     val gemmaSessions by lazy { GemmaSessionManager(inferenceResources) }
     val embeddingEngine: ImageTextEmbeddingEngine by lazy {
-        LiteRtImageTextEmbeddingEngine(retrievalModelPackManager, inferenceResources)
+        if (fixtureBackendsEnabled()) {
+            newFixtureEngine<ImageTextEmbeddingEngine>("FakeEmbeddingEngine")
+        } else {
+            LiteRtImageTextEmbeddingEngine(retrievalModelPackManager, inferenceResources)
+        }
     }
     val semanticVectorStore by lazy {
         SemanticVectorStore(application, retrievalModelPackManager, embeddingEngine)
@@ -37,10 +49,25 @@ class AppServices(private val application: AskAlbumApplication) {
         CaptionVectorStore(application, retrievalModelPackManager, embeddingEngine)
     }
     val visualVerifier: CandidateVerifier by lazy {
-        LiteRtGemmaVisualVerifier(application, modelPackManager, gemmaSessions, galleryDatabase)
+        if (fixtureBackendsEnabled()) {
+            FixtureCandidateVerifier()
+        } else {
+            LiteRtGemmaVisualVerifier(application, modelPackManager, gemmaSessions, galleryDatabase)
+        }
     }
-    val groundedAnswerComposer by lazy {
-        LiteRtGemmaGroundedAnswerComposer(modelPackManager, gemmaSessions)
+    val queryPlanCompiler: GalleryPlanCompiler by lazy {
+        if (fixtureBackendsEnabled()) {
+            FixtureGalleryPlanCompiler()
+        } else {
+            ProductionGalleryPlanCompiler(LiteRtLmQueryPlanner(modelPackManager, gemmaSessions))
+        }
+    }
+    val groundedAnswerComposer: GalleryAnswerComposer by lazy {
+        if (fixtureBackendsEnabled()) {
+            FixtureGalleryAnswerComposer()
+        } else {
+            ProductionGalleryAnswerComposer(LiteRtGemmaGroundedAnswerComposer(modelPackManager, gemmaSessions))
+        }
     }
     val repository by lazy { GalleryRepository(application) }
 }

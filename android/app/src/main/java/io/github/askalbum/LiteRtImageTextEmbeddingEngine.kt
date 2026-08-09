@@ -47,8 +47,13 @@ class LiteRtImageTextEmbeddingEngine(
 
     override suspend fun embedText(text: String): FloatArray = embedTexts(listOf(text)).single()
 
-    internal suspend fun embedTexts(texts: List<String>): List<FloatArray> =
-        resources.withModel(ModelCapability.TEXT_EMBEDDING) {
+    override suspend fun embedTextInteractive(text: String): FloatArray =
+        embedTexts(listOf(text), InferencePriority.INTERACTIVE).single()
+
+    internal suspend fun embedTexts(
+        texts: List<String>,
+        priority: InferencePriority = InferencePriority.BACKGROUND,
+    ): List<FloatArray> = resources.withModel(ModelCapability.TEXT_EMBEDDING, priority) {
             withContext(Dispatchers.Default) {
                 val pack = modelPacks.current() ?: error("No verified retrieval model pack is installed")
                 val tokenizer = tokenizerFor(pack)

@@ -24,7 +24,7 @@ class ComprehensiveSemanticCaptionTest {
     @Test
     fun oneResponseProducesCaptionFactsAndGeneralPersonAppearance() {
         val raw = """
-            {"sceneSummary":"P1 and P2 are posing together in a decorated living room.",
+            {"sceneSummary":"P1 and P2 are posing together in a decorated living room.","activityState":"OBSERVED",
              "primaryActivity":{"label":"posing together","confidence":0.95,"evidence":["P1 is standing beside P2"]},
              "actions":[{"subjectRef":"P1","action":"holding","objectRef":"a flower","confidence":0.93}],
              "interactions":[{"subjectRef":"P1","predicate":"standing beside","targetRef":"P2","confidence":0.94}],
@@ -101,7 +101,7 @@ class ComprehensiveSemanticCaptionTest {
     @Test
     fun cakeDoesNotForceAnOccasionWithoutModelEvidence() {
         val raw = """
-            {"sceneSummary":"A person is placing a plain cake on a kitchen counter.",
+            {"sceneSummary":"A person is placing a plain cake on a kitchen counter.","activityState":"OBSERVED",
              "primaryActivity":{"label":"placing a cake on a counter","confidence":0.91,"evidence":[]},
              "actions":[],"interactions":[],"occasionIndicators":[],"possibleOccasion":null,
              "detailedCaption":"A person is placing a plain cake on a kitchen counter.",
@@ -112,6 +112,63 @@ class ComprehensiveSemanticCaptionTest {
 
         assertTrue(result.facts.none { it.predicate == "possible_occasion" })
         assertEquals("placing a cake on a counter", result.facts.single { it.predicate == "primary_activity" }.value)
+    }
+
+    @Test
+    fun visualFactOccasionIsAlwaysStoredAsPossibleInference() {
+        val raw = """
+            {"sceneSummary":"People are standing beside a decorated table.",
+             "detailedCaption":"People are standing beside a decorated table.",
+             "people":[],
+             "facts":[{"predicate":"possible_occasion","value":"birthday celebration","confidence":0.88,"applicability":"EVIDENCE_MEDIA_ONLY"}]}
+        """.trimIndent()
+
+        val result = SemanticEnrichmentCodec.decode(job, raw, "fixture", emptyList())
+        val occasions = result.facts.filter { it.predicate == "possible_occasion" }
+
+        assertEquals(1, occasions.size)
+        assertEquals(SemanticProvenanceApplicability.POSSIBLE_INFERENCE, occasions.single().applicability)
+    }
+
+    @Test
+    fun negativeAndUnknownPersonPredicatesCannotBecomePositiveFacts() {
+        val raw = """
+            {"sceneSummary":"P1 and P2 are visible indoors.",
+             "detailedCaption":"P1 and P2 are visible indoors.","captionConfidence":0.9,
+             "people":[
+               {"personRef":"P1","visibility":"FULL_BODY","associationStatus":"CONFIDENT","actions":[]},
+               {"personRef":"P2","visibility":"FULL_BODY","associationStatus":"CONFIDENT","actions":[]}],
+             "actions":[
+               {"subjectRef":"P1","action":"not holding","objectRef":"the bag","confidence":0.95},
+               {"subjectRef":"P1","action":"photographing","objectRef":"the scene","confidence":0.95}],
+             "interactions":[
+               {"subjectRef":"P1","predicate":"not standing beside","targetRef":"P2","confidence":0.95},
+               {"subjectRef":"P1","predicate":"laughing with","targetRef":"P2","confidence":0.95}],
+             "facts":[]}
+        """.trimIndent()
+
+        val result = SemanticEnrichmentCodec.decode(job, raw, "fixture", bindings)
+
+        assertTrue(result.personFacts.none { it.relation == PersonVisualRelation.HOLDING })
+        assertTrue(result.personFacts.none { it.relation == PersonVisualRelation.INTERACTING_WITH })
+        assertTrue(result.personFacts.none { it.value.contains("null", ignoreCase = true) })
+    }
+
+    @Test
+    fun nullObjectReferenceIsAbsentFromTypedFact() {
+        val raw = """
+            {"sceneSummary":"P1 is holding an object.","activityState":"OBSERVED",
+             "detailedCaption":"P1 is holding an object.","captionConfidence":0.9,
+             "people":[{"personRef":"P1","visibility":"FULL_BODY","associationStatus":"CONFIDENT","actions":[]}],
+             "actions":[{"subjectRef":"P1","action":"holding","objectRef":null,"confidence":0.95}],
+             "interactions":[],"facts":[]}
+        """.trimIndent()
+
+        val result = SemanticEnrichmentCodec.decode(job, raw, "fixture", bindings)
+        val holding = result.personFacts.single { it.relation == PersonVisualRelation.HOLDING }
+
+        assertNull(holding.itemType)
+        assertTrue(holding.value != "null" && !holding.value.contains("null ", ignoreCase = true))
     }
 
     @Test(expected = SemanticEnrichmentOutputException::class)

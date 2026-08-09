@@ -7,6 +7,7 @@ import kotlinx.coroutines.currentCoroutineContext
 
 internal enum class ForegroundIndexStopReason {
     COMPLETE,
+    UNAVAILABLE,
     THERMAL,
     RETRYABLE_FAILURE,
     TIME_LIMIT,
@@ -44,6 +45,7 @@ internal data class ForegroundIndexRunResult(
     val permanentFailures: Int,
     val elapsedMs: Long,
     val thermalStatus: Int,
+    val errorCode: String? = null,
 )
 
 internal class ForegroundIndexCoordinator(context: Context) {
@@ -59,9 +61,8 @@ internal class ForegroundIndexCoordinator(context: Context) {
         onProgress: (ForegroundIndexProgress) -> Unit = {},
     ): ForegroundIndexRunResult {
         require(allowedMediaIds == null || allowedMediaIds.isNotEmpty()) { "Foreground index scope is empty" }
-        IndexScheduler.cancelAndWait(appContext)
-        EmbeddingIndexScheduler.cancelAndWait(appContext)
-        repository.recoverInterruptedJobs()
+        repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
+        repository.recoverInterruptedJobs(IndexingPipeline.EMBEDDINGS)
         val started = SystemClock.elapsedRealtime()
         val job = currentCoroutineContext()[Job]
         var cycles = 0
@@ -151,12 +152,12 @@ internal class ForegroundIndexCoordinator(context: Context) {
                         thermalStatus = after.thermalStatus,
                     ),
                 )
-                val reason = when {
-                    !after.allowed -> ForegroundIndexStopReason.THERMAL
-                    job?.isActive == false || galleryBatch.stopped || embeddingBatch.stopped -> ForegroundIndexStopReason.CANCELLED
-                    !galleryBatch.hasMore && !embeddingBatch.hasMore -> ForegroundIndexStopReason.COMPLETE
-                    else -> null
-                }
+                val reason = ForegroundIndexCompletionPolicy.terminalReason(
+                    admissionAllowed = after.allowed,
+                    cancelled = job?.isActive == false || galleryBatch.stopped || embeddingBatch.stopped,
+                    gallery = galleryBatch,
+                    embeddings = embeddingBatch,
+                )
                 if (reason != null) {
                     return finish(
                         reason,
@@ -168,6 +169,7 @@ internal class ForegroundIndexCoordinator(context: Context) {
                         started,
                         after.thermalStatus,
                         allowedMediaIds,
+                        errorCode = embeddingBatch.errorCode.takeIf { reason == ForegroundIndexStopReason.UNAVAILABLE },
                     )
                 }
             }
@@ -196,6 +198,7 @@ internal class ForegroundIndexCoordinator(context: Context) {
         started: Long,
         thermalStatus: Int,
         allowedMediaIds: Set<String>?,
+        errorCode: String? = null,
     ): ForegroundIndexRunResult {
         if (galleryProcessed > 0) repository.rebuildEvents()
         if (allowedMediaIds == null && reason != ForegroundIndexStopReason.COMPLETE) {
@@ -216,6 +219,7 @@ internal class ForegroundIndexCoordinator(context: Context) {
             permanentFailures = permanentFailures,
             elapsedMs = SystemClock.elapsedRealtime() - started,
             thermalStatus = thermalStatus,
+            errorCode = errorCode,
         )
     }
 }

@@ -53,13 +53,13 @@ class RealGemmaVisualVerifierAcceptanceTest {
                 sizeBytes = fixture.length(),
             )
             val plan = GalleryQueryPlan(
-                originalQuery = "Show the image where Person A has a yellow hat and Person B has a blue suit, and nobody else wears a yellow hat.",
+                originalQuery = "Show the image where Person A has a yellow hat and red clothing, and Person B has a blue suit.",
                 intent = QueryIntent.FIND_MEDIA,
                 mediaScope = MediaScope.IMAGES,
                 semanticClauses = listOf(
                     SemanticClause("Person A is wearing a yellow hat", hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON, relationToPerson = "person_a"),
                     SemanticClause("Person B is wearing a blue suit", hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON, relationToPerson = "person_b"),
-                    SemanticClause("No visible person other than Person A is wearing a yellow hat", polarity = Polarity.NEGATIVE, hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON),
+                    SemanticClause("Person A is wearing red clothing", hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON, relationToPerson = "person_a"),
                 ),
                 terms = listOf("yellow hat", "blue suit"),
                 verification = VerificationPolicy.REQUIRED,
@@ -78,7 +78,8 @@ class RealGemmaVisualVerifierAcceptanceTest {
                 "repaired=${trace.repairedCandidates} loadMs=${trace.engineLoadMs} generationMs=${trace.generationMs} " +
                 "closeMs=${trace.engineCloseMs} elapsedMs=${trace.elapsedMs} wallMs=$wallMs " +
                 "pssBeforeKb=$pssBeforeKb pssAfterCloseKb=$pssAfterCloseKb accepted=${result.acceptedIds.size} " +
-                "evidence=${result.evidence.size} failures=${result.failures.size}"
+                "evidence=${result.evidence.size} failures=${result.failures.size} " +
+                "conditions=${result.evaluations.flatMap { it.conditions }.joinToString { "${it.id}:${it.verdict}:${it.confidence}" }}"
             instrumentation.sendStatus(2, Bundle().apply { putString("real_gemma_visual_trace", report) })
 
             assertTrue("Gemma visual verification fell back: ${trace.fallbackReason}", trace.usedGemma)

@@ -15,7 +15,7 @@ object PersonVerificationImageComposer {
         if (bindings.isEmpty()) return jpeg
         val source = requireNotNull(BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)) { "Verification image could not be decoded" }
         val cropSize = (source.width / bindings.size.coerceAtLeast(1)).coerceIn(160, 420)
-        val output = Bitmap.createBitmap(source.width, source.height + cropSize * 2, Bitmap.Config.ARGB_8888)
+        val output = Bitmap.createBitmap(source.width, source.height + cropSize * 3, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
         canvas.drawColor(Color.BLACK)
         canvas.drawBitmap(source, 0f, 0f, null)
@@ -70,12 +70,21 @@ object PersonVerificationImageComposer {
                 corridor.last.coerceAtLeast(box.right).coerceAtMost(source.width),
                 source.height,
             )
+            val lowerBody = Rect(
+                fullBody.left,
+                (box.bottom - faceHeight / 2).coerceAtLeast(0).coerceAtMost(source.height - 1),
+                fullBody.right,
+                source.height,
+            )
             val fullDestination = Rect(index * cropSize, source.height, minOf(source.width, (index + 1) * cropSize), source.height + cropSize)
             canvas.drawBitmap(source, fullBody, fullDestination, null)
             canvas.drawText("${binding.stableLabel} FULL", fullDestination.left + 8f, fullDestination.top + labelPaint.textSize, labelPaint)
             val upperDestination = Rect(index * cropSize, source.height + cropSize, minOf(source.width, (index + 1) * cropSize), source.height + cropSize * 2)
             canvas.drawBitmap(source, upperBody, upperDestination, null)
             canvas.drawText("${binding.stableLabel} UPPER", upperDestination.left + 8f, upperDestination.top + labelPaint.textSize, labelPaint)
+            val lowerDestination = Rect(index * cropSize, source.height + cropSize * 2, minOf(source.width, (index + 1) * cropSize), source.height + cropSize * 3)
+            canvas.drawBitmap(source, lowerBody, lowerDestination, null)
+            canvas.drawText("${binding.stableLabel} LOWER/FEET", lowerDestination.left + 8f, lowerDestination.top + labelPaint.textSize, labelPaint)
         }
         return try {
             ByteArrayOutputStream().use { bytes ->
@@ -96,7 +105,8 @@ internal object PersonVerificationPromptBinding {
     ): List<VerificationConditionSpec> {
         if (bindings.isEmpty()) return conditions
         return conditions.map { condition ->
-            val explicit = bindings.firstOrNull { binding ->
+            val identityBindings = bindings.filterNot { it.clusterId.startsWith("unreviewed-face-") }
+            val explicit = identityBindings.firstOrNull { binding ->
                 condition.relationToPerson == binding.clusterId ||
                     binding.identityTerms.any { it.equals(condition.relationToPerson, ignoreCase = true) }
             }
@@ -111,11 +121,40 @@ internal object PersonVerificationPromptBinding {
                     }
                 }
             }
-            val bound = explicit ?: bindings.singleOrNull()?.takeIf { condition.subject == SemanticSubject.PERSON }
+            text = expandOtherPersonPredicate(text, bindings)
+            val bound = explicit ?: identityBindings.singleOrNull()?.takeIf { condition.subject == SemanticSubject.PERSON }
             if (bound != null && bound.stableLabel.lowercase(Locale.ROOT) !in text.lowercase(Locale.ROOT)) {
                 text = "${bound.stableLabel}: $text"
             }
             condition.copy(text = text, relationToPerson = bound?.clusterId ?: condition.relationToPerson)
         }
     }
+
+    /**
+     * Turns a negative existential such as "no visible person other than P1 is wearing X"
+     * into the positive predicate Gemma must evaluate. Kotlin still owns the negative
+     * polarity, so VERIFIED_FALSE means that none of the remaining labelled people match.
+     */
+    private fun expandOtherPersonPredicate(
+        text: String,
+        bindings: List<PersonVerificationBinding>,
+    ): String {
+        val match = OTHER_PERSON_PATTERN.matchEntire(text.trim()) ?: return text
+        val excluded = match.groupValues[1]
+        val predicate = match.groupValues[2].trim()
+        val otherLabels = bindings
+            .map(PersonVerificationBinding::stableLabel)
+            .filterNot { it.equals(excluded, ignoreCase = true) }
+            .distinct()
+        if (predicate.isBlank() || otherLabels.isEmpty()) return text
+        return if (otherLabels.size == 1) {
+            "${otherLabels.single()} is $predicate"
+        } else {
+            "${otherLabels.joinToString(" or ")} is $predicate"
+        }
+    }
+
+    private val OTHER_PERSON_PATTERN = Regex(
+        "(?i)^(?:any\\s+)?(?:visible\\s+)?person\\s+other\\s+than\\s+(P\\d+)\\s+(?:is\\s+)?(.+)$",
+    )
 }

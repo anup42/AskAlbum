@@ -38,6 +38,32 @@ class GemmaVerificationCodecTest {
     }
 
     @Test
+    fun derivesNegativeHardConditionFromThePositivePredicateResult() {
+        val expected = listOf(
+            condition("c1", ConstraintStrength.HARD).copy(polarity = Polarity.NEGATIVE),
+            condition("c2", ConstraintStrength.HARD),
+        )
+        val decoded = codec.decode(
+            """{"conditions":[{"id":"c1","satisfied":false,"confidence":0.9},{"id":"c2","satisfied":true,"confidence":0.9}],"overallMatch":false}""",
+            expected,
+        )
+
+        assertTrue("The forbidden predicate is absent and the positive predicate is present", decoded.overallMatch)
+        assertFalse(decoded.conditions.first().satisfied)
+    }
+
+    @Test
+    fun modelOverallMatchIsSchemaOnlyAndCannotRejectKotlinPolarityResult() {
+        val expected = listOf(condition("c1", ConstraintStrength.HARD).copy(polarity = Polarity.NEGATIVE))
+        val decoded = codec.decode(
+            """{"conditions":[{"id":"c1","satisfied":false,"confidence":0.9}],"overallMatch":true}""",
+            expected,
+        )
+
+        assertTrue(decoded.overallMatch)
+    }
+
+    @Test
     fun rejectsUnknownMissingDuplicateFieldsAndInvalidConfidence() {
         val validItems = """{"id":"c1","satisfied":true,"confidence":0.9},{"id":"c2","satisfied":true,"confidence":0.8},{"id":"c3","satisfied":true,"confidence":0.7}"""
         val invalid = listOf(
@@ -45,7 +71,6 @@ class GemmaVerificationCodecTest {
             """{"conditions":[{"id":"c1","satisfied":true,"confidence":0.9}],"overallMatch":true}""",
             """{"conditions":[{"id":"c1","satisfied":true,"confidence":0.9},{"id":"c1","satisfied":true,"confidence":0.8},{"id":"c3","satisfied":true,"confidence":0.7}],"overallMatch":true}""",
             """{"conditions":[{"id":"c1","satisfied":true,"confidence":1.1},{"id":"c2","satisfied":true,"confidence":0.8},{"id":"c3","satisfied":true,"confidence":0.7}],"overallMatch":true}""",
-            """{"conditions":[$validItems],"overallMatch":false}""",
         )
         invalid.forEach { response ->
             assertThrows(RuntimeException::class.java) { codec.decode(response, conditions) }
@@ -75,7 +100,8 @@ class GemmaVerificationCodecTest {
 
         assertFalse(VisualVerificationPolicy.requiresVerification(ordinary))
         assertTrue(VisualVerificationPolicy.requiresVerification(relation))
-        assertFalse(VisualVerificationPolicy.requiresVerification(relation.copy(verification = VerificationPolicy.NEVER)))
+        assertTrue(VisualVerificationPolicy.requiresVerification(relation.copy(verification = VerificationPolicy.NEVER)))
+        assertFalse(VisualVerificationPolicy.requiresVerification(ordinary.copy(verification = VerificationPolicy.NEVER)))
         assertEquals(listOf("c1"), VisualVerificationPolicy.conditions(relation).map { it.id })
         assertEquals(LiteRtGemmaVisualVerifier.MAX_CANDIDATES, 8)
     }

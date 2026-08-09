@@ -6,6 +6,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 class GalleryIndexWorker(
@@ -17,82 +18,118 @@ class GalleryIndexWorker(
     private val jobControls = IndexingJobControlsStore(appContext)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        if (!jobControls.load().mediaAnalysisEnabled) return@withContext Result.success()
-        if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
-        repository.recoverInterruptedJobs()
-        val budget = IndexingWorkerRunBudget()
-        var batches = 0
-        var processed = 0
-        var retryableFailures = 0
-        var permanentFailures = 0
-        var hasMore = true
-        var stoppedDuringBatch = false
-        GalleryIndexBatchProcessor(applicationContext, repository).use { processor ->
-            while (
-                hasMore &&
-                budget.hasTimeRemaining() &&
-                !isStopped &&
-                jobControls.load().mediaAnalysisEnabled &&
-                workAdmission.evaluate().allowed
-            ) {
-                val batch = IndexingResourceCoordinator.withBackgroundPermit {
-                    processor.processBatch(
-                        ownerId = id.toString(),
-                        canContinue = {
-                            !isStopped &&
-                                jobControls.load().mediaAnalysisEnabled &&
-                                workAdmission.evaluate().allowed
-                        },
+        val ownerId = id.toString()
+        try {
+            if (!jobControls.load().mediaAnalysisEnabled) return@withContext Result.success()
+            if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+                return@withContext Result.retry()
+            }
+            if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
+            repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
+            val budget = IndexingWorkerRunBudget()
+            var batches = 0
+            var processed = 0
+            var retryableFailures = 0
+            var permanentFailures = 0
+            var hasMore = true
+            var stoppedDuringBatch = false
+            var unavailable = false
+            var errorCode: String? = null
+            val progressStartedAt = System.currentTimeMillis()
+            GalleryIndexBatchProcessor(applicationContext, repository).use { processor ->
+                while (
+                    hasMore &&
+                    budget.hasTimeRemaining() &&
+                    !isStopped &&
+                    !ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active) &&
+                    jobControls.load().mediaAnalysisEnabled &&
+                    workAdmission.evaluate().allowed
+                ) {
+                    val batch = IndexingResourceCoordinator.withBackgroundPermit {
+                        processor.processBatch(
+                            ownerId = ownerId,
+                            canContinue = {
+                                !isStopped &&
+                                    !ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active) &&
+                                    jobControls.load().mediaAnalysisEnabled &&
+                                    workAdmission.evaluate().allowed
+                            },
+                        )
+                    }
+                    batches++
+                    processed += batch.processed
+                    retryableFailures += batch.retryableFailures
+                    permanentFailures += batch.permanentFailures
+                    hasMore = batch.hasMore
+                    stoppedDuringBatch = batch.stopped
+                    unavailable = unavailable || batch.unavailable
+                    errorCode = batch.errorCode ?: errorCode
+                    if (!batch.stopped) repository.renewIndexingLeases(IndexingPipeline.MEDIA_ANALYSIS, ownerId)
+                    val estimate = IndexingProgressEstimate.calculate(
+                        processed = processed,
+                        remaining = repository.indexSummary().pending,
+                        startedAtMillis = progressStartedAt,
+                    )
+                    setProgress(
+                        workDataOf(
+                            "processed" to processed,
+                            "batches" to batches,
+                            "in_flight" to 0,
+                            "retryable_failures" to retryableFailures,
+                            "last_progress_at" to System.currentTimeMillis(),
+                            "next_attempt_at" to (batch.nextAttemptAtMillis ?: 0L),
+                            "delayed_retries" to retryableFailures,
+                            "quarantined" to permanentFailures,
+                            "unavailable" to unavailable,
+                            "error_code" to (errorCode ?: ""),
+                            "rate_per_minute" to (estimate.ratePerMinute ?: 0.0),
+                            "eta_millis" to (estimate.etaMillis ?: 0L),
+                        ),
+                    )
+                    if (batch.stopped) break
+                }
+            }
+
+            if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+                return@withContext Result.retry()
+            }
+            if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.schedule(applicationContext)
+            val enabled = jobControls.load().mediaAnalysisEnabled
+            val admission = workAdmission.evaluate()
+            val shouldRetry = IndexingWorkerResultPolicy.shouldRetryWorker(
+                processed = processed,
+                retryableFailures = retryableFailures,
+                stopped = isStopped || stoppedDuringBatch,
+                admissionAllowed = admission.allowed,
+                hasImmediateWork = hasMore,
+                unavailable = unavailable,
+            )
+            if (hasMore && enabled && !shouldRetry) {
+                IndexScheduler.scheduleContinuation(applicationContext)
+            } else if (!hasMore && enabled) {
+                repository.nextMediaRetryAt()?.let { retryAt ->
+                    IndexScheduler.scheduleContinuation(
+                        applicationContext,
+                        (retryAt - System.currentTimeMillis()).coerceAtLeast(10_000L),
                     )
                 }
-                batches++
-                processed += batch.processed
-                retryableFailures += batch.retryableFailures
-                permanentFailures += batch.permanentFailures
-                hasMore = batch.hasMore
-                stoppedDuringBatch = batch.stopped
-                setProgress(
-                    workDataOf(
-                        "processed" to processed,
-                        "batches" to batches,
-                        "in_flight" to if (hasMore) GalleryIndexBatchProcessor.DEFAULT_BATCH_SIZE else 0,
-                        "retryable_failures" to retryableFailures,
-                    ),
-                )
-                if (batch.stopped) break
             }
-        }
-
-        if (repository.peopleIndexStatus().enabled) PeopleIndexScheduler.schedule(applicationContext)
-        val enabled = jobControls.load().mediaAnalysisEnabled
-        val admission = workAdmission.evaluate()
-        val shouldRetry = IndexingWorkerResultPolicy.shouldRetryWorker(
-            processed = processed,
-            retryableFailures = retryableFailures,
-            stopped = isStopped || stoppedDuringBatch,
-            admissionAllowed = admission.allowed,
-            hasImmediateWork = hasMore,
-        )
-        if (hasMore && enabled && !shouldRetry) {
-            IndexScheduler.scheduleContinuation(applicationContext)
-        } else if (!hasMore && enabled) {
-            repository.nextMediaRetryAt()?.let { retryAt ->
-                IndexScheduler.scheduleContinuation(
-                    applicationContext,
-                    (retryAt - System.currentTimeMillis()).coerceAtLeast(10_000L),
-                )
+            Log.i(
+                TAG,
+                "Media analysis run finished batches=$batches processed=$processed hasMore=$hasMore " +
+                    "stopped=${isStopped || stoppedDuringBatch} retryableFailures=$retryableFailures " +
+                    "permanentFailures=$permanentFailures unavailable=$unavailable " +
+                    "errorCode=${errorCode ?: "none"} elapsedMs=${budget.elapsedMillis()}",
+            )
+            when {
+                !enabled -> Result.success()
+                shouldRetry -> Result.retry()
+                else -> Result.success()
             }
-        }
-        Log.i(
-            TAG,
-            "Media analysis run finished batches=$batches processed=$processed hasMore=$hasMore " +
-                "stopped=${isStopped || stoppedDuringBatch} retryableFailures=$retryableFailures " +
-                "permanentFailures=$permanentFailures elapsedMs=${budget.elapsedMillis()}",
-        )
-        when {
-            !enabled -> Result.success()
-            shouldRetry -> Result.retry()
-            else -> Result.success()
+        } finally {
+            withContext(NonCancellable) {
+                repository.releaseIndexingLeases(IndexingPipeline.MEDIA_ANALYSIS, ownerId)
+            }
         }
     }
 

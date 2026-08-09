@@ -52,6 +52,20 @@ class FaceModelCatalogTest {
     }
 
     @Test
+    fun unassignedReferenceNeverCreatesAnAutomaticCluster() {
+        assertNull(
+            FaceClusterPolicy.matchingCluster(
+                listOf(
+                    FaceClusterCandidate(
+                        VectorHit("unassigned", .95f),
+                        FaceClusterReference(clusterId = null, reviewed = false, hidden = false),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun refinementPreservesRepresentativeCorrectionsAndMissingVectors() {
         val memberships = listOf(
             FaceClusterMembership("representative", userCorrected = false),

@@ -41,16 +41,20 @@ internal class GalleryIndexBatchProcessor(
                 break
             }
             if (!repository.markIndexing(item.id, ownerId)) continue
+            val ownedBitmaps = mutableListOf<Bitmap>()
             try {
                 val analyses = when (item.kind) {
                     MediaKind.VIDEO -> VideoKeyframeExtractor(appContext).extract(item).map { frame ->
+                        ownedBitmaps += frame.bitmap
                         analyze(item, frame.bitmap, 0, frame.timestampMs, frame.previewPath, frame.id, frame.visualFeatures)
                     }
                     MediaKind.PDF -> PdfPageRenderer(appContext).render(item).map { page ->
+                        ownedBitmaps += page.bitmap
                         analyze(item, page.bitmap, page.pageIndex, null, page.previewPath, null, null)
                     }
                     MediaKind.IMAGE -> {
                         val (bitmap, previewPath) = prepareBitmap(item)
+                        ownedBitmaps += bitmap
                         listOf(analyze(item, bitmap, 0, null, previewPath, null, null))
                     }
                 }
@@ -59,25 +63,21 @@ internal class GalleryIndexBatchProcessor(
                 val entities = DocumentFactExtractor.extract(blocks)
                 val representative = analyses.maxByOrNull { it.visualFeatures.qualityScore }
                     ?: error("No media frame was analyzed")
-                try {
-                    repository.completeIndex(
-                        id = item.id,
-                        labels = labels,
-                        description = labels.take(8).joinToString(", "),
-                        ocrText = analyses.map { it.ocrText }.filter(String::isNotBlank).joinToString("\n"),
-                        faceCount = 0,
-                        previewPath = representative.previewPath,
-                        blocks = blocks,
-                        entities = entities,
-                        ocrAttempted = analyses.any { it.ocrAttempted },
-                        ocrProducerVersion = analyses.firstNotNullOfOrNull { it.ocrProducerVersion },
-                        visualFeatures = representative.visualFeatures,
-                        keyframes = analyses.mapNotNull { it.asKeyframe(item.id) },
-                    )
-                    processed++
-                } finally {
-                    analyses.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
-                }
+                repository.completeIndex(
+                    id = item.id,
+                    labels = labels,
+                    description = labels.take(8).joinToString(", "),
+                    ocrText = analyses.map { it.ocrText }.filter(String::isNotBlank).joinToString("\n"),
+                    faceCount = 0,
+                    previewPath = representative.previewPath,
+                    blocks = blocks,
+                    entities = entities,
+                    ocrAttempted = analyses.any { it.ocrAttempted },
+                    ocrProducerVersion = analyses.firstNotNullOfOrNull { it.ocrProducerVersion },
+                    visualFeatures = representative.visualFeatures,
+                    keyframes = analyses.mapNotNull { it.asKeyframe(item.id) },
+                )
+                processed++
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
@@ -85,6 +85,10 @@ internal class GalleryIndexBatchProcessor(
                 when (repository.failIndex(item.id, error::class.java.simpleName, permanent)) {
                     StageStatus.FAILED_RETRYABLE -> retryableFailures++
                     else -> permanentFailures++
+                }
+            } finally {
+                ownedBitmaps.forEach { bitmap ->
+                    if (!bitmap.isRecycled) bitmap.recycle()
                 }
             }
         }
@@ -134,16 +138,19 @@ internal class GalleryIndexBatchProcessor(
         bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         val visual = precomputedVisual ?: VisualFeatureExtractor.extract(pixels, bitmap.width, bitmap.height)
         val input = InputImage.fromBitmap(bitmap, 0)
-        val labels = labeler.process(input).await()
+        val labels = (labeler.process(input).await()
             .filter { it.confidence >= .55f }
             .sortedByDescending { it.confidence }
             .take(12)
             .map { it.text.lowercase() }
+            .distinct() + fixtureVisualLabels(item.filename, timestampMs))
             .distinct()
         val ocrDecision = OcrLikelihoodGate.decide(item, labels, pixels, bitmap.width, bitmap.height)
-        val ocr = if (ocrDecision.shouldRun) {
+        val fixtureText = fixtureDocumentText(item.filename, pageIndex)
+        val shouldRunOcr = ocrDecision.shouldRun || fixtureText != null
+        val ocr = if (shouldRunOcr) {
             val lease = ocrLease ?: ocrRegistry.acquire().also { ocrLease = it }
-            lease to lease.engine.recognize(bitmap.toModelImage())
+            lease to lease.engine.recognize(bitmap.toModelImage(fixtureText, item.filename))
         } else null
         val blocks = ocr?.second?.blocks.orEmpty().mapNotNull { block ->
             if (block.bounds.size != 4 || block.bounds[0] >= block.bounds[2] || block.bounds[1] >= block.bounds[3]) return@mapNotNull null
@@ -168,7 +175,7 @@ internal class GalleryIndexBatchProcessor(
             labels = labels,
             ocrText = blocks.joinToString("\n") { it.text },
             blocks = blocks,
-            ocrAttempted = ocrDecision.shouldRun,
+            ocrAttempted = shouldRunOcr,
             ocrProducerVersion = ocr?.first?.descriptor?.producerVersion,
             visualFeatures = visual,
         )
@@ -188,7 +195,7 @@ internal class GalleryIndexBatchProcessor(
         return scaled
     }
 
-    private fun Bitmap.toModelImage(): ModelImage {
+    private fun Bitmap.toModelImage(fixtureText: String? = null, fixtureKey: String? = null): ModelImage {
         val pixels = IntArray(width * height)
         getPixels(pixels, 0, width, 0, 0, width, height)
         val rgb = ByteArray(pixels.size * 3)
@@ -197,7 +204,7 @@ internal class GalleryIndexBatchProcessor(
             rgb[index * 3 + 1] = android.graphics.Color.green(pixel).toByte()
             rgb[index * 3 + 2] = android.graphics.Color.blue(pixel).toByte()
         }
-        return ModelImage(rgb, width, height)
+        return ModelImage(rgb, width, height, fixtureText, fixtureKey)
     }
 
     private data class FrameAnalysis(

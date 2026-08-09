@@ -20,12 +20,29 @@ class SemanticVectorStore(
         currentIndex().index.upsert(mediaId, vector)
     }
 
-    suspend fun searchText(query: String, topK: Int, allowedIds: Set<String>? = null): List<VectorHit> {
-        if (query.isBlank() || packs.current() == null) return emptyList()
-        val current = currentIndex()
-        val vector = embeddings.embedText(query)
-        return current.index.search(vector, topK, allowedIds)
-            .filter { it.score >= current.pack.manifest.minimumSimilarity }
+    suspend fun scanTextBatchReport(
+        query: String,
+        allowedIds: Set<String>,
+        eligibleCount: Int = allowedIds.size,
+    ): RetrievalChannelReport<VectorHit> {
+        if (query.isBlank()) return SemanticChannelReporter.notRequired()
+        if (allowedIds.isEmpty()) {
+            return SemanticBatchCoveragePolicy.noVectorIds(eligibleCount, producerVersion())
+        }
+        return SemanticChannelReporter.execute(
+            query = query,
+            modelVersion = producerVersion(),
+            eligibleCount = allowedIds.size,
+            eligibleVectorIds = allowedIds,
+            topK = allowedIds.size,
+            indexedIds = { currentIndex().index.ids() },
+            search = { text, _, eligibleIds ->
+                val current = currentIndex()
+                val vector = embeddings.embedTextInteractive(text)
+                current.index.scan(vector, eligibleIds)
+                    .filter { it.score >= current.pack.manifest.minimumSimilarity }
+            },
+        )
     }
 
     suspend fun searchTextReport(
@@ -42,7 +59,7 @@ class SemanticVectorStore(
         indexedIds = { currentIndex().index.ids() },
         search = { text, limit, eligibleIds ->
             val current = currentIndex()
-            val vector = embeddings.embedText(text)
+            val vector = embeddings.embedTextInteractive(text)
             current.index.search(vector, limit, eligibleIds)
                 .filter { it.score >= current.pack.manifest.minimumSimilarity }
         },
@@ -73,6 +90,25 @@ class SemanticVectorStore(
         val pack: InstalledRetrievalPack,
         val index: MmapFp16VectorIndex,
     )
+}
+
+internal object SemanticBatchCoveragePolicy {
+    fun noVectorIds(
+        eligibleCount: Int,
+        modelVersion: String?,
+    ): RetrievalChannelReport<VectorHit> {
+        val safeEligibleCount = eligibleCount.coerceAtLeast(0)
+        return RetrievalChannelReport(
+            channel = RetrievalChannel.SEMANTIC,
+            status = if (safeEligibleCount == 0) ChannelStatus.NOT_REQUIRED else ChannelStatus.PARTIAL,
+            eligibleCount = safeEligibleCount,
+            indexedCount = 0,
+            searchedCount = 0,
+            hits = emptyList(),
+            modelVersion = modelVersion,
+            errorCode = if (safeEligibleCount == 0) null else "SCAN_BATCH_VECTOR_IDS_UNAVAILABLE",
+        )
+    }
 }
 
 data class RankedChannel(val weight: Double, val ids: List<String>)

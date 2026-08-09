@@ -22,9 +22,104 @@ class IndexingReliabilityPolicyTest {
     }
 
     @Test
+    fun unavailableIndexingPackCannotBeReportedAsSuccessfulCompletion() {
+        assertTrue(
+            IndexingWorkerResultPolicy.shouldRetryWorker(
+                processed = 0,
+                retryableFailures = 0,
+                stopped = false,
+                admissionAllowed = true,
+                hasImmediateWork = false,
+                unavailable = true,
+            ),
+        )
+    }
+
+    @Test
+    fun backgroundWorkersYieldToTheForegroundIndexLane() {
+        assertTrue(ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(true))
+        assertFalse(ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(false))
+    }
+
+    @Test
+    fun supervisorDoesNotScheduleBackgroundWorkDuringForegroundOrUserPause() {
+        assertFalse(IndexingSupervisorPolicy.shouldScheduleBackgroundWork(true, false))
+        assertFalse(IndexingSupervisorPolicy.shouldScheduleBackgroundWork(false, true))
+        assertTrue(IndexingSupervisorPolicy.shouldScheduleBackgroundWork(false, false))
+    }
+
+    @Test
+    fun appStartupReclaimsOrphanLeasesUnlessForegroundIndexingIsLive() {
+        assertFalse(IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(true, false))
+        assertFalse(IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(true, true))
+        assertTrue(IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(false, true))
+        assertTrue(IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(false, false))
+    }
+
+    @Test
+    fun unexpectedServiceDestructionSchedulesRecoveryButExplicitStopDoesNot() {
+        assertTrue(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(false, true))
+        assertFalse(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(true, true))
+        assertFalse(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(false, false))
+    }
+
+    @Test
     fun retryDelayIsBoundedAndIncreasing() {
         assertEquals(30_000L, IndexingRetryPolicy.retryDelayMillis(1))
         assertEquals(60_000L, IndexingRetryPolicy.retryDelayMillis(2))
         assertEquals(120_000L, IndexingRetryPolicy.retryDelayMillis(3))
+    }
+
+    @Test
+    fun exhaustedItemsKeepThePipelineInDegradedStateAfterPendingWorkEnds() {
+        assertEquals(
+            IndexingPipelineState.DEGRADED,
+            IndexingRuntimeStatePolicy.resolve(
+                enabled = true,
+                pending = 0,
+                failed = 1,
+                admissionAllowed = true,
+                workRunning = false,
+                workEnqueued = false,
+                runAttemptCount = 0,
+                foregroundActive = false,
+            ),
+        )
+    }
+
+    @Test
+    fun expiredLeaseRecoveryIsScopedToTheOwningPipeline() {
+        assertEquals(
+            setOf(
+                IndexStage.THUMBNAIL,
+                IndexStage.VIDEO_KEYFRAMES,
+                IndexStage.OCR,
+                IndexStage.EVENTS,
+                IndexStage.ENRICHMENT,
+            ),
+            IndexingRecoveryPolicy.stagesFor(IndexingPipeline.MEDIA_ANALYSIS),
+        )
+        assertEquals(
+            setOf(IndexStage.EMBEDDING),
+            IndexingRecoveryPolicy.stagesFor(IndexingPipeline.EMBEDDINGS),
+        )
+        assertEquals(
+            setOf(IndexStage.FACES),
+            IndexingRecoveryPolicy.stagesFor(IndexingPipeline.PEOPLE),
+        )
+        assertTrue(IndexStage.FACES in IndexingRecoveryPolicy.stagesFor(IndexingPipeline.ALL))
+        assertTrue(IndexingRecoveryPolicy.recoversSemanticMemory(IndexingPipeline.SEMANTIC_MEMORY))
+        assertFalse(IndexingRecoveryPolicy.recoversSemanticMemory(IndexingPipeline.EMBEDDINGS))
+        assertTrue(IndexingRecoveryPolicy.recoversCaptionEmbeddings(IndexingPipeline.CAPTION_EMBEDDINGS))
+        assertFalse(IndexingRecoveryPolicy.recoversCaptionEmbeddings(IndexingPipeline.MEDIA_ANALYSIS))
+    }
+
+    @Test
+    fun everyUiIndexingJobMapsToOnlyItsOwnRecoveryPipeline() {
+        assertEquals(IndexingPipeline.MEDIA_ANALYSIS, IndexingRecoveryPolicy.pipelineFor(IndexingJob.MEDIA_ANALYSIS))
+        assertEquals(IndexingPipeline.EMBEDDINGS, IndexingRecoveryPolicy.pipelineFor(IndexingJob.EMBEDDINGS))
+        assertEquals(IndexingPipeline.CAPTION_EMBEDDINGS, IndexingRecoveryPolicy.pipelineFor(IndexingJob.CAPTION_EMBEDDINGS))
+        assertEquals(IndexingPipeline.PEOPLE, IndexingRecoveryPolicy.pipelineFor(IndexingJob.PEOPLE))
+        assertEquals(IndexingPipeline.SEMANTIC_MEMORY, IndexingRecoveryPolicy.pipelineFor(IndexingJob.SEMANTIC_MEMORY))
     }
 }

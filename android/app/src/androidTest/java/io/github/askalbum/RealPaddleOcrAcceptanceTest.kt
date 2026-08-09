@@ -25,6 +25,11 @@ class RealPaddleOcrAcceptanceTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val application = instrumentation.targetContext.applicationContext as AskAlbumApplication
         val services = application.services
+        val retainedFixture = application.repository.allItems().firstOrNull {
+            it.filename == "synthetic_menu_hindi_v0.png"
+        }
+        assumeTrue("The CC0 Hindi OCR fixture is not retained on the device", retainedFixture != null)
+        val fixture = requireNotNull(retainedFixture)
         if (!services.ocrModelPackManager.status().installed) {
             services.ocrModelDownloader.enqueue()
             withTimeout(5 * 60_000L) {
@@ -42,9 +47,6 @@ class RealPaddleOcrAcceptanceTest {
             assertEquals(artifact.sizeBytes, java.io.File(installed.root, artifact.targetName).length())
         }
 
-        val fixture = requireNotNull(application.repository.allItems().firstOrNull { it.filename == "synthetic_menu_hindi_v0.png" }) {
-            "The CC0 Hindi OCR fixture is not retained on the device"
-        }
         val image = application.contentResolver.loadThumbnail(
             Uri.parse(requireNotNull(fixture.contentUri)),
             Size(1240, 1754),

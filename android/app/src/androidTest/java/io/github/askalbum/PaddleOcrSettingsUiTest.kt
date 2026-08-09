@@ -19,8 +19,11 @@ class PaddleOcrSettingsUiTest {
         }
         rule.onNodeWithText("Menu").performClick()
         rule.onNodeWithText("Settings").performClick()
+        rule.waitUntil(timeoutMillis = 10_000) {
+            runCatching { rule.onNodeWithText("Multilingual OCR engine").fetchSemanticsNode() }.isSuccess
+        }
         rule.onNodeWithText("Multilingual OCR engine").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("Apache-2.0", substring = true).performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Apache-2.0 - Latin-script", substring = true).performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("Hindi/Devanagari", substring = true).performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("provider registry", substring = true).performScrollTo().assertIsDisplayed()
     }

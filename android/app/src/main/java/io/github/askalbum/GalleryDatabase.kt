@@ -14,8 +14,143 @@ class GalleryDatabase(
     private val databaseName: String = GalleryRoomDatabase.NAME,
 ) {
     private val room = GalleryRoomDatabase.open(context, databaseName)
+    private val sensitiveDataAtRest = SensitiveDataAtRest()
     private val readableDatabase get() = GallerySqlDatabase(room.openHelper.readableDatabase)
     private val writableDatabase get() = GallerySqlDatabase(room.openHelper.writableDatabase)
+
+    init {
+        migrateSensitiveDerivedData()
+    }
+
+    private fun migrateSensitiveDerivedData() {
+        val db = writableDatabase
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS sensitive_data_migration " +
+                "(id INTEGER NOT NULL PRIMARY KEY, version INTEGER NOT NULL, completed_at INTEGER NOT NULL)",
+        )
+        val currentVersion = db.query(
+            "sensitive_data_migration", arrayOf("version"), "id=1", null, null, null, null, "1",
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        if (currentVersion >= SensitiveDataAtRest.MIGRATION_VERSION) return
+
+        db.beginTransaction()
+        try {
+            migrateSensitiveColumn(db, "ocr_block", "id", "text")
+            migrateSensitiveColumn(db, "ocr_block", "id", "normalized_text")
+            migrateSensitiveColumn(db, "video_keyframe", "id", "ocr_text")
+            migrateSensitiveColumn(db, "query_turn", "id", "query")
+            migrateSensitiveColumn(db, "query_turn", "id", "plan_summary")
+            migrateSensitiveColumn(db, "query_session", "session_id", "last_query")
+            migrateSensitiveColumn(db, "result_set", "id", "query")
+            migrateSensitiveColumn(db, "semantic_predicate_scan", "id", "query_text")
+            migrateSensitiveColumn(db, "person_cluster", "id", "label")
+            migrateSensitiveColumn(db, "person_cluster", "id", "relationship")
+            migrateSensitiveColumn(db, "person_cluster", "id", "aliases")
+            migrateSensitiveColumn(db, "person_attribute_fact", "id", "value")
+            migrateSensitiveColumn(db, "person_attribute_fact", "id", "attributes")
+            migrateSensitiveColumn(db, "media_item", "id", "ocr_text")
+            migrateSensitiveOcrEntities(db)
+            migrateSensitiveColumn(db, "semantic_fact", "id", "value")
+            migrateSensitiveColumn(db, "semantic_caption", "id", "text")
+            // The encrypted OCR migration previously rebuilt FTS with ciphertext.
+            // Rebuild once for this migration version using only the safe searchable
+            // projection while the media row remains protected at rest.
+            rebuildRedactedFts(db)
+            db.insertWithOnConflict(
+                "sensitive_data_migration",
+                null,
+                ContentValues().apply {
+                    put("id", 1)
+                    put("version", SensitiveDataAtRest.MIGRATION_VERSION)
+                    put("completed_at", System.currentTimeMillis())
+                },
+                SQLiteDatabase.CONFLICT_REPLACE,
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun migrateSensitiveColumn(
+        db: GallerySqlDatabase,
+        table: String,
+        idColumn: String,
+        valueColumn: String,
+    ): Int {
+        val pending = db.query(
+            table,
+            arrayOf(idColumn, valueColumn),
+            "$valueColumn IS NOT NULL AND $valueColumn<>''",
+            null,
+            null,
+            null,
+            null,
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        cursor.getString(cursor.getColumnIndexOrThrow(idColumn)) to
+                            cursor.getString(cursor.getColumnIndexOrThrow(valueColumn)),
+                    )
+                }
+            }
+        }
+        var changed = 0
+        pending.forEach { (id, raw) ->
+            val protected = sensitiveDataAtRest.protect(raw)
+            if (protected == raw) return@forEach
+            db.update(
+                table,
+                ContentValues().apply { put(valueColumn, protected) },
+                "$idColumn=?",
+                arrayOf(id),
+            )
+            changed++
+        }
+        return changed
+    }
+
+    private fun migrateSensitiveOcrEntities(db: GallerySqlDatabase): Int {
+        val sensitiveTypes = OcrEntityType.entries.filter { it.isHighRiskAtRest() }
+        if (sensitiveTypes.isEmpty()) return 0
+        val placeholders = sensitiveTypes.joinToString(",") { "?" }
+        var changed = 0
+        db.query(
+            "ocr_entity",
+            arrayOf("id", "raw_text", "normalized_value"),
+            "entity_type IN ($placeholders)",
+            sensitiveTypes.map(OcrEntityType::name).toTypedArray(),
+            null,
+            null,
+            null,
+            null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(0).toString()
+                val raw = cursor.getString(1)
+                val normalized = cursor.getString(2)
+                val protectedRaw = sensitiveDataAtRest.protect(raw)
+                val protectedNormalized = sensitiveDataAtRest.protect(normalized)
+                if (protectedRaw == raw && protectedNormalized == normalized) continue
+                db.update("ocr_entity", ContentValues().apply {
+                    put("raw_text", protectedRaw)
+                    put("normalized_value", protectedNormalized)
+                }, "id=?", arrayOf(id))
+                changed++
+            }
+        }
+        return changed
+    }
+
+    private fun rebuildRedactedFts(db: GallerySqlDatabase) {
+        val ids = db.query("media_item", arrayOf("id"), null, null, null, null, null).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getString(0))
+            }
+        }
+        ids.forEach { id -> itemById(db, id)?.let { refreshFts(db, it) } }
+    }
 
     fun seedDemoIfEmpty(): Int {
         readableDatabase.rawQuery("SELECT COUNT(*) FROM media_item WHERE source_kind='DEMO_ASSET'", null).use { cursor ->
@@ -31,16 +166,18 @@ class GalleryDatabase(
                 val item = entries.getJSONObject(i)
                 val tagArray = item.getJSONArray("tags")
                 val tags = buildList {
-                    for (tagIndex in 0 until tagArray.length()) add(tagArray.getString(tagIndex))
+                    for (tagIndex in 0 until tagArray.length()) {
+                        tagArray.optionalSafeString(tagIndex, 128)?.let(::add)
+                    }
                 }
-                val location = item.optString("location_name", "Unknown location")
+                val location = item.optionalSafeString("location_name", 256) ?: "Unknown location"
                 val galleryItem = GalleryItem(
                     id = item.getString("id"),
                     filename = item.getString("filename"),
                     title = item.getString("title"),
-                    creator = item.optString("creator").takeIf { it.isNotBlank() && it != "null" },
+                    creator = item.optionalSafeString("creator", 256),
                     location = location,
-                    album = item.optString("album", location),
+                    album = item.optionalSafeString("album", 256) ?: location,
                     latitude = item.optDouble("latitude").takeUnless(Double::isNaN),
                     longitude = item.optDouble("longitude").takeUnless(Double::isNaN),
                     tags = tags,
@@ -326,9 +463,31 @@ class GalleryDatabase(
         return mediaIds + keyframes
     }
 
+    fun mediaIdsWithVectorCoverage(mediaIds: Set<String>, vectorIds: Set<String>): Set<String> {
+        if (mediaIds.isEmpty() || vectorIds.isEmpty()) return emptySet()
+        val covered = mediaIds.filterTo(mutableSetOf()) { it in vectorIds }
+        for (ids in mediaIds.chunked(SQLITE_ID_CHUNK)) {
+            val placeholders = ids.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT id,media_id FROM video_keyframe WHERE media_id IN ($placeholders)",
+                ids.toTypedArray(),
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val keyframeId = cursor.text("id")
+                    if (keyframeId in vectorIds) covered += cursor.text("media_id")
+                }
+            }
+        }
+        return covered
+    }
+
     fun keyframeEmbeddingPendingItems(producerVersion: String, limit: Int): List<VideoKeyframeRecord> = readableDatabase.rawQuery(
-        "SELECT v.* FROM video_keyframe v JOIN media_item m ON m.id=v.media_id WHERE m.access_state='ACCESSIBLE' AND (v.embedding_version IS NULL OR v.embedding_version!=?) ORDER BY COALESCE(m.captured_at,0) DESC,v.timestamp_ms LIMIT ?",
-        arrayOf(producerVersion, limit.toString()),
+        "SELECT v.* FROM video_keyframe v JOIN media_item m ON m.id=v.media_id " +
+            "WHERE m.access_state='ACCESSIBLE' AND v.embedding_state NOT IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') " +
+            "AND (v.embedding_state IN ('PENDING','FAILED_RETRYABLE') OR v.embedding_version IS NULL OR v.embedding_version!=?) " +
+            "AND v.embedding_next_attempt_at<=? " +
+            "ORDER BY COALESCE(m.captured_at,0) DESC,v.timestamp_ms LIMIT ?",
+        arrayOf(producerVersion, System.currentTimeMillis().toString(), limit.toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorVideoKeyframe(cursor)) } }
 
     fun keyframeEmbeddingPendingItemsForIds(
@@ -339,9 +498,11 @@ class GalleryDatabase(
         readableDatabase.rawQuery(
             "SELECT v.* FROM video_keyframe v JOIN media_item m ON m.id=v.media_id " +
                 "WHERE m.access_state='ACCESSIBLE' AND m.id IN (${ids.joinToString(",") { "?" }}) " +
-                "AND (v.embedding_version IS NULL OR v.embedding_version!=?) " +
+                "AND v.embedding_state NOT IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') " +
+                "AND (v.embedding_state IN ('PENDING','FAILED_RETRYABLE') OR v.embedding_version IS NULL OR v.embedding_version!=?) " +
+                "AND v.embedding_next_attempt_at<=? " +
                 "ORDER BY COALESCE(m.captured_at,0) DESC,v.timestamp_ms LIMIT ?",
-            (ids + producerVersion + remaining.toString()).toTypedArray(),
+            (ids + producerVersion + System.currentTimeMillis().toString() + remaining.toString()).toTypedArray(),
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursorVideoKeyframe(cursor)) } }
     }
 
@@ -357,7 +518,43 @@ class GalleryDatabase(
     }
 
     fun completeKeyframeEmbedding(id: String, producerVersion: String) {
-        writableDatabase.update("video_keyframe", ContentValues().apply { put("embedding_version", producerVersion) }, "id=?", arrayOf(id))
+        writableDatabase.update(
+            "video_keyframe",
+            ContentValues().apply {
+                put("embedding_version", producerVersion)
+                put("embedding_state", "COMPLETE")
+                put("embedding_attempt_count", 0)
+                putNull("embedding_error")
+                put("embedding_next_attempt_at", 0L)
+            },
+            "id=? AND embedding_state NOT IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') AND " +
+                "(embedding_state IN ('PENDING','FAILED_RETRYABLE') OR embedding_version IS NULL OR embedding_version!=?)",
+            arrayOf(id, producerVersion),
+        )
+    }
+
+    fun failKeyframeEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean): StageStatus {
+        val db = writableDatabase
+        val attempts = db.query(
+            "video_keyframe", arrayOf("embedding_attempt_count"), "id=?", arrayOf(id),
+            null, null, null, "1",
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else return StageStatus.COMPLETE }
+        val nextAttempt = attempts + 1
+        val status = IndexingRetryPolicy.failedStatus(permanent, nextAttempt)
+        val now = System.currentTimeMillis()
+        val changed = db.update(
+            "video_keyframe",
+            ContentValues().apply {
+                put("embedding_state", status.name)
+                put("embedding_attempt_count", nextAttempt)
+                put("embedding_error", if (status == StageStatus.FAILED_EXHAUSTED) "retry_exhausted:${message.take(220)}" else message.take(300))
+                put("embedding_next_attempt_at", if (status == StageStatus.FAILED_RETRYABLE) IndexingRetryPolicy.nextAttemptAt(now, nextAttempt) else 0L)
+            },
+            "id=? AND embedding_state NOT IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') AND " +
+                "(embedding_state IN ('PENDING','FAILED_RETRYABLE') OR embedding_version IS NULL OR embedding_version!=?)",
+            arrayOf(id, producerVersion),
+        )
+        return if (changed > 0) status else StageStatus.COMPLETE
     }
 
     fun videoKeyframes(mediaId: String): List<VideoKeyframeRecord> = readableDatabase.rawQuery(
@@ -491,7 +688,7 @@ class GalleryDatabase(
             db.update("media_item", ContentValues().apply {
                 put("tags", labels.joinToString(TAG_SEPARATOR))
                 put("description", description)
-                put("ocr_text", ocrText)
+                put("ocr_text", sensitiveDataAtRest.protect(ocrText))
                 put("face_count", faceCount)
                 put("preview_path", previewPath)
                 put("index_state", IndexState.READY.name)
@@ -509,8 +706,8 @@ class GalleryDatabase(
             blocks.forEach { block ->
                 db.insert("ocr_block", null, ContentValues().apply {
                     put("media_id", id)
-                    put("text", block.text)
-                    put("normalized_text", block.normalizedText)
+                    put("text", sensitiveDataAtRest.protect(block.text))
+                    put("normalized_text", sensitiveDataAtRest.protect(block.normalizedText))
                     if (block.language == null) putNull("language") else put("language", block.language)
                     put("page_index", block.pageIndex)
                     if (block.timestampMs == null) putNull("timestamp_ms") else put("timestamp_ms", block.timestampMs)
@@ -525,8 +722,8 @@ class GalleryDatabase(
                 db.insert("ocr_entity", null, ContentValues().apply {
                     put("media_id", id)
                     put("entity_type", entity.type.name)
-                    put("raw_text", entity.rawText)
-                    put("normalized_value", entity.normalizedValue)
+                    put("raw_text", if (entity.type.isHighRiskAtRest()) sensitiveDataAtRest.protect(entity.rawText) else entity.rawText)
+                    put("normalized_value", if (entity.type.isHighRiskAtRest()) sensitiveDataAtRest.protect(entity.normalizedValue) else entity.normalizedValue)
                     if (entity.label == null) putNull("label") else put("label", entity.label)
                     put("confidence", entity.confidence)
                     put("left_pos", entity.left)
@@ -544,11 +741,15 @@ class GalleryDatabase(
                     put("timestamp_ms", keyframe.timestampMs)
                     put("preview_path", keyframe.previewPath)
                     put("labels", keyframe.labels.joinToString(TAG_SEPARATOR))
-                    put("ocr_text", keyframe.ocrText)
+                    put("ocr_text", sensitiveDataAtRest.protect(keyframe.ocrText))
                     put("perceptual_hash", java.lang.Long.toUnsignedString(keyframe.perceptualHash, 16))
                     put("quality_score", keyframe.qualityScore)
                     put("producer_version", keyframe.producerVersion)
                     if (keyframe.embeddingVersion == null) putNull("embedding_version") else put("embedding_version", keyframe.embeddingVersion)
+                    put("embedding_state", keyframe.embeddingState)
+                    put("embedding_attempt_count", keyframe.embeddingAttemptCount)
+                    if (keyframe.embeddingError == null) putNull("embedding_error") else put("embedding_error", keyframe.embeddingError.take(300))
+                    put("embedding_next_attempt_at", keyframe.embeddingNextAttemptAt)
                 })
             }
             itemById(db, id)?.let { refreshFts(db, it) }
@@ -616,48 +817,75 @@ class GalleryDatabase(
         return status
     }
 
-    fun recoverInterruptedJobs() {
+    fun recoverInterruptedJobs(
+        pipeline: IndexingPipeline,
+        reclaimOrphanedLeases: Boolean = false,
+    ) {
         val db = writableDatabase
         val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
-            db.execSQL(
-                "UPDATE media_item SET index_state='PENDING' WHERE index_state='INDEXING' AND id IN (" +
-                    "SELECT media_id FROM media_index_stage WHERE stage='THUMBNAIL' AND status='RUNNING' " +
-                    "AND lease_expires_at IS NOT NULL AND lease_expires_at<=?)",
-                arrayOf(now),
-            )
-            db.execSQL(
-                "UPDATE media_index_stage SET status='PENDING'," +
-                    "attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END," +
-                    "updated_at=?,error='lease_expired',lease_owner=NULL,lease_expires_at=NULL " +
-                    "WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?",
-                arrayOf(now, now),
-            )
-            db.execSQL(
-                """
-                UPDATE semantic_enrichment_job
-                SET status='PENDING',
-                    attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
-                    updated_at=$now,
-                    error='lease_expired',
-                    lease_owner=NULL,
-                    lease_expires_at=NULL
-                WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=$now
-                """.trimIndent(),
-            )
-            db.execSQL(
-                """
-                UPDATE semantic_caption_chunk
-                SET embedding_state='PENDING',
-                    attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
-                    updated_at=$now,
-                    error='lease_expired',
-                    lease_owner=NULL,
-                    lease_expires_at=NULL
-                WHERE embedding_state='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=$now
-                """.trimIndent(),
-            )
+            val stages = IndexingRecoveryPolicy.stagesFor(pipeline)
+            val mediaStages = stages.intersect(IndexingRecoveryPolicy.mediaAnalysisStages)
+            val stageNames = stages.joinToString(",") { "'${it.name}'" }
+            val mediaStageNames = mediaStages.joinToString(",") { "'${it.name}'" }
+            val leaseFilter = IndexingLeaseRecoveryPolicy.runningFilter(reclaimOrphanedLeases, now)
+            val leasePredicate = leaseFilter.sql
+            val leaseArgs = leaseFilter.args
+            val recoveryError = if (reclaimOrphanedLeases) "lease_orphaned" else "lease_expired"
+            if (mediaStages.isNotEmpty()) {
+                val orphanedMediaIds = "SELECT media_id FROM media_index_stage WHERE stage IN ($mediaStageNames) AND $leasePredicate"
+                db.execSQL(
+                    "UPDATE media_item SET index_state='PENDING',index_error=NULL " +
+                        "WHERE index_state='INDEXING' AND id IN ($orphanedMediaIds)",
+                    leaseArgs,
+                )
+                val orphanedThumbnailMediaIds =
+                    "SELECT media_id FROM media_index_stage WHERE stage='THUMBNAIL' AND $leasePredicate"
+                val resetThumbnailSql =
+                    "UPDATE media_index_stage SET status='PENDING',updated_at=?,error=? " +
+                        "WHERE stage='THUMBNAIL' AND status IN ('COMPLETE','RUNNING') AND media_id IN ($orphanedThumbnailMediaIds)"
+                db.execSQL(resetThumbnailSql, arrayOf(now, recoveryError, *leaseArgs))
+            }
+            if (stages.isNotEmpty()) {
+                db.execSQL(
+                    "UPDATE media_index_stage SET status='PENDING'," +
+                        "attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END," +
+                        "updated_at=?,error=?,lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=0 " +
+                        "WHERE stage IN ($stageNames) AND $leasePredicate",
+                    arrayOf(now, recoveryError, *leaseArgs),
+                )
+            }
+            if (IndexingRecoveryPolicy.recoversSemanticMemory(pipeline)) {
+                db.execSQL(
+                    """
+                    UPDATE semantic_enrichment_job
+                    SET status='PENDING',
+                        attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
+                        updated_at=$now,
+                        error='$recoveryError',
+                        lease_owner=NULL,
+                        lease_expires_at=NULL
+                    WHERE status='RUNNING'
+                        AND ${IndexingLeaseRecoveryPolicy.semanticFilter(reclaimOrphanedLeases, now)}
+                    """.trimIndent(),
+                )
+            }
+            if (IndexingRecoveryPolicy.recoversCaptionEmbeddings(pipeline)) {
+                db.execSQL(
+                    """
+                    UPDATE semantic_caption_chunk
+                    SET embedding_state='PENDING',
+                        attempt_count=CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
+                        updated_at=$now,
+                        error='$recoveryError',
+                        lease_owner=NULL,
+                        lease_expires_at=NULL
+                    WHERE embedding_state='RUNNING'
+                        AND ${IndexingLeaseRecoveryPolicy.semanticFilter(reclaimOrphanedLeases, now)}
+                    """.trimIndent(),
+                )
+            }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -671,7 +899,16 @@ class GalleryDatabase(
     ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
 
     fun nextEmbeddingRetryAt(): Long? = readableDatabase.rawQuery(
-        "SELECT MIN(next_attempt_at) FROM media_index_stage WHERE stage='EMBEDDING' " +
+        "SELECT MIN(next_attempt_at) FROM (" +
+            "SELECT next_attempt_at FROM media_index_stage WHERE stage='EMBEDDING' AND status='FAILED_RETRYABLE' AND attempt_count<? " +
+            "UNION ALL " +
+            "SELECT embedding_next_attempt_at FROM video_keyframe WHERE embedding_state='FAILED_RETRYABLE' AND embedding_attempt_count<?" +
+            ")",
+        arrayOf(IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(), IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString()),
+    ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
+
+    fun nextPeopleRetryAt(): Long? = readableDatabase.rawQuery(
+        "SELECT MIN(next_attempt_at) FROM media_index_stage WHERE stage='FACES' " +
             "AND status='FAILED_RETRYABLE' AND attempt_count<?",
         arrayOf(IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString()),
     ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
@@ -694,11 +931,62 @@ class GalleryDatabase(
         }, "media_id=? AND stage=?", arrayOf(id, stage.name))
     }
 
+    private fun stageClaimOwned(
+        db: GallerySqlDatabase,
+        mediaId: String,
+        stage: IndexStage,
+        owner: String,
+    ): Boolean = db.rawQuery(
+        "SELECT 1 FROM media_index_stage WHERE media_id=? AND stage=? AND status='RUNNING' AND lease_owner=? " +
+            "AND (lease_expires_at IS NULL OR lease_expires_at>?)",
+        arrayOf(mediaId, stage.name, owner, System.currentTimeMillis().toString()),
+    ).use { cursor -> cursor.moveToFirst() }
+
     fun allItems(): List<GalleryItem> = allItems(readableDatabase)
 
     fun mediaStoreItemsIncludingInaccessible(): List<GalleryItem> = queryItems(
         "source_kind=?", arrayOf(MediaSource.MEDIA_STORE.name), "COALESCE(captured_at,0) DESC", null,
     )
+
+    fun renewIndexingLeases(pipeline: IndexingPipeline, owner: String) {
+        val stages = IndexingRecoveryPolicy.stagesFor(pipeline)
+        if (stages.isEmpty()) return
+        val now = System.currentTimeMillis()
+        writableDatabase.update(
+            "media_index_stage",
+            ContentValues().apply {
+                put("lease_expires_at", now + IndexingRetryPolicy.LEASE_MILLIS)
+                put("last_progress_at", now)
+            },
+            "status='RUNNING' AND lease_owner=? AND stage IN (${stages.joinToString(",") { "'${it.name}'" }})",
+            arrayOf(owner),
+        )
+    }
+
+    fun releaseIndexingLeases(pipeline: IndexingPipeline, owner: String) {
+        val stages = IndexingRecoveryPolicy.stagesFor(pipeline)
+        if (stages.isEmpty()) return
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        val stageNames = stages.joinToString(",") { "'${it.name}'" }
+        val ownedMediaIds = "SELECT media_id FROM media_index_stage WHERE status='RUNNING' " +
+            "AND lease_owner=? AND stage IN ($stageNames)"
+        if (stages.intersect(IndexingRecoveryPolicy.mediaAnalysisStages).isNotEmpty()) {
+            db.execSQL(
+                "UPDATE media_item SET index_state='PENDING',index_error=NULL " +
+                    "WHERE index_state='INDEXING' AND id IN ($ownedMediaIds)",
+                arrayOf(owner),
+            )
+        }
+        db.execSQL(
+            "UPDATE media_index_stage SET status='PENDING'," +
+                "attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END," +
+                "updated_at=?,error='worker_cancelled',lease_owner=NULL,lease_expires_at=NULL," +
+                "next_attempt_at=0,last_progress_at=? " +
+                "WHERE status='RUNNING' AND lease_owner=? AND stage IN ($stageNames)",
+            arrayOf(now, now, owner),
+        )
+    }
 
     fun applyReconciliation(plan: MediaReconciliationPlan): Int {
         val db = writableDatabase
@@ -810,10 +1098,52 @@ class GalleryDatabase(
             reviewedClusterCount = count("SELECT COUNT(*) FROM person_cluster WHERE reviewed=1 AND hidden=0"),
             identityReadyFaceCount = count(
                 "SELECT COUNT(*) FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
-                    "WHERE p.reviewed=1 AND f.embedding_dimension>0 AND f.embedding_offset IS NOT NULL",
+                    "WHERE p.reviewed=1 AND p.hidden=0 AND f.embedding_dimension>0 AND f.embedding_offset IS NOT NULL",
             ),
             pendingMediaCount = count("SELECT COUNT(*) FROM media_index_stage WHERE stage='FACES' AND status IN ('PENDING','RUNNING','FAILED_RETRYABLE')"),
         )
+    }
+
+    fun peopleCoverage(mediaIds: Set<String>): PeopleCoverage {
+        if (mediaIds.isEmpty()) return PeopleCoverage()
+        val placeholders = mediaIds.joinToString(",") { "?" }
+        return readableDatabase.rawQuery(
+            "SELECT COUNT(*), " +
+                "COALESCE(SUM(CASE WHEN s.status='COMPLETE' THEN 1 ELSE 0 END),0), " +
+                "COALESCE(SUM(CASE WHEN s.media_id IS NULL OR s.status IN " +
+                "('PENDING','RUNNING','FAILED_RETRYABLE') THEN 1 ELSE 0 END),0), " +
+                "COALESCE(SUM(CASE WHEN s.status IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') THEN 1 ELSE 0 END),0) " +
+                "FROM media_item m LEFT JOIN media_index_stage s " +
+                "ON s.media_id=m.id AND s.stage='FACES' " +
+                "WHERE m.id IN ($placeholders)",
+            mediaIds.toTypedArray(),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return PeopleCoverage()
+            PeopleCoverage(
+                eligibleCount = cursor.getInt(0),
+                indexedCount = cursor.getInt(1),
+                pendingCount = cursor.getInt(2),
+                failedCount = cursor.getInt(3),
+            )
+        }
+    }
+
+    fun indexStageCoverage(mediaIds: Set<String>, stage: IndexStage): IndexStageCoverage {
+        if (mediaIds.isEmpty()) return IndexStageCoverage(eligibleCount = 0)
+        val counts = linkedMapOf<StageStatus, Int>()
+        mediaIds.toList().chunked(SQLITE_ID_CHUNK).forEach { ids ->
+            val placeholders = ids.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT status,COUNT(*) FROM media_index_stage WHERE stage=? AND media_id IN ($placeholders) GROUP BY status",
+                arrayOf(stage.name, *ids.toTypedArray()),
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val status = enumOrNull<StageStatus>(cursor.getString(0)) ?: continue
+                    counts[status] = (counts[status] ?: 0) + cursor.getInt(1)
+                }
+            }
+        }
+        return IndexStageCoverage(mediaIds.size, counts)
     }
 
     fun enablePeopleIndexing(consentVersion: Int): PeopleIndexStatus {
@@ -899,21 +1229,34 @@ class GalleryDatabase(
                 put("updated_at", now)
             }, SQLiteDatabase.CONFLICT_IGNORE)
             db.update("person_cluster", ContentValues().apply {
-                put("label", safeLabel)
-                if (safeRelationship == null) putNull("relationship") else put("relationship", safeRelationship)
-                put("aliases", JSONArray(safeAliases).toString())
+                put("label", sensitiveDataAtRest.protect(safeLabel))
+                if (safeRelationship == null) putNull("relationship") else put("relationship", sensitiveDataAtRest.protect(safeRelationship))
+                put("aliases", sensitiveDataAtRest.protect(JSONArray(safeAliases).toString()))
                 put("reviewed", 1)
                 put("hidden", 0)
                 put("include_in_personal_memory", if (includeInPersonalMemory) 1 else 0)
                 put("updated_at", now)
             }, "id=?", arrayOf(id))
             if (safeRelationship.equals("me", ignoreCase = true)) {
-                db.update(
-                    "person_cluster",
-                    ContentValues().apply { putNull("relationship"); put("updated_at", now) },
-                    "id<>? AND reviewed=1 AND lower(relationship)='me'",
+                val otherMeIds = db.rawQuery(
+                    "SELECT id,relationship FROM person_cluster WHERE id<>? AND reviewed=1",
                     arrayOf(id),
-                )
+                ).use { cursor ->
+                    buildList {
+                        while (cursor.moveToNext()) {
+                            val relationship = if (cursor.isNull(1)) null else sensitiveDataAtRest.reveal(cursor.getString(1))
+                            if (relationship.equals("me", ignoreCase = true)) add(cursor.getString(0))
+                        }
+                    }
+                }
+                otherMeIds.forEach { otherId ->
+                    db.update(
+                        "person_cluster",
+                        ContentValues().apply { putNull("relationship"); put("updated_at", now) },
+                        "id=?",
+                        arrayOf(otherId),
+                    )
+                }
             }
             db.setTransactionSuccessful()
         } finally {
@@ -924,26 +1267,75 @@ class GalleryDatabase(
 
     fun facePendingItems(limit: Int): List<GalleryItem> {
         if (!peopleIndexStatus().enabled) return emptyList()
+        val now = System.currentTimeMillis()
         return queryItems(
             "media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY' AND id IN " +
-                "(SELECT media_id FROM media_index_stage WHERE stage='FACES' AND status IN ('PENDING','FAILED_RETRYABLE'))",
-            null,
+                "(SELECT media_id FROM media_index_stage WHERE stage='FACES' AND " +
+                "(status='PENDING' OR (status='FAILED_RETRYABLE' AND attempt_count<? AND next_attempt_at<=?)) " +
+                "AND (lease_expires_at IS NULL OR lease_expires_at<=?))",
+            arrayOf(
+                IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
+                now.toString(),
+                now.toString(),
+            ),
             "COALESCE(captured_at,0) DESC",
             limit.coerceIn(1, 100).toString(),
         )
     }
 
-    fun markFaces(mediaId: String) {
-        if (!peopleIndexStatus().enabled) return
-        updateStage(writableDatabase, mediaId, IndexStage.FACES, StageStatus.RUNNING, "mlkit-face-detection-v1", incrementAttempt = true)
+    fun markFaces(
+        mediaId: String,
+        producerVersion: String = "mlkit-face-detection-v1",
+        owner: String = "people-direct",
+    ): Boolean {
+        if (!peopleIndexStatus().enabled) return false
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        val changed = db.update(
+            "media_index_stage",
+            ContentValues().apply {
+                put("status", StageStatus.RUNNING.name)
+                put("producer_version", producerVersion)
+                put("updated_at", now)
+                put("last_progress_at", now)
+                put("lease_owner", owner)
+                put("lease_expires_at", now + IndexingRetryPolicy.LEASE_MILLIS)
+                putNull("error")
+            },
+            "media_id=? AND stage=? AND (" +
+                "status='PENDING' OR (status='FAILED_RETRYABLE' AND attempt_count<? AND next_attempt_at<=?)" +
+                ") AND (lease_expires_at IS NULL OR lease_expires_at<=?)",
+            arrayOf(
+                mediaId,
+                IndexStage.FACES.name,
+                IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString(),
+                now.toString(),
+                now.toString(),
+            ),
+        )
+        if (changed > 0) {
+            db.execSQL(
+                "UPDATE media_index_stage SET attempt_count=attempt_count+1 WHERE media_id=? AND stage=?",
+                arrayOf(mediaId, IndexStage.FACES.name),
+            )
+        }
+        return changed > 0
     }
 
-    fun completeFaces(mediaId: String, detections: List<FaceDetectionRecord>, producerVersion: String) {
+    fun completeFaces(
+        mediaId: String,
+        detections: List<FaceDetectionRecord>,
+        producerVersion: String,
+        owner: String? = null,
+    ) {
         require(detections.size <= MAX_FACES_PER_MEDIA) { "Too many face detections" }
         val db = writableDatabase
         db.beginTransaction()
         try {
             check(peopleIndexEnabled(db)) { "People indexing was disabled" }
+            check(owner == null || stageClaimOwned(db, mediaId, IndexStage.FACES, owner)) {
+                "People face lease was lost before completion"
+            }
             db.delete("face_instance", "media_id=?", arrayOf(mediaId))
             val now = System.currentTimeMillis()
             detections.forEachIndexed { index, face ->
@@ -968,6 +1360,7 @@ class GalleryDatabase(
             }
             db.update("media_item", ContentValues().apply { put("face_count", detections.size) }, "id=?", arrayOf(mediaId))
             updateStage(db, mediaId, IndexStage.FACES, StageStatus.COMPLETE, producerVersion)
+            clearStageLease(db, mediaId, IndexStage.FACES)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -979,12 +1372,16 @@ class GalleryDatabase(
         faces: List<FaceInstance>,
         clusterIds: List<String>,
         producerVersion: String,
+        owner: String? = null,
     ) {
         require(faces.size == clusterIds.size && faces.size <= MAX_FACES_PER_MEDIA) { "Invalid embedded face batch" }
         val db = writableDatabase
         db.beginTransaction()
         try {
             check(peopleIndexEnabled(db)) { "People indexing was disabled" }
+            check(owner == null || stageClaimOwned(db, mediaId, IndexStage.FACES, owner)) {
+                "People face lease was lost before completion"
+            }
             val correctedAssignments = db.rawQuery(
                 "SELECT id,cluster_id FROM face_instance WHERE media_id=? AND user_corrected=1",
                 arrayOf(mediaId),
@@ -1028,6 +1425,7 @@ class GalleryDatabase(
             }
             db.update("media_item", ContentValues().apply { put("face_count", faces.size) }, "id=?", arrayOf(mediaId))
             updateStage(db, mediaId, IndexStage.FACES, StageStatus.COMPLETE, producerVersion)
+            clearStageLease(db, mediaId, IndexStage.FACES)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -1055,9 +1453,9 @@ class GalleryDatabase(
                 add(
                     IndexedPersonMetadata(
                         clusterId = cursor.getString(0),
-                        label = if (cursor.isNull(1)) null else cursor.getString(1),
-                        relationship = if (cursor.isNull(2)) null else cursor.getString(2),
-                        aliases = decodeStrings(cursor.getString(3)).sorted(),
+                        label = if (cursor.isNull(1)) null else sensitiveDataAtRest.reveal(cursor.getString(1)),
+                        relationship = if (cursor.isNull(2)) null else sensitiveDataAtRest.reveal(cursor.getString(2)),
+                        aliases = decodeStrings(sensitiveDataAtRest.reveal(cursor.getString(3))).sorted(),
                         reviewed = cursor.getInt(4) != 0,
                         hidden = cursor.getInt(5) != 0,
                         faceCount = cursor.getInt(6),
@@ -1067,10 +1465,95 @@ class GalleryDatabase(
         }
     }
 
+    fun indexedPeopleForMediaIds(mediaIds: Set<String>): Map<String, List<IndexedPersonMetadata>> {
+        if (mediaIds.isEmpty()) return emptyMap()
+        return mediaIds.toList().chunked(SQLITE_ID_CHUNK).flatMap { ids ->
+            val placeholders = ids.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT f.media_id,c.id,c.label,c.relationship,c.aliases,c.reviewed,c.hidden,COUNT(f.id) " +
+                    "FROM face_instance f JOIN person_cluster c ON c.id=f.cluster_id " +
+                    "WHERE f.media_id IN ($placeholders) AND c.reviewed=1 AND c.hidden=0 " +
+                    "GROUP BY f.media_id,c.id,c.label,c.relationship,c.aliases,c.reviewed,c.hidden " +
+                    "ORDER BY f.media_id,COALESCE(c.label,c.relationship,c.id) COLLATE NOCASE",
+                ids.toTypedArray(),
+            ).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) {
+                        add(
+                            cursor.getString(0) to IndexedPersonMetadata(
+                                clusterId = cursor.getString(1),
+                                label = if (cursor.isNull(2)) null else sensitiveDataAtRest.reveal(cursor.getString(2)),
+                                relationship = if (cursor.isNull(3)) null else sensitiveDataAtRest.reveal(cursor.getString(3)),
+                                aliases = decodeStrings(sensitiveDataAtRest.reveal(cursor.getString(4))).sorted(),
+                                reviewed = cursor.getInt(5) != 0,
+                                hidden = cursor.getInt(6) != 0,
+                                faceCount = cursor.getInt(7),
+                            ),
+                        )
+                    }
+                }
+            }
+        }.groupBy({ it.first }, { it.second })
+    }
+
     fun allEmbeddedFaceIds(): Set<String> = readableDatabase.rawQuery(
         "SELECT id FROM face_instance WHERE embedding_dimension=? AND embedding_offset IS NOT NULL",
         arrayOf(FaceModelCatalog.sface.embeddingDimension.toString()),
     ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    fun requestFaceEmbeddingRepair(faceIds: Set<String>, producerVersion: String) {
+        if (faceIds.isEmpty()) return
+        require(producerVersion.isNotBlank() && producerVersion.length <= 240) { "Invalid face producer version" }
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val affectedMediaIds = linkedSetOf<String>()
+            faceIds.toList().chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                val placeholders = ids.joinToString(",") { "?" }
+                db.rawQuery(
+                    "SELECT DISTINCT media_id FROM face_instance WHERE id IN ($placeholders)",
+                    ids.toTypedArray(),
+                ).use { cursor ->
+                    while (cursor.moveToNext()) affectedMediaIds += cursor.getString(0)
+                }
+                db.update(
+                    "face_instance",
+                    ContentValues().apply {
+                        putNull("embedding_offset")
+                        put("embedding_dimension", 0)
+                        put("producer_version", producerVersion)
+                    },
+                    "id IN ($placeholders)",
+                    ids.toTypedArray(),
+                )
+            }
+            if (affectedMediaIds.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                affectedMediaIds.toList().chunked(SQLITE_ID_CHUNK).forEach { mediaIds ->
+                    val placeholders = mediaIds.joinToString(",") { "?" }
+                    db.update(
+                        "media_index_stage",
+                        ContentValues().apply {
+                            put("status", StageStatus.PENDING.name)
+                            put("producer_version", producerVersion)
+                            put("attempt_count", 0)
+                            put("updated_at", now)
+                            put("next_attempt_at", 0L)
+                            put("last_progress_at", now)
+                            putNull("lease_owner")
+                            putNull("lease_expires_at")
+                            putNull("error")
+                        },
+                        "stage=? AND media_id IN ($placeholders)",
+                        arrayOf(IndexStage.FACES.name) + mediaIds.toTypedArray(),
+                    )
+                }
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
 
     fun markFaceEmbeddingAvailable(faceId: String, dimension: Int, producerVersion: String) {
         require(faceId.length in 3..240 && dimension == FaceModelCatalog.sface.embeddingDimension) {
@@ -1095,16 +1578,18 @@ class GalleryDatabase(
             val placeholders = ids.joinToString(",") { "?" }
             readableDatabase.rawQuery(
                 "SELECT f.id,c.id,c.reviewed,c.hidden,f.user_corrected FROM face_instance f " +
-                    "JOIN person_cluster c ON c.id=f.cluster_id WHERE f.id IN ($placeholders)",
+                    "LEFT JOIN person_cluster c ON c.id=f.cluster_id " +
+                    "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                    "WHERE f.id IN ($placeholders)",
                 ids.toTypedArray(),
             ).use { cursor ->
                 buildList {
                     while (cursor.moveToNext()) {
                         add(
                             cursor.getString(0) to FaceClusterReference(
-                                clusterId = cursor.getString(1),
-                                reviewed = cursor.getInt(2) != 0,
-                                hidden = cursor.getInt(3) != 0,
+                                clusterId = if (cursor.isNull(1)) null else cursor.getString(1),
+                                reviewed = !cursor.isNull(2) && cursor.getInt(2) != 0,
+                                hidden = !cursor.isNull(3) && cursor.getInt(3) != 0,
                                 userCorrected = cursor.getInt(4) != 0,
                             ),
                         )
@@ -1116,7 +1601,9 @@ class GalleryDatabase(
     fun faceClusterMemberships(clusterId: String): List<FaceClusterMembership> {
         require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
         return readableDatabase.rawQuery(
-            "SELECT id,user_corrected FROM face_instance WHERE cluster_id=? ORDER BY quality DESC,id",
+            "SELECT f.id,f.user_corrected FROM face_instance f " +
+                "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                "WHERE f.cluster_id=? ORDER BY f.quality DESC,f.id",
             arrayOf(clusterId),
         ).use { cursor ->
             buildList {
@@ -1140,6 +1627,7 @@ class GalleryDatabase(
                 val placeholders = ids.joinToString(",") { "?" }
                 db.rawQuery(
                     "SELECT f.id,f.media_id,f.cluster_id FROM face_instance f " +
+                        "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
                         "LEFT JOIN person_cluster c ON c.id=f.cluster_id " +
                         "WHERE f.id IN ($placeholders) AND f.user_corrected=0 " +
                         "AND (f.cluster_id IS NULL OR (c.reviewed=0 AND c.hidden=0))",
@@ -1222,7 +1710,7 @@ class GalleryDatabase(
         if (personIds.isEmpty()) return emptySet()
         val db = readableDatabase
         val clusterSets = personIds.distinct().map { requested ->
-            val needle = requested.trim().lowercase(Locale.ROOT)
+            val needle = PersonIdentityNormalization.normalize(requested)
             val clusterIds = db.rawQuery(
                 "SELECT id,label,relationship,aliases FROM person_cluster WHERE reviewed=1 AND hidden=0",
                 null,
@@ -1230,25 +1718,53 @@ class GalleryDatabase(
                 buildSet {
                     while (cursor.moveToNext()) {
                         val id = cursor.getString(0)
-                        val label = if (cursor.isNull(1)) null else cursor.getString(1)
-                        val relationship = if (cursor.isNull(2)) null else cursor.getString(2)
+                        val label = if (cursor.isNull(1)) null else sensitiveDataAtRest.reveal(cursor.getString(1))
+                        val relationship = if (cursor.isNull(2)) null else sensitiveDataAtRest.reveal(cursor.getString(2))
                         val aliases = runCatching {
-                            val json = JSONArray(cursor.getString(3))
+                            val json = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(3)))
                             List(json.length()) { json.getString(it) }
                         }.getOrDefault(emptyList())
-                        if (listOfNotNull(id, label, relationship).plus(aliases).any { it.lowercase(Locale.ROOT) == needle }) add(id)
+                        if (listOfNotNull(id, label, relationship).plus(aliases).any {
+                                PersonIdentityNormalization.normalize(it) == needle
+                            }
+                        ) add(id)
                     }
                 }
             }
             if (clusterIds.isEmpty()) emptySet() else {
                 val placeholders = clusterIds.joinToString(",") { "?" }
                 db.rawQuery(
-                    "SELECT DISTINCT media_id FROM face_instance WHERE cluster_id IN ($placeholders)",
-                    clusterIds.toTypedArray(),
+                    "SELECT DISTINCT f.media_id FROM face_instance f " +
+                        "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                        "WHERE f.cluster_id IN ($placeholders) AND f.embedding_dimension=? " +
+                        "AND f.embedding_offset IS NOT NULL",
+                    clusterIds.toTypedArray() + FaceModelCatalog.sface.embeddingDimension.toString(),
                 ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
             }
         }
         return clusterSets.reduceOrNull { current, next -> current intersect next }.orEmpty()
+    }
+
+    fun identityReadyReviewedPersonIds(personIds: Collection<String>): Set<String> {
+        if (personIds.isEmpty()) return emptySet()
+        val resolved = personIds.flatMap { requested ->
+            resolveReviewedPersonIds(requested).ifEmpty {
+                if (PERSON_ID.matches(requested)) setOf(requested) else emptySet()
+            }
+        }.distinct()
+        if (resolved.isEmpty()) return emptySet()
+        return resolved.chunked(SQLITE_ID_CHUNK).flatMapTo(linkedSetOf()) { clusterChunk ->
+            val placeholders = clusterChunk.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT DISTINCT f.cluster_id FROM face_instance f " +
+                    "JOIN person_cluster p ON p.id=f.cluster_id " +
+                    "WHERE p.reviewed=1 AND p.hidden=0 AND f.embedding_dimension=? " +
+                    "AND f.embedding_offset IS NOT NULL AND f.cluster_id IN ($placeholders)",
+                arrayOf(FaceModelCatalog.sface.embeddingDimension.toString(), *clusterChunk.toTypedArray()),
+            ).use { cursor ->
+                buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) }
+            }
+        }
     }
 
     fun personClustersPendingReview(): List<PersonClusterReviewItem> =
@@ -1256,10 +1772,16 @@ class GalleryDatabase(
 
     fun personClusterSummaries(includeHidden: Boolean = false): List<PersonClusterReviewItem> {
         val summaries = readableDatabase.rawQuery(
-            "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(f.id) AS face_count, " +
-                "COUNT(DISTINCT f.media_id) AS media_count, MAX(f.media_id) AS sample_media_id " +
+            "SELECT c.id, c.label, c.relationship, c.aliases, COUNT(fm.id) AS face_count, " +
+                "COUNT(DISTINCT fm.id) AS media_count, " +
+                "(SELECT latest_face.media_id FROM face_instance latest_face " +
+                "JOIN media_item latest_media ON latest_media.id=latest_face.media_id " +
+                "WHERE latest_face.cluster_id=c.id AND latest_media.access_state='ACCESSIBLE' " +
+                "ORDER BY COALESCE(latest_media.captured_at,latest_media.modified_at,0) DESC, " +
+                "COALESCE(latest_media.modified_at,0) DESC, latest_face.created_at DESC, latest_face.id LIMIT 1) AS sample_media_id " +
                 ", c.reviewed, c.hidden, c.representative_face_id, c.include_in_personal_memory " +
                 "FROM person_cluster c LEFT JOIN face_instance f ON c.id = f.cluster_id " +
+                "LEFT JOIN media_item fm ON fm.id=f.media_id AND fm.access_state='ACCESSIBLE' " +
                 (if (includeHidden) "" else "WHERE c.hidden = 0 ") +
                 "GROUP BY c.id, c.label, c.relationship, c.aliases, c.reviewed, c.hidden, c.representative_face_id, c.include_in_personal_memory " +
                 "ORDER BY c.hidden ASC, c.reviewed ASC, face_count DESC, c.updated_at DESC, c.id",
@@ -1270,10 +1792,10 @@ class GalleryDatabase(
                     add(
                         PersonClusterReviewItem(
                             id = cursor.getString(0),
-                            label = if (cursor.isNull(1)) null else cursor.getString(1),
-                            relationship = if (cursor.isNull(2)) null else cursor.getString(2),
+                            label = if (cursor.isNull(1)) null else sensitiveDataAtRest.reveal(cursor.getString(1)),
+                            relationship = if (cursor.isNull(2)) null else sensitiveDataAtRest.reveal(cursor.getString(2)),
                             aliases = runCatching {
-                                val json = JSONArray(cursor.getString(3))
+                                val json = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(3)))
                                 List(json.length()) { json.getString(it) }
                             }.getOrDefault(emptyList()),
                             faceCount = cursor.getInt(4),
@@ -1295,10 +1817,29 @@ class GalleryDatabase(
         )
         return visibleSummaries.map { summary ->
             val faces = facesByCluster[summary.id].orEmpty()
+            val selectedRepresentative = summary.representativeFaceId?.let { representativeId ->
+                faces.firstOrNull { it.id == representativeId } ?: personFace(representativeId)
+            }
+            val latestFace = summary.sampleMediaId?.let { mediaId ->
+                faces.firstOrNull { it.mediaId == mediaId }
+            } ?: faces.firstOrNull()
             summary.copy(
-                representativeFace = faces.firstOrNull { it.id == summary.representativeFaceId } ?: faces.firstOrNull(),
+                representativeFace = selectedRepresentative ?: faces.firstOrNull(),
+                latestFace = latestFace,
                 supportingFaces = faces,
             )
+        }
+    }
+
+    fun personClusterRevision(): String = readableDatabase.rawQuery(
+        "SELECT (SELECT COUNT(*) FROM person_cluster), " +
+            "COALESCE((SELECT MAX(updated_at) FROM person_cluster),0), " +
+            "(SELECT COUNT(*) FROM face_instance f JOIN media_item m ON m.id=f.media_id " +
+                "WHERE f.cluster_id IS NOT NULL AND m.access_state='ACCESSIBLE')",
+        null,
+    ).use { cursor ->
+        if (!cursor.moveToFirst()) "0:0:0" else {
+            "${cursor.getLong(0)}:${cursor.getLong(1)}:${cursor.getLong(2)}"
         }
     }
 
@@ -1318,7 +1859,8 @@ class GalleryDatabase(
         )
         val pending = readableDatabase.rawQuery(
             "SELECT f.id,f.media_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,f.quality,f.user_corrected " +
-                "FROM face_instance f JOIN media_item m ON m.id=f.media_id WHERE f.cluster_id=? " +
+                "FROM face_instance f JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                "WHERE f.cluster_id=? " +
                 "ORDER BY COALESCE(m.captured_at,m.modified_at,0) DESC, COALESCE(m.modified_at,0) DESC, " +
                 "f.created_at DESC, f.quality DESC, f.id " +
                 "LIMIT ? OFFSET ?",
@@ -1373,7 +1915,9 @@ class GalleryDatabase(
             val userCorrected: Boolean,
         )
         val face = readableDatabase.rawQuery(
-            "SELECT media_id,left_pos,top_pos,right_pos,bottom_pos,quality,user_corrected FROM face_instance WHERE id=?",
+            "SELECT f.media_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,f.quality,f.user_corrected " +
+                "FROM face_instance f JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                "WHERE f.id=?",
             arrayOf(faceId),
         ).use { cursor ->
             if (!cursor.moveToFirst()) return null
@@ -1424,8 +1968,12 @@ class GalleryDatabase(
             val placeholders = clusterChunk.joinToString(",") { "?" }
             readableDatabase.rawQuery(
                 "SELECT f.id,f.media_id,f.cluster_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,f.quality,f.user_corrected " +
-                    "FROM face_instance f JOIN person_cluster c ON c.id=f.cluster_id WHERE f.cluster_id IN ($placeholders) " +
-                    "ORDER BY f.cluster_id,CASE WHEN f.id=c.representative_face_id THEN 0 ELSE 1 END,f.quality DESC,f.created_at DESC",
+                    "FROM face_instance f " +
+                    "JOIN person_cluster c ON c.id=f.cluster_id " +
+                    "JOIN media_item m ON m.id=f.media_id " +
+                    "WHERE f.cluster_id IN ($placeholders) AND m.access_state='ACCESSIBLE' " +
+                    "ORDER BY f.cluster_id,COALESCE(m.captured_at,m.modified_at,0) DESC, " +
+                    "COALESCE(m.modified_at,0) DESC,f.created_at DESC,f.quality DESC,f.id",
                 clusterChunk.toTypedArray(),
             ).use { cursor ->
                 while (cursor.moveToNext()) {
@@ -1575,9 +2123,12 @@ class GalleryDatabase(
                 putNull("cluster_id")
                 put("user_corrected", 1)
             }, "id=?", arrayOf(faceId))
+            val now = System.currentTimeMillis()
+            db.update("person_cluster", ContentValues().apply {
+                put("updated_at", now)
+            }, "id=?", arrayOf(source.first))
             db.update("person_cluster", ContentValues().apply {
                 putNull("representative_face_id")
-                put("updated_at", System.currentTimeMillis())
             }, "id=? AND representative_face_id=?", arrayOf(source.first, faceId))
             invalidatePersonalSemanticEvidence(db, setOf(source.second))
             db.setTransactionSuccessful()
@@ -1637,10 +2188,10 @@ class GalleryDatabase(
             ).use { cursor ->
                 check(cursor.moveToFirst())
                 ClusterIdentity(
-                    label = if (cursor.isNull(0)) null else cursor.getString(0),
-                    relationship = if (cursor.isNull(1)) null else cursor.getString(1),
+                    label = if (cursor.isNull(0)) null else sensitiveDataAtRest.reveal(cursor.getString(0)),
+                    relationship = if (cursor.isNull(1)) null else sensitiveDataAtRest.reveal(cursor.getString(1)),
                     aliases = runCatching {
-                        val json = JSONArray(cursor.getString(2))
+                        val json = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(2)))
                         List(json.length()) { json.getString(it) }
                     }.getOrDefault(emptyList()),
                     representativeFaceId = if (cursor.isNull(3)) null else cursor.getString(3),
@@ -1665,10 +2216,10 @@ class GalleryDatabase(
                 val label = targetIdentity.label ?: sourceIdentity.label
                 val relationship = targetIdentity.relationship ?: sourceIdentity.relationship
                 val representativeFaceId = targetIdentity.representativeFaceId ?: sourceIdentity.representativeFaceId
-                if (label == null) putNull("label") else put("label", label)
-                if (relationship == null) putNull("relationship") else put("relationship", relationship)
+                if (label == null) putNull("label") else put("label", sensitiveDataAtRest.protect(label))
+                if (relationship == null) putNull("relationship") else put("relationship", sensitiveDataAtRest.protect(relationship))
                 if (representativeFaceId == null) putNull("representative_face_id") else put("representative_face_id", representativeFaceId)
-                put("aliases", JSONArray(aliases).toString())
+                put("aliases", sensitiveDataAtRest.protect(JSONArray(aliases).toString()))
                 put("reviewed", if (label != null) 1 else 0)
                 put(
                     "include_in_personal_memory",
@@ -1701,11 +2252,17 @@ class GalleryDatabase(
                 put("cluster_id", target)
                 put("user_corrected", 1)
             }, "id=?", arrayOf(faceId))
+            val now = System.currentTimeMillis()
+            db.update("person_cluster", ContentValues().apply {
+                put("updated_at", now)
+            }, "id=?", arrayOf(target))
             invalidatePersonalSemanticEvidence(db, setOf(source.second))
             source.first?.let { sourceClusterId ->
                 db.update("person_cluster", ContentValues().apply {
+                    put("updated_at", now)
+                }, "id=?", arrayOf(sourceClusterId))
+                db.update("person_cluster", ContentValues().apply {
                     putNull("representative_face_id")
-                    put("updated_at", System.currentTimeMillis())
                 }, "id=? AND representative_face_id=?", arrayOf(sourceClusterId, faceId))
             }
             db.delete(
@@ -1724,7 +2281,7 @@ class GalleryDatabase(
         resolveReviewedPersonGroups(query).flatMapTo(linkedSetOf(), ReviewedPersonMatchGroup::personIds)
 
     internal fun resolveReviewedPersonGroups(query: String): List<ReviewedPersonMatchGroup> {
-        val normalizedQuery = query.lowercase(Locale.ROOT)
+        val normalizedQuery = PersonIdentityNormalization.normalize(query)
         val candidates = readableDatabase.rawQuery(
             """
             SELECT c.id,c.label,c.relationship,c.aliases,
@@ -1739,10 +2296,10 @@ class GalleryDatabase(
                 while (cursor.moveToNext()) {
                     val id = cursor.getString(0)
                     val terms = buildList {
-                        if (!cursor.isNull(1)) add(cursor.getString(1))
-                        if (!cursor.isNull(2)) add(cursor.getString(2))
+                        if (!cursor.isNull(1)) add(sensitiveDataAtRest.reveal(cursor.getString(1)))
+                        if (!cursor.isNull(2)) add(sensitiveDataAtRest.reveal(cursor.getString(2)))
                         val aliases = runCatching {
-                            val json = JSONArray(cursor.getString(3))
+                            val json = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(3)))
                             List(json.length()) { json.getString(it) }
                         }.getOrDefault(emptyList())
                         addAll(aliases)
@@ -1776,16 +2333,17 @@ class GalleryDatabase(
         return readableDatabase.rawQuery(
             "SELECT f.id,f.cluster_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos,p.label,p.relationship,p.aliases " +
                 "FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
-                "WHERE f.media_id=? AND p.reviewed=1 AND p.hidden=0 AND f.cluster_id IN ($placeholders) " +
+                "WHERE f.media_id=? AND p.reviewed=1 AND p.hidden=0 AND f.embedding_dimension=? " +
+                "AND f.embedding_offset IS NOT NULL AND f.cluster_id IN ($placeholders) " +
                 "ORDER BY f.cluster_id,f.quality DESC,f.id",
-            (listOf(mediaId) + resolved).toTypedArray(),
+            arrayOf(mediaId, FaceModelCatalog.sface.embeddingDimension.toString(), *resolved.toTypedArray()),
         ).use { cursor ->
             val stable = resolved.withIndex().associate { (index, id) -> id to "P${index + 1}" }
             buildList {
                 while (cursor.moveToNext()) {
                     val clusterId = cursor.getString(1)
                     val aliases = runCatching {
-                        val json = JSONArray(cursor.getString(8))
+                        val json = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(8)))
                         List(json.length()) { json.getString(it) }
                     }.getOrDefault(emptyList())
                     add(
@@ -1794,8 +2352,8 @@ class GalleryDatabase(
                             clusterId = clusterId,
                             stableLabel = stable.getValue(clusterId),
                             identityTerms = setOfNotNull(
-                                if (cursor.isNull(6)) null else cursor.getString(6),
-                                if (cursor.isNull(7)) null else cursor.getString(7),
+                                if (cursor.isNull(6)) null else sensitiveDataAtRest.reveal(cursor.getString(6)),
+                                if (cursor.isNull(7)) null else sensitiveDataAtRest.reveal(cursor.getString(7)),
                             ) + aliases,
                             left = cursor.getFloat(2),
                             top = cursor.getFloat(3),
@@ -1811,10 +2369,108 @@ class GalleryDatabase(
     fun reviewedFaceBindingsForMedia(mediaId: String): List<PersonVerificationBinding> {
         val clusterIds = readableDatabase.rawQuery(
             "SELECT DISTINCT f.cluster_id FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
-                "WHERE f.media_id=? AND p.reviewed=1 AND p.hidden=0 ORDER BY f.cluster_id",
-            arrayOf(mediaId),
+                "WHERE f.media_id=? AND p.reviewed=1 AND p.hidden=0 AND f.embedding_dimension=? " +
+                "AND f.embedding_offset IS NOT NULL ORDER BY f.cluster_id",
+            arrayOf(mediaId, FaceModelCatalog.sface.embeddingDimension.toString()),
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
         return reviewedFaceBindings(mediaId, clusterIds.toSet()).distinctBy(PersonVerificationBinding::clusterId)
+    }
+
+    /**
+     * Labels every visible face before person-conditioned visual verification. Only reviewed,
+     * non-hidden clusters receive identity terms; other faces are explicitly marked as U* so
+     * their bodies cannot be mistaken for a requested reviewed person.
+     */
+    fun verificationFaceBindingsForMedia(mediaId: String): List<PersonVerificationBinding> {
+        data class FaceRow(
+            val faceId: String,
+            val clusterId: String?,
+            val reviewed: Boolean,
+            val terms: Set<String>,
+            val left: Float,
+            val top: Float,
+            val right: Float,
+            val bottom: Float,
+        )
+
+        val rows = readableDatabase.rawQuery(
+            "SELECT f.id,f.cluster_id,f.left_pos,f.top_pos,f.right_pos,f.bottom_pos," +
+                "p.reviewed,p.hidden,p.label,p.relationship,p.aliases,f.embedding_dimension,f.embedding_offset " +
+                "FROM face_instance f " +
+                "JOIN media_item m ON m.id=f.media_id AND m.access_state='ACCESSIBLE' " +
+                "LEFT JOIN person_cluster p ON p.id=f.cluster_id " +
+                "WHERE f.media_id=? ORDER BY f.left_pos,f.top_pos,f.id",
+            arrayOf(mediaId),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val faceId = cursor.getString(0)
+                    val clusterId = if (cursor.isNull(1)) null else cursor.getString(1)
+                    val reviewed = !cursor.isNull(6) && cursor.getInt(6) == 1 &&
+                        !cursor.isNull(7) && cursor.getInt(7) == 0 && clusterId != null &&
+                        cursor.getInt(11) == FaceModelCatalog.sface.embeddingDimension && !cursor.isNull(12)
+                    val terms = if (reviewed) {
+                        buildSet {
+                            if (!cursor.isNull(8)) add(sensitiveDataAtRest.reveal(cursor.getString(8)))
+                            if (!cursor.isNull(9)) add(sensitiveDataAtRest.reveal(cursor.getString(9)))
+                            if (!cursor.isNull(10)) {
+                                runCatching {
+                                    val aliases = JSONArray(sensitiveDataAtRest.reveal(cursor.getString(10)))
+                                    repeat(aliases.length()) { index -> add(aliases.getString(index)) }
+                                }
+                            }
+                        }.filter(String::isNotBlank).toSet()
+                    } else {
+                        emptySet()
+                    }
+                    add(
+                        FaceRow(
+                            faceId = faceId,
+                            clusterId = clusterId,
+                            reviewed = reviewed,
+                            terms = terms,
+                            left = cursor.getFloat(2),
+                            top = cursor.getFloat(3),
+                            right = cursor.getFloat(4),
+                            bottom = cursor.getFloat(5),
+                        ),
+                    )
+                }
+            }
+        }
+        val reviewedLabels = rows.asSequence()
+            .filter { it.reviewed && it.clusterId != null }
+            .mapNotNull { it.clusterId }
+            .distinct()
+            .withIndex()
+            .associate { it.value to "P${it.index + 1}" }
+        var unreviewedIndex = 0
+        return rows.map { row ->
+            if (row.reviewed && row.clusterId != null) {
+                PersonVerificationBinding(
+                    faceId = row.faceId,
+                    clusterId = row.clusterId,
+                    stableLabel = requireNotNull(reviewedLabels[row.clusterId]),
+                    identityTerms = row.terms,
+                    left = row.left,
+                    top = row.top,
+                    right = row.right,
+                    bottom = row.bottom,
+                )
+            } else {
+                unreviewedIndex++
+                PersonVerificationBinding(
+                    faceId = row.faceId,
+                    clusterId = "unreviewed-face-$unreviewedIndex",
+                    stableLabel = "U$unreviewedIndex",
+                    identityTerms = emptySet(),
+                    left = row.left,
+                    top = row.top,
+                    right = row.right,
+                    bottom = row.bottom,
+                )
+            }
+        }
     }
 
     fun reviewedPersonClusterIdsByMedia(): Map<String, Set<String>> = readableDatabase.rawQuery(
@@ -1835,41 +2491,71 @@ class GalleryDatabase(
         confidence: Float,
         region: List<Float>,
         modelVersion: String,
+        verdict: PersonVisualVerdict = PersonVisualVerdict.VERIFIED_TRUE,
     ) {
         require(PERSON_ID.matches(clusterId) && predicate.isNotBlank() && value.isNotBlank()) { "Invalid person fact" }
-        val id = "$mediaId:$clusterId:${predicate.lowercase(Locale.ROOT).hashCode().toUInt()}"
+        val id = "$mediaId:$clusterId:${StableDerivedId.sha256(predicate.lowercase(Locale.ROOT))}"
         writableDatabase.insertWithOnConflict("person_attribute_fact", null, ContentValues().apply {
             put("id", id)
             put("media_id", mediaId)
             put("cluster_id", clusterId)
             put("predicate", predicate.take(240))
-            put("value", value.take(240))
+            put("value", sensitiveDataAtRest.protect(value.take(240)))
             put("confidence", confidence.coerceIn(0f, 1f))
             put("region", JSONArray(region).toString())
             put("model_version", modelVersion.take(160))
             put("person_ref", "")
             put("relation", PersonVisualRelation.ACTION.name)
             put("category", WornItemCategory.OTHER_WORN_ITEM.name)
-            put("attributes", "{}")
+            put("attributes", sensitiveDataAtRest.protect("{}"))
             put("body_region", BodyRegion.UNKNOWN.name)
             put("face_region", JSONArray(region).toString())
             put("association_status", PersonAssociationStatus.CONFIDENT.name)
-            put("verdict", PersonVisualVerdict.VERIFIED_TRUE.name)
+            put("verdict", verdict.name)
             put("prompt_version", "query-visual-verification-v2")
+            put("body_region_version", PersonalSemanticMemoryPolicy.BODY_REGION_VERSION)
             put("updated_at", System.currentTimeMillis())
         }, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    fun failFaces(mediaId: String, message: String, permanent: Boolean) {
-        if (!peopleIndexStatus().enabled) return
-        updateStage(
-            writableDatabase,
-            mediaId,
-            IndexStage.FACES,
-            if (permanent) StageStatus.FAILED_PERMANENT else StageStatus.FAILED_RETRYABLE,
-            "mlkit-face-detection-v1",
-            error = message,
-        )
+    fun failFaces(
+        mediaId: String,
+        message: String,
+        permanent: Boolean,
+        producerVersion: String = "mlkit-face-detection-v1",
+        owner: String? = null,
+    ) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            if (!peopleIndexEnabled(db)) return
+            if (owner != null && !stageClaimOwned(db, mediaId, IndexStage.FACES, owner)) return
+            val attempts = stageAttemptCount(db, mediaId, IndexStage.FACES)
+            val status = IndexingRetryPolicy.failedStatus(permanent, attempts)
+            updateStage(db, mediaId, IndexStage.FACES, status, producerVersion, error = message)
+            db.update(
+                "media_index_stage",
+                ContentValues().apply {
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("last_progress_at", System.currentTimeMillis())
+                    put(
+                        "next_attempt_at",
+                        if (status == StageStatus.FAILED_RETRYABLE) {
+                            IndexingRetryPolicy.nextAttemptAt(System.currentTimeMillis(), attempts)
+                        } else {
+                            0L
+                        },
+                    )
+                    if (status == StageStatus.FAILED_EXHAUSTED) put("error", "retry_exhausted:${message.take(220)}")
+                },
+                "media_id=? AND stage=?",
+                arrayOf(mediaId, IndexStage.FACES.name),
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
     }
 
     fun stageRecords(mediaId: String): List<MediaIndexStageRecord> = readableDatabase.query(
@@ -1898,8 +2584,8 @@ class GalleryDatabase(
         buildList {
             while (cursor.moveToNext()) add(
                 OcrBlockRecord(
-                    text = cursor.getString(cursor.getColumnIndexOrThrow("text")),
-                    normalizedText = cursor.getString(cursor.getColumnIndexOrThrow("normalized_text")),
+                    text = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("text"))),
+                    normalizedText = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("normalized_text"))),
                     language = cursor.getColumnIndexOrThrow("language").let { if (cursor.isNull(it)) null else cursor.getString(it) },
                     pageIndex = cursor.getInt(cursor.getColumnIndexOrThrow("page_index")),
                     timestampMs = cursor.getColumnIndexOrThrow("timestamp_ms").let { if (cursor.isNull(it)) null else cursor.getLong(it) },
@@ -1923,33 +2609,61 @@ class GalleryDatabase(
         "confidence DESC, id",
     ).use { cursor ->
         buildList {
-            while (cursor.moveToNext()) add(
-                OcrEntityRecord(
-                    type = OcrEntityType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow("entity_type"))),
-                    rawText = cursor.getString(cursor.getColumnIndexOrThrow("raw_text")),
-                    normalizedValue = cursor.getString(cursor.getColumnIndexOrThrow("normalized_value")),
-                    label = cursor.getColumnIndexOrThrow("label").let { if (cursor.isNull(it)) null else cursor.getString(it) },
-                    confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
-                    left = cursor.getFloat(cursor.getColumnIndexOrThrow("left_pos")),
-                    top = cursor.getFloat(cursor.getColumnIndexOrThrow("top_pos")),
-                    right = cursor.getFloat(cursor.getColumnIndexOrThrow("right_pos")),
-                    bottom = cursor.getFloat(cursor.getColumnIndexOrThrow("bottom_pos")),
-                    producerVersion = cursor.getString(cursor.getColumnIndexOrThrow("producer_version")),
-                ),
-            )
+            while (cursor.moveToNext()) add(cursorOcrEntity(cursor))
         }
     }
 
-    fun fullTextMatches(terms: List<String>, limit: Int = 500): Set<String> {
+    /** Returns the highest-confidence entity of the requested type for each eligible media item. */
+    fun ocrEntitiesForMediaIds(mediaIds: Set<String>, type: OcrEntityType): Map<String, OcrEntityRecord> {
+        if (mediaIds.isEmpty()) return emptyMap()
+        val result = LinkedHashMap<String, OcrEntityRecord>()
+        mediaIds.toList().chunked(SQLITE_ID_CHUNK).forEach { ids ->
+            val placeholders = ids.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT * FROM ocr_entity WHERE media_id IN ($placeholders) AND entity_type=? ORDER BY confidence DESC,id",
+                (ids + type.name).toTypedArray(),
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val mediaId = cursor.getString(cursor.getColumnIndexOrThrow("media_id"))
+                    if (mediaId !in result) result[mediaId] = cursorOcrEntity(cursor)
+                }
+            }
+        }
+        return result
+    }
+
+    private fun cursorOcrEntity(cursor: android.database.Cursor): OcrEntityRecord {
+        val entityType = OcrEntityType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow("entity_type")))
+        return OcrEntityRecord(
+            type = entityType,
+            rawText = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("raw_text"))),
+            normalizedValue = sensitiveDataAtRest.reveal(cursor.getString(cursor.getColumnIndexOrThrow("normalized_value"))),
+            label = cursor.getColumnIndexOrThrow("label").let { if (cursor.isNull(it)) null else cursor.getString(it) },
+            confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
+            left = cursor.getFloat(cursor.getColumnIndexOrThrow("left_pos")),
+            top = cursor.getFloat(cursor.getColumnIndexOrThrow("top_pos")),
+            right = cursor.getFloat(cursor.getColumnIndexOrThrow("right_pos")),
+            bottom = cursor.getFloat(cursor.getColumnIndexOrThrow("bottom_pos")),
+            producerVersion = cursor.getString(cursor.getColumnIndexOrThrow("producer_version")),
+        )
+    }
+
+    fun fullTextMatches(terms: List<String>, limit: Int = 500): LexicalSearchResult {
         val safe = terms.map { it.replace(Regex("[^\\p{L}\\p{N}]+"), "").trim() }.filter(String::isNotBlank)
-        if (safe.isEmpty()) return emptySet()
+        if (safe.isEmpty()) return LexicalSearchResult(status = ChannelStatus.NOT_REQUIRED)
         val expression = safe.joinToString(" OR ") { "\"$it\"" }
         return runCatching {
-            readableDatabase.rawQuery(
+            val ids = readableDatabase.rawQuery(
                 "SELECT media_id FROM media_fts WHERE media_fts MATCH ? LIMIT ?",
                 arrayOf(expression, limit.toString()),
             ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
-        }.getOrDefault(emptySet())
+            LexicalSearchResult(ids = ids, status = ChannelStatus.SUCCESS)
+        }.getOrElse {
+            LexicalSearchResult(
+                status = ChannelStatus.FAILED,
+                errorCode = "MEDIA_FTS_SEARCH_FAILED",
+            )
+        }
     }
 
     fun rebuildEvents() {
@@ -2083,6 +2797,12 @@ class GalleryDatabase(
         }.sortedWith(compareByDescending<EventSearchHit> { it.score }.thenByDescending { it.event.startTime })
     }
 
+    fun listEvents(allowedIds: Set<String>? = null): List<EventSearchHit> = events()
+        .mapNotNull { event ->
+            val members = eventMembers(event.id).filter { allowedIds == null || it in allowedIds }
+            if (members.isEmpty()) null else EventSearchHit(event, members, 1.0)
+        }
+
     fun eventMembership(): Map<String, Long> = readableDatabase.rawQuery(
         "SELECT media_id,event_id FROM event_media", null,
     ).use { cursor -> buildMap { while (cursor.moveToNext()) put(cursor.getString(0), cursor.getLong(1)) } }
@@ -2095,7 +2815,7 @@ class GalleryDatabase(
                 SUM(CASE WHEN source_kind='DEMO_ASSET' OR index_state='READY' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN tags IS NOT NULL AND TRIM(tags) NOT IN ('', '[]') THEN 1 ELSE 0 END),
                 SUM(CASE WHEN index_state IN ('PENDING', 'INDEXING') THEN 1 ELSE 0 END),
-                SUM(CASE WHEN index_state IN ('FAILED_PERMANENT', 'FAILED_RETRYABLE') THEN 1 ELSE 0 END),
+                SUM(CASE WHEN index_state IN ('FAILED_PERMANENT', 'FAILED_RETRYABLE', 'FAILED_EXHAUSTED') THEN 1 ELSE 0 END),
                 SUM(CASE WHEN media_kind='IMAGE' AND access_state='ACCESSIBLE' AND index_state='READY' THEN 1 ELSE 0 END)
             FROM media_item
             """.trimIndent(),
@@ -2103,19 +2823,44 @@ class GalleryDatabase(
         ).use { cursor ->
             if (!cursor.moveToFirst()) IntArray(6) else IntArray(6) { cursor.getInt(it) }
         }
+        val analysisStageCounts = readableDatabase.rawQuery(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN stage='METADATA' AND status IN ('COMPLETE','SKIPPED') THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN stage='OCR' AND status IN ('COMPLETE','SKIPPED') THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN stage='ENRICHMENT' AND status IN ('COMPLETE','SKIPPED') THEN 1 ELSE 0 END),0)
+            FROM media_index_stage
+            """.trimIndent(),
+            null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) IntArray(3) else IntArray(3) { cursor.getInt(it) }
+        }
+        val vectorStageCounts = readableDatabase.rawQuery(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN s.status='COMPLETE' THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN s.status IN ('PENDING','RUNNING','FAILED_RETRYABLE') THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN s.status IN ('FAILED_EXHAUSTED','FAILED_PERMANENT') THEN 1 ELSE 0 END),0),
+                COUNT(*)
+            FROM media_index_stage s
+            JOIN media_item m ON m.id=s.media_id
+            WHERE s.stage='EMBEDDING' AND m.access_state='ACCESSIBLE'
+            """.trimIndent(),
+            null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) IntArray(4) else IntArray(4) { cursor.getInt(it) }
+        }
         return IndexSummary(
             discovered = mediaCounts[0],
-            metadataReady = mediaCounts[0],
+            metadataReady = analysisStageCounts[0],
             semanticFactsReady = readableDatabase.rawQuery(
-                "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_fact",
-                null,
+                "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_fact WHERE scope=?",
+                arrayOf(SemanticFactScope.MEDIA.name),
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
-            ocrReady = mediaCounts[1],
-            visualLabelsReady = mediaCounts[2],
-            siglipVectorsReady = readableDatabase.rawQuery(
-                "SELECT COUNT(*) FROM media_index_stage WHERE stage='EMBEDDING' AND status='COMPLETE'",
-                null,
-            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
+            ocrReady = analysisStageCounts[1],
+            visualLabelsReady = analysisStageCounts[2],
+            siglipVectorsReady = vectorStageCounts[0],
+            siglipVectorsEligible = vectorStageCounts[3],
             videoKeyframesReady = readableDatabase.rawQuery(
                 "SELECT COUNT(*) FROM video_keyframe", null,
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 },
@@ -2130,6 +2875,8 @@ class GalleryDatabase(
             events = events().size,
             failed = mediaCounts[4],
             storageBytes = databaseBytes(),
+            siglipVectorsPending = vectorStageCounts[1],
+            siglipVectorsFailed = vectorStageCounts[2],
         )
     }
 
@@ -2174,11 +2921,11 @@ class GalleryDatabase(
 
     fun recordQuery(outcome: SearchOutcome, sessionId: String? = null) {
         writableDatabase.insert("query_turn", null, ContentValues().apply {
-            put("query", outcome.plan.originalQuery)
+            put("query", sensitiveDataAtRest.protect(outcome.plan.originalQuery))
             val channels = outcome.channelReports.joinToString(",") { report ->
                 "${report.channel}:${report.status}:${report.searchedCount}/${report.eligibleCount}"
             }
-            put("plan_summary", "${outcome.plan.intent}:${outcome.plan.terms.joinToString(",")}|channels=$channels")
+            put("plan_summary", sensitiveDataAtRest.protect("${outcome.plan.intent}:${outcome.plan.terms.joinToString(",")}|channels=$channels"))
             put("result_count", outcome.hits.size)
             put("elapsed_ms", outcome.elapsedMs)
             put("created_at", System.currentTimeMillis())
@@ -2200,7 +2947,7 @@ class GalleryDatabase(
                 sessionId = sessionId,
                 activeResultSetId = active,
                 activeResultIds = active?.let(::resultSetMediaIds).orEmpty(),
-                lastQuery = cursor.nullableText("last_query"),
+                lastQuery = cursor.nullableText("last_query")?.let(sensitiveDataAtRest::reveal),
                 referencedPeople = decodeStrings(cursor.text("referenced_people")),
                 referencedEvents = decodeLongs(cursor.text("referenced_events")),
                 currentTimeScope = if (cursor.isNull(cursor.getColumnIndexOrThrow("time_start")) && cursor.isNull(cursor.getColumnIndexOrThrow("time_end"))) {
@@ -2242,7 +2989,7 @@ class GalleryDatabase(
                 put("id", resultSetId)
                 put("session_id", sessionId)
                 put("parent_result_set_id", expectedParentResultSetId)
-                put("query", outcome.plan.originalQuery.take(2_000))
+                put("query", sensitiveDataAtRest.protect(outcome.plan.originalQuery.take(2_000)))
                 put("intent", outcome.plan.intent.name)
                 put("exactness", outcome.answer.exactness.name)
                 put("created_at", now)
@@ -2260,7 +3007,7 @@ class GalleryDatabase(
             db.insertWithOnConflict("query_session", null, ContentValues().apply {
                 put("session_id", sessionId)
                 put("active_result_set_id", resultSetId)
-                put("last_query", outcome.plan.originalQuery.take(2_000))
+                put("last_query", sensitiveDataAtRest.protect(outcome.plan.originalQuery.take(2_000)))
                 put("referenced_people", encode(outcome.plan.peopleClauses.map { it.personId }))
                 put("referenced_events", encode(eventIds))
                 put("time_start", timeRange?.startEpochMs)
@@ -2298,7 +3045,7 @@ class GalleryDatabase(
             put("location", item.location)
             put("tags", item.tags.joinToString(" "))
             put("description", item.description)
-            put("ocr_text", item.ocrText)
+            put("ocr_text", SensitiveContentClassifier.redactForSearch(item.ocrText))
         })
     }
 
@@ -2327,7 +3074,7 @@ class GalleryDatabase(
         put("width", item.width)
         put("height", item.height)
         put("size_bytes", item.sizeBytes)
-        put("ocr_text", item.ocrText)
+            put("ocr_text", SensitiveContentClassifier.redactForSearch(item.ocrText))
         put("face_count", item.faceCount)
         put("index_state", item.indexState.name)
         put("index_error", item.indexError)
@@ -2397,7 +3144,7 @@ class GalleryDatabase(
             width = cursor.getInt(cursor.getColumnIndexOrThrow("width")),
             height = cursor.getInt(cursor.getColumnIndexOrThrow("height")),
             sizeBytes = cursor.getLong(cursor.getColumnIndexOrThrow("size_bytes")),
-            ocrText = text("ocr_text"),
+            ocrText = sensitiveDataAtRest.reveal(text("ocr_text")),
             faceCount = cursor.getInt(cursor.getColumnIndexOrThrow("face_count")),
             indexState = runCatching { IndexState.valueOf(text("index_state")) }.getOrDefault(IndexState.PENDING),
             indexError = nullableText("index_error"),
@@ -2529,11 +3276,15 @@ class GalleryDatabase(
         timestampMs = cursor.getLong(cursor.getColumnIndexOrThrow("timestamp_ms")),
         previewPath = cursor.text("preview_path"),
         labels = cursor.text("labels").split(TAG_SEPARATOR).filter(String::isNotBlank),
-        ocrText = cursor.text("ocr_text"),
+        ocrText = sensitiveDataAtRest.reveal(cursor.text("ocr_text")),
         perceptualHash = java.lang.Long.parseUnsignedLong(cursor.text("perceptual_hash"), 16),
         qualityScore = cursor.getFloat(cursor.getColumnIndexOrThrow("quality_score")),
         producerVersion = cursor.text("producer_version"),
         embeddingVersion = cursor.nullableText("embedding_version"),
+        embeddingState = cursor.text("embedding_state"),
+        embeddingAttemptCount = cursor.getInt(cursor.getColumnIndexOrThrow("embedding_attempt_count")),
+        embeddingError = cursor.nullableText("embedding_error"),
+        embeddingNextAttemptAt = cursor.getLong(cursor.getColumnIndexOrThrow("embedding_next_attempt_at")),
     )
 
     private fun peopleIndexEnabled(db: GallerySqlDatabase): Boolean = db.rawQuery(
@@ -2547,10 +3298,7 @@ class GalleryDatabase(
     ).use(android.database.Cursor::moveToFirst)
 
     private fun identityTermMatches(normalizedQuery: String, rawTerm: String): Boolean {
-        val term = rawTerm.trim().lowercase(Locale.ROOT)
-        if (term.isEmpty()) return false
-        return Regex("(^|[^\\p{L}\\p{M}\\p{N}])${Regex.escape(term)}([^\\p{L}\\p{M}\\p{N}]|$)")
-            .containsMatchIn(normalizedQuery)
+        return PersonIdentityNormalization.containsIdentityTerm(normalizedQuery, rawTerm)
     }
 
     fun embeddingReadyMediaIds(): Set<String> = readableDatabase.rawQuery(
@@ -2569,23 +3317,38 @@ class GalleryDatabase(
         mediaIds: Set<String>? = null,
     ): Int = writableDatabase.transaction { db ->
         val reason = PersonalSemanticMemoryPolicy.jobReason(modelVersion)
+        val supersededModelVersion = "superseded:$reason"
         val now = System.currentTimeMillis()
         db.update(
             "semantic_enrichment_job",
             ContentValues().apply {
                 put("status", SemanticEnrichmentStatus.COMPLETE.name)
-                put("model_version", "superseded:${PersonalSemanticMemoryPolicy.PROMPT_VERSION}")
+                put("model_version", supersededModelVersion)
                 putNull("lease_owner")
                 putNull("lease_expires_at")
                 put("next_attempt_at", 0L)
                 put("last_progress_at", now)
                 put("updated_at", now)
             },
-            "reason LIKE ? AND reason<>? AND status<>?",
+            "reason LIKE ? AND reason<>? AND COALESCE(model_version,'') NOT LIKE 'superseded:%' " +
+                "AND NOT (status=? AND lease_expires_at>?)",
             arrayOf(
                 "${PersonalSemanticMemoryPolicy.JOB_PREFIX}%",
                 reason,
-                SemanticEnrichmentStatus.COMPLETE.name,
+                SemanticEnrichmentStatus.RUNNING.name,
+                now.toString(),
+            ),
+        )
+        db.update(
+            "semantic_enrichment_job",
+            ContentValues().apply { put("model_version", supersededModelVersion) },
+            "reason LIKE ? AND reason<>? AND COALESCE(model_version,'') NOT LIKE 'superseded:%' " +
+                "AND status=? AND lease_expires_at>?",
+            arrayOf(
+                "${PersonalSemanticMemoryPolicy.JOB_PREFIX}%",
+                reason,
+                SemanticEnrichmentStatus.RUNNING.name,
+                now.toString(),
             ),
         )
         db.update(
@@ -2593,6 +3356,7 @@ class GalleryDatabase(
             ContentValues().apply {
                 put("status", SemanticEnrichmentStatus.PENDING.name)
                 put("attempt_count", 0)
+                put("priority", SemanticEnrichmentPriority.forJob(reason, userRequested))
                 putNull("error")
                 putNull("lease_owner")
                 putNull("lease_expires_at")
@@ -2619,6 +3383,7 @@ class GalleryDatabase(
                 put("status", SemanticEnrichmentStatus.PENDING.name)
                 put("attempt_count", 0)
                 put("user_requested", userRequested)
+                put("priority", SemanticEnrichmentPriority.forJob(reason, userRequested))
                 putNull("model_version")
                 putNull("error")
                 putNull("lease_owner")
@@ -2630,6 +3395,7 @@ class GalleryDatabase(
             if (userRequested) {
                 db.update("semantic_enrichment_job", ContentValues().apply {
                     put("user_requested", true)
+                    put("priority", SemanticEnrichmentPriority.forJob(reason, true))
                     put("updated_at", now)
                 }, "id=? AND status<>?", arrayOf(
                     UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString(),
@@ -2656,7 +3422,7 @@ class GalleryDatabase(
                 WHERE c.evidence_media_id=semantic_enrichment_job.representative_media_id
                   AND c.scope=?
                   AND c.source_type IN (?,?)
-                  AND c.applicability<>'STALE_PERSON_BINDING'
+                  AND c.applicability NOT IN ('STALE_PERSON_BINDING','LEGACY_SCOPE_UNCERTAIN','POSSIBLE_INFERENCE')
                   AND c.prompt_version=?
             )
             """.trimIndent(),
@@ -2699,14 +3465,14 @@ class GalleryDatabase(
             arrayOf(digest, job.representativeMediaId, job.reason),
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
         for (sourceId in sourceIds) {
-            val sourceBindings = reviewedFaceBindingsForMedia(sourceId)
-            if (!equivalentReviewedBindings(sourceBindings, targetBindings)) continue
-            val caption = semanticCaptionsForMedia(sourceId).firstOrNull {
-                it.scope == SemanticFactScope.MEDIA &&
-                    it.subjectId == sourceId &&
-                    it.applicability != "STALE_PERSON_BINDING" &&
-                    it.promptVersion == SemanticEnrichmentCodec.PROMPT_VERSION
-            } ?: continue
+        val sourceBindings = reviewedFaceBindingsForMedia(sourceId)
+        if (!equivalentReviewedBindings(sourceBindings, targetBindings)) continue
+        val caption = semanticCaptionsForMedia(sourceId).firstOrNull {
+            it.scope == SemanticFactScope.MEDIA &&
+                it.subjectId == sourceId &&
+                SemanticProvenanceApplicability.isSafeForExactDuplicateSharing(it.applicability) &&
+                it.promptVersion == SemanticEnrichmentCodec.PROMPT_VERSION
+        } ?: continue
             val targetByLabel = targetBindings.associateBy(PersonVerificationBinding::stableLabel)
             val copiedRefs = caption.personRefs.mapNotNull { sourceRef ->
                 val target = targetByLabel[sourceRef.personRef]
@@ -2717,16 +3483,12 @@ class GalleryDatabase(
                 )
             }
             if (copiedRefs.size != caption.personRefs.size) continue
-            val copiedFacts = semanticFacts(listOf(sourceId))
-                .filter {
-                    it.scope == SemanticFactScope.MEDIA &&
-                        it.subjectId == sourceId &&
-                        it.applicability !in setOf(
-                            "GROUP_CONTEXT_ONLY",
-                            "LEGACY_GROUP_CONTEXT_ONLY",
-                            "STALE_PERSON_BINDING",
-                        )
-                }
+        val copiedFacts = semanticFacts(listOf(sourceId))
+            .filter {
+                it.scope == SemanticFactScope.MEDIA &&
+                    it.subjectId == sourceId &&
+                    SemanticProvenanceApplicability.isSafeForExactDuplicateSharing(it.applicability)
+            }
                 .map {
                     it.copy(
                         subjectId = job.representativeMediaId,
@@ -2734,7 +3496,10 @@ class GalleryDatabase(
                         applicability = "EXACT_DUPLICATE_SHARED",
                     )
                 }
-            val sourcePersonFacts = personVisualFactsForMedia(sourceId)
+            val sourcePersonFacts = CaptionChunkFactProvenancePolicy.matchingPersonFacts(
+                caption,
+                personVisualFactsForMedia(sourceId),
+            )
             val copiedPersonFacts = sourcePersonFacts.mapNotNull { sourceFact ->
                 val target = targetBindings.firstOrNull {
                     it.clusterId == sourceFact.clusterId && it.stableLabel == sourceFact.personRef
@@ -2923,6 +3688,7 @@ class GalleryDatabase(
                     put("status", job.status.name)
                     put("attempt_count", job.attemptCount)
                     put("user_requested", job.userRequested)
+                    put("priority", job.priority)
                     putNull("model_version")
                     putNull("error")
                     put("updated_at", now)
@@ -2932,6 +3698,7 @@ class GalleryDatabase(
                         put("status", SemanticEnrichmentStatus.PENDING.name)
                         put("attempt_count", 0)
                         put("user_requested", true)
+                        put("priority", SemanticEnrichmentPriority.forJob(job.reason, true))
                         putNull("error")
                         put("updated_at", now)
                     }, "id=? AND status IN (?,?)", arrayOf(
@@ -2953,9 +3720,7 @@ class GalleryDatabase(
             val where = if (userRequestedOnly) " AND user_requested=1" else ""
             selected = db.rawQuery(
                 "SELECT * FROM semantic_enrichment_job WHERE status=? AND next_attempt_at<=?$where " +
-                    "ORDER BY user_requested DESC," +
-                    "CASE WHEN reason LIKE '${PersonalSemanticMemoryPolicy.JOB_PREFIX}%' THEN 0 ELSE 1 END," +
-                    "updated_at LIMIT 1",
+                    "ORDER BY priority DESC,user_requested DESC,next_attempt_at,updated_at,id LIMIT 1",
                 arrayOf(SemanticEnrichmentStatus.PENDING.name, System.currentTimeMillis().toString()),
             ).use { cursor ->
                 if (!cursor.moveToFirst()) null else SemanticEnrichmentJobRecord(
@@ -2969,6 +3734,8 @@ class GalleryDatabase(
                     userRequested = cursor.getInt(cursor.getColumnIndexOrThrow("user_requested")) != 0,
                     modelVersion = cursor.nullableText("model_version"),
                     error = cursor.nullableText("error"),
+                    priority = cursor.getInt(cursor.getColumnIndexOrThrow("priority")),
+                    leaseOwner = owner,
                 )
             }
             selected?.let { job ->
@@ -2990,6 +3757,12 @@ class GalleryDatabase(
         "SELECT 1 FROM semantic_enrichment_job WHERE status=? LIMIT 1",
         arrayOf(SemanticEnrichmentStatus.PENDING.name),
     ).use(android.database.Cursor::moveToFirst)
+
+    fun nextSemanticEnrichmentRetryAt(): Long? = readableDatabase.rawQuery(
+        "SELECT MIN(next_attempt_at) FROM semantic_enrichment_job " +
+            "WHERE status=? AND next_attempt_at>?",
+        arrayOf(SemanticEnrichmentStatus.PENDING.name, System.currentTimeMillis().toString()),
+    ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
 
     fun hasUserRequestedPendingSemanticEnrichmentJobs(): Boolean = readableDatabase.rawQuery(
         "SELECT 1 FROM semantic_enrichment_job WHERE status=? AND user_requested=1 LIMIT 1",
@@ -3025,9 +3798,51 @@ class GalleryDatabase(
             counts[2] == 0
     }
 
+    private fun countValidPersonalSemanticCaptions(
+        db: GallerySqlDatabase,
+    ): Int {
+        val eligibleMediaSql = """
+            SELECT DISTINCT m.id
+            FROM media_item m
+            JOIN face_instance f ON f.media_id = m.id
+            JOIN person_cluster p ON p.id = f.cluster_id
+            WHERE m.media_kind = 'IMAGE'
+              AND m.access_state = 'ACCESSIBLE'
+              AND m.index_state = 'READY'
+              AND p.reviewed = 1
+              AND p.hidden = 0
+              AND p.include_in_personal_memory = 1
+        """.trimIndent()
+        val sql = """
+            SELECT COUNT(DISTINCT c.evidence_media_id)
+            FROM semantic_caption c
+            WHERE c.scope = 'MEDIA'
+              AND c.subject_id = c.evidence_media_id
+              AND c.source_type IN ('GEMMA_MEDIA_DIRECT', 'GEMMA_DIRECT', 'EXACT_DUPLICATE_REUSE')
+              AND c.prompt_version = ?
+              AND (c.applicability IS NULL OR c.applicability NOT IN (
+                  'STALE_PERSON_BINDING',
+                  'LEGACY_SCOPE_UNCERTAIN',
+                  'POSSIBLE_INFERENCE'
+              ))
+              AND c.evidence_media_id IN ($eligibleMediaSql)
+        """.trimIndent()
+        return db.rawQuery(sql, arrayOf(SemanticEnrichmentCodec.PROMPT_VERSION)).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
+    }
     fun semanticMemoryProgress(activeModelVersion: String? = null): SemanticMemoryProgress {
         val db = readableDatabase
-        val personalReason = PersonalSemanticMemoryPolicy.jobReason(activeModelVersion)
+        val personalJobSelection = if (activeModelVersion == null) {
+            "reason LIKE ? AND COALESCE(model_version,'') NOT LIKE 'superseded:%'"
+        } else {
+            "reason=? AND COALESCE(model_version,'') NOT LIKE 'superseded:%'"
+        }
+        val personalJobArgs = if (activeModelVersion == null) {
+            arrayOf("${PersonalSemanticMemoryPolicy.JOB_PREFIX}%")
+        } else {
+            arrayOf(PersonalSemanticMemoryPolicy.jobReason(activeModelVersion))
+        }
         val counts = db.rawQuery(
             """
             SELECT COUNT(*),
@@ -3037,6 +3852,7 @@ class GalleryDatabase(
                    COALESCE(SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END),0),
                    COALESCE(SUM(CASE WHEN status='AUTH_REQUIRED' THEN 1 ELSE 0 END),0)
             FROM semantic_enrichment_job
+            WHERE COALESCE(model_version,'') NOT LIKE 'superseded:%'
             """.trimIndent(),
             emptyArray(),
         ).use { cursor ->
@@ -3057,17 +3873,29 @@ class GalleryDatabase(
             if (cursor.moveToFirst()) cursor.getInt(0) else 0
         }
         val personalEligibleCount = personalSemanticMemoryEligibleMediaIds(db).size
-        val personalCounts = db.rawQuery(
+        val jobPersonalCounts = db.rawQuery(
             """
             SELECT
-                COALESCE(SUM(CASE WHEN status='COMPLETE' THEN 1 ELSE 0 END),0),
-                COALESCE(SUM(CASE WHEN status IN ('PENDING','RUNNING') THEN 1 ELSE 0 END),0),
-                COALESCE(SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END),0),
-                COALESCE(SUM(CASE WHEN status='AUTH_REQUIRED' THEN 1 ELSE 0 END),0)
-            FROM semantic_enrichment_job
-            WHERE reason=?
+                COUNT(DISTINCT CASE WHEN j.status='COMPLETE' THEN j.representative_media_id END),
+                COUNT(DISTINCT CASE WHEN j.status IN ('PENDING','RUNNING') THEN j.representative_media_id END),
+                COUNT(DISTINCT CASE WHEN j.status='FAILED' THEN j.representative_media_id END),
+                COUNT(DISTINCT CASE WHEN j.status='AUTH_REQUIRED' THEN j.representative_media_id END)
+            FROM semantic_enrichment_job j
+            WHERE $personalJobSelection
+              AND j.representative_media_id IN (
+                  SELECT DISTINCT m.id
+                  FROM media_item m
+                  JOIN face_instance f ON f.media_id=m.id
+                  JOIN person_cluster p ON p.id=f.cluster_id
+                  WHERE m.media_kind='IMAGE'
+                    AND m.access_state='ACCESSIBLE'
+                    AND m.index_state='READY'
+                    AND p.reviewed=1
+                    AND p.hidden=0
+                    AND p.include_in_personal_memory=1
+              )
             """.trimIndent(),
-            arrayOf(personalReason),
+            personalJobArgs,
         ).use { cursor ->
             if (!cursor.moveToFirst()) IntArray(4) else IntArray(4) { cursor.getInt(it) }
         }
@@ -3075,17 +3903,56 @@ class GalleryDatabase(
             "SELECT COUNT(*) FROM semantic_enrichment_job WHERE status IN ('PENDING','RUNNING') AND user_requested=1",
             emptyArray(),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        val personalCounts = jobPersonalCounts.copyOf().also {
+            it[0] = countValidPersonalSemanticCaptions(db)
+            it[1] = (personalEligibleCount - it[0] - it[2] - it[3]).coerceAtLeast(0)
+        }
         val personalExactReuseCount = db.rawQuery(
-            "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption WHERE source_type='EXACT_DUPLICATE_REUSE'",
+            """
+                SELECT COUNT(DISTINCT c.evidence_media_id)
+                FROM semantic_caption c
+                JOIN (
+                    SELECT DISTINCT m.id
+                    FROM media_item m
+                    JOIN face_instance f ON f.media_id=m.id
+                    JOIN person_cluster p ON p.id=f.cluster_id
+                    WHERE m.media_kind='IMAGE'
+                      AND m.access_state='ACCESSIBLE'
+                      AND m.index_state='READY'
+                      AND p.reviewed=1
+                      AND p.hidden=0
+                      AND p.include_in_personal_memory=1
+                ) eligible ON eligible.id=c.evidence_media_id
+                WHERE c.scope='MEDIA' AND c.source_type='EXACT_DUPLICATE_REUSE'
+            """.trimIndent(),
             emptyArray(),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
         val personalStaleCount = db.rawQuery(
-            "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption WHERE applicability='STALE_PERSON_BINDING'",
+            """
+                SELECT COUNT(DISTINCT c.evidence_media_id)
+                FROM semantic_caption c
+                JOIN (
+                    SELECT DISTINCT m.id
+                    FROM media_item m
+                    JOIN face_instance f ON f.media_id=m.id
+                    JOIN person_cluster p ON p.id=f.cluster_id
+                    WHERE m.media_kind='IMAGE'
+                      AND m.access_state='ACCESSIBLE'
+                      AND m.index_state='READY'
+                      AND p.reviewed=1
+                      AND p.hidden=0
+                      AND p.include_in_personal_memory=1
+                ) eligible ON eligible.id=c.evidence_media_id
+                WHERE c.scope='MEDIA' AND c.applicability='STALE_PERSON_BINDING'
+            """.trimIndent(),
             emptyArray(),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
         val latestError = db.rawQuery(
-            "SELECT error FROM semantic_enrichment_job WHERE error IS NOT NULL AND error<>'' ORDER BY updated_at DESC LIMIT 1",
-            emptyArray(),
+            "SELECT error FROM semantic_enrichment_job " +
+                "WHERE error IS NOT NULL AND error<>'' AND status IN (?,?) " +
+                "AND COALESCE(model_version,'') NOT LIKE 'superseded:%' " +
+                "ORDER BY updated_at DESC,id DESC LIMIT 1",
+            arrayOf(SemanticEnrichmentStatus.FAILED.name, SemanticEnrichmentStatus.AUTH_REQUIRED.name),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
         return SemanticMemoryProgress(
             totalJobs = counts[0],
@@ -3140,49 +4007,102 @@ class GalleryDatabase(
         writableDatabase.transaction { db ->
             val now = System.currentTimeMillis()
             val facts = result.facts
+            val leaseOwner = job.leaseOwner ?: return@transaction
+            val superseded = db.update(
+                "semantic_enrichment_job",
+                ContentValues().apply {
+                    put("status", SemanticEnrichmentStatus.COMPLETE.name)
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("next_attempt_at", 0L)
+                    put("last_progress_at", now)
+                    put("updated_at", now)
+                },
+                "id=? AND status=? AND lease_owner=? AND lease_expires_at>? AND model_version LIKE 'superseded:%'",
+                arrayOf(job.id, SemanticEnrichmentStatus.RUNNING.name, leaseOwner, now.toString()),
+            )
+            if (superseded == 1) return@transaction
+            val producer = result.caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
+            val completionModel = producer?.let { "caption-v4:$it" } ?: "caption-v4:no-accepted-output"
+            // Claim completion before writing derived records. The enclosing transaction
+            // makes the status change and all derived writes atomic, while the owner and
+            // unexpired lease prevent a reclaimed worker from committing stale evidence.
+            val claimed = db.update(
+                "semantic_enrichment_job",
+                ContentValues().apply {
+                    put("status", SemanticEnrichmentStatus.COMPLETE.name)
+                    put("model_version", completionModel)
+                    putNull("error")
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("next_attempt_at", 0L)
+                    put("last_progress_at", now)
+                    put("updated_at", now)
+                },
+                "id=? AND status=? AND lease_owner=? AND lease_expires_at>? AND COALESCE(model_version,'') NOT LIKE 'superseded:%'",
+                arrayOf(job.id, SemanticEnrichmentStatus.RUNNING.name, leaseOwner, now.toString()),
+            )
+            if (claimed != 1) return@transaction
             var storedCaption: SemanticCaptionRecord? = null
+
+            fun storeFact(fact: SemanticFactRecord) {
+                val stable = listOf(
+                    fact.scope.name,
+                    fact.subjectId,
+                    fact.predicate,
+                    fact.value,
+                    fact.evidenceMediaId,
+                    fact.applicability,
+                    fact.modelVersion,
+                    fact.promptVersion,
+                ).joinToString("|")
+                val id = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
+                db.insertWithOnConflict("semantic_fact", null, ContentValues().apply {
+                    put("id", id)
+                    put("scope", fact.scope.name)
+                    put("subject_id", fact.subjectId)
+                    put("predicate", fact.predicate)
+                    put("value", sensitiveDataAtRest.protect(fact.value))
+                    put("confidence", fact.confidence)
+                    put("evidence_media_id", fact.evidenceMediaId)
+                    if (fact.region == null) putNull("region") else put("region", JSONArray(fact.region).toString())
+                    put("applicability", fact.applicability)
+                    put("model_version", fact.modelVersion)
+                    put("prompt_version", fact.promptVersion)
+                    if (fact.generationId == null) putNull("generation_id") else put("generation_id", fact.generationId)
+                    put("updated_at", now)
+                }, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+
             facts.forEach { fact ->
-                val targets = if (fact.applicability == "SAFE_FOR_EXACT_DUPLICATES") {
+                // Preserve the generated fact exactly as scoped. Propagation is a second,
+                // explicit write and is allowed only for media or exact-duplicate-group facts.
+                storeFact(fact)
+                if (
+                    fact.applicability == "SAFE_FOR_EXACT_DUPLICATES" &&
+                    fact.scope in setOf(SemanticFactScope.MEDIA, SemanticFactScope.EXACT_DUPLICATE_GROUP)
+                ) {
                     exactDuplicateMediaIds(db, fact.evidenceMediaId)
-                } else {
-                    setOf(fact.subjectId)
-                }
-                targets.forEach { subjectId ->
-                    val stable = "${fact.scope}|$subjectId|${fact.predicate}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}"
-                    val id = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
-                    db.insertWithOnConflict("semantic_fact", null, ContentValues().apply {
-                        put("id", id)
-                    put(
-                        "scope",
-                        if (fact.applicability == "SAFE_FOR_EXACT_DUPLICATES") {
-                            SemanticFactScope.MEDIA.name
-                        } else if (subjectId == fact.evidenceMediaId) {
-                            fact.scope.name
-                        } else {
-                            SemanticFactScope.MEDIA.name
-                        },
-                    )
-                        put("subject_id", subjectId)
-                        put("predicate", fact.predicate)
-                        put("value", fact.value)
-                        put("confidence", fact.confidence)
-                        put("evidence_media_id", fact.evidenceMediaId)
-                        if (fact.region == null) putNull("region") else put("region", JSONArray(fact.region).toString())
-                        put("applicability", if (subjectId == fact.evidenceMediaId) fact.applicability else "EXACT_DUPLICATE_SHARED")
-                        put("model_version", fact.modelVersion)
-                        put("prompt_version", fact.promptVersion)
-                        put("updated_at", now)
-                    }, SQLiteDatabase.CONFLICT_REPLACE)
+                        .forEach { targetMediaId ->
+                            storeFact(
+                                fact.copy(
+                                    scope = SemanticFactScope.MEDIA,
+                                    subjectId = targetMediaId,
+                                    evidenceMediaId = targetMediaId,
+                                    applicability = "EXACT_DUPLICATE_SHARED",
+                                ),
+                            )
+                        }
                 }
             }
             result.caption?.let { caption ->
-                val stable = "${caption.scope}|${caption.subjectId}|${caption.evidenceMediaId}|${caption.modelVersion}|${caption.promptVersion}"
+                val stable = "${caption.scope}|${caption.subjectId}|${caption.evidenceMediaId}|${caption.modelVersion}|${caption.promptVersion}|${caption.generationId.orEmpty()}"
                 val captionId = UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString()
                 db.insertWithOnConflict("semantic_caption", null, ContentValues().apply {
                     put("id", captionId)
                     put("scope", caption.scope.name)
                     put("subject_id", caption.subjectId)
-                    put("text", caption.text.take(4_000))
+                    put("text", sensitiveDataAtRest.protect(caption.text.take(4_000)))
                     put("confidence", caption.confidence.coerceIn(0f, 1f))
                     put("evidence_media_id", caption.evidenceMediaId)
                     if (caption.representativeMediaId == null) {
@@ -3195,6 +4115,7 @@ class GalleryDatabase(
                     put("body_region_version", caption.bodyRegionVersion)
                     put("model_version", caption.modelVersion)
                     put("prompt_version", caption.promptVersion)
+                    if (caption.generationId == null) putNull("generation_id") else put("generation_id", caption.generationId)
                     put("created_at", caption.createdAt.takeIf { it > 0L } ?: now)
                     put("updated_at", now)
                     putNull("chunk_policy_version")
@@ -3217,14 +4138,28 @@ class GalleryDatabase(
                     updatedAt = now,
                 )
             }
+            result.generation?.let { generation ->
+                db.insertWithOnConflict("semantic_generation", null, ContentValues().apply {
+                    put("generation_id", generation.generationId)
+                    if (storedCaption?.id == null) putNull("caption_id") else put("caption_id", storedCaption?.id)
+                    put("job_id", generation.jobId)
+                    put("scope", generation.scope.name)
+                    put("scope_id", generation.scopeId)
+                    put("evidence_media_id", generation.evidenceMediaId)
+                    put("model_version", generation.modelVersion)
+                    put("prompt_version", generation.promptVersion)
+                    put("body_region_version", generation.bodyRegionVersion)
+                    put("created_at", generation.createdAt)
+                }, SQLiteDatabase.CONFLICT_REPLACE)
+            }
             result.personFacts.forEach { fact ->
-                val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}"
+                val stable = "${fact.mediaId}|${fact.clusterId}|${fact.relation}|${fact.category}|${fact.itemType}|${fact.value}|${fact.modelVersion}|${fact.promptVersion}|${fact.bodyRegionVersion}|${fact.generationId.orEmpty()}"
                 db.insertWithOnConflict("person_attribute_fact", null, ContentValues().apply {
                     put("id", UUID.nameUUIDFromBytes(stable.toByteArray(Charsets.UTF_8)).toString())
                     put("media_id", fact.mediaId)
                     put("cluster_id", fact.clusterId)
                     put("predicate", fact.relation.name.lowercase(Locale.ROOT))
-                    put("value", fact.value.take(240))
+                    put("value", sensitiveDataAtRest.protect(fact.value.take(240)))
                     put("confidence", fact.confidence.coerceIn(0f, 1f))
                     put("region", JSONArray(fact.evidenceRegion ?: fact.faceRegion).toString())
                     put("model_version", fact.modelVersion)
@@ -3232,29 +4167,19 @@ class GalleryDatabase(
                     put("relation", fact.relation.name)
                     put("category", fact.category?.name ?: WornItemCategory.OTHER_WORN_ITEM.name)
                     if (fact.itemType == null) putNull("item_type") else put("item_type", fact.itemType.take(120))
-                    put("attributes", encodeAttributes(fact.attributes))
+                    put("attributes", sensitiveDataAtRest.protect(encodeAttributes(fact.attributes)))
                     put("body_region", fact.bodyRegion.name)
                     put("face_region", JSONArray(fact.faceRegion).toString())
                     put("association_status", fact.associationStatus.name)
                     put("verdict", fact.verdict.name)
                     if (fact.targetClusterId == null) putNull("target_cluster_id") else put("target_cluster_id", fact.targetClusterId)
                     put("prompt_version", fact.promptVersion)
+                    if (fact.generationId == null) putNull("generation_id") else put("generation_id", fact.generationId)
+                    put("body_region_version", fact.bodyRegionVersion)
                     put("updated_at", now)
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
             storedCaption?.let { replaceCaptionChunks(db, it, facts, result.personFacts) }
-            val producer = result.caption?.modelVersion ?: facts.firstOrNull()?.modelVersion
-            val completionPrefix = "caption-v4"
-            db.update("semantic_enrichment_job", ContentValues().apply {
-                put("status", SemanticEnrichmentStatus.COMPLETE.name)
-                put("model_version", producer?.let { "$completionPrefix:$it" } ?: "$completionPrefix:no-accepted-output")
-                putNull("error")
-                putNull("lease_owner")
-                putNull("lease_expires_at")
-                put("next_attempt_at", 0L)
-                put("last_progress_at", now)
-                put("updated_at", now)
-            }, "id=?", arrayOf(job.id))
             updateStage(
                 db,
                 job.representativeMediaId,
@@ -3272,28 +4197,44 @@ class GalleryDatabase(
         authenticationRequired: Boolean = false,
     ) {
         writableDatabase.transaction { db ->
+            val leaseOwner = job.leaseOwner ?: return@transaction
+            val now = System.currentTimeMillis()
+            val superseded = db.update(
+                "semantic_enrichment_job",
+                ContentValues().apply {
+                    put("status", SemanticEnrichmentStatus.COMPLETE.name)
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("next_attempt_at", 0L)
+                    put("last_progress_at", now)
+                    put("updated_at", now)
+                },
+                "id=? AND status=? AND lease_owner=? AND lease_expires_at>? AND model_version LIKE 'superseded:%'",
+                arrayOf(job.id, SemanticEnrichmentStatus.RUNNING.name, leaseOwner, now.toString()),
+            )
+            if (superseded == 1) return@transaction
             val status = when {
                 authenticationRequired -> SemanticEnrichmentStatus.AUTH_REQUIRED
                 retryable && job.attemptCount < 3 -> SemanticEnrichmentStatus.PENDING
                 else -> SemanticEnrichmentStatus.FAILED
             }
-            db.update("semantic_enrichment_job", ContentValues().apply {
+            val updated = db.update("semantic_enrichment_job", ContentValues().apply {
                 put("status", status.name)
                 put("error", error.take(240))
                 putNull("lease_owner")
                 putNull("lease_expires_at")
-                put("last_progress_at", System.currentTimeMillis())
+                put("last_progress_at", now)
                 put(
                     "next_attempt_at",
                     if (status == SemanticEnrichmentStatus.PENDING) {
-                        IndexingRetryPolicy.nextAttemptAt(System.currentTimeMillis(), job.attemptCount)
+                        IndexingRetryPolicy.nextAttemptAt(now, job.attemptCount)
                     } else {
                         0L
                     },
                 )
-                put("updated_at", System.currentTimeMillis())
-            }, "id=?", arrayOf(job.id))
-            if (status == SemanticEnrichmentStatus.FAILED) {
+                put("updated_at", now)
+            }, "id=? AND status=? AND lease_owner=? AND COALESCE(model_version,'') NOT LIKE 'superseded:%'", arrayOf(job.id, SemanticEnrichmentStatus.RUNNING.name, leaseOwner))
+            if (updated == 1 && status == SemanticEnrichmentStatus.FAILED) {
                 updateStage(
                     db,
                     job.representativeMediaId,
@@ -3319,7 +4260,7 @@ class GalleryDatabase(
                             scope = SemanticFactScope.valueOf(cursor.text("scope")),
                             subjectId = cursor.text("subject_id"),
                             predicate = cursor.text("predicate"),
-                            value = cursor.text("value"),
+                            value = sensitiveDataAtRest.reveal(cursor.text("value")),
                             confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
                             evidenceMediaId = cursor.text("evidence_media_id"),
                             region = cursor.nullableText("region")?.let { encoded ->
@@ -3328,6 +4269,7 @@ class GalleryDatabase(
                             applicability = cursor.text("applicability"),
                             modelVersion = cursor.text("model_version"),
                             promptVersion = cursor.text("prompt_version"),
+                            generationId = cursor.nullableText("generation_id"),
                         ),
                     )
                 }
@@ -3346,7 +4288,7 @@ class GalleryDatabase(
                         scope = SemanticFactScope.valueOf(cursor.text("scope")),
                         subjectId = cursor.text("subject_id"),
                         predicate = cursor.text("predicate"),
-                        value = cursor.text("value"),
+                        value = sensitiveDataAtRest.reveal(cursor.text("value")),
                         confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
                         evidenceMediaId = cursor.text("evidence_media_id"),
                         region = cursor.nullableText("region")?.let { encoded ->
@@ -3355,6 +4297,7 @@ class GalleryDatabase(
                         applicability = cursor.text("applicability"),
                         modelVersion = cursor.text("model_version"),
                         promptVersion = cursor.text("prompt_version"),
+                        generationId = cursor.nullableText("generation_id"),
                     ),
                 )
             }
@@ -3372,7 +4315,7 @@ class GalleryDatabase(
                         scope = SemanticFactScope.valueOf(cursor.text("scope")),
                         subjectId = cursor.text("subject_id"),
                         predicate = cursor.text("predicate"),
-                        value = cursor.text("value"),
+                        value = sensitiveDataAtRest.reveal(cursor.text("value")),
                         confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
                         evidenceMediaId = cursor.text("evidence_media_id"),
                         region = cursor.nullableText("region")?.let { encoded ->
@@ -3381,6 +4324,7 @@ class GalleryDatabase(
                         applicability = cursor.text("applicability"),
                         modelVersion = cursor.text("model_version"),
                         promptVersion = cursor.text("prompt_version"),
+                        generationId = cursor.nullableText("generation_id"),
                     ),
                 )
             }
@@ -3467,8 +4411,14 @@ class GalleryDatabase(
             replaceCaptionChunks(
                 db,
                 caption,
-                semanticFactsForMedia(caption.evidenceMediaId),
-                personVisualFactsForMedia(caption.evidenceMediaId),
+                CaptionChunkFactProvenancePolicy.matchingFacts(
+                    caption,
+                    semanticFactsForMedia(caption.evidenceMediaId),
+                ),
+                CaptionChunkFactProvenancePolicy.matchingPersonFacts(
+                    caption,
+                    personVisualFactsForMedia(caption.evidenceMediaId),
+                ),
             )
         }
         captions.size
@@ -3497,6 +4447,25 @@ class GalleryDatabase(
             arrayOf(now, now),
         )
     }
+
+    fun hasCaptionEmbeddingBackfillWork(): Boolean =
+        readableDatabase.rawQuery(
+            """
+            SELECT 1 WHERE EXISTS(
+                SELECT 1 FROM semantic_caption
+                WHERE COALESCE(chunk_policy_version,'')<>?
+                  AND applicability<>'STALE_PERSON_BINDING'
+            ) OR EXISTS(
+                SELECT 1 FROM semantic_caption_chunk
+                WHERE COALESCE(applicability,'')<>'STALE_PERSON_BINDING'
+                  AND (
+                    embedding_state IN ('PENDING','RUNNING','FAILED_RETRYABLE')
+                    OR (embedding_state='COMPLETE' AND embedding_model_version IS NULL)
+                  )
+            ) LIMIT 1
+            """.trimIndent(),
+            arrayOf(SemanticCaptionChunker.POLICY_VERSION),
+        ).use { cursor -> cursor.moveToFirst() }
 
     fun claimCaptionEmbeddingChunks(owner: String, producerVersion: String, limit: Int): List<SemanticCaptionChunkRecord> =
         writableDatabase.transaction { db ->
@@ -3531,7 +4500,7 @@ class GalleryDatabase(
             ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
         }
 
-    fun completeCaptionEmbedding(chunkId: String, producerVersion: String) {
+    fun completeCaptionEmbedding(chunkId: String, producerVersion: String, owner: String): Boolean =
         writableDatabase.update("semantic_caption_chunk", ContentValues().apply {
             put("embedding_state", CaptionEmbeddingState.COMPLETE.name)
             put("embedding_model_version", producerVersion)
@@ -3541,13 +4510,26 @@ class GalleryDatabase(
             put("next_attempt_at", 0L)
             put("last_progress_at", System.currentTimeMillis())
             put("updated_at", System.currentTimeMillis())
-        }, "id=?", arrayOf(chunkId))
-    }
+        }, "id=? AND embedding_state=? AND lease_owner=? AND embedding_model_version=?", arrayOf(
+            chunkId,
+            CaptionEmbeddingState.RUNNING.name,
+            owner,
+            producerVersion,
+        )) == 1
 
-    fun failCaptionEmbedding(chunkId: String, error: String, retryable: Boolean) {
-        val db = writableDatabase
-        val attempt = db.rawQuery("SELECT attempt_count FROM semantic_caption_chunk WHERE id=?", arrayOf(chunkId))
-            .use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else IndexingRetryPolicy.MAX_ITEM_ATTEMPTS }
+    fun failCaptionEmbedding(
+        chunkId: String,
+        producerVersion: String,
+        owner: String,
+        error: String,
+        retryable: Boolean,
+    ): Boolean = writableDatabase.transaction { db ->
+        val attempt = db.rawQuery(
+            "SELECT attempt_count FROM semantic_caption_chunk " +
+                "WHERE id=? AND embedding_state=? AND lease_owner=? AND embedding_model_version=?",
+            arrayOf(chunkId, CaptionEmbeddingState.RUNNING.name, owner, producerVersion),
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else null }
+            ?: return@transaction false
         val state = when {
             !retryable -> CaptionEmbeddingState.FAILED_PERMANENT
             attempt >= IndexingRetryPolicy.MAX_ITEM_ATTEMPTS -> CaptionEmbeddingState.FAILED_EXHAUSTED
@@ -3568,7 +4550,12 @@ class GalleryDatabase(
             )
             put("last_progress_at", System.currentTimeMillis())
             put("updated_at", System.currentTimeMillis())
-        }, "id=?", arrayOf(chunkId))
+        }, "id=? AND embedding_state=? AND lease_owner=? AND embedding_model_version=?", arrayOf(
+            chunkId,
+            CaptionEmbeddingState.RUNNING.name,
+            owner,
+            producerVersion,
+        )) == 1
     }
 
     fun releaseCaptionEmbeddingClaims(owner: String, reason: String) {
@@ -3598,9 +4585,38 @@ class GalleryDatabase(
         ).use(android.database.Cursor::moveToFirst)
 
     fun currentCaptionEmbeddingChunkIds(producerVersion: String): Set<String> = readableDatabase.rawQuery(
-        "SELECT id FROM semantic_caption_chunk WHERE embedding_state='COMPLETE' AND embedding_model_version=?",
-        arrayOf(producerVersion),
+        """
+        SELECT id FROM semantic_caption_chunk
+        WHERE embedding_state='COMPLETE' AND embedding_model_version=?
+          AND chunk_policy_version=? AND applicability<>'STALE_PERSON_BINDING'
+        """.trimIndent(),
+        arrayOf(producerVersion, SemanticCaptionChunker.POLICY_VERSION),
     ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    fun requeueMissingCaptionEmbeddings(chunkIds: Set<String>, producerVersion: String): Int =
+        writableDatabase.transaction { db ->
+            var repaired = 0
+            chunkIds.chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                if (ids.isEmpty()) return@forEach
+                val placeholders = ids.joinToString(",") { "?" }
+                repaired += db.update(
+                    "semantic_caption_chunk",
+                    ContentValues().apply {
+                        put("embedding_state", CaptionEmbeddingState.PENDING.name)
+                        putNull("embedding_model_version")
+                        put("attempt_count", 0)
+                        putNull("error")
+                        putNull("lease_owner")
+                        putNull("lease_expires_at")
+                        put("next_attempt_at", 0L)
+                        put("updated_at", System.currentTimeMillis())
+                    },
+                    "id IN ($placeholders) AND embedding_state='COMPLETE' AND embedding_model_version=?",
+                    arrayOf(*ids.toTypedArray(), producerVersion),
+                )
+            }
+            repaired
+        }
 
     fun eligibleCaptionChunksForSearch(
         allowedMediaIds: Set<String>,
@@ -3612,18 +4628,34 @@ class GalleryDatabase(
             val placeholders = ids.joinToString(",") { "?" }
             readableDatabase.rawQuery(
                 """
-                SELECT * FROM semantic_caption_chunk
-                WHERE media_id IN ($placeholders) AND embedding_state='COMPLETE' AND embedding_model_version=?
+                SELECT c.* FROM semantic_caption_chunk c
+                JOIN semantic_caption cap ON cap.id=c.caption_id
+                WHERE c.media_id IN ($placeholders) AND c.chunk_policy_version=?
+                  AND c.scope=cap.scope
+                  AND c.scope_id=cap.subject_id
+                  AND c.media_id=cap.evidence_media_id
+                  AND c.evidence_media_id=cap.evidence_media_id
+                  AND c.caption_model_version=cap.model_version
+                  AND c.caption_prompt_version=cap.prompt_version
+                  AND c.generation_id IS cap.generation_id
                 """.trimIndent(),
-                arrayOf(*ids.toTypedArray(), producerVersion),
+                arrayOf(*ids.toTypedArray(), SemanticCaptionChunker.POLICY_VERSION),
             ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
         }
         val contextual = readableDatabase.rawQuery(
             """
-            SELECT * FROM semantic_caption_chunk
-            WHERE scope IN ('VISUAL_GROUP','EVENT') AND embedding_state='COMPLETE' AND embedding_model_version=?
+            SELECT c.* FROM semantic_caption_chunk c
+            JOIN semantic_caption cap ON cap.id=c.caption_id
+            WHERE c.scope IN ('VISUAL_GROUP','EVENT') AND c.chunk_policy_version=?
+              AND c.scope=cap.scope
+              AND c.scope_id=cap.subject_id
+              AND c.media_id=cap.evidence_media_id
+              AND c.evidence_media_id=cap.evidence_media_id
+              AND c.caption_model_version=cap.model_version
+              AND c.caption_prompt_version=cap.prompt_version
+              AND c.generation_id IS cap.generation_id
             """.trimIndent(),
-            arrayOf(producerVersion),
+            arrayOf(SemanticCaptionChunker.POLICY_VERSION),
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(readCaptionChunk(cursor)) } }
             .filter { chunkTargets(it).any { target -> target in allowedMediaIds } }
         return (direct + contextual).asSequence()
@@ -3657,8 +4689,16 @@ class GalleryDatabase(
                 return@flatMap emptyList()
             }
             val caption = captions[chunk.captionId] ?: return@flatMap emptyList()
+            if (!CaptionChunkSearchPolicy.isSearchableVector(caption, chunk)) {
+                return@flatMap emptyList()
+            }
             chunkTargets(chunk).filter { it in allowedMediaIds }.map { mediaId ->
-                val direct = chunk.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP || mediaId == chunk.evidenceMediaId
+                val direct = SemanticProvenanceApplicability.isDirect(
+                    scope = chunk.scope,
+                    applicability = chunk.applicability,
+                    mediaId = mediaId,
+                    evidenceMediaId = chunk.evidenceMediaId,
+                )
                 CaptionSearchHit(
                     mediaId = mediaId,
                     caption = caption,
@@ -3688,18 +4728,32 @@ class GalleryDatabase(
         allowedIds: Set<String>,
         requiredPersonClusterIds: Set<String> = emptySet(),
         limit: Int = 500,
-    ): List<CaptionSearchHit> {
-        if (allowedIds.isEmpty()) return emptyList()
+    ): CaptionLexicalSearchResult {
+        if (allowedIds.isEmpty()) return CaptionLexicalSearchResult(emptyList(), ChannelStatus.NOT_REQUIRED)
         val variants = CaptionLexicalQueryBuilder.variants(queries)
-        val perVariant = variants.mapNotNull { query ->
-            val expression = CaptionLexicalQueryBuilder.ftsExpression(query) ?: return@mapNotNull null
-            val matches = runCatching {
+        val executableVariants = variants.mapNotNull { query ->
+            CaptionLexicalQueryBuilder.ftsExpression(query)?.let { expression -> query to expression }
+        }
+        if (executableVariants.isEmpty()) {
+            return CaptionLexicalSearchResult(emptyList(), ChannelStatus.NOT_REQUIRED)
+        }
+        var ftsFailed = false
+        val perVariant = executableVariants.mapNotNull { (query, expression) ->
+            val matchesResult = runCatching {
                 readableDatabase.rawQuery(
                     """
                     SELECT c.*,matchinfo(semantic_caption_chunk_fts,'pcnalx') AS fts_info
                     FROM semantic_caption_chunk_fts
                     JOIN semantic_caption_chunk c ON c.id=semantic_caption_chunk_fts.chunk_id
+                    JOIN semantic_caption cap ON cap.id=c.caption_id
                     WHERE semantic_caption_chunk_fts MATCH ? AND c.chunk_policy_version=?
+                      AND c.scope=cap.scope
+                      AND c.scope_id=cap.subject_id
+                      AND c.media_id=cap.evidence_media_id
+                      AND c.evidence_media_id=cap.evidence_media_id
+                      AND c.caption_model_version=cap.model_version
+                      AND c.caption_prompt_version=cap.prompt_version
+                      AND c.generation_id IS cap.generation_id
                     """.trimIndent(),
                     arrayOf(expression, SemanticCaptionChunker.POLICY_VERSION),
                 ).use { cursor ->
@@ -3717,8 +4771,12 @@ class GalleryDatabase(
                             val caption = semanticCaptionById(chunk.captionId) ?: continue
                             val baseScore = CaptionFtsRanker.bm25(cursor.getBlob(cursor.getColumnIndexOrThrow("fts_info")))
                             chunkTargets(chunk).filter { it in allowedIds }.forEach { mediaId ->
-                                val direct = chunk.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP ||
-                                    mediaId == chunk.evidenceMediaId
+                                val direct = SemanticProvenanceApplicability.isDirect(
+                                    scope = chunk.scope,
+                                    applicability = chunk.applicability,
+                                    mediaId = mediaId,
+                                    evidenceMediaId = chunk.evidenceMediaId,
+                                )
                                 add(
                                     CaptionSearchHit(
                                         mediaId,
@@ -3733,16 +4791,43 @@ class GalleryDatabase(
                         }
                     }
                 }
-            }.getOrDefault(emptyList()).sortedByDescending(CaptionSearchHit::score).distinctBy(CaptionSearchHit::mediaId)
-            query to matches
+            }
+            if (matchesResult.isFailure) {
+                ftsFailed = true
+                null
+            } else {
+                query to matchesResult.getOrThrow()
+                    .sortedByDescending(CaptionSearchHit::score)
+                    .distinctBy(CaptionSearchHit::mediaId)
+            }
         }
-        if (perVariant.any { it.second.isNotEmpty() }) {
-            val fused = HybridRankFusion.fuse(perVariant.map { RankedChannel(1.0, it.second.map(CaptionSearchHit::mediaId)) })
-            val best = perVariant.flatMap { it.second }.groupBy(CaptionSearchHit::mediaId)
-                .mapValues { (_, hits) -> hits.maxBy(CaptionSearchHit::score) }
-            return fused.mapNotNull { (mediaId, score) -> best[mediaId]?.copy(score = score) }.take(limit)
+        val fused = fuseCaptionHits(perVariant, limit)
+        if (!ftsFailed) {
+            return CaptionLexicalSearchResult(fused, ChannelStatus.SUCCESS)
         }
-        return legacyCaptionSearch(variants, allowedIds, limit)
+        val fallbackResult = runCatching { legacyCaptionSearch(variants, allowedIds, limit) }
+        val fallback = fallbackResult.getOrDefault(emptyList())
+        val combined = (fused + fallback).distinctBy(CaptionSearchHit::mediaId).take(limit)
+        return CaptionLexicalSearchResult(
+            hits = combined,
+            status = if (fallbackResult.isFailure) ChannelStatus.FAILED else ChannelStatus.PARTIAL,
+            errorCode = if (fallbackResult.isFailure) {
+                "CAPTION_FTS_AND_LEGACY_SEARCH_FAILED"
+            } else {
+                "CAPTION_FTS_SEARCH_FAILED_LEGACY_FALLBACK"
+            },
+        )
+    }
+
+    private fun fuseCaptionHits(
+        perVariant: List<Pair<String, List<CaptionSearchHit>>>,
+        limit: Int,
+    ): List<CaptionSearchHit> {
+        if (perVariant.isEmpty()) return emptyList()
+        val fused = HybridRankFusion.fuse(perVariant.map { RankedChannel(1.0, it.second.map(CaptionSearchHit::mediaId)) })
+        val best = perVariant.flatMap { it.second }.groupBy(CaptionSearchHit::mediaId)
+            .mapValues { (_, hits) -> hits.maxBy(CaptionSearchHit::score) }
+        return fused.mapNotNull { (mediaId, score) -> best[mediaId]?.copy(score = score) }.take(limit)
     }
 
     private fun legacyCaptionSearch(
@@ -3757,7 +4842,12 @@ class GalleryDatabase(
                 val matched = terms.count { it in caption.text.lowercase(Locale.ROOT) }
                 if (matched == 0) return@flatMap emptyList()
                 captionTargets(caption).filter { it in allowedIds }.map { mediaId ->
-                    val direct = mediaId == caption.evidenceMediaId || caption.scope == SemanticFactScope.EXACT_DUPLICATE_GROUP
+                    val direct = SemanticProvenanceApplicability.isDirect(
+                        scope = caption.scope,
+                        applicability = caption.applicability,
+                        mediaId = mediaId,
+                        evidenceMediaId = caption.evidenceMediaId,
+                    )
                     CaptionSearchHit(
                         mediaId,
                         caption,
@@ -3775,26 +4865,58 @@ class GalleryDatabase(
         return fused.mapNotNull { (id, score) -> best[id]?.copy(score = score) }.take(limit)
     }
 
-    fun semanticCaptionEvidenceCount(): Int = readableDatabase.rawQuery(
-        "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption",
-        emptyArray(),
-    ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+    fun semanticCaptionEvidenceCount(mediaIds: Set<String>? = null): Int {
+        if (mediaIds != null && mediaIds.isEmpty()) return 0
+        val db = readableDatabase
+        val covered = linkedSetOf<String>()
 
-    fun semanticCaptionEvidenceCount(allowedMediaIds: Set<String>): Int {
-        if (allowedMediaIds.isEmpty()) return 0
-
-        return allowedMediaIds.chunked(SQLITE_ID_CHUNK).sumOf { ids ->
-            val placeholders = ids.joinToString(",") { "?" }
-            readableDatabase.rawQuery(
-                "SELECT COUNT(DISTINCT evidence_media_id) FROM semantic_caption " +
-                    "WHERE evidence_media_id IN ($placeholders)",
-                ids.toTypedArray(),
-            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        fun collect(sql: String, args: Array<String>) {
+            db.rawQuery(sql, args).use { cursor ->
+                while (cursor.moveToNext()) covered += cursor.getString(0)
+            }
         }
+
+        if (mediaIds == null) {
+            collect(
+                "SELECT DISTINCT c.evidence_media_id FROM semantic_caption c " +
+                    "WHERE c.scope IN ('MEDIA','QUERY_VERIFICATION') " +
+                    "AND c.applicability<>'${SemanticProvenanceApplicability.STALE_PERSON_BINDING}'",
+                emptyArray(),
+            )
+            collect(
+                "SELECT DISTINCT gm.media_id FROM semantic_caption c " +
+                    "JOIN visual_group_member gm ON c.scope='EXACT_DUPLICATE_GROUP' AND c.subject_id=gm.group_id " +
+                    "JOIN visual_group g ON g.id=gm.group_id " +
+                    "WHERE g.kind='EXACT_DUPLICATE' AND " +
+                    "c.applicability='${SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES}'",
+                emptyArray(),
+            )
+        } else {
+            mediaIds.chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                val placeholders = ids.joinToString(",") { "?" }
+                collect(
+                    "SELECT DISTINCT c.evidence_media_id FROM semantic_caption c " +
+                        "WHERE c.scope IN ('MEDIA','QUERY_VERIFICATION') " +
+                        "AND c.applicability<>'${SemanticProvenanceApplicability.STALE_PERSON_BINDING}' " +
+                        "AND c.evidence_media_id IN ($placeholders)",
+                    ids.toTypedArray(),
+                )
+                collect(
+                    "SELECT DISTINCT gm.media_id FROM semantic_caption c " +
+                        "JOIN visual_group_member gm ON c.scope='EXACT_DUPLICATE_GROUP' AND c.subject_id=gm.group_id " +
+                        "JOIN visual_group g ON g.id=gm.group_id " +
+                        "WHERE g.kind='EXACT_DUPLICATE' AND " +
+                        "c.applicability='${SemanticProvenanceApplicability.SAFE_FOR_EXACT_DUPLICATES}' " +
+                        "AND gm.media_id IN ($placeholders)",
+                    ids.toTypedArray(),
+                )
+            }
+        }
+        return covered.size
     }
 
     fun hasAuthenticationProtectedOcr(mediaId: String): Boolean = readableDatabase.rawQuery(
-        "SELECT 1 FROM ocr_entity WHERE media_id=? AND entity_type IN ('PASSWORD','EMAIL','PHONE','ORDER_ID') LIMIT 1",
+        "SELECT 1 FROM ocr_entity WHERE media_id=? AND entity_type IN ('AMOUNT','RECEIPT_TOTAL','PASSWORD','EMAIL','PHONE','ORDER_ID') LIMIT 1",
         arrayOf(mediaId),
     ).use(android.database.Cursor::moveToFirst)
 
@@ -3816,7 +4938,7 @@ class GalleryDatabase(
             id = id,
             scope = SemanticFactScope.valueOf(cursor.text("scope")),
             subjectId = cursor.text("subject_id"),
-            text = cursor.text("text"),
+            text = sensitiveDataAtRest.reveal(cursor.text("text")),
             confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
             evidenceMediaId = cursor.text("evidence_media_id"),
             representativeMediaId = cursor.nullableText("representative_media_id"),
@@ -3828,6 +4950,7 @@ class GalleryDatabase(
             createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
             updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
             personRefs = captionPersonRefs(id),
+            generationId = cursor.nullableText("generation_id"),
         )
     }
 
@@ -3861,6 +4984,7 @@ class GalleryDatabase(
         lastProgressAt = cursor.getColumnIndex("last_progress_at").let { if (it < 0 || cursor.isNull(it)) null else cursor.getLong(it) },
         createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
         updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+        generationId = cursor.nullableText("generation_id"),
     )
 
     private fun readPersonVisualFact(cursor: android.database.Cursor): PersonVisualFactRecord {
@@ -3869,13 +4993,14 @@ class GalleryDatabase(
             id = cursor.text("id"),
             mediaId = cursor.text("media_id"),
             clusterId = cursor.text("cluster_id"),
-            resolvedLabel = cursor.nullableText("label") ?: cursor.nullableText("relationship"),
+            resolvedLabel = cursor.nullableText("label")?.let(sensitiveDataAtRest::reveal)
+                ?: cursor.nullableText("relationship")?.let(sensitiveDataAtRest::reveal),
             personRef = cursor.text("person_ref"),
             relation = enumOrDefault(cursor.text("relation"), PersonVisualRelation.ACTION),
             category = enumOrNull<WornItemCategory>(cursor.text("category")),
             itemType = cursor.nullableText("item_type"),
-            value = cursor.text("value"),
-            attributes = decodeAttributes(cursor.text("attributes")),
+            value = sensitiveDataAtRest.reveal(cursor.text("value")),
+            attributes = decodeAttributes(sensitiveDataAtRest.reveal(cursor.text("attributes"))),
             bodyRegion = enumOrDefault(cursor.text("body_region"), BodyRegion.UNKNOWN),
             confidence = cursor.getFloat(cursor.getColumnIndexOrThrow("confidence")),
             faceRegion = cursor.nullableText("face_region")?.let(::decodeRegion) ?: region,
@@ -3885,7 +5010,9 @@ class GalleryDatabase(
             targetClusterId = cursor.nullableText("target_cluster_id"),
             modelVersion = cursor.text("model_version"),
             promptVersion = cursor.text("prompt_version"),
+            bodyRegionVersion = cursor.text("body_region_version"),
             updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+            generationId = cursor.nullableText("generation_id"),
         )
     }
 
@@ -3919,6 +5046,7 @@ class GalleryDatabase(
                 put("caption_model_version", chunk.captionModelVersion)
                 put("caption_prompt_version", chunk.captionPromptVersion)
                 put("chunk_policy_version", chunk.chunkPolicyVersion)
+                if (chunk.generationId == null) putNull("generation_id") else put("generation_id", chunk.generationId)
                 putNull("embedding_model_version")
                 put("embedding_state", CaptionEmbeddingState.PENDING.name)
                 put("attempt_count", 0)
@@ -3943,7 +5071,8 @@ class GalleryDatabase(
 
     private fun captionTargets(caption: SemanticCaptionRecord): List<String> = when (caption.scope) {
         SemanticFactScope.MEDIA, SemanticFactScope.QUERY_VERIFICATION -> listOf(caption.evidenceMediaId)
-        SemanticFactScope.EXACT_DUPLICATE_GROUP, SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
+        SemanticFactScope.EXACT_DUPLICATE_GROUP -> exactDuplicateGroupMembers(caption.subjectId)
+        SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
             "SELECT media_id FROM visual_group_member WHERE group_id=?",
             arrayOf(caption.subjectId),
         ).use { cursor -> buildList { add(caption.evidenceMediaId); while (cursor.moveToNext()) add(cursor.getString(0)) } }
@@ -3952,12 +5081,20 @@ class GalleryDatabase(
 
     private fun chunkTargets(chunk: SemanticCaptionChunkRecord): List<String> = when (chunk.scope) {
         SemanticFactScope.MEDIA, SemanticFactScope.QUERY_VERIFICATION -> listOf(chunk.evidenceMediaId)
-        SemanticFactScope.EXACT_DUPLICATE_GROUP, SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
+        SemanticFactScope.EXACT_DUPLICATE_GROUP -> exactDuplicateGroupMembers(chunk.scopeId)
+        SemanticFactScope.VISUAL_GROUP -> readableDatabase.rawQuery(
             "SELECT media_id FROM visual_group_member WHERE group_id=?",
             arrayOf(chunk.scopeId),
         ).use { cursor -> buildList { add(chunk.evidenceMediaId); while (cursor.moveToNext()) add(cursor.getString(0)) } }
         SemanticFactScope.EVENT -> listOf(chunk.evidenceMediaId) + eventMembers(chunk.scopeId.toLongOrNull() ?: Long.MIN_VALUE)
     }.distinct()
+
+    private fun exactDuplicateGroupMembers(groupId: String): List<String> = readableDatabase.rawQuery(
+        "SELECT member.media_id FROM visual_group_member member " +
+            "JOIN visual_group group_record ON group_record.id=member.group_id " +
+            "WHERE member.group_id=? AND group_record.kind='EXACT_DUPLICATE'",
+        arrayOf(groupId),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
 
     private fun captionPersonRefs(captionId: String): List<SemanticCaptionPersonRefRecord> = readableDatabase.rawQuery(
         "SELECT r.*,p.label,p.relationship FROM semantic_caption_person_ref r " +
@@ -3969,7 +5106,8 @@ class GalleryDatabase(
                 SemanticCaptionPersonRefRecord(
                     personRef = cursor.text("person_ref"),
                     clusterId = cursor.text("cluster_id"),
-                    resolvedLabel = cursor.nullableText("label") ?: cursor.nullableText("relationship"),
+                    resolvedLabel = cursor.nullableText("label")?.let(sensitiveDataAtRest::reveal)
+                        ?: cursor.nullableText("relationship")?.let(sensitiveDataAtRest::reveal),
                     faceRegion = decodeRegion(cursor.text("face_region")),
                     bodyRegion = cursor.nullableText("body_region")?.let(::decodeRegion),
                     associationStatus = enumOrDefault(cursor.text("association_status"), PersonAssociationStatus.AMBIGUOUS),
@@ -3986,13 +5124,279 @@ class GalleryDatabase(
         val json = JSONObject(encoded)
         json.keys().asSequence().associateWith { key ->
             val values = json.optJSONArray(key) ?: JSONArray()
-            List(values.length()) { values.optString(it) }
+            buildList {
+                for (index in 0 until values.length()) {
+                    values.optionalSafeString(index, 256)?.let(::add)
+                }
+            }
         }
     }.getOrDefault(emptyMap())
 
     private fun decodeRegion(encoded: String): List<Float> = JSONArray(encoded).let { array ->
         List(array.length()) { array.getDouble(it).toFloat() }
     }
+
+    fun createOrResumeSemanticPredicateScan(
+        query: String,
+        modelVersion: String,
+        eligibleMediaIds: Set<String>,
+        indexedMediaIds: Set<String>,
+    ): String {
+        require(query.isNotBlank())
+        require(modelVersion.isNotBlank())
+        val orderedMediaIds = eligibleMediaIds.toList().sorted()
+        val coveredMediaIds = indexedMediaIds.intersect(eligibleMediaIds)
+        val indexedMediaCount = coveredMediaIds.size
+        val indexedCoverageHash = SemanticPredicateScanPolicy.coverageHash(eligibleMediaIds, coveredMediaIds)
+        val scopeHash = SemanticPredicateScanPolicy.scopeHash(eligibleMediaIds)
+        val queryKey = SemanticPredicateScanPolicy.queryKey(query, modelVersion, scopeHash)
+        val scanId = SemanticPredicateScanPolicy.scanId(queryKey)
+        val now = System.currentTimeMillis()
+        writableDatabase.transaction { db ->
+            val existing = readSemanticPredicateScan(db, scanId)
+            if (existing == null) {
+                db.insertOrThrow("semantic_predicate_scan", null, ContentValues().apply {
+                    put("id", scanId)
+                    put("query_key", queryKey)
+                    put("query_text", sensitiveDataAtRest.protect(query))
+                    put("model_version", modelVersion)
+                    put("scope_hash", scopeHash)
+                    put("eligible_count", orderedMediaIds.size)
+                    put("indexed_count", indexedMediaCount.coerceIn(0, orderedMediaIds.size))
+                    put("indexed_coverage_hash", indexedCoverageHash)
+                    put("searched_count", 0)
+                    put("next_ordinal", 0)
+                    put("hit_count", 0)
+                    put("status", if (orderedMediaIds.isEmpty()) SemanticPredicateScanStatus.COMPLETE.name else SemanticPredicateScanStatus.PENDING.name)
+                    put("attempt_count", 0)
+                    putNull("error")
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("next_attempt_at", 0L)
+                    putNull("last_progress_at")
+                    put("created_at", now)
+                    put("updated_at", now)
+                })
+                orderedMediaIds.forEachIndexed { ordinal, mediaId ->
+                    db.insertOrThrow("semantic_predicate_scan_scope", null, ContentValues().apply {
+                        put("scan_id", scanId)
+                        put("media_id", mediaId)
+                        put("ordinal", ordinal)
+                    })
+                }
+            } else {
+                val mustRestart = SemanticPredicateScanPolicy.requiresCoverageReset(
+                    status = existing.status,
+                    storedCoverageHash = existing.indexedCoverageHash,
+                    currentCoverageHash = indexedCoverageHash,
+                )
+                db.update("semantic_predicate_scan", ContentValues().apply {
+                    put("indexed_count", indexedMediaCount.coerceIn(0, orderedMediaIds.size))
+                    if (existing.status != SemanticPredicateScanStatus.RUNNING) {
+                        put("indexed_coverage_hash", indexedCoverageHash)
+                    }
+                    if (existing.status == SemanticPredicateScanStatus.FAILED) {
+                        put("status", SemanticPredicateScanStatus.PENDING.name)
+                        put("next_attempt_at", 0L)
+                        putNull("error")
+                    }
+                    if (mustRestart) {
+                        put("status", SemanticPredicateScanStatus.PENDING.name)
+                        put("searched_count", 0)
+                        put("next_ordinal", 0)
+                        put("hit_count", 0)
+                        put("next_attempt_at", 0L)
+                        putNull("error")
+                        db.delete("semantic_predicate_scan_hit", "scan_id=?", arrayOf(scanId))
+                    }
+                    put("updated_at", now)
+                }, "id=?", arrayOf(scanId))
+            }
+        }
+        return scanId
+    }
+
+    fun semanticPredicateScan(scanId: String): SemanticPredicateScanRecord? =
+        readableDatabase.rawQuery(
+            "SELECT * FROM semantic_predicate_scan WHERE id=? LIMIT 1",
+            arrayOf(scanId),
+        ).use { cursor -> if (cursor.moveToFirst()) readSemanticPredicateScan(cursor) else null }
+
+    fun claimSemanticPredicateScan(scanId: String, owner: String): SemanticPredicateScanRecord? {
+        val now = System.currentTimeMillis()
+        return writableDatabase.transaction { db ->
+            val current = readSemanticPredicateScan(db, scanId) ?: return@transaction null
+            if (current.status == SemanticPredicateScanStatus.COMPLETE) return@transaction current
+            if (current.status == SemanticPredicateScanStatus.FAILED) return@transaction null
+            if (current.nextAttemptAt > now) return@transaction null
+            if (current.leaseOwner != null && current.leaseOwner != owner && (current.leaseExpiresAt ?: 0L) > now) {
+                return@transaction null
+            }
+            db.update("semantic_predicate_scan", ContentValues().apply {
+                put("status", SemanticPredicateScanStatus.RUNNING.name)
+                put("lease_owner", owner)
+                put("lease_expires_at", now + SemanticPredicateScanPolicy.LEASE_MS)
+                put("updated_at", now)
+            }, "id=?", arrayOf(scanId))
+            readSemanticPredicateScan(db, scanId)
+        }
+    }
+
+    fun nextSemanticPredicateScanBatch(scanId: String, owner: String, limit: Int): SemanticPredicateScanBatch? {
+        require(limit in 1..256)
+        return writableDatabase.transaction { db ->
+            val current = readSemanticPredicateScan(db, scanId) ?: return@transaction null
+            if (current.status != SemanticPredicateScanStatus.RUNNING || current.leaseOwner != owner) {
+                return@transaction null
+            }
+            if (current.nextOrdinal >= current.eligibleCount) {
+                db.update("semantic_predicate_scan", ContentValues().apply {
+                    put("status", SemanticPredicateScanStatus.COMPLETE.name)
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("updated_at", System.currentTimeMillis())
+                }, "id=?", arrayOf(scanId))
+                return@transaction null
+            }
+            val mediaIds = db.rawQuery(
+                "SELECT media_id FROM semantic_predicate_scan_scope WHERE scan_id=? AND ordinal>=? ORDER BY ordinal LIMIT ?",
+                arrayOf(scanId, current.nextOrdinal.toString(), limit.toString()),
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.text("media_id")) } }
+            if (mediaIds.isEmpty()) {
+                db.update("semantic_predicate_scan", ContentValues().apply {
+                    put("status", SemanticPredicateScanStatus.FAILED.name)
+                    put("error", "SCAN_SCOPE_MISSING")
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                    put("updated_at", System.currentTimeMillis())
+                }, "id=?", arrayOf(scanId))
+                null
+            } else {
+                SemanticPredicateScanBatch(scanId, current.queryText, current.nextOrdinal, mediaIds)
+            }
+        }
+    }
+
+    fun commitSemanticPredicateScanBatch(
+        scanId: String,
+        owner: String,
+        batch: SemanticPredicateScanBatch,
+        hits: List<VectorHit>,
+    ): SemanticPredicateScanRecord? {
+        return writableDatabase.transaction { db ->
+            val current = readSemanticPredicateScan(db, scanId) ?: return@transaction null
+            if (current.status != SemanticPredicateScanStatus.RUNNING || current.leaseOwner != owner) {
+                return@transaction null
+            }
+            hits.distinctBy(VectorHit::mediaId).forEach { hit ->
+                db.insertWithOnConflict("semantic_predicate_scan_hit", null, ContentValues().apply {
+                    put("scan_id", scanId)
+                    put("media_id", hit.mediaId)
+                    put("score", hit.score)
+                }, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            val nextOrdinal = (batch.ordinal + batch.mediaIds.size).coerceAtMost(current.eligibleCount)
+            val complete = nextOrdinal >= current.eligibleCount
+            val now = System.currentTimeMillis()
+            val hitCount = db.rawQuery(
+                "SELECT COUNT(*) FROM semantic_predicate_scan_hit WHERE scan_id=?",
+                arrayOf(scanId),
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+            db.update("semantic_predicate_scan", ContentValues().apply {
+                put("searched_count", nextOrdinal)
+                put("next_ordinal", nextOrdinal)
+                put("hit_count", hitCount)
+                put("status", if (complete) SemanticPredicateScanStatus.COMPLETE.name else SemanticPredicateScanStatus.RUNNING.name)
+                putNull("error")
+                put("last_progress_at", now)
+                put("updated_at", now)
+                if (complete) {
+                    putNull("lease_owner")
+                    putNull("lease_expires_at")
+                } else {
+                    put("lease_expires_at", now + SemanticPredicateScanPolicy.LEASE_MS)
+                }
+            }, "id=? AND lease_owner=?", arrayOf(scanId, owner))
+            readSemanticPredicateScan(db, scanId)
+        }
+    }
+
+    fun releaseSemanticPredicateScan(scanId: String, owner: String) {
+        writableDatabase.update("semantic_predicate_scan", ContentValues().apply {
+            put("status", SemanticPredicateScanStatus.PENDING.name)
+            putNull("lease_owner")
+            putNull("lease_expires_at")
+            put("next_attempt_at", 0L)
+            put("updated_at", System.currentTimeMillis())
+        }, "id=? AND lease_owner=? AND status=?", arrayOf(scanId, owner, SemanticPredicateScanStatus.RUNNING.name))
+    }
+
+    fun failSemanticPredicateScan(scanId: String, owner: String, error: String, retryable: Boolean) {
+        writableDatabase.transaction { db ->
+            val current = readSemanticPredicateScan(db, scanId) ?: return@transaction
+            if (current.leaseOwner != owner) return@transaction
+            val attempts = current.attemptCount + 1
+            val canRetry = retryable && attempts < IndexingRetryPolicy.MAX_ITEM_ATTEMPTS
+            val now = System.currentTimeMillis()
+            db.update("semantic_predicate_scan", ContentValues().apply {
+                put("status", if (canRetry) SemanticPredicateScanStatus.PENDING.name else SemanticPredicateScanStatus.FAILED.name)
+                put("attempt_count", attempts)
+                put("error", error.take(500))
+                putNull("lease_owner")
+                putNull("lease_expires_at")
+                put("next_attempt_at", if (canRetry) now + (30_000L * (1L shl (attempts - 1))) else 0L)
+                put("updated_at", now)
+            }, "id=? AND lease_owner=?", arrayOf(scanId, owner))
+        }
+    }
+
+    fun semanticPredicateScanHits(scanId: String): List<VectorHit> = readableDatabase.rawQuery(
+        "SELECT media_id,score FROM semantic_predicate_scan_hit WHERE scan_id=? ORDER BY score DESC,media_id",
+        arrayOf(scanId),
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(VectorHit(cursor.text("media_id"), cursor.getFloat(cursor.getColumnIndexOrThrow("score"))))
+        }
+    }
+
+    fun runnableSemanticPredicateScanIds(limit: Int = 8): List<String> = readableDatabase.rawQuery(
+        "SELECT id FROM semantic_predicate_scan WHERE (status=? AND next_attempt_at<=?) OR (status=? AND (lease_expires_at IS NULL OR lease_expires_at<=?)) ORDER BY updated_at LIMIT ?",
+        arrayOf(
+            SemanticPredicateScanStatus.PENDING.name,
+            System.currentTimeMillis().toString(),
+            SemanticPredicateScanStatus.RUNNING.name,
+            System.currentTimeMillis().toString(),
+            limit.coerceIn(1, 32).toString(),
+        ),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.text("id")) } }
+
+    private fun readSemanticPredicateScan(db: GallerySqlDatabase, id: String): SemanticPredicateScanRecord? = db.rawQuery(
+        "SELECT * FROM semantic_predicate_scan WHERE id=? LIMIT 1",
+        arrayOf(id),
+    ).use { cursor -> if (cursor.moveToFirst()) readSemanticPredicateScan(cursor) else null }
+
+    private fun readSemanticPredicateScan(cursor: android.database.Cursor): SemanticPredicateScanRecord = SemanticPredicateScanRecord(
+        id = cursor.text("id"),
+        queryKey = cursor.text("query_key"),
+        queryText = sensitiveDataAtRest.reveal(cursor.text("query_text")),
+        modelVersion = cursor.text("model_version"),
+        scopeHash = cursor.text("scope_hash"),
+        eligibleCount = cursor.getInt(cursor.getColumnIndexOrThrow("eligible_count")),
+        indexedCount = cursor.getInt(cursor.getColumnIndexOrThrow("indexed_count")),
+        indexedCoverageHash = cursor.nullableText("indexed_coverage_hash"),
+        searchedCount = cursor.getInt(cursor.getColumnIndexOrThrow("searched_count")),
+        nextOrdinal = cursor.getInt(cursor.getColumnIndexOrThrow("next_ordinal")),
+        hitCount = cursor.getInt(cursor.getColumnIndexOrThrow("hit_count")),
+        status = enumOrDefault(cursor.text("status"), SemanticPredicateScanStatus.FAILED),
+        attemptCount = cursor.getInt(cursor.getColumnIndexOrThrow("attempt_count")),
+        error = cursor.nullableText("error"),
+        leaseOwner = cursor.nullableText("lease_owner"),
+        leaseExpiresAt = cursor.getColumnIndexOrThrow("lease_expires_at").let { if (cursor.isNull(it)) null else cursor.getLong(it) },
+        nextAttemptAt = cursor.getLong(cursor.getColumnIndexOrThrow("next_attempt_at")),
+        lastProgressAt = cursor.getColumnIndexOrThrow("last_progress_at").let { if (cursor.isNull(it)) null else cursor.getLong(it) },
+        createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+        updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+    )
 
     private inline fun <reified T : Enum<T>> enumOrNull(raw: String): T? =
         enumValues<T>().firstOrNull { it.name == raw }

@@ -103,7 +103,8 @@ def main() -> None:
     try:
         run(
             [sys.executable, "tools/device/seed_gallery.py", "--serial", serial, "--package", args.package,
-             "--gallery", str(gallery), "--run-id", run_id, "--artifacts", str(artifacts.parent)],
+             "--gallery", str(gallery), "--run-id", run_id, "--artifacts", str(artifacts.parent),
+             "--transport", "instrumentation"],
             artifacts / "seed-command.txt",
         )
         seeded = True

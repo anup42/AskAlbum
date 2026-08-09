@@ -22,8 +22,8 @@ enum class AnswerMode { RESULTS_ONLY, SUMMARY_ONLY, RESULTS_AND_SUMMARY }
 enum class Polarity { POSITIVE, NEGATIVE }
 enum class ConstraintStrength { HARD, SOFT }
 enum class SemanticSubject { WHOLE_MEDIA, PERSON, EVENT, DOCUMENT }
-enum class ResultExactness { EXACT, COMPLETE_MODEL_SCAN, ESTIMATED_FROM_RETRIEVAL, PARTIAL_INDEX }
-enum class RetrievalChannel { LEXICAL, SEMANTIC, CAPTION, CAPTION_EMBEDDING, EVENT, OCR, PEOPLE, VISUAL_VERIFICATION }
+enum class ResultExactness { EXACT, COMPLETE_PREDICATE_SCAN, ESTIMATED_FROM_RETRIEVAL, PARTIAL_INDEX }
+enum class RetrievalChannel { LEXICAL, SEMANTIC, EVENT_PREDICATE_SEMANTIC, CAPTION, CAPTION_EMBEDDING, EVENT, OCR, PEOPLE, VISUAL_VERIFICATION }
 enum class ChannelStatus { SUCCESS, UNAVAILABLE, FAILED, PARTIAL, NOT_REQUIRED }
 enum class MediaSource { DEMO_ASSET, MEDIA_STORE, PHOTO_PICKER, SAF_DOCUMENT }
 enum class MediaKind { IMAGE, VIDEO, PDF }
@@ -31,6 +31,7 @@ enum class IndexState { PENDING, INDEXING, READY, FAILED_RETRYABLE, FAILED_EXHAU
 enum class MediaAccessState { ACCESSIBLE, INACCESSIBLE }
 enum class IndexStage { DISCOVERY, METADATA, THUMBNAIL, VIDEO_KEYFRAMES, EMBEDDING, OCR, FACES, EVENTS, ENRICHMENT }
 enum class StageStatus { PENDING, RUNNING, COMPLETE, SKIPPED, FAILED_RETRYABLE, FAILED_EXHAUSTED, FAILED_PERMANENT }
+enum class IndexingPipeline { MEDIA_ANALYSIS, EMBEDDINGS, PEOPLE, SEMANTIC_MEMORY, CAPTION_EMBEDDINGS, ALL }
 enum class OcrEntityType { AMOUNT, RECEIPT_TOTAL, DATE, PHONE, EMAIL, URL, ORDER_ID, FLIGHT_NUMBER, FLIGHT_TIME, MERCHANT, PASSWORD }
 
 sealed interface FilterExpression {
@@ -86,6 +87,7 @@ data class GalleryQueryPlan(
     // hybrid channel executors replace its current term scorer.
     val terms: List<String> = emptyList(),
     val place: String? = null,
+    val comparisonScopes: List<String> = emptyList(),
     val baseResultIds: Set<String>? = null,
     val limit: Int = 100,
 )
@@ -191,6 +193,11 @@ data class EvidenceRecord(
     val region: List<Float>? = null,
     val timestampMs: Long? = null,
     val pageIndex: Int? = null,
+    val scope: SemanticFactScope? = null,
+    val scopeId: String? = null,
+    val evidenceMediaId: String? = null,
+    val clusterId: String? = null,
+    val applicability: String? = null,
 )
 
 data class SearchHit(
@@ -200,6 +207,17 @@ data class SearchHit(
     val duplicateIds: List<String> = emptyList(),
 )
 
+/** Keeps channel evidence when a result viewer moves to another search hit. */
+internal fun findViewerEvidenceHit(
+    currentMediaId: String,
+    initialHit: SearchHit,
+    searchHits: Collection<SearchHit>,
+): SearchHit? = if (initialHit.item.id == currentMediaId) {
+    initialHit
+} else {
+    searchHits.firstOrNull { it.item.id == currentMediaId }
+}
+
 data class RetrievalChannelReport<T>(
     val channel: RetrievalChannel,
     val status: ChannelStatus,
@@ -208,6 +226,12 @@ data class RetrievalChannelReport<T>(
     val searchedCount: Int,
     val hits: List<T>,
     val modelVersion: String? = null,
+    val errorCode: String? = null,
+)
+
+data class LexicalSearchResult(
+    val ids: Set<String> = emptySet(),
+    val status: ChannelStatus,
     val errorCode: String? = null,
 )
 
@@ -246,6 +270,7 @@ sealed interface QueryProgress {
     data object Understanding : QueryProgress
     data class PlanReady(val plan: GalleryQueryPlan) : QueryProgress
     data class InitialResults(val plan: GalleryQueryPlan, val hits: List<SearchHit>) : QueryProgress
+    data class SemanticScan(val searchedCount: Int, val eligibleCount: Int) : QueryProgress
     data class Verifying(val candidateCount: Int) : QueryProgress
     data object ComposingAnswer : QueryProgress
     data class Completed(val outcome: SearchOutcome) : QueryProgress
@@ -258,6 +283,7 @@ data class IndexSummary(
     val ocrReady: Int = 0,
     val visualLabelsReady: Int = 0,
     val siglipVectorsReady: Int = 0,
+    val siglipVectorsEligible: Int = 0,
     val videoKeyframesReady: Int = 0,
     val facesScanned: Int = 0,
     val faceEligible: Int = 0,
@@ -265,6 +291,8 @@ data class IndexSummary(
     val events: Int = 0,
     val failed: Int = 0,
     val storageBytes: Long = 0,
+    val siglipVectorsPending: Int = 0,
+    val siglipVectorsFailed: Int = 0,
 )
 
 data class ScopedIndexCoverage(
@@ -272,6 +300,17 @@ data class ScopedIndexCoverage(
     val indexStates: Map<IndexState, Int>,
     val stageStatuses: Map<IndexStage, Map<StageStatus, Int>>,
 )
+
+data class IndexStageCoverage(
+    val eligibleCount: Int,
+    val statusCounts: Map<StageStatus, Int> = emptyMap(),
+) {
+    val coveredCount: Int
+        get() = (statusCounts[StageStatus.COMPLETE] ?: 0) + (statusCounts[StageStatus.SKIPPED] ?: 0)
+
+    val isComplete: Boolean
+        get() = coveredCount >= eligibleCount
+}
 
 data class VideoKeyframeRecord(
     val id: String,
@@ -284,6 +323,10 @@ data class VideoKeyframeRecord(
     val qualityScore: Float,
     val producerVersion: String,
     val embeddingVersion: String? = null,
+    val embeddingState: String = "PENDING",
+    val embeddingAttemptCount: Int = 0,
+    val embeddingError: String? = null,
+    val embeddingNextAttemptAt: Long = 0L,
 )
 
 data class PeopleIndexStatus(
@@ -297,6 +340,16 @@ data class PeopleIndexStatus(
     val pendingMediaCount: Int = 0,
 )
 
+data class PeopleCoverage(
+    val eligibleCount: Int = 0,
+    val indexedCount: Int = 0,
+    val pendingCount: Int = 0,
+    val failedCount: Int = 0,
+) {
+    val isComplete: Boolean
+        get() = indexedCount >= eligibleCount && pendingCount == 0 && failedCount == 0
+}
+
 data class PersonClusterReviewItem(
     val id: String,
     val label: String?,
@@ -309,6 +362,7 @@ data class PersonClusterReviewItem(
     val includeInPersonalSemanticMemory: Boolean = false,
     val representativeFaceId: String? = null,
     val representativeFace: PersonFaceReviewItem? = null,
+    val latestFace: PersonFaceReviewItem? = null,
     val supportingFaces: List<PersonFaceReviewItem> = emptyList(),
     val mediaCount: Int = 0,
 )

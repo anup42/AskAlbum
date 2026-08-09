@@ -2,6 +2,7 @@ package io.github.anup42.askalbum
 
 import android.content.Context
 import java.io.File
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -29,8 +30,37 @@ class CaptionVectorStore(
     suspend fun searchVariants(
         queries: List<String>,
         eligibleChunkIds: Set<String>,
+        searchableChunkIds: Set<String>,
+        eligibleMediaCount: Int,
         topK: Int,
+        captionedMediaCount: Int = eligibleMediaCount,
     ): CaptionVectorSearchReport {
+        val normalizedQueries = queries
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+        if (normalizedQueries.isEmpty()) {
+            return CaptionVectorSearchReport(
+                status = ChannelStatus.NOT_REQUIRED,
+                eligibleChunkCount = eligibleChunkIds.size,
+                indexedChunkCount = 0,
+                searchedChunkCount = 0,
+                hits = emptyList(),
+                modelVersion = null,
+                errorCode = null,
+            )
+        }
+        if (eligibleMediaCount <= 0) {
+            return CaptionVectorSearchReport(
+                status = ChannelStatus.NOT_REQUIRED,
+                eligibleChunkCount = 0,
+                indexedChunkCount = 0,
+                searchedChunkCount = 0,
+                hits = emptyList(),
+                modelVersion = null,
+                errorCode = null,
+            )
+        }
         val modelVersion = producerVersion()
             ?: return CaptionVectorSearchReport(
                 ChannelStatus.UNAVAILABLE,
@@ -41,21 +71,45 @@ class CaptionVectorStore(
                 null,
                 "NO_VERIFIED_RETRIEVAL_PACK",
             )
-        if (queries.isEmpty() || eligibleChunkIds.isEmpty()) {
+        if (eligibleChunkIds.isEmpty()) {
             return CaptionVectorSearchReport(
-                ChannelStatus.SUCCESS,
-                eligibleChunkIds.size,
-                0,
-                0,
-                emptyList(),
-                modelVersion,
+                status = CaptionVectorCoveragePolicy.status(
+                    queryRequired = true,
+                    eligibleMediaCount = eligibleMediaCount,
+                    eligibleChunkCount = 0,
+                    indexedChunkCount = 0,
+                    captionedMediaCount = captionedMediaCount,
+                ),
+                eligibleChunkCount = 0,
+                indexedChunkCount = 0,
+                searchedChunkCount = 0,
+                hits = emptyList(),
+                modelVersion = modelVersion,
+                errorCode = if (eligibleMediaCount > 0) "NO_ELIGIBLE_CAPTION_CHUNKS" else null,
             )
         }
-        return runCatching {
+        if (searchableChunkIds.isEmpty()) {
+            return CaptionVectorSearchReport(
+                status = CaptionVectorCoveragePolicy.status(
+                    queryRequired = true,
+                    eligibleMediaCount = eligibleMediaCount,
+                    eligibleChunkCount = eligibleChunkIds.size,
+                    indexedChunkCount = 0,
+                    captionedMediaCount = captionedMediaCount,
+                ),
+                eligibleChunkCount = eligibleChunkIds.size,
+                indexedChunkCount = 0,
+                searchedChunkCount = 0,
+                hits = emptyList(),
+                modelVersion = modelVersion,
+                errorCode = "NO_SEARCHABLE_CAPTION_CHUNKS",
+            )
+        }
+        return try {
             val current = currentIndex()
-            val indexed = current.index.ids() intersect eligibleChunkIds
-            val perVariant = queries.map { query ->
-                val vector = embeddings.embedText(query)
+            val indexed = current.index.ids() intersect searchableChunkIds intersect eligibleChunkIds
+            val perVariant = normalizedQueries.map { query ->
+                val vector = embeddings.embedTextInteractive(query)
                 query to current.index.search(vector, topK.coerceIn(1, 100), indexed)
                     .filter { it.score >= current.pack.manifest.minimumSimilarity }
             }
@@ -66,15 +120,26 @@ class CaptionVectorStore(
                 hits.map { CaptionVectorHit(it.mediaId, it.score, query) }
             }.groupBy(CaptionVectorHit::chunkId).mapValues { (_, hits) -> hits.maxBy(CaptionVectorHit::score) }
             CaptionVectorSearchReport(
-                status = if (indexed.size < eligibleChunkIds.size) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
+                status = CaptionVectorCoveragePolicy.status(
+                    queryRequired = true,
+                    eligibleMediaCount = eligibleMediaCount,
+                    eligibleChunkCount = eligibleChunkIds.size,
+                    indexedChunkCount = indexed.size,
+                    captionedMediaCount = captionedMediaCount,
+                ),
                 eligibleChunkCount = eligibleChunkIds.size,
                 indexedChunkCount = indexed.size,
                 searchedChunkCount = indexed.size,
                 hits = fused.mapNotNull { best[it.first] }.take(topK.coerceIn(1, 100)),
                 modelVersion = modelVersion,
-                errorCode = if (indexed.size < eligibleChunkIds.size) "PARTIAL_CAPTION_VECTOR_COVERAGE" else null,
+                errorCode = when {
+                    captionedMediaCount < eligibleMediaCount -> "PARTIAL_CAPTION_MEDIA_COVERAGE"
+                    indexed.size < eligibleChunkIds.size -> "PARTIAL_CAPTION_VECTOR_COVERAGE"
+                    else -> null
+                },
             )
-        }.getOrElse {
+        } catch (error: Throwable) {
+            if (CaptionVectorSearchFailurePolicy.shouldPropagate(error)) throw error
             CaptionVectorSearchReport(
                 ChannelStatus.FAILED,
                 eligibleChunkIds.size,
@@ -91,6 +156,8 @@ class CaptionVectorStore(
         val index = currentIndex().index
         (index.ids() - validChunkIds).forEach { index.delete(it) }
     }
+
+    suspend fun indexedChunkIds(): Set<String> = currentIndex().index.ids()
 
     private suspend fun currentIndex(): Loaded = loadMutex.withLock {
         val pack = packs.current() ?: error("No verified retrieval model pack is installed")
@@ -110,4 +177,13 @@ class CaptionVectorStore(
         val pack: InstalledRetrievalPack,
         val index: MmapFp16VectorIndex,
     )
+}
+
+internal object CaptionVectorSearchFailurePolicy {
+    fun shouldPropagate(error: Throwable): Boolean = error is CancellationException
+}
+
+internal object CaptionVectorRepairPolicy {
+    fun missingVectorIds(expectedCompleteIds: Set<String>, indexedIds: Set<String>): Set<String> =
+        expectedCompleteIds - indexedIds
 }

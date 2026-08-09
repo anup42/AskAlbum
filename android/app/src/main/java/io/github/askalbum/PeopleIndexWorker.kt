@@ -5,6 +5,8 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -23,23 +25,49 @@ class PeopleIndexWorker(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (!repository.peopleIndexStatus().enabled) return@withContext Result.success()
         if (!jobControls.load().peopleEnabled) return@withContext Result.success()
+        if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+            return@withContext Result.retry()
+        }
         if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
         val faceLease = services.faceEngines.acquireOrNull()
         val detector = if (faceLease == null) MlKitFaceDetectionEngine() else null
         val embedder = faceLease?.engine
-        var retryableFailure = false
+        val faceProducerVersion = faceLease?.descriptor?.producerVersion ?: MlKitFaceDetectionEngine.PRODUCER_VERSION
+        val ownerId = id.toString()
+        var retryableFailures = 0
+        var quarantinedFailures = 0
         try {
-            if (embedder != null) services.faceVectorStore.reconcile(repository.allEmbeddedFaceIds())
-            repository.facePendingItems(BATCH_SIZE).forEach { item ->
+            repository.recoverInterruptedJobs(IndexingPipeline.PEOPLE)
+            if (embedder != null) {
+                val persistedFaceIds = repository.allEmbeddedFaceIds()
+                val indexedFaceIds = services.faceVectorStore.ids()
+                val missingFaceIds = FaceVectorRepairPolicy.missingVectorIds(persistedFaceIds, indexedFaceIds)
+                if (missingFaceIds.isNotEmpty()) {
+                    repository.requestFaceEmbeddingRepair(missingFaceIds, faceProducerVersion)
+                }
+                services.faceVectorStore.reconcile(repository.allEmbeddedFaceIds())
+            }
+            val pendingItems = repository.facePendingItems(BATCH_SIZE)
+            var processed = 0
+            val progressStartedAt = System.currentTimeMillis()
+            publishProgress(processed, pendingItems.size, pendingItems.size, retryableFailures, quarantinedFailures, progressStartedAt)
+            for ((index, item) in pendingItems.withIndex()) {
                 if (isStopped || !repository.peopleIndexStatus().enabled || !jobControls.load().peopleEnabled) {
                     return@withContext Result.success()
                 }
+                if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+                    return@withContext Result.retry()
+                }
                 if (!workAdmission.evaluate().allowed) return@withContext Result.retry()
-                repository.markFaces(item.id)
+                if (!repository.markFaces(item.id, faceProducerVersion, ownerId)) {
+                    processed = index + 1
+                    publishProgress(processed, pendingItems.size, pendingItems.size - processed, retryableFailures, quarantinedFailures, progressStartedAt)
+                    continue
+                }
                 runCatching {
                     val jpeg = imageLoader.loadJpeg(item)
                     if (embedder == null) {
-                        repository.completeFaces(item.id, requireNotNull(detector).detect(jpeg), MlKitFaceDetectionEngine.PRODUCER_VERSION)
+                        repository.completeFaces(item.id, requireNotNull(detector).detect(jpeg), faceProducerVersion, ownerId)
                     } else {
                         val oldFaceIds = repository.faceIdsForMedia(item.id)
                         // Only match against faces compiled before this media item. Two different people
@@ -61,26 +89,97 @@ class PeopleIndexWorker(
                             repository.ensureAutomaticPersonCluster(clusterId)
                             clusterId
                         }
-                        repository.completeEmbeddedFaces(item.id, faces, clusters, requireNotNull(faceLease).descriptor.producerVersion)
+                        repository.completeEmbeddedFaces(item.id, faces, clusters, faceProducerVersion, ownerId)
                         oldFaceIds.forEach { services.faceVectorStore.delete(it) }
                         faces.forEachIndexed { index, face -> services.faceVectorStore.upsert("${item.id}:$index", face.embedding) }
                     }
                 }.onFailure { error ->
+                    if (PeopleIndexFailurePolicy.shouldPropagate(error)) throw error
                     if (repository.peopleIndexStatus().enabled) {
                         val permanent = error is SecurityException || error is java.io.FileNotFoundException
-                        repository.failFaces(item.id, error::class.java.simpleName, permanent)
-                        retryableFailure = retryableFailure || !permanent
+                        repository.failFaces(item.id, error::class.java.simpleName, permanent, faceProducerVersion, ownerId)
+                        if (permanent) {
+                            quarantinedFailures++
+                        } else {
+                            retryableFailures++
+                        }
                     }
                 }
+                processed = index + 1
+                publishProgress(processed, pendingItems.size, pendingItems.size - processed, retryableFailures, quarantinedFailures, progressStartedAt)
             }
-            if (repository.peopleIndexStatus().enabled && repository.facePendingItems(1).isNotEmpty()) {
+            if (ForegroundIndexLanePolicy.shouldDeferBackgroundWorker(ForegroundIndexRuntime.active)) {
+                return@withContext Result.retry()
+            }
+            val enabled = repository.peopleIndexStatus().enabled && jobControls.load().peopleEnabled
+            val hasMore = repository.facePendingItems(1).isNotEmpty()
+            val admission = workAdmission.evaluate()
+            val nextRetryAt = if (!hasMore) repository.nextPeopleRetryAt() else null
+            val shouldRetry = IndexingWorkerResultPolicy.shouldRetryWorker(
+                processed = processed,
+                retryableFailures = retryableFailures,
+                stopped = isStopped,
+                admissionAllowed = admission.allowed,
+                hasImmediateWork = hasMore,
+            )
+            setProgress(
+                workDataOf(
+                    "processed" to processed,
+                    "eligible" to pendingItems.size,
+                    "in_flight" to 0,
+                    "last_progress_at" to System.currentTimeMillis(),
+                    "next_attempt_at" to (nextRetryAt ?: 0L),
+                    "delayed_retries" to retryableFailures,
+                    "quarantined" to quarantinedFailures,
+                ),
+            )
+            if (hasMore && enabled && !shouldRetry) {
                 PeopleIndexScheduler.scheduleContinuation(applicationContext)
+            } else if (!hasMore && enabled) {
+                nextRetryAt?.let { retryAt ->
+                    PeopleIndexScheduler.scheduleContinuation(
+                        applicationContext,
+                        (retryAt - System.currentTimeMillis()).coerceAtLeast(10_000L),
+                    )
+                }
             }
-            if (retryableFailure) Result.retry() else Result.success()
+            when {
+                !enabled -> Result.success()
+                shouldRetry -> Result.retry()
+                else -> Result.success()
+            }
         } finally {
             detector?.close()
             faceLease?.close()
         }
+    }
+
+    private suspend fun publishProgress(
+        processed: Int,
+        eligible: Int,
+        inFlight: Int,
+        delayedRetries: Int,
+        quarantined: Int,
+        startedAtMillis: Long,
+    ) {
+        val estimate = IndexingProgressEstimate.calculate(
+            processed = processed,
+            remaining = repository.peopleIndexStatus().pendingMediaCount,
+            startedAtMillis = startedAtMillis,
+        )
+        setProgress(
+            workDataOf(
+                "processed" to processed,
+                "eligible" to eligible,
+                "in_flight" to inFlight.coerceAtLeast(0),
+                "last_progress_at" to System.currentTimeMillis(),
+                "next_attempt_at" to 0L,
+                "delayed_retries" to delayedRetries,
+                "quarantined" to quarantined,
+                "rate_per_minute" to (estimate.ratePerMinute ?: 0.0),
+                "eta_millis" to (estimate.etaMillis ?: 0L),
+            ),
+        )
     }
 
     private companion object {
@@ -104,4 +203,8 @@ class PeopleIndexWorker(
             bitmap.recycle()
         }
     }
+}
+
+internal object PeopleIndexFailurePolicy {
+    fun shouldPropagate(error: Throwable): Boolean = error is CancellationException
 }

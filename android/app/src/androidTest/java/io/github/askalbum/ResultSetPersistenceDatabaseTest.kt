@@ -79,7 +79,7 @@ class ResultSetPersistenceDatabaseTest {
                 headline = "Found ${items.size}",
                 detail = "Fixture result",
                 evidenceIds = items.map { "${it.id}:fixture" },
-                exactness = ResultExactness.COMPLETE_MODEL_SCAN,
+                exactness = ResultExactness.COMPLETE_PREDICATE_SCAN,
                 indexedEligibleCount = items.size,
                 totalEligibleCount = items.size,
             ),

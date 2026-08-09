@@ -68,10 +68,10 @@ class QueryCompilerTest {
     }
 
     @Test
-    fun sensitiveContentClassifierFindsPasswordsAndCards() {
+    fun sensitiveContentClassifierFindsPasswordsCardsAndFinancialFacts() {
         assertTrue(SensitiveContentClassifier.isSensitive("Wi-Fi password: mango-tree"))
         assertTrue(SensitiveContentClassifier.isSensitive("4111 1111 1111 1111"))
-        assertTrue(!SensitiveContentClassifier.isSensitive("Grand total Rs 1,248"))
+        assertTrue(SensitiveContentClassifier.isSensitive("Grand total Rs 1,248"))
     }
 
     @Test
@@ -114,5 +114,32 @@ class QueryCompilerTest {
         assertTrue(plan.terms.isEmpty())
         assertTrue(plan.semanticClauses.isEmpty())
         assertEquals(setOf("sg-1", "sg-2"), plan.baseResultIds)
+    }
+
+    @Test
+    fun comparisonQueryRetainsBothKnownScopesInsteadOfSelectingOnePlaceFilter() {
+        val plan = compiler.compile("Compare my Goa and Singapore trips")
+
+        assertEquals(QueryIntent.COMPARE, plan.intent)
+        assertEquals(listOf("goa", "singapore"), plan.comparisonScopes)
+        assertEquals(null, plan.place)
+    }
+
+    @Test
+    fun listPlacesUsesCompletePlaceGrouping() {
+        val plan = compiler.compile("List places in my recent photos")
+
+        assertEquals(QueryIntent.LIST, plan.intent)
+        assertEquals(Grouping.PLACE, plan.grouping)
+        assertTrue(plan.terms.isEmpty())
+    }
+
+    @Test
+    fun numericAggregationsUseOcrFactsInsteadOfSemanticPredicates() {
+        val sum = compiler.compile("Sum my receipt totals")
+        val maximum = compiler.compile("Which receipt has the highest total?")
+
+        assertTrue(sum.semanticClauses.isEmpty())
+        assertTrue(maximum.semanticClauses.isEmpty())
     }
 }

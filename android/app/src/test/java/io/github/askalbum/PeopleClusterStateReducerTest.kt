@@ -31,6 +31,19 @@ class PeopleClusterStateReducerTest {
         assertNull(updated.single { it.id == "person_existing" }.relationship)
     }
 
+    @Test
+    fun sparseClustersAreHiddenWithoutRemovingTheirStoredRows() {
+        val visible = PeopleClusterDisplayPolicy.visible(
+            listOf(
+                cluster("person_large", "Large", null, reviewed = false).copy(mediaCount = 5),
+                cluster("person_sparse", "Sparse", null, reviewed = false).copy(mediaCount = 4),
+                cluster("person_hidden", "Hidden", null, reviewed = true).copy(mediaCount = 1, hidden = true),
+            ),
+        )
+
+        assertEquals(listOf("person_large", "person_hidden"), visible.map(PersonClusterReviewItem::id))
+    }
+
     private fun cluster(
         id: String,
         label: String?,

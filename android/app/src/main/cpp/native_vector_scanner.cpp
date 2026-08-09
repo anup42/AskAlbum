@@ -3,7 +3,7 @@
 #include <cstring>
 #include <vector>
 
-#if ASKALBUM_ARM64_FP16
+#if defined(ASKALBUM_ARM64_FP16) && ASKALBUM_ARM64_FP16
 #include <arm_neon.h>
 #endif
 
@@ -35,7 +35,7 @@ float half_to_float(uint16_t value) {
 }
 
 float dot_row(const uint16_t* row, const float* query, int dimension) {
-#if ASKALBUM_ARM64_FP16
+#if defined(ASKALBUM_ARM64_FP16) && ASKALBUM_ARM64_FP16
     float32x4_t sum_low = vdupq_n_f32(0.0f);
     float32x4_t sum_high = vdupq_n_f32(0.0f);
     int index = 0;

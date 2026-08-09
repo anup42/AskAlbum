@@ -3,8 +3,37 @@ package io.github.anup42.askalbum
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Locale
 
 class AdaptiveSemanticEnrichmentTest {
+    @Test
+    fun unavailableModelRetriesOnlyWhenPendingJobsExist() {
+        assertEquals(
+            true,
+            SemanticEnrichmentAvailabilityPolicy.shouldRetryForUnavailableModel(
+                modelInstalled = false,
+                modelMultimodal = false,
+                hasPendingJobs = true,
+            ),
+        )
+        assertEquals(
+            false,
+            SemanticEnrichmentAvailabilityPolicy.shouldRetryForUnavailableModel(
+                modelInstalled = false,
+                modelMultimodal = false,
+                hasPendingJobs = false,
+            ),
+        )
+        assertEquals(
+            false,
+            SemanticEnrichmentAvailabilityPolicy.shouldRetryForUnavailableModel(
+                modelInstalled = true,
+                modelMultimodal = true,
+                hasPendingJobs = true,
+            ),
+        )
+    }
+
     @Test
     fun exactDuplicatesShareOneCanonicalRepresentativeAndEventsStayDiverse() {
         val items = listOf(
@@ -51,6 +80,17 @@ class AdaptiveSemanticEnrichmentTest {
     }
 
     @Test
+    fun familyRelationshipEligibilityIsIndependentOfDeviceLocale() {
+        val previous = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale("tr", "TR"))
+            assertTrue(PersonalSemanticMemoryPolicy.defaultEnabled("SISTER"))
+        } finally {
+            Locale.setDefault(previous)
+        }
+    }
+
+    @Test
     fun factDecoderKeepsSafeFactsAndDropsSensitiveOrUnallowlistedFacts() {
         val job = SemanticEnrichmentJobRecord(
             id = "j",
@@ -80,7 +120,7 @@ class AdaptiveSemanticEnrichmentTest {
 
         assertEquals(listOf("beach", "birthday card", "birthday party"), facts.map(SemanticFactRecord::value))
         assertEquals("occasion", facts.last().predicate)
-        assertEquals("EVIDENCE_MEDIA_ONLY", facts.last().applicability)
+        assertEquals("POSSIBLE_INFERENCE", facts.last().applicability)
     }
 
     @Test

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filterIsInstance
@@ -13,11 +14,42 @@ import kotlinx.coroutines.withContext
 import kotlin.math.max
 import java.util.concurrent.ConcurrentHashMap
 
+internal fun shouldExecuteCapabilityWithoutMediaHits(
+    intent: QueryIntent,
+    verificationApplied: Boolean,
+): Boolean = !verificationApplied && intent in setOf(
+    QueryIntent.LIST,
+    QueryIntent.COUNT,
+    QueryIntent.ANSWER_FACT,
+    QueryIntent.DOCUMENT_QA,
+    QueryIntent.SUM,
+    QueryIntent.MIN_MAX,
+    QueryIntent.EVENT_SUMMARY,
+    QueryIntent.TIMELINE,
+    QueryIntent.COMPARE,
+)
+
+internal fun isDeterministicMetadataCount(
+    plan: GalleryQueryPlan,
+    terms: List<String>,
+    semanticQueries: List<String>,
+    verificationApplied: Boolean,
+): Boolean = plan.intent == QueryIntent.COUNT &&
+    plan.semanticClauses.isEmpty() &&
+    terms.isEmpty() &&
+    semanticQueries.isEmpty() &&
+    !verificationApplied
+
+internal fun requiresAuthenticationForAnswer(
+    rankedHits: List<SearchHit>,
+    deterministicAnswerHits: List<SearchHit>,
+): Boolean = (rankedHits + deterministicAnswerHits).any(SensitiveEvidencePolicy::requiresAuthentication)
+
 class GalleryRepository(context: Context) {
     private val appContext = context.applicationContext
     private val services = (context.applicationContext as AskAlbumApplication).services
     private val database = services.galleryDatabase
-    private val planner = LiteRtLmQueryPlanner(services.modelPackManager, services.gemmaSessions)
+    private val planner = services.queryPlanCompiler
     private val semanticVectors = services.semanticVectorStore
     private val captionVectors = services.captionVectorStore
     private val visualVerifier = services.visualVerifier
@@ -30,7 +62,41 @@ class GalleryRepository(context: Context) {
 
     fun initialize(): IndexSummary {
         val restartWorkersAfterUpdate = consumeWorkerUpdateRestart()
-        database.recoverInterruptedJobs()
+        database.recoverInterruptedJobs(
+            pipeline = IndexingPipeline.MEDIA_ANALYSIS,
+            reclaimOrphanedLeases = IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(
+                foregroundActive = ForegroundIndexRuntime.active,
+                scheduledWorkActive = IndexScheduler.hasActiveWork(appContext),
+            ),
+        )
+        database.recoverInterruptedJobs(
+            pipeline = IndexingPipeline.EMBEDDINGS,
+            reclaimOrphanedLeases = IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(
+                foregroundActive = ForegroundIndexRuntime.active,
+                scheduledWorkActive = EmbeddingIndexScheduler.hasActiveWork(appContext),
+            ),
+        )
+        database.recoverInterruptedJobs(
+            pipeline = IndexingPipeline.PEOPLE,
+            reclaimOrphanedLeases = IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(
+                foregroundActive = ForegroundIndexRuntime.active,
+                scheduledWorkActive = PeopleIndexScheduler.hasActiveWork(appContext),
+            ),
+        )
+        database.recoverInterruptedJobs(
+            pipeline = IndexingPipeline.SEMANTIC_MEMORY,
+            reclaimOrphanedLeases = IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(
+                foregroundActive = ForegroundIndexRuntime.active,
+                scheduledWorkActive = SemanticEnrichmentScheduler.hasActiveWork(appContext),
+            ),
+        )
+        database.recoverInterruptedJobs(
+            pipeline = IndexingPipeline.CAPTION_EMBEDDINGS,
+            reclaimOrphanedLeases = IndexingRecoveryAdmissionPolicy.shouldReclaimOrphanedLeases(
+                foregroundActive = ForegroundIndexRuntime.active,
+                scheduledWorkActive = CaptionEmbeddingScheduler.hasActiveWork(appContext),
+            ),
+        )
         val legacyCaptionJobs = database.queueLegacySemanticCaptionJobs()
         if (legacyCaptionJobs > 0 && indexingJobControlsStore.load().semanticMemoryEnabled) {
             SemanticEnrichmentScheduler.schedule(
@@ -68,6 +134,7 @@ class GalleryRepository(context: Context) {
                 SemanticEnrichmentScheduler.schedule(appContext, userRequested = true)
             }
         }
+        SemanticPredicateScanScheduler.reconcile(appContext)
         return database.summary()
     }
 
@@ -94,6 +161,8 @@ class GalleryRepository(context: Context) {
     fun indexingJobControls(): IndexingJobControls = indexingJobControlsStore.load()
     fun setIndexingJobEnabled(job: IndexingJob, enabled: Boolean): IndexingJobControls =
         indexingJobControlsStore.setEnabled(job, enabled)
+    fun setForegroundIndexingPaused(paused: Boolean): IndexingJobControls =
+        indexingJobControlsStore.setForegroundPaused(paused)
     fun indexCoverageForContentUris(contentUris: Collection<String>): ScopedIndexCoverage =
         database.indexCoverageForContentUris(contentUris)
 
@@ -124,6 +193,7 @@ class GalleryRepository(context: Context) {
 
     fun tombstoneCount(): Int = database.tombstoneCount()
     fun stageRecords(mediaId: String): List<MediaIndexStageRecord> = database.stageRecords(mediaId)
+    fun itemById(mediaId: String): GalleryItem? = database.itemById(mediaId)
     fun videoKeyframes(mediaId: String): List<VideoKeyframeRecord> = database.videoKeyframes(mediaId)
     fun indexedMetadata(mediaId: String, includeSensitiveContent: Boolean = false): IndexedMediaMetadata {
         val item = requireNotNull(database.itemById(mediaId)) { "Media item is no longer available" }
@@ -170,14 +240,19 @@ class GalleryRepository(context: Context) {
     }
     fun peopleIndexStatus(): PeopleIndexStatus = database.peopleIndexStatus()
 
-    fun enablePeopleIndexing(): PeopleIndexStatus = database
-        .enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
-        .also { PeopleIndexScheduler.schedule(appContext) }
+    fun enablePeopleIndexing(): PeopleIndexStatus {
+        val status = database.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+        indexingJobControlsStore.setEnabled(IndexingJob.PEOPLE, true)
+        PeopleIndexScheduler.schedule(appContext)
+        return status
+    }
 
     fun resetPeopleIndex(): PeopleIndexStatus {
         PeopleIndexScheduler.cancelAndWait(appContext)
         kotlinx.coroutines.runBlocking { services.faceVectorStore.clear() }
-        return database.resetPeopleIndex()
+        val status = database.resetPeopleIndex()
+        indexingJobControlsStore.setEnabled(IndexingJob.PEOPLE, false)
+        return status
     }
 
     fun onFaceModelInstalled(): PeopleIndexStatus {
@@ -193,6 +268,8 @@ class GalleryRepository(context: Context) {
         if (changed > 0) IndexScheduler.schedule(appContext)
         return changed
     }
+
+    fun onGemmaModelInstalled(): Int = queuePersonalSemanticMemory()
 
     fun saveReviewedPersonCluster(
         id: String,
@@ -214,6 +291,7 @@ class GalleryRepository(context: Context) {
     fun personClustersPendingReview(): List<PersonClusterReviewItem> = database.personClustersPendingReview()
     fun personClusterSummaries(includeHidden: Boolean = true): List<PersonClusterReviewItem> =
         database.personClusterSummaries(includeHidden)
+    fun personClusterRevision(): String = database.personClusterRevision()
     fun personFacesForCluster(id: String, limit: Int, offset: Int): List<PersonFaceReviewItem> =
         database.personFacesForCluster(id, limit, offset)
     fun personFace(faceId: String): PersonFaceReviewItem? = database.personFace(faceId)
@@ -226,25 +304,44 @@ class GalleryRepository(context: Context) {
     fun removePersonLabel(id: String): PeopleIndexStatus = database.removePersonLabel(id)
         .also { queuePersonalSemanticMemory() }
     fun setPersonClusterHidden(id: String, hidden: Boolean): PeopleIndexStatus = database.setPersonClusterHidden(id, hidden)
-        .also { if (!hidden) queuePersonalSemanticMemory(userRequested = true) }
+        .also {
+            if (!hidden) {
+                queuePersonalSemanticMemory(userRequested = true)
+                ReviewedIdentityExpansionScheduler.schedule(appContext, id)
+            }
+        }
     fun mergePersonClusters(targetId: String, sourceId: String): PeopleIndexStatus =
         database.mergePersonClusters(targetId, sourceId).also {
             queuePersonalSemanticMemory(userRequested = true)
             ReviewedIdentityExpansionScheduler.schedule(appContext, targetId)
         }
     fun moveFaceToCluster(faceId: String, targetId: String? = null): String =
-        database.moveFaceToCluster(faceId, targetId).also { queuePersonalSemanticMemory(userRequested = true) }
+        database.moveFaceToCluster(faceId, targetId).also { resolvedTargetId ->
+            queuePersonalSemanticMemory(userRequested = true)
+            ReviewedIdentityExpansionScheduler.schedule(appContext, resolvedTargetId)
+        }
 
     fun pendingItems(limit: Int): List<GalleryItem> = database.pendingItems(limit)
     fun pendingItemsForIds(mediaIds: Set<String>, limit: Int): List<GalleryItem> = database.pendingItemsForIds(mediaIds, limit)
     fun requestGalleryReindex(mediaIds: Set<String>) = database.requestGalleryReindex(mediaIds)
     fun ocrBlocks(mediaId: String): List<OcrBlockRecord> = database.ocrBlocks(mediaId)
     fun facePendingItems(limit: Int): List<GalleryItem> = database.facePendingItems(limit)
-    fun markFaces(mediaId: String) = database.markFaces(mediaId)
-    fun completeFaces(mediaId: String, detections: List<FaceDetectionRecord>, producerVersion: String) =
-        database.completeFaces(mediaId, detections, producerVersion)
-    fun completeEmbeddedFaces(mediaId: String, faces: List<FaceInstance>, clusterIds: List<String>, producerVersion: String) {
-        database.completeEmbeddedFaces(mediaId, faces, clusterIds, producerVersion)
+    fun markFaces(mediaId: String, producerVersion: String = "mlkit-face-detection-v1", owner: String = "people-direct"): Boolean =
+        database.markFaces(mediaId, producerVersion, owner)
+    fun completeFaces(
+        mediaId: String,
+        detections: List<FaceDetectionRecord>,
+        producerVersion: String,
+        owner: String? = null,
+    ) = database.completeFaces(mediaId, detections, producerVersion, owner)
+    fun completeEmbeddedFaces(
+        mediaId: String,
+        faces: List<FaceInstance>,
+        clusterIds: List<String>,
+        producerVersion: String,
+        owner: String? = null,
+    ) {
+        database.completeEmbeddedFaces(mediaId, faces, clusterIds, producerVersion, owner)
         queuePersonalSemanticMemory(mediaIds = setOf(mediaId))
     }
     fun faceIdsForMedia(mediaId: String): List<String> = database.faceIdsForMedia(mediaId)
@@ -256,13 +353,23 @@ class GalleryRepository(context: Context) {
         database.faceClusterMemberships(clusterId)
     fun markFaceEmbeddingAvailable(faceId: String, dimension: Int, producerVersion: String) =
         database.markFaceEmbeddingAvailable(faceId, dimension, producerVersion)
+    fun requestFaceEmbeddingRepair(faceIds: Set<String>, producerVersion: String) =
+        database.requestFaceEmbeddingRepair(faceIds, producerVersion)
     fun assignAutomaticFacesToReviewedCluster(clusterId: String, faceIds: Set<String>): Int =
-        database.assignAutomaticFacesToReviewedCluster(clusterId, faceIds)
+        database.assignAutomaticFacesToReviewedCluster(clusterId, faceIds).also { movedCount ->
+            if (movedCount > 0) queuePersonalSemanticMemory(userRequested = true)
+        }
     fun refineReviewedPersonCluster(clusterId: String, representativeFaceId: String, rejectedFaceIds: Set<String>): Int =
         database.refineReviewedPersonCluster(clusterId, representativeFaceId, rejectedFaceIds)
             .also { if (it > 0) queuePersonalSemanticMemory(userRequested = true) }
     fun ensureAutomaticPersonCluster(id: String) = database.ensureAutomaticPersonCluster(id)
-    fun failFaces(mediaId: String, message: String, permanent: Boolean) = database.failFaces(mediaId, message, permanent)
+    fun failFaces(
+        mediaId: String,
+        message: String,
+        permanent: Boolean,
+        producerVersion: String = "mlkit-face-detection-v1",
+        owner: String? = null,
+    ) = database.failFaces(mediaId, message, permanent, producerVersion, owner)
     fun embeddingPendingItems(producerVersion: String, limit: Int): List<GalleryItem> =
         database.embeddingPendingItems(producerVersion, limit)
     fun embeddingPendingItemsForIds(producerVersion: String, mediaIds: Set<String>, limit: Int): List<GalleryItem> =
@@ -277,12 +384,21 @@ class GalleryRepository(context: Context) {
         limit: Int,
     ): List<VideoKeyframeRecord> = database.keyframeEmbeddingPendingItemsForIds(producerVersion, mediaIds, limit)
     fun completeKeyframeEmbedding(id: String, producerVersion: String) = database.completeKeyframeEmbedding(id, producerVersion)
+    fun failKeyframeEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean): StageStatus =
+        database.failKeyframeEmbedding(id, producerVersion, message, permanent)
     fun markEmbedding(id: String, producerVersion: String, owner: String = "repository-direct"): Boolean =
         database.markEmbedding(id, producerVersion, owner)
     fun completeEmbedding(id: String, producerVersion: String) = database.completeEmbedding(id, producerVersion)
     fun failEmbedding(id: String, producerVersion: String, message: String, permanent: Boolean): StageStatus =
         database.failEmbedding(id, producerVersion, message, permanent)
-    fun recoverInterruptedJobs() = database.recoverInterruptedJobs()
+    fun recoverInterruptedJobs(
+        pipeline: IndexingPipeline,
+        reclaimOrphanedLeases: Boolean = false,
+    ) = database.recoverInterruptedJobs(pipeline, reclaimOrphanedLeases)
+    fun renewIndexingLeases(pipeline: IndexingPipeline, owner: String) =
+        database.renewIndexingLeases(pipeline, owner)
+    fun releaseIndexingLeases(pipeline: IndexingPipeline, owner: String) =
+        database.releaseIndexingLeases(pipeline, owner)
     fun markIndexing(
         id: String,
         owner: String = "repository-direct",
@@ -308,6 +424,7 @@ class GalleryRepository(context: Context) {
         database.failIndex(id, message, permanent)
     fun nextMediaRetryAt(): Long? = database.nextMediaRetryAt()
     fun nextEmbeddingRetryAt(): Long? = database.nextEmbeddingRetryAt()
+    fun nextPeopleRetryAt(): Long? = database.nextPeopleRetryAt()
     fun rebuildEvents() {
         database.rebuildEvents()
         SemanticEnrichmentScheduler.schedule(appContext)
@@ -413,9 +530,24 @@ class GalleryRepository(context: Context) {
     suspend fun beginInteractiveQuery() {
         IndexingResourceCoordinator.beginInteractiveQuery()
         withContext(Dispatchers.IO) {
-            runCatching { SemanticEnrichmentScheduler.cancelAndWait(appContext) }
-            runCatching { CaptionEmbeddingScheduler.cancelAndWait(appContext) }
-            runCatching { EmbeddingIndexScheduler.cancelAndWait(appContext) }
+            try {
+                SemanticEnrichmentScheduler.cancelAndWait(appContext)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+            }
+            try {
+                CaptionEmbeddingScheduler.cancelAndWait(appContext)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+            }
+            try {
+                EmbeddingIndexScheduler.cancelAndWait(appContext)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -446,11 +578,20 @@ class GalleryRepository(context: Context) {
     ): Flow<QueryProgress> = flow {
         val started = SystemClock.elapsedRealtime()
         val conversation = sessionId?.let(database::conversationState)
-        val isFollowUp = FollowUpRefinementPolicy.isContextualFollowUp(query, conversation)
-        val scopedIds = if (conversation != null && isFollowUp) conversation.activeResultIds else activeResultIds
-        val parentResultSetId = if (conversation != null && isFollowUp) conversation.activeResultSetId else null
+        val hasActiveConversation = FollowUpRefinementPolicy.hasActiveResultSet(conversation)
+        val scopedIds = if (hasActiveConversation) conversation?.activeResultIds else activeResultIds
         emit(QueryProgress.Understanding)
-        val compiledPlan = planner.compile(query, scopedIds)
+        val compiledPlan = if (hasActiveConversation && conversation != null) {
+            planner.compileFollowUp(
+                query,
+                FollowUpPlanningContext(conversation, sessionId?.let(sessionPlans::get)),
+            )
+        } else {
+            planner.compile(query, scopedIds)
+        }
+        val isFollowUp = hasActiveConversation && conversation != null &&
+            compiledPlan.baseResultIds == conversation.activeResultIds
+        val parentResultSetId = if (isFollowUp) conversation?.activeResultSetId else null
         val (planPatch, patchedPlan) = if (conversation != null && isFollowUp) {
             planPatchResolver.createAndApply(
                 compiledPlan,
@@ -463,35 +604,26 @@ class GalleryRepository(context: Context) {
         val sanitizedPatchedPlan = patchedPlan.copy(
             peopleClauses = PeopleClauseSanitizer.sanitize(patchedPlan.peopleClauses),
         )
-        val resolvedPersonGroups = database.resolveReviewedPersonGroups(query)
-        val plan = if (resolvedPersonGroups.isEmpty()) {
-            sanitizedPatchedPlan
-        } else {
-            sanitizedPatchedPlan.copy(
-                peopleClauses = (
-                    sanitizedPatchedPlan.peopleClauses + resolvedPersonGroups.flatMap { group ->
-                        group.personIds.map { personId ->
-                            PersonClause(personId = personId, alternativeGroup = group.alternativeGroup)
-                        }
-                    }
-                )
-                    .distinctBy { it.personId to it.mustBePresent },
-            )
-        }
+        val plan = sanitizedPatchedPlan.copy(
+            peopleClauses = PeopleClauseMergePolicy.merge(
+                plannerClauses = sanitizedPatchedPlan.peopleClauses,
+                detectedClauses = PeopleQueryReferenceDetector.detect(query),
+                reviewedGroups = database.resolveReviewedPersonGroups(query),
+                resolveReviewedIds = database::resolveReviewedPersonIds,
+            ),
+        )
         sessionId?.let { sessionPlans[it] = plan }
         emit(QueryProgress.PlanReady(plan))
         val peopleStatus = database.peopleIndexStatus()
-        val peopleUnavailable = PeopleQueryGate.unavailableReason(plan, peopleStatus)
+        val identityReadiness = mutableMapOf<String, Boolean>()
+        val peopleUnavailable = PeopleQueryGate.unavailableReason(plan, peopleStatus) { requested ->
+            identityReadiness.getOrPut(requested) {
+                database.identityReadyReviewedPersonIds(listOf(requested)).isNotEmpty()
+            }
+        }
         if (peopleUnavailable != null) {
-            val peopleReport = RetrievalChannelReport<SearchHit>(
-                RetrievalChannel.PEOPLE,
-                ChannelStatus.UNAVAILABLE,
-                database.allItems().count { it.kind == MediaKind.IMAGE },
-                peopleStatus.identityReadyFaceCount,
-                0,
-                emptyList(),
-                errorCode = "REVIEWED_IDENTITY_UNAVAILABLE",
-            )
+            val eligibleImageCount = database.allItems().count { it.kind == MediaKind.IMAGE }
+            val peopleReport = PeopleUnavailableCoveragePolicy.report(eligibleImageCount)
             emit(QueryProgress.InitialResults(plan, emptyList()))
             val outcome = finalizeOutcome(sessionId, parentResultSetId, SearchOutcome(
                 plan = plan,
@@ -501,8 +633,8 @@ class GalleryRepository(context: Context) {
                     detail = peopleUnavailable,
                     evidenceIds = emptyList(),
                     exactness = ResultExactness.PARTIAL_INDEX,
-                    indexedEligibleCount = peopleStatus.faceInstanceCount,
-                    totalEligibleCount = database.allItems().count { it.kind == MediaKind.IMAGE },
+                    indexedEligibleCount = peopleReport.indexedCount,
+                    totalEligibleCount = peopleReport.eligibleCount,
                     warnings = listOf(peopleUnavailable),
                     channelReports = listOf(peopleReport),
                 ),
@@ -528,26 +660,89 @@ class GalleryRepository(context: Context) {
         } else {
             (requiredAllowed ?: databaseItems.mapTo(mutableSetOf(), GalleryItem::id)) - peopleScope.excludedIds
         }
+        val hasExplicitComparisonScopes = plan.intent == QueryIntent.COMPARE && plan.comparisonScopes.size >= 2
         val terms = RetrievalConceptExpansion.evidenceTerms(
             RetrievalTerms.forExecution(
                 plan.terms,
                 reviewedPeopleFilterApplied = plan.peopleClauses.isNotEmpty(),
             ),
         )
-        val allItems = databaseItems.filter { item ->
+        val prePeopleItems = databaseItems.filter { item ->
             val inScope = when (plan.mediaScope) {
                 MediaScope.ALL -> true
                 MediaScope.IMAGES -> item.kind == MediaKind.IMAGE
                 MediaScope.VIDEOS -> item.kind == MediaKind.VIDEO
                 MediaScope.DOCUMENTS -> item.kind == MediaKind.PDF || item.ocrText.isNotBlank() || item.looksLikeDocument()
             }
-            inScope && (allowed == null || item.id in allowed) &&
+            inScope && (baseAllowed == null || item.id in baseAllowed) &&
                 GalleryFilterEvaluator.matches(item, plan.filter) &&
-                item.matchesRequiredPlace(plan.place) &&
+                item.matchesRequiredPlace(if (hasExplicitComparisonScopes) null else plan.place) &&
                 item.matchesRequiredMerchant(plan.ocrClause?.merchant)
         }
+        val allItems = prePeopleItems.filter {
+            (allowed == null || it.id in allowed) &&
+                !DeterministicNegativeClausePolicy.excludes(it, plan.semanticClauses)
+        }
         val eligibleIds = allItems.mapTo(mutableSetOf(), GalleryItem::id)
-        val fullTextIds = database.fullTextMatches(terms)
+        val deterministicAggregationHits = if (
+            plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX) &&
+            plan.semanticClauses.isEmpty()
+        ) {
+            val field = OcrFactAllowlist.resolve(plan.aggregation?.field) ?: OcrFactAllowlist.fields.first()
+            val entities = database.ocrEntitiesForMediaIds(eligibleIds, field.type)
+            allItems.mapNotNull { item ->
+                entities[item.id]?.let { entity ->
+                    SearchHit(
+                        item = item,
+                        score = 0.0,
+                        evidence = listOf(
+                            EvidenceRecord(
+                                id = "${item.id}:${field.sourceField}:${StableDerivedId.sha256(entity.normalizedValue)}",
+                                mediaId = item.id,
+                                sourceField = field.sourceField,
+                                text = entity.rawText,
+                                confidence = entity.confidence,
+                                producerVersion = entity.producerVersion,
+                                region = listOf(entity.left, entity.top, entity.right, entity.bottom),
+                            ),
+                        ),
+                    )
+                }
+            }
+        } else {
+            emptyList()
+        }
+        val deterministicDocumentHits = if (
+            plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) ||
+            plan.intent == QueryIntent.LIST && plan.ocrClause?.requestedField != null
+        ) {
+            OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)?.let { field ->
+                val entities = database.ocrEntitiesForMediaIds(eligibleIds, field.type)
+                allItems.mapNotNull { item ->
+                    entities[item.id]?.let { entity ->
+                        SearchHit(
+                            item = item,
+                            score = 0.0,
+                            evidence = listOf(
+                                EvidenceRecord(
+                                    id = "${item.id}:${field.sourceField}:${StableDerivedId.sha256(entity.normalizedValue)}",
+                                    mediaId = item.id,
+                                    sourceField = field.sourceField,
+                                    text = entity.rawText,
+                                    confidence = entity.confidence,
+                                    producerVersion = entity.producerVersion,
+                                    region = listOf(entity.left, entity.top, entity.right, entity.bottom),
+                                ),
+                            ),
+                        )
+                    }
+                }
+            }.orEmpty()
+        } else {
+            emptyList()
+        }
+        val lexicalSearch = database.fullTextMatches(terms)
+        val fullTextIds = lexicalSearch.ids
         val lexicalRanked = allItems
             .asSequence()
             .mapNotNull { item -> score(item, terms, item.id in fullTextIds) }
@@ -555,21 +750,32 @@ class GalleryRepository(context: Context) {
             .toList()
         val semanticQueries = SemanticQueryVariants.from(plan)
         val requiredPersonChunkClusters = PersonCaptionConstraintPolicy.requiredClusterIds(plan)
-        val captionRanked = database.searchSemanticCaptions(
+        val captionSearch = database.searchSemanticCaptions(
             semanticQueries + terms,
             eligibleIds,
             requiredPersonChunkClusters,
         )
+        val captionRanked = captionSearch.hits
         val captionProducer = captionVectors.producerVersion()
         val eligibleCaptionChunks = if (captionProducer == null) {
             emptyList()
         } else {
             database.eligibleCaptionChunksForSearch(eligibleIds, requiredPersonChunkClusters, captionProducer)
         }
+        val searchableCaptionChunkIds = captionProducer?.let {
+            CaptionVectorCoveragePolicy.searchableChunkIds(eligibleCaptionChunks, it)
+        }.orEmpty()
+        val captionedMediaCount = eligibleCaptionChunks.asSequence()
+            .map(SemanticCaptionChunkRecord::mediaId)
+            .distinct()
+            .count()
         val captionVectorSearch = captionVectors.searchVariants(
             semanticQueries,
             eligibleCaptionChunks.mapTo(mutableSetOf(), SemanticCaptionChunkRecord::id),
+            searchableCaptionChunkIds,
+            eligibleIds.size,
             plan.limit.coerceIn(20, 100),
+            captionedMediaCount,
         )
         val captionEmbeddingRanked = database.resolveCaptionVectorHits(
             captionVectorSearch.hits,
@@ -577,7 +783,48 @@ class GalleryRepository(context: Context) {
             requiredPersonChunkClusters,
         )
         val eligibleVectorIds = database.vectorIdsForMedia(eligibleIds)
-        val semanticVectorReport = SemanticChannelReportFusion.fuse(
+        val exactPredicateScan = if (
+            SemanticPredicateScanPolicy.requested(plan) &&
+            semanticQueries.isNotEmpty() &&
+            eligibleIds.isNotEmpty()
+        ) {
+            semanticVectors.producerVersion()?.let { modelVersion ->
+                val indexedMediaIds = database.mediaIdsWithVectorCoverage(
+                    eligibleIds,
+                    semanticVectors.indexedIds(),
+                )
+                val scanId = database.createOrResumeSemanticPredicateScan(
+                    query = SemanticPredicateScanPolicy.queryText(plan),
+                    modelVersion = modelVersion,
+                    eligibleMediaIds = eligibleIds,
+                    indexedMediaIds = indexedMediaIds,
+                )
+                val record = SemanticPredicateScanRunner(database, semanticVectors).run(scanId) { progress ->
+                    emit(QueryProgress.SemanticScan(progress.searchedCount, progress.eligibleCount))
+                }
+                record?.also {
+                    if (!it.completeCoverage) SemanticPredicateScanScheduler.schedule(appContext, it.id)
+                }
+            }
+        } else {
+            null
+        }
+        val semanticVectorReport = exactPredicateScan?.let { scan ->
+            RetrievalChannelReport(
+                channel = RetrievalChannel.SEMANTIC,
+                status = when {
+                    scan.status == SemanticPredicateScanStatus.FAILED -> ChannelStatus.FAILED
+                    scan.status == SemanticPredicateScanStatus.COMPLETE && scan.indexedCount >= scan.eligibleCount -> ChannelStatus.SUCCESS
+                    else -> ChannelStatus.PARTIAL
+                },
+                eligibleCount = scan.eligibleCount,
+                indexedCount = scan.indexedCount,
+                searchedCount = scan.searchedCount,
+                hits = database.semanticPredicateScanHits(scan.id),
+                modelVersion = scan.modelVersion,
+                errorCode = scan.error,
+            )
+        } ?: SemanticChannelReportFusion.fuse(
             semanticQueries.map { semanticQuery ->
                 semanticVectors.searchTextReport(
                     query = semanticQuery,
@@ -596,102 +843,180 @@ class GalleryRepository(context: Context) {
         val bestSemanticKeyframeByMedia = resolvedSemanticHits.mapNotNull { resolved ->
             resolved.keyframe?.let { it.mediaId to it }
         }.toMap()
-        val eventRanked = database.searchEvents(terms, eligibleIds)
-        val eventMediaRank = eventRanked.flatMap { it.mediaIds }.distinct()
+        val eventRanked = if (
+            plan.intent == QueryIntent.LIST && plan.grouping == Grouping.EVENT && terms.isEmpty() && semanticQueries.isEmpty()
+        ) {
+            database.listEvents(eligibleIds)
+        } else {
+            database.searchEvents(terms, eligibleIds)
+        }
+        val rawEventMediaRank = eventRanked.flatMap { it.mediaIds }.distinct()
         val eventByMedia = eventRanked.flatMap { hit -> hit.mediaIds.map { it to hit.event } }.toMap()
         val lexicalById = lexicalRanked.associateBy { it.item.id }
         val semanticById = semanticRanked.associateBy { it.mediaId }
+        val itemPredicateTerms = EventExpansionPolicy.itemPredicateTerms(plan)
+        val itemPredicateQueries = EventExpansionPolicy.itemPredicateQueries(plan)
+        val predicateLexicalIds = if (itemPredicateTerms.isEmpty()) {
+            emptySet()
+        } else {
+            database.fullTextMatches(itemPredicateTerms).ids
+        }
+        val directCaptionIds = captionRanked
+            .asSequence()
+            .filter { it.directEvidence }
+            .mapTo(mutableSetOf(), CaptionSearchHit::mediaId)
+        val directCaptionEmbeddingIds = captionEmbeddingRanked
+            .asSequence()
+            .filter { it.directEvidence }
+            .mapTo(mutableSetOf(), CaptionSearchHit::mediaId)
+        val predicateSemanticReport = if (
+            itemPredicateQueries.isEmpty() ||
+            (plan.place == null && plan.comparisonScopes.isEmpty())
+        ) {
+            null
+        } else {
+            semanticVectors.searchTextReport(
+                query = itemPredicateQueries.joinToString(" "),
+                topK = plan.limit.coerceIn(20, 100),
+                eligibleCount = eligibleIds.size,
+                allowedIds = eligibleVectorIds,
+            )
+        }
+        val predicateSemanticIds = predicateSemanticReport?.hits
+            ?.mapTo(mutableSetOf(), VectorHit::mediaId)
+            ?: semanticById.keys
+        val itemPredicateIds = EventExpansionPolicy.itemPredicateIds(
+            predicateTerms = itemPredicateTerms,
+            lexicalIds = predicateLexicalIds,
+            semanticIds = predicateSemanticIds,
+            captionIds = directCaptionIds,
+            captionEmbeddingIds = directCaptionEmbeddingIds,
+        )
+        val allowContextualEventExpansion =
+            plan.intent == QueryIntent.EVENT_SUMMARY || plan.grouping == Grouping.EVENT ||
+                (terms.isEmpty() && semanticQueries.isEmpty())
+        val eventMediaRank = EventExpansionPolicy.mediaIdsForSearch(
+            rawEventMediaIds = rawEventMediaRank,
+            itemPredicateIds = itemPredicateIds,
+            allowContextualExpansion = allowContextualEventExpansion,
+        )
+        val eventCoverageRequired = plan.intent == QueryIntent.EVENT_SUMMARY ||
+            plan.grouping == Grouping.EVENT || rawEventMediaRank.isNotEmpty()
+        val eventStageCoverage = if (eventCoverageRequired) {
+            database.indexStageCoverage(eligibleIds, IndexStage.EVENTS)
+        } else {
+            IndexStageCoverage(eligibleCount = 0)
+        }
+        val eventStatus = EventChannelCoveragePolicy.status(eventCoverageRequired, eventStageCoverage)
         val itemById = allItems.associateBy { it.id }
-        val resolvedSemanticBySourceId = resolvedSemanticHits.associateBy(ResolvedSemanticHit::sourceVectorId)
-        val semanticChannelReport = RetrievalChannelReport<SearchHit>(
-            channel = semanticVectorReport.channel,
-            status = semanticVectorReport.status,
-            eligibleCount = semanticVectorReport.eligibleCount,
-            indexedCount = semanticVectorReport.indexedCount,
-            searchedCount = semanticVectorReport.searchedCount,
-            hits = semanticVectorReport.hits.mapNotNull { vectorHit ->
-                val resolved = resolvedSemanticBySourceId[vectorHit.mediaId] ?: return@mapNotNull null
-                val item = itemById[resolved.hit.mediaId] ?: return@mapNotNull null
-                SearchHit(item, resolved.hit.score.toDouble(), emptyList())
-            },
-            modelVersion = semanticVectorReport.modelVersion,
-            errorCode = semanticVectorReport.errorCode,
-        )
-        val readyEligibleCount = allItems.count { it.indexState == IndexState.READY }
-        val lexicalChannelReport = RetrievalChannelReport(
-            RetrievalChannel.LEXICAL,
-            ChannelStatus.SUCCESS,
-            allItems.size,
-            readyEligibleCount,
-            allItems.size,
-            lexicalRanked,
-            modelVersion = "sqlite-fts+metadata-v1",
-        )
-        val eventChannelReport = RetrievalChannelReport(
-            RetrievalChannel.EVENT,
-            if (terms.isEmpty() && plan.intent != QueryIntent.EVENT_SUMMARY) ChannelStatus.NOT_REQUIRED else ChannelStatus.SUCCESS,
-            allItems.size,
-            database.events().size,
-            eventRanked.size,
-            eventMediaRank.mapNotNull { id -> itemById[id]?.let { SearchHit(it, 1.0, emptyList()) } },
-            modelVersion = EventCompiler.PRODUCER_VERSION,
-        )
-        val captionCoverage = database.semanticCaptionEvidenceCount(eligibleIds)
-        val captionChannelReport = RetrievalChannelReport(
-            RetrievalChannel.CAPTION,
-            CaptionCoveragePolicy.status(eligibleIds.size, captionCoverage),
-            eligibleIds.size,
-            captionCoverage,
-            captionCoverage,
-            captionRanked.mapNotNull { match ->
-                itemById[match.mediaId]?.let { SearchHit(it, match.score, emptyList()) }
-            },
-            modelVersion = captionRanked.firstOrNull()?.caption?.modelVersion,
-            errorCode = if (eligibleIds.isNotEmpty() && captionCoverage == 0) "NO_CACHED_CAPTIONS" else null,
-        )
-        val captionEmbeddingSearchedMediaCount = eligibleCaptionChunks.asSequence()
-            .filter {
-                it.embeddingState == CaptionEmbeddingState.COMPLETE &&
-                    it.embeddingModelVersion == captionVectorSearch.modelVersion
-            }
-            .map(SemanticCaptionChunkRecord::mediaId)
-            .distinct()
-            .count()
-        val captionEmbeddingChannelReport = RetrievalChannelReport(
-            RetrievalChannel.CAPTION_EMBEDDING,
-            captionVectorSearch.status,
-            allItems.size,
-            captionEmbeddingSearchedMediaCount,
-            captionEmbeddingSearchedMediaCount,
-            captionEmbeddingRanked.mapNotNull { match ->
-                itemById[match.mediaId]?.let { SearchHit(it, match.score, emptyList()) }
-            },
-            modelVersion = captionVectorSearch.modelVersion,
-            errorCode = captionVectorSearch.errorCode,
-        )
+        val deterministicScopeHit: (GalleryItem) -> SearchHit = { item ->
+            val event = eventByMedia[item.id]
+            SearchHit(
+                item = item,
+                score = 0.0,
+                evidence = buildList {
+                    add(
+                        EvidenceRecord(
+                            id = "${item.id}:deterministic_scope",
+                            mediaId = item.id,
+                            sourceField = "deterministic_scope",
+                            text = listOf(item.title, item.location, item.album)
+                                .filter(String::isNotBlank)
+                                .distinct()
+                                .joinToString(" | "),
+                            confidence = 1f,
+                            producerVersion = "gallery-deterministic-v1",
+                        ),
+                    )
+                    event?.let {
+                        add(
+                            EvidenceRecord(
+                                id = "${item.id}:event:${it.id}",
+                                mediaId = item.id,
+                                sourceField = "event",
+                                text = "${it.title} (${formatEventRange(it.startTime, it.endTime)})",
+                                confidence = it.confidence,
+                                producerVersion = it.producerVersion,
+                            ),
+                        )
+                    }
+                },
+            )
+        }
+        val deterministicCapabilityHits = when {
+            isDeterministicMetadataCount(plan, terms, semanticQueries, false) ->
+                allItems.map(deterministicScopeHit)
+            plan.intent == QueryIntent.LIST && terms.isEmpty() && semanticQueries.isEmpty() ->
+                allItems.map(deterministicScopeHit)
+            plan.intent == QueryIntent.LIST && plan.grouping == Grouping.EVENT &&
+                eventStatus == ChannelStatus.SUCCESS && eventMediaRank.isNotEmpty() ->
+                eventMediaRank.mapNotNull { itemById[it] }.map(deterministicScopeHit)
+            hasExplicitComparisonScopes ->
+                plan.comparisonScopes.flatMap { scope ->
+                    allItems.filter { item -> item.matchesComparisonScope(scope, eventByMedia[item.id]) }
+                        .map(deterministicScopeHit)
+                }
+            plan.intent in setOf(QueryIntent.EVENT_SUMMARY, QueryIntent.TIMELINE, QueryIntent.COMPARE) &&
+                eventStatus == ChannelStatus.SUCCESS && eventMediaRank.isNotEmpty() ->
+                eventMediaRank.mapNotNull { itemById[it] }.map(deterministicScopeHit)
+            else -> emptyList()
+        }
+        val deterministicAnswerHits = deterministicCapabilityHits.ifEmpty {
+            deterministicAggregationHits.ifEmpty { deterministicDocumentHits }
+        }
+        val peopleCoverage = if (plan.peopleClauses.isEmpty()) {
+            PeopleCoverage()
+        } else {
+            database.peopleCoverage(
+                allItems.filter { it.kind == MediaKind.IMAGE }.mapTo(mutableSetOf(), GalleryItem::id),
+            )
+        }
         val peopleChannelReport = RetrievalChannelReport<SearchHit>(
             RetrievalChannel.PEOPLE,
-            if (plan.peopleClauses.isEmpty()) ChannelStatus.NOT_REQUIRED else ChannelStatus.SUCCESS,
-            databaseItems.count { it.kind == MediaKind.IMAGE },
-            peopleStatus.identityReadyFaceCount,
-            if (plan.peopleClauses.isEmpty()) 0 else allItems.size,
+            when {
+                plan.peopleClauses.isEmpty() -> ChannelStatus.NOT_REQUIRED
+                peopleCoverage.isComplete -> ChannelStatus.SUCCESS
+                else -> ChannelStatus.PARTIAL
+            },
+            peopleCoverage.eligibleCount,
+            peopleCoverage.indexedCount,
+            peopleCoverage.indexedCount,
             emptyList(),
             modelVersion = services.faceEngines.activeDescriptor()?.producerVersion,
+            errorCode = if (plan.peopleClauses.isNotEmpty() && !peopleCoverage.isComplete) {
+                "FACE_COVERAGE_PARTIAL"
+            } else {
+                null
+            },
         )
+        val ocrRequired = plan.ocrClause != null || plan.intent in setOf(
+            QueryIntent.ANSWER_FACT,
+            QueryIntent.DOCUMENT_QA,
+            QueryIntent.SUM,
+            QueryIntent.MIN_MAX,
+        )
+        val ocrStageCoverage = if (ocrRequired) {
+            database.indexStageCoverage(eligibleIds, IndexStage.OCR)
+        } else {
+            IndexStageCoverage(eligibleCount = 0)
+        }
+        val ocrModelAvailable = services.ocrEngines.activeDescriptor() != null
+        val ocrStatus = OcrChannelCoveragePolicy.status(ocrRequired, ocrStageCoverage, ocrModelAvailable)
         val ocrChannelReport = RetrievalChannelReport<SearchHit>(
-            RetrievalChannel.OCR,
-            if (plan.ocrClause == null) ChannelStatus.NOT_REQUIRED else if (readyEligibleCount < allItems.size) ChannelStatus.PARTIAL else ChannelStatus.SUCCESS,
-            allItems.size,
-            readyEligibleCount,
-            if (plan.ocrClause == null) 0 else allItems.size,
-            emptyList(),
+            channel = RetrievalChannel.OCR,
+            status = ocrStatus,
+            eligibleCount = ocrStageCoverage.eligibleCount,
+            indexedCount = ocrStageCoverage.coveredCount,
+            searchedCount = if (ocrRequired) ocrStageCoverage.coveredCount else 0,
+            hits = emptyList(),
             modelVersion = services.ocrEngines.activeDescriptor()?.producerVersion,
+            errorCode = OcrChannelCoveragePolicy.errorCode(ocrStatus),
         )
         val refinementIds = FollowUpRefinementPolicy.corroboratedSemanticIds(
             scoped = plan.baseResultIds != null,
             semanticIds = semanticRanked.map { it.mediaId },
             lexicalIds = lexicalById.keys,
-            eventIds = eventByMedia.keys,
+            eventIds = eventMediaRank.toSet(),
         )
         val fused = HybridRankFusion.fuse(
             listOf(
@@ -711,7 +1036,7 @@ class GalleryRepository(context: Context) {
             val semanticEvidence = semantic?.let {
                 val keyframe = bestSemanticKeyframeByMedia[item.id]
                 EvidenceRecord(
-                    id = "${item.id}:image_text_embedding:${plan.originalQuery.hashCode().toUInt()}",
+                    id = "${item.id}:image_text_embedding:${StableDerivedId.sha256(plan.originalQuery)}",
                     mediaId = item.id,
                     sourceField = "image_text_embedding",
                     text = if (keyframe == null) "Local image-text similarity" else "Local video-frame similarity at ${formatTimestamp(keyframe.timestampMs)}",
@@ -725,9 +1050,13 @@ class GalleryRepository(context: Context) {
                     id = "${item.id}:event:${event.id}",
                     mediaId = item.id,
                     sourceField = "event",
-                    text = "${event.title} (${event.startTime}..${event.endTime})",
+                    text = "${event.title} (${formatEventRange(event.startTime, event.endTime)})",
                     confidence = event.confidence,
                     producerVersion = event.producerVersion,
+                    scope = SemanticFactScope.EVENT,
+                    scopeId = event.id.toString(),
+                    evidenceMediaId = item.id,
+                    applicability = "EVENT_MEMBERSHIP",
                 )
             }
             val captionEvidence = caption?.let {
@@ -738,6 +1067,11 @@ class GalleryRepository(context: Context) {
                     text = it.caption.text,
                     confidence = (it.caption.confidence * if (it.directEvidence) 1f else 0.72f).coerceIn(0f, 1f),
                     producerVersion = it.caption.modelVersion,
+                    scope = it.chunk?.scope ?: it.caption.scope,
+                    scopeId = it.chunk?.scopeId ?: it.caption.subjectId,
+                    evidenceMediaId = it.chunk?.evidenceMediaId ?: it.caption.evidenceMediaId,
+                    clusterId = it.chunk?.clusterId,
+                    applicability = it.chunk?.applicability ?: it.caption.applicability,
                 )
             }
             val captionEmbeddingEvidence = captionEmbedding?.let {
@@ -749,6 +1083,11 @@ class GalleryRepository(context: Context) {
                     text = chunk.exactText,
                     confidence = (chunk.confidence * if (it.directEvidence) 1f else 0.72f).coerceIn(0f, 1f),
                     producerVersion = chunk.embeddingModelVersion ?: captionVectorSearch.modelVersion ?: "unknown-caption-vector",
+                    scope = chunk.scope,
+                    scopeId = chunk.scopeId,
+                    evidenceMediaId = chunk.evidenceMediaId,
+                    clusterId = chunk.clusterId,
+                    applicability = chunk.applicability,
                 )
             }
             SearchHit(
@@ -762,6 +1101,107 @@ class GalleryRepository(context: Context) {
                 ),
             )
         }
+        val fusedHitsById = fusedHits.associateBy { it.item.id }
+        val channelHit: (String, Double, RetrievalChannel) -> SearchHit? = { mediaId, score, channel ->
+            fusedHitsById[mediaId]?.let { hit ->
+                RetrievalChannelEvidence.project(hit, channel)?.copy(score = score)
+            }
+        }
+        val readyEligibleCount = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
+        val lexicalChannelReport = RetrievalChannelReport(
+            RetrievalChannel.LEXICAL,
+            lexicalSearch.status,
+            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
+            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else readyEligibleCount,
+            if (lexicalSearch.status == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
+            lexicalRanked,
+            modelVersion = "sqlite-fts+metadata-v2",
+            errorCode = lexicalSearch.errorCode,
+        )
+        val semanticChannelReport = RetrievalChannelReport<SearchHit>(
+            channel = semanticVectorReport.channel,
+            status = semanticVectorReport.status,
+            eligibleCount = semanticVectorReport.eligibleCount,
+            indexedCount = semanticVectorReport.indexedCount,
+            searchedCount = semanticVectorReport.searchedCount,
+            hits = semanticRanked.mapNotNull { vectorHit ->
+                channelHit(vectorHit.mediaId, vectorHit.score.toDouble(), RetrievalChannel.SEMANTIC)
+            },
+            modelVersion = semanticVectorReport.modelVersion,
+            errorCode = semanticVectorReport.errorCode,
+        )
+        val eventChannelReport = RetrievalChannelReport(
+            RetrievalChannel.EVENT,
+            eventStatus,
+            eventStageCoverage.eligibleCount,
+            eventStageCoverage.coveredCount,
+            eventRanked.size,
+            eventMediaRank.mapNotNull { id -> channelHit(id, 1.0, RetrievalChannel.EVENT) },
+            modelVersion = EventCompiler.PRODUCER_VERSION,
+            errorCode = when (eventStatus) {
+                ChannelStatus.PARTIAL -> "EVENT_COVERAGE_PARTIAL"
+                ChannelStatus.UNAVAILABLE -> "EVENT_INDEX_UNAVAILABLE"
+                else -> null
+            },
+        )
+        val eventPredicateSemanticChannelReport = predicateSemanticReport?.let { report ->
+            val projected = EventPredicateSemanticChannelPolicy.project(report)
+            RetrievalChannelReport(
+                channel = projected.channel,
+                status = projected.status,
+                eligibleCount = projected.eligibleCount,
+                indexedCount = projected.indexedCount,
+                searchedCount = projected.searchedCount,
+                hits = projected.hits.mapNotNull { vectorHit ->
+                    channelHit(vectorHit.mediaId, vectorHit.score.toDouble(), projected.channel)
+                },
+                modelVersion = projected.modelVersion,
+                errorCode = projected.errorCode,
+            )
+        }
+        val captionCoverage = database.semanticCaptionEvidenceCount(eligibleIds)
+        val captionStatus = when {
+            captionSearch.status == ChannelStatus.NOT_REQUIRED -> ChannelStatus.NOT_REQUIRED
+            captionSearch.status != ChannelStatus.SUCCESS -> captionSearch.status
+            captionCoverage < eligibleIds.size -> ChannelStatus.PARTIAL
+            else -> ChannelStatus.SUCCESS
+        }
+        val captionChannelReport = RetrievalChannelReport(
+            RetrievalChannel.CAPTION,
+            captionStatus,
+            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else eligibleIds.size,
+            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else captionCoverage,
+            if (captionStatus == ChannelStatus.NOT_REQUIRED) 0 else captionCoverage,
+            captionRanked.mapNotNull { match ->
+                channelHit(match.mediaId, match.score, RetrievalChannel.CAPTION)
+            },
+            modelVersion = captionRanked.firstOrNull()?.caption?.modelVersion,
+            errorCode = captionSearch.errorCode
+                ?: if (captionCoverage < eligibleIds.size && captionStatus != ChannelStatus.NOT_REQUIRED) {
+                    "CAPTION_COVERAGE_PARTIAL"
+                } else {
+                    null
+                },
+        )
+        val captionChunksByMedia = eligibleCaptionChunks.groupBy(SemanticCaptionChunkRecord::mediaId)
+        val captionEmbeddingSearchedMediaCount = captionChunksByMedia.count { (_, chunks) ->
+            chunks.any { it.id in searchableCaptionChunkIds }
+        }
+        val captionEmbeddingIndexedMediaCount = captionChunksByMedia.count { (_, chunks) ->
+            chunks.isNotEmpty() && chunks.all { it.id in searchableCaptionChunkIds }
+        }
+        val captionEmbeddingChannelReport = RetrievalChannelReport(
+            RetrievalChannel.CAPTION_EMBEDDING,
+            captionVectorSearch.status,
+            eligibleIds.size,
+            captionEmbeddingIndexedMediaCount,
+            captionEmbeddingSearchedMediaCount,
+            captionEmbeddingRanked.mapNotNull { match ->
+                channelHit(match.mediaId, match.score, RetrievalChannel.CAPTION_EMBEDDING)
+            },
+            modelVersion = captionVectorSearch.modelVersion,
+            errorCode = captionVectorSearch.errorCode,
+        )
         val ranked = when (plan.sort) {
             SortSpec.CAPTURE_TIME_DESC -> fusedHits.sortedWith(compareByDescending<SearchHit> { it.item.capturedAt ?: Long.MIN_VALUE }.thenByDescending { it.score })
             SortSpec.CAPTURE_TIME_ASC -> fusedHits.sortedWith(compareBy<SearchHit> { it.item.capturedAt ?: Long.MAX_VALUE }.thenByDescending { it.score })
@@ -792,11 +1232,7 @@ class GalleryRepository(context: Context) {
         val cachedSemanticFacts = database.semanticFacts(deterministicFacts.map { it.item.id })
             .filter {
                 it.scope == SemanticFactScope.MEDIA &&
-                    it.applicability !in setOf(
-                        "GROUP_CONTEXT_ONLY",
-                        "LEGACY_GROUP_CONTEXT_ONLY",
-                        "STALE_PERSON_BINDING",
-                    )
+                    it.applicability !in SemanticProvenanceApplicability.NON_CONFIRMING
             }
             .groupBy(SemanticFactRecord::subjectId)
         val enriched = deterministicFacts.map { hit ->
@@ -809,6 +1245,10 @@ class GalleryRepository(context: Context) {
                     confidence = fact.confidence,
                     producerVersion = fact.modelVersion,
                     region = fact.region,
+                    scope = fact.scope,
+                    scopeId = fact.subjectId,
+                    evidenceMediaId = fact.evidenceMediaId,
+                    applicability = fact.applicability,
                 )
             }
             hit.copy(evidence = (hit.evidence + cached).distinctBy(EvidenceRecord::id))
@@ -829,6 +1269,7 @@ class GalleryRepository(context: Context) {
             enriched
         }
         val hits = verified.take(plan.limit.coerceIn(1, 100))
+        val deterministicMetadataCount = isDeterministicMetadataCount(plan, terms, semanticQueries, verification.applied)
         val visualChannelReport = RetrievalChannelReport(
             RetrievalChannel.VISUAL_VERIFICATION,
             when {
@@ -846,25 +1287,54 @@ class GalleryRepository(context: Context) {
             modelVersion = verification.trace?.modelRevision,
             errorCode = verification.trace?.fallbackReason?.take(120),
         )
-        val channelReports = listOf(
+        val channelReports = listOfNotNull(
             lexicalChannelReport,
             semanticChannelReport,
             captionChannelReport,
             captionEmbeddingChannelReport,
             eventChannelReport,
+            eventPredicateSemanticChannelReport,
             ocrChannelReport,
             peopleChannelReport,
             visualChannelReport,
         )
 
-        val matchCount = if (verification.applied) verified.size else ranked.size
-        val deterministicAnswer = buildAnswer(plan, hits, allItems, matchCount, verification, channelReports)
-        val requiresAuthentication = hits.any(SensitiveEvidencePolicy::requiresAuthentication)
+        val exactPredicateMatchCount = exactPredicateScan?.takeIf { it.completeCoverage }?.let { scan ->
+            SemanticPredicateScanResultPolicy.completeMatchCount(
+                scan,
+                database.semanticPredicateScanHits(scan.id),
+            )
+        }
+        val matchCount = when {
+            verification.applied -> verified.size
+            deterministicMetadataCount -> deterministicAnswerHits.size
+            exactPredicateMatchCount != null -> exactPredicateMatchCount
+            else -> ranked.size
+        }
+        val deterministicAnswer = buildAnswer(
+            plan,
+            hits,
+            allItems,
+            eligibleIds,
+            matchCount,
+            verification,
+            channelReports,
+            deterministicAnswerHits,
+            completePredicateScan = exactPredicateScan?.completeCoverage == true,
+            deterministicMetadataCount = deterministicMetadataCount,
+        )
+        val requiresAuthentication = requiresAuthenticationForAnswer(hits, deterministicAnswerHits)
         val answer = if (requiresAuthentication) {
             SensitiveEvidencePolicy.lock(deterministicAnswer)
         } else if (shouldComposeGroundedAnswer(plan, hits, verification)) {
             emit(QueryProgress.ComposingAnswer)
-            groundedAnswerComposer.compose(GroundedAnswerInput(plan, hits, deterministicAnswer)).answer
+            groundedAnswerComposer.compose(
+                GroundedAnswerInput(
+                    plan,
+                    GroundedAnswerEvidenceHits.merge(hits, deterministicAnswerHits),
+                    deterministicAnswer,
+                ),
+            ).answer
         } else {
             deterministicAnswer
         }.copy(channelReports = channelReports)
@@ -946,14 +1416,18 @@ class GalleryRepository(context: Context) {
             if (term in ocrText) {
                 score += 10.0
                 val matchingBlock = database.ocrBlocks(item.id).firstOrNull { term in it.text.lowercase(Locale.ROOT) }
+                val matchingEntity = database.ocrEntities(item.id).firstOrNull { entity ->
+                    term in entity.rawText.lowercase(Locale.ROOT) || term in entity.normalizedValue.lowercase(Locale.ROOT)
+                }
                 evidence += EvidenceRecord(
-                    id = "${item.id}:ocr:${term.hashCode().toUInt()}",
+                id = "${item.id}:ocr:${StableDerivedId.sha256(term)}",
                     mediaId = item.id,
-                    sourceField = "ocr_text",
-                    text = matchingBlock?.text ?: term,
-                    confidence = matchingBlock?.confidence ?: .8f,
-                    producerVersion = "mlkit-text-v2",
-                    region = matchingBlock?.let { listOf(it.left, it.top, it.right, it.bottom) },
+                    sourceField = ocrEvidenceSourceField(matchingEntity?.type),
+                    text = matchingEntity?.rawText ?: matchingBlock?.text ?: term,
+                    confidence = matchingEntity?.confidence ?: matchingBlock?.confidence ?: .8f,
+                    producerVersion = matchingEntity?.producerVersion ?: "mlkit-text-v2",
+                    region = matchingEntity?.let { listOf(it.left, it.top, it.right, it.bottom) }
+                        ?: matchingBlock?.let { listOf(it.left, it.top, it.right, it.bottom) },
                     timestampMs = matchingBlock?.timestampMs,
                     pageIndex = matchingBlock?.pageIndex,
                 )
@@ -971,7 +1445,7 @@ class GalleryRepository(context: Context) {
         value: String,
         confidence: Float,
     ) = EvidenceRecord(
-        id = "${item.id}:$source:${value.lowercase(Locale.ROOT).hashCode().toUInt()}",
+        id = "${item.id}:$source:${StableDerivedId.sha256(value.lowercase(Locale.ROOT))}",
         mediaId = item.id,
         sourceField = source,
         text = value,
@@ -982,23 +1456,66 @@ class GalleryRepository(context: Context) {
         plan: GalleryQueryPlan,
         hits: List<SearchHit>,
         allItems: List<GalleryItem>,
+        eligibleIds: Set<String>,
         matchCount: Int,
         verification: VerificationResult,
         channelReports: List<RetrievalChannelReport<SearchHit>>,
+        deterministicAnswerHits: List<SearchHit>,
+        completePredicateScan: Boolean = false,
+        deterministicMetadataCount: Boolean = false,
     ): SearchAnswer {
-        val totalItems = allItems.size
-        val readyItems = allItems.count { it.indexState == IndexState.READY }
+        val totalItems = eligibleIds.size
+        val readyItems = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
         val semanticReport = channelReports.first { it.channel == RetrievalChannel.SEMANTIC }
+        val peopleReport = channelReports.first { it.channel == RetrievalChannel.PEOPLE }
+        val ocrReport = channelReports.first { it.channel == RetrievalChannel.OCR }
+        val peopleCoverageComplete = peopleReport.status !in setOf(
+            ChannelStatus.PARTIAL,
+            ChannelStatus.UNAVAILABLE,
+            ChannelStatus.FAILED,
+        )
+        val ocrCoverageComplete = ocrReport.status !in setOf(
+            ChannelStatus.PARTIAL,
+            ChannelStatus.UNAVAILABLE,
+            ChannelStatus.FAILED,
+        )
+        val eventCoverageComplete = channelReports.firstOrNull { it.channel == RetrievalChannel.EVENT }?.status == ChannelStatus.SUCCESS
         val usedSemanticRetrieval = semanticReport.status != ChannelStatus.NOT_REQUIRED
         val deterministicResultSetFilter = plan.baseResultIds != null && plan.terms.isEmpty() &&
             plan.semanticClauses.isEmpty() && plan.filter != FilterExpression.True && !verification.applied
         val deterministicAggregation = plan.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
-            plan.aggregation != null && plan.semanticClauses.isEmpty() && !usedSemanticRetrieval && !verification.applied
+            plan.aggregation != null && plan.semanticClauses.isEmpty() && !verification.applied &&
+            (deterministicMetadataCount || deterministicAnswerHits.isNotEmpty() || plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX))
+        val deterministicList = plan.intent == QueryIntent.LIST && !verification.applied && (
+            plan.terms.isEmpty() && plan.semanticClauses.isEmpty() ||
+                plan.grouping == Grouping.EVENT && eventCoverageComplete && deterministicAnswerHits.isNotEmpty() ||
+                plan.ocrClause != null && ocrCoverageComplete && deterministicAnswerHits.isNotEmpty()
+            )
+        val deterministicComparison = plan.intent == QueryIntent.COMPARE &&
+            plan.comparisonScopes.size >= 2 && !verification.applied
+        val requestedDocumentField = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)
+        val deterministicDocumentFact = plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) &&
+            requestedDocumentField != null &&
+            ocrCoverageComplete &&
+            DocumentAnswerSelector.select(
+                deterministicAnswerHits,
+                setOf(requestedDocumentField.sourceField),
+                plan.sort,
+            )?.fact != null &&
+            !verification.applied
+        val deterministicDocumentConstraint = plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) &&
+            plan.ocrClause?.merchant?.isNotBlank() == true &&
+            plan.terms.isEmpty() &&
+            plan.semanticClauses.isEmpty() &&
+            ocrCoverageComplete &&
+            !verification.applied
         val exactness = RetrievalExactnessPolicy.resolve(
-            allEligibleIndexed = readyItems == totalItems,
-            deterministicOperation = deterministicAggregation || deterministicResultSetFilter,
+            allEligibleIndexed = readyItems == totalItems && peopleCoverageComplete && ocrCoverageComplete,
+            deterministicOperation = deterministicAggregation || deterministicResultSetFilter || deterministicDocumentFact ||
+                deterministicDocumentConstraint || deterministicList || deterministicComparison,
             semanticReport = semanticReport,
             verificationApplied = verification.applied,
+            completePredicateScan = completePredicateScan,
         )
         val warnings = buildList {
             if (verification.failures.isNotEmpty()) {
@@ -1014,15 +1531,16 @@ class GalleryRepository(context: Context) {
                 }
         }.distinct()
         val evidenceIds = hits.flatMap { it.evidence }.map { it.id }.distinct().take(12)
-        if (hits.isEmpty()) {
+        if (hits.isEmpty() && !shouldExecuteCapabilityWithoutMediaHits(plan.intent, verification.applied)) {
             return SearchAnswer(
                 headline = "No supported matches found",
                 detail = if (verification.applied) {
                     "No bounded candidate was proven to satisfy every required visual condition. Failed or unverified candidates are never returned as matches."
+                } else if (completePredicateScan) {
+                    "An exhaustive semantic scan evaluated ${semanticReport.searchedCount} of " +
+                        "${semanticReport.eligibleCount} eligible local items and found no supported matches."
                 } else if (usedSemanticRetrieval) {
-                    "The semantic channel was ${semanticReport.status.name.lowercase()} and searched " +
-                        "${semanticReport.searchedCount} of ${semanticReport.eligibleCount} eligible local items. " +
-                        "This is not a complete gallery predicate scan."
+                    RetrievalCoverageWording.boundedSemanticNoResult(semanticReport)
                 } else {
                     "All $totalItems eligible local items were checked. " +
                         if (readyItems < totalItems) "Some items are still indexing." else "Try a place, object, OCR word, or scene."
@@ -1046,72 +1564,16 @@ class GalleryRepository(context: Context) {
                 totalEligibleCount = totalItems,
                 warnings = warnings,
                 channelReports = channelReports,
-                eventsByMedia = database.eventsForMedia(hits.map { it.item.id }),
+                eventsByMedia = database.eventsForMedia((hits + deterministicAnswerHits).map { it.item.id }),
+                deterministicHits = deterministicAnswerHits,
+                comparisonScopes = plan.comparisonScopes,
+                peopleByMedia = database.indexedPeopleForMediaIds(
+                    (hits + deterministicAnswerHits).mapTo(mutableSetOf()) { it.item.id },
+                ),
+                eventCoverageComplete = eventCoverageComplete,
             ),
         )
 
-        @Suppress("UNREACHABLE_CODE")
-        val scope = if (plan.baseResultIds == null) "the local gallery" else "your previous result set"
-        return when (plan.intent) {
-            QueryIntent.COUNT -> SearchAnswer(
-                headline = RetrievalAnswerWording.countHeadline(matchCount, usedSemanticRetrieval),
-                detail = if (usedSemanticRetrieval) {
-                    "This count comes from thresholded semantic retrieval over $scope; run a complete predicate scan when an exact visual count is required."
-                } else {
-                    "This is a complete scan of $scope using indexed metadata and deterministic local facts."
-                },
-                evidenceIds = evidenceIds,
-                exactness = exactness,
-                indexedEligibleCount = readyItems,
-                totalEligibleCount = totalItems,
-                warnings = warnings,
-                channelReports = channelReports,
-            )
-            QueryIntent.EVENT_SUMMARY -> {
-                val event = database.eventsForMedia(hits.map { it.item.id }).values
-                    .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
-                val locations = hits.map { it.item.location }.filter(String::isNotBlank).groupingBy { it }.eachCount().entries
-                    .sortedByDescending { it.value }.take(3).joinToString { it.key }
-                SearchAnswer(
-                    headline = event?.let { "${it.title}: ${hits.size} related ${if (hits.size == 1) "memory" else "memories"}" }
-                        ?: "Found ${hits.size} related ${if (hits.size == 1) "memory" else "memories"}",
-                    detail = event?.let { "This local event runs from ${it.startTime} to ${it.endTime}${it.locationName?.let { name -> " near $name" }.orEmpty()}." }
-                        ?: "The strongest evidence points to ${locations.ifBlank { "the indexed event" }}.",
-                    evidenceIds = evidenceIds,
-                    exactness = exactness,
-                    indexedEligibleCount = readyItems,
-                    totalEligibleCount = totalItems,
-                    warnings = warnings,
-                    channelReports = channelReports,
-                )
-            }
-            QueryIntent.ANSWER_FACT -> {
-                // Hits are already sorted by the plan (for example newest first). Never skip a newer
-                // failed/ambiguous document and silently answer from an older one.
-                val selection = DocumentAnswerSelector.select(hits)
-                val fact = selection?.fact
-                SearchAnswer(
-                    headline = fact?.text ?: "I found the document, but not a reliable final total",
-                    detail = if (fact != null) "The value comes from a locally recognized Total, Grand Total, or Amount Paid line." else "Open the evidence to inspect the local OCR. The app will not invent a number.",
-                    evidenceIds = fact?.let { listOf(it.id) } ?: evidenceIds,
-                    exactness = if (fact != null && selection.document.item.indexState == IndexState.READY) ResultExactness.EXACT else exactness,
-                    indexedEligibleCount = readyItems,
-                    totalEligibleCount = totalItems,
-                    warnings = warnings,
-                    channelReports = channelReports,
-                )
-            }
-            else -> SearchAnswer(
-                headline = "Found ${hits.size} ${if (hits.size == 1) "match" else "matches"}",
-                detail = "Ranked from $scope. Open Why this answer? to inspect the exact sidecar fields used.",
-                evidenceIds = evidenceIds,
-                exactness = exactness,
-                indexedEligibleCount = readyItems,
-                totalEligibleCount = totalItems,
-                warnings = warnings,
-                channelReports = channelReports,
-            )
-        }
     }
 
     private fun SearchHit?.orEmptyEvidence(): List<EvidenceRecord> = this?.evidence.orEmpty()
@@ -1121,16 +1583,23 @@ class GalleryRepository(context: Context) {
         return "%d:%02d".format(Locale.ROOT, totalSeconds / 60L, totalSeconds % 60L)
     }
 
+    private fun formatEventRange(startTime: Long, endTime: Long): String {
+        val formatter = java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.MEDIUM)
+            .withZone(java.time.ZoneId.systemDefault())
+        return listOf(startTime, endTime)
+            .map { formatter.format(java.time.Instant.ofEpochMilli(it)) }
+            .joinToString(" - ")
+    }
+
     private fun shouldComposeGroundedAnswer(
         plan: GalleryQueryPlan,
         hits: List<SearchHit>,
         verification: VerificationResult,
-    ): Boolean = hits.isNotEmpty() && services.modelPackManager.status().installed && (
-        verification.applied || plan.intent in setOf(
-            QueryIntent.COMPARE,
-            QueryIntent.TIMELINE,
-            QueryIntent.EVENT_SUMMARY,
-        )
+    ): Boolean = GroundedAnswerPolicy.shouldCompose(
+        plan = plan,
+        hasHits = hits.isNotEmpty(),
+        modelInstalled = services.modelPackManager.status().installed,
+        verificationApplied = verification.applied,
     )
 
     private fun GalleryItem.looksLikeDocument(): Boolean {
@@ -1153,17 +1622,32 @@ class GalleryRepository(context: Context) {
             .any { required in it.lowercase(Locale.ROOT) }
     }
 
+    private fun GalleryItem.matchesComparisonScope(scope: String, event: EventRecord?): Boolean {
+        val needle = scope.trim().lowercase(Locale.ROOT).takeIf(String::isNotBlank) ?: return false
+        return listOf(
+            location,
+            album,
+            title,
+            filename,
+            description,
+            event?.title.orEmpty(),
+            event?.locationName.orEmpty(),
+            event?.searchText.orEmpty(),
+        ).plus(tags).any { needle in it.lowercase(Locale.ROOT) }
+    }
+
     private fun addDeterministicFactEvidence(hit: SearchHit, plan: GalleryQueryPlan): SearchHit {
         val requested = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField ?: plan.aggregation?.field)
         val fields = when {
             requested != null -> listOf(requested)
             plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX) -> listOf(OcrFactAllowlist.fields.first())
+            plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) -> emptyList()
             else -> OcrFactAllowlist.fields
         }
         val evidence = fields.mapNotNull { field ->
             val selected = database.ocrEntities(hit.item.id, field.type).firstOrNull() ?: return@mapNotNull null
             EvidenceRecord(
-                id = "${hit.item.id}:${field.sourceField}:${selected.normalizedValue.hashCode().toUInt()}",
+                id = "${hit.item.id}:${field.sourceField}:${StableDerivedId.sha256(selected.normalizedValue)}",
                 mediaId = hit.item.id,
                 sourceField = field.sourceField,
                 text = selected.rawText,
@@ -1178,6 +1662,10 @@ class GalleryRepository(context: Context) {
 
 internal fun resolveExecutionScope(planResultIds: Set<String>?, explicitScopeIds: Set<String>?): Set<String>? =
     planResultIds ?: explicitScopeIds
+
+internal fun ocrEvidenceSourceField(entityType: OcrEntityType?): String =
+    entityType?.let { type -> OcrFactAllowlist.fields.firstOrNull { it.type == type }?.sourceField }
+        ?: "ocr_text"
 
 internal fun matchesMerchantIdentity(
     required: String,

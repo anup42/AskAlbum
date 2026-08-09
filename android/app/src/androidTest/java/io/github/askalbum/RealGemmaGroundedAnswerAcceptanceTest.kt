@@ -37,6 +37,7 @@ class RealGemmaGroundedAnswerAcceptanceTest {
             totalEligibleCount = 1,
         )
         val input = GroundedAnswerInput(plan(), listOf(hit), baseline)
+        val initializationsBefore = application.services.gemmaSessions.initializationCount
         val pssBeforeKb = Debug.getPss()
         val started = SystemClock.elapsedRealtime()
         val result = withTimeout(6 * 60_000L) { application.services.groundedAnswerComposer.compose(input) }
@@ -60,7 +61,8 @@ class RealGemmaGroundedAnswerAcceptanceTest {
         assertEquals(ResultExactness.ESTIMATED_FROM_RETRIEVAL, result.answer.exactness)
         assertEquals(1, result.answer.indexedEligibleCount)
         assertEquals(1, result.answer.totalEligibleCount)
-        assertTrue(trace.engineLoadMs > 0)
+        assertTrue("Grounded answer initialized Gemma more than once", application.services.gemmaSessions.initializationCount - initializationsBefore <= 1)
+        assertTrue(trace.engineLoadMs >= 0)
         assertTrue(trace.generationMs > 0)
     }
 
@@ -72,7 +74,7 @@ class RealGemmaGroundedAnswerAcceptanceTest {
             headline = "No supported matches found",
             detail = "No indexed receipt matched the requested merchant.",
             evidenceIds = emptyList(),
-            exactness = ResultExactness.COMPLETE_MODEL_SCAN,
+            exactness = ResultExactness.COMPLETE_PREDICATE_SCAN,
             indexedEligibleCount = 8,
             totalEligibleCount = 8,
         )

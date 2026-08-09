@@ -2,7 +2,8 @@ package io.github.anup42.askalbum
 
 /**
  * Stable seams for production model packs. Implementations must never send image data off-device.
- * The bundled MVP uses [QueryCompiler] and curated sample facts, so it makes no false model claim.
+ * Production uses the verified on-device model graph. QueryCompiler and fixture engines are
+ * retained only for model-independent test builds.
  */
 interface GenerativeEngine {
     suspend fun compilePlan(input: PlannerInput): GalleryQueryPlan
@@ -13,6 +14,7 @@ interface GenerativeEngine {
 interface ImageTextEmbeddingEngine {
     suspend fun embedImage(image: ModelImage): FloatArray
     suspend fun embedText(text: String): FloatArray
+    suspend fun embedTextInteractive(text: String): FloatArray = embedText(text)
 }
 
 interface OcrEngine : AutoCloseable {
@@ -29,6 +31,7 @@ interface VectorIndex {
     suspend fun upsert(mediaId: String, vector: FloatArray)
     suspend fun delete(mediaId: String)
     suspend fun search(query: FloatArray, topK: Int, allowedIds: Set<String>? = null): List<VectorHit>
+    suspend fun scan(query: FloatArray, allowedIds: Set<String>? = null): List<VectorHit>
 }
 
 interface QueryPlanner {
@@ -49,8 +52,15 @@ interface EvidenceRepository {
 
 enum class ModelCapability { GENERATIVE, IMAGE_EMBEDDING, TEXT_EMBEDDING, OCR, FACES }
 
+enum class InferencePriority(val rank: Int) { INTERACTIVE(0), BACKGROUND(1) }
+
 interface InferenceResourceManager {
     suspend fun <T> withModel(capability: ModelCapability, block: suspend () -> T): T
+    suspend fun <T> withModel(
+        capability: ModelCapability,
+        priority: InferencePriority,
+        block: suspend () -> T,
+    ): T = withModel(capability, block)
 }
 
 data class PlannerInput(
@@ -121,6 +131,7 @@ data class ModelImage(
     val width: Int,
     val height: Int,
     val fixtureText: String? = null,
+    val fixtureKey: String? = null,
 )
 data class OcrDocument(val blocks: List<OcrBlock>, val language: String? = null)
 data class OcrBlock(val text: String, val confidence: Float, val bounds: List<Float>, val script: String? = null)

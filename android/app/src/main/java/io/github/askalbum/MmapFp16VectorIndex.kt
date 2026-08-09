@@ -126,6 +126,43 @@ class MmapFp16VectorIndex(
         best.sortedWith(ReferenceVectorIndex.HIT_ORDER)
     }
 
+    override suspend fun scan(query: FloatArray, allowedIds: Set<String>?): List<VectorHit> = mutex.withLock {
+        val normalizedQuery = normalizeVector(query, dimension)
+        val snapshotInfo = snapshot
+        val channel = snapshotInfo?.file?.takeIf(File::isFile)?.let { FileInputStream(it).channel }
+        val mapped = channel?.use { it.map(FileChannel.MapMode.READ_ONLY, 0, it.size()).order(ByteOrder.LITTLE_ENDIAN) }
+        val hits = ArrayList<VectorHit>()
+        val snapshotEntries = entries.asSequence()
+            .filter { (id, source) -> source is Source.Snapshot && (allowedIds == null || id in allowedIds) }
+            .map { (id, source) -> id to (source as Source.Snapshot).row }
+            .toList()
+        val nativeScores = if (NativeVectorScanner.isAvailable && mapped != null && snapshotInfo != null && snapshotEntries.isNotEmpty()) {
+            NativeVectorScanner.dotFp16Matrix(
+                mapped,
+                snapshotInfo.vectorOffset,
+                dimension,
+                snapshotEntries.mapToIntArray { it.second },
+                normalizedQuery,
+            )
+        } else null
+        if (nativeScores != null && nativeScores.size == snapshotEntries.size) {
+            snapshotEntries.forEachIndexed { index, (id) -> hits += VectorHit(id, nativeScores[index]) }
+        } else if (snapshotEntries.isNotEmpty()) {
+            val safeMapped = requireNotNull(mapped) { "Vector snapshot is unavailable for an exact scan" }
+            val safeSnapshot = requireNotNull(snapshotInfo)
+            snapshotEntries.forEach { (id, row) ->
+                hits += VectorHit(id, dotSnapshot(safeMapped, safeSnapshot, row, normalizedQuery))
+            }
+        }
+        entries.forEach { (id, source) ->
+            if (source is Source.Delta && (allowedIds == null || id in allowedIds)) {
+                hits += VectorHit(id, dotProduct(source.vector, normalizedQuery))
+            }
+        }
+        hits.sortWith(ReferenceVectorIndex.HIT_ORDER)
+        hits
+    }
+
     suspend fun replaceAll(vectors: Map<String, FloatArray>) = mutex.withLock {
         val normalized = linkedMapOf<String, Source>()
         vectors.forEach { (id, vector) ->

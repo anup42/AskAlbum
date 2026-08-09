@@ -8,14 +8,6 @@ import org.junit.Test
 
 class RetrievalChannelPolicyTest {
     @Test
-    fun captionCoverageIsPartialWhenOnlySomeEligibleMediaHaveCaptions() {
-        assertEquals(ChannelStatus.PARTIAL, CaptionCoveragePolicy.status(10, 0))
-        assertEquals(ChannelStatus.PARTIAL, CaptionCoveragePolicy.status(10, 3))
-        assertEquals(ChannelStatus.SUCCESS, CaptionCoveragePolicy.status(10, 10))
-        assertEquals(ChannelStatus.SUCCESS, CaptionCoveragePolicy.status(0, 0))
-    }
-
-    @Test
     fun missingModelIsUnavailableAndDoesNotExecuteSearch() = runBlocking {
         var searched = false
         val report = SemanticChannelReporter.execute(
@@ -41,6 +33,21 @@ class RetrievalChannelPolicyTest {
     }
 
     @Test
+    fun eventPredicateSemanticFailureRemainsASeparateTypedChannel() = runBlocking {
+        val report = SemanticChannelReporter.execute(
+            "birthday cake", "siglip@test", 2, setOf("a", "b"), 20,
+            indexedIds = { setOf("a", "b") },
+            search = { _, _, _ -> error("embedding failed") },
+        )
+
+        val projected = EventPredicateSemanticChannelPolicy.project(report)
+
+        assertEquals(RetrievalChannel.EVENT_PREDICATE_SEMANTIC, projected.channel)
+        assertEquals(ChannelStatus.FAILED, projected.status)
+        assertEquals("TEXT_EMBEDDING_OR_VECTOR_SEARCH_FAILED", projected.errorCode)
+    }
+
+    @Test
     fun partialVectorCoverageAndZeroHitsRemainTyped() = runBlocking {
         val partial = SemanticChannelReporter.execute(
             "dog", "siglip@test", 2, setOf("a", "b"), 100,
@@ -57,6 +64,60 @@ class RetrievalChannelPolicyTest {
         assertEquals(1, partial.indexedCount)
         assertEquals(ChannelStatus.SUCCESS, zero.status)
         assertTrue(zero.hits.isEmpty())
+    }
+
+    @Test
+    fun fullyIndexedVideoKeyframesDoNotMakeMediaCoverageLookPartial() = runBlocking {
+        val report = SemanticChannelReporter.execute(
+            "video", "siglip@test", 1, setOf("video", "video-keyframe-1"), 100,
+            indexedIds = { setOf("video", "video-keyframe-1") },
+            search = { _, _, _ -> emptyList() },
+        )
+
+        assertEquals(ChannelStatus.SUCCESS, report.status)
+        assertEquals(1, report.eligibleCount)
+        assertEquals(1, report.indexedCount)
+        assertEquals(1, report.searchedCount)
+    }
+
+    @Test
+    fun eligibleMediaWithoutAnyVectorIdsIsPartialAndDoesNotSearch() = runBlocking {
+        var searched = false
+        val report = SemanticChannelReporter.execute(
+            "dog", "siglip@test", 3, emptySet(), 100,
+            indexedIds = { emptySet() },
+            search = { _, _, _ -> searched = true; emptyList() },
+        )
+
+        assertEquals(ChannelStatus.PARTIAL, report.status)
+        assertEquals(3, report.eligibleCount)
+        assertEquals(0, report.indexedCount)
+        assertEquals("VECTOR_COVERAGE_PARTIAL", report.errorCode)
+        assertFalse(searched)
+    }
+
+    @Test
+    fun eligibleMediaWithMissingVectorIdsIsPartialEvenWhenIndexedSubsetIsComplete() = runBlocking {
+        val report = SemanticChannelReporter.execute(
+            "dog", "siglip@test", 3, setOf("a", "b"), 100,
+            indexedIds = { setOf("a", "b") },
+            search = { _, _, _ -> listOf(VectorHit("a", .8f)) },
+        )
+
+        assertEquals(ChannelStatus.PARTIAL, report.status)
+        assertEquals(2, report.indexedCount)
+        assertEquals("VECTOR_COVERAGE_PARTIAL", report.errorCode)
+    }
+
+    @Test
+    fun emptyEligibleScopeIsNotRequiredEvenWhenModelIsMissing() = runBlocking {
+        val report = SemanticChannelReporter.execute(
+            "dog", null, 0, emptySet(), 100,
+            indexedIds = { error("must not load an index") },
+            search = { _, _, _ -> error("must not search") },
+        )
+
+        assertEquals(ChannelStatus.NOT_REQUIRED, report.status)
     }
 
     @Test
@@ -102,6 +163,48 @@ class RetrievalChannelPolicyTest {
     }
 
     @Test
+    fun noResultWordingDistinguishesSearchFailureFromCompletedZeroHits() {
+        fun report(status: ChannelStatus) = RetrievalChannelReport<VectorHit>(
+            channel = RetrievalChannel.SEMANTIC,
+            status = status,
+            eligibleCount = 10,
+            indexedCount = if (status == ChannelStatus.UNAVAILABLE || status == ChannelStatus.FAILED) 0 else 8,
+            searchedCount = if (status == ChannelStatus.UNAVAILABLE || status == ChannelStatus.FAILED) 0 else 8,
+            hits = emptyList(),
+        )
+
+        val unavailable = RetrievalCoverageWording.boundedSemanticNoResult(report(ChannelStatus.UNAVAILABLE))
+        val failed = RetrievalCoverageWording.boundedSemanticNoResult(report(ChannelStatus.FAILED))
+        val partial = RetrievalCoverageWording.boundedSemanticNoResult(report(ChannelStatus.PARTIAL))
+        val success = RetrievalCoverageWording.boundedSemanticNoResult(report(ChannelStatus.SUCCESS))
+
+        assertTrue(unavailable.contains("did not run"))
+        assertTrue(failed.contains("failed"))
+        assertTrue(partial.contains("bounded top-K retrieval pass found no supported matches"))
+        assertTrue(success.contains("bounded top-K retrieval pass found no supported matches"))
+        assertFalse(unavailable.contains("found no supported matches"))
+        assertFalse(failed.contains("found no supported matches"))
+    }
+
+    @Test
+    fun hardScreenshotExclusionUsesOnlyMetadataOwnedEvidence() {
+        val exclusion = SemanticClause(
+            text = "screenshots",
+            polarity = Polarity.NEGATIVE,
+            hardness = ConstraintStrength.HARD,
+        )
+        assertTrue(DeterministicNegativeClausePolicy.excludes(item("Screenshot_2024.png"), listOf(exclusion)))
+        assertTrue(DeterministicNegativeClausePolicy.excludes(item("vacation.jpg", tags = listOf("screen capture")), listOf(exclusion)))
+        assertFalse(DeterministicNegativeClausePolicy.excludes(item("vacation.jpg", description = "A screenshot is visible"), listOf(exclusion)))
+        assertFalse(
+            DeterministicNegativeClausePolicy.excludes(
+                item("Screenshot_2024.png"),
+                listOf(exclusion.copy(hardness = ConstraintStrength.SOFT)),
+            ),
+        )
+    }
+
+    @Test
     fun totalEclipseDoesNotBecomeDocumentFactIntent() {
         val plan = QueryCompiler().compile("Show total eclipse photos.")
 
@@ -115,5 +218,20 @@ class RetrievalChannelPolicyTest {
             terms = listOf("family", "goa"),
             semanticClauses = listOf(SemanticClause("family Goa", canonical)),
         ),
+    )
+
+    private fun item(filename: String, tags: List<String> = emptyList(), description: String = "") = GalleryItem(
+        id = filename,
+        filename = filename,
+        title = filename,
+        creator = null,
+        location = "",
+        latitude = null,
+        longitude = null,
+        tags = tags,
+        description = description,
+        license = "",
+        sourceUrl = "",
+        assetPath = null,
     )
 }

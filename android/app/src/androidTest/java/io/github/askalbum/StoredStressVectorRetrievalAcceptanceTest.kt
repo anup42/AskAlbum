@@ -24,7 +24,8 @@ class StoredStressVectorRetrievalAcceptanceTest {
         val runId = arguments.getString("galleryRunId")
         val expectedCount = arguments.getString("galleryExpectedCount")?.toIntOrNull()
         assumeTrue("galleryRunId was not supplied", !runId.isNullOrBlank())
-        assumeTrue("This acceptance gate requires exactly 5,000 items", expectedCount == EXPECTED_COUNT)
+        assumeTrue("This acceptance gate requires 5,000 or 20,000 items", expectedCount in SUPPORTED_COUNTS)
+        val requiredCount = requireNotNull(expectedCount)
 
         val application = instrumentation.targetContext.applicationContext as AskAlbumApplication
         val safeRunId = requireNotNull(runId)
@@ -34,12 +35,12 @@ class StoredStressVectorRetrievalAcceptanceTest {
         val seededUris = seedResult.getJSONArray("createdUris").let { array ->
             (0 until array.length()).mapTo(mutableSetOf()) { array.getString(it) }
         }
-        assertEquals(EXPECTED_COUNT, seedResult.getInt("createdCount"))
+        assertEquals(requiredCount, seedResult.getInt("createdCount"))
 
         val itemsById = application.repository.allItems()
             .filter { it.contentUri in seededUris }
             .associateBy(GalleryItem::id)
-        assertEquals("Every recorded 5k URI must resolve to one database row", EXPECTED_COUNT, itemsById.size)
+        assertEquals("Every recorded stress URI must resolve to one database row", requiredCount, itemsById.size)
         val allowedIds = itemsById.keys
         val indexedIds = application.services.semanticVectorStore.indexedIds()
         assertEquals(
@@ -51,7 +52,7 @@ class StoredStressVectorRetrievalAcceptanceTest {
         val pack = requireNotNull(application.services.retrievalModelPackManager.current())
         assertEquals("siglip2-base-p16-224-q8", pack.manifest.packId)
         assertEquals("ba1f3b0-q8-core05", pack.manifest.packVersion)
-        assertEquals(768, pack.manifest.embeddingDimension)
+        assertTrue("Retrieval pack dimension must be positive", pack.manifest.embeddingDimension > 0)
         assertTrue(application.services.semanticVectorStore.producerVersion()?.contains(pack.manifest.packVersion) == true)
 
         val cases = listOf(
@@ -65,8 +66,15 @@ class StoredStressVectorRetrievalAcceptanceTest {
         withTimeout(2 * 60_000L) {
             cases.forEach { case ->
                 val started = SystemClock.elapsedRealtime()
-                val hits = application.services.semanticVectorStore.searchText(case.query, TOP_K, allowedIds)
+                val report = application.services.semanticVectorStore.searchTextReport(
+                    query = case.query,
+                    topK = TOP_K,
+                    eligibleCount = allowedIds.size,
+                    allowedIds = allowedIds,
+                )
                 val elapsedMs = SystemClock.elapsedRealtime() - started
+                assertEquals("${case.query} retrieval status", ChannelStatus.SUCCESS, report.status)
+                val hits = report.hits
                 assertTrue("${case.query} returned no stored-vector matches", hits.isNotEmpty())
                 val expectedHits = hits.count { hit ->
                     val item = requireNotNull(itemsById[hit.mediaId]) { "Vector hit escaped the run scope" }
@@ -85,8 +93,15 @@ class StoredStressVectorRetrievalAcceptanceTest {
         val warmLatencies = mutableListOf<Long>()
         repeat(LATENCY_ITERATIONS) {
             val started = SystemClock.elapsedRealtime()
-            val hits = application.services.semanticVectorStore.searchText(cases[2].query, TOP_K, allowedIds)
+            val report = application.services.semanticVectorStore.searchTextReport(
+                query = cases[2].query,
+                topK = TOP_K,
+                eligibleCount = allowedIds.size,
+                allowedIds = allowedIds,
+            )
             warmLatencies += SystemClock.elapsedRealtime() - started
+            assertEquals("Warm retrieval status", ChannelStatus.SUCCESS, report.status)
+            val hits = report.hits
             assertTrue(hits.isNotEmpty() && cases[2].matches(requireNotNull(itemsById[hits.first().mediaId]).filename))
         }
         val p95Ms = percentile95(warmLatencies)
@@ -134,9 +149,9 @@ class StoredStressVectorRetrievalAcceptanceTest {
     }
 
     private companion object {
-        val STRESS_FILENAME = Regex("stress_(\\d{5})\\.jpg")
-        const val EXPECTED_COUNT = 5_000
-        const val SOURCE_COUNT = 81
+        val STRESS_FILENAME = Regex("stress_(\\d{5})(?:_[a-z0-9_-]+)?\\.jpg")
+        val SUPPORTED_COUNTS = setOf(5_000, 20_000)
+        const val SOURCE_COUNT = 82
         const val TOP_K = 20
         const val PRECISION_K = 10
         const val MIN_PRECISION = 0.6

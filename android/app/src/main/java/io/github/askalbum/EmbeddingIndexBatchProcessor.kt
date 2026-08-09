@@ -30,7 +30,12 @@ internal class EmbeddingIndexBatchProcessor(
         ownerId: String = "gallery-image-embeddings",
         canContinue: () -> Boolean = { true },
     ): IndexBatchResult {
-        val producer = vectors.producerVersion() ?: return IndexBatchResult(processed = 0, hasMore = false)
+        val producer = vectors.producerVersion() ?: return IndexBatchResult(
+            processed = 0,
+            hasMore = false,
+            unavailable = true,
+            errorCode = "NO_VERIFIED_RETRIEVAL_PACK",
+        )
         val candidates = pendingItems(producer, allowedMediaIds, batchSize)
         val keyframeCandidates = pendingKeyframes(producer, allowedMediaIds, KEYFRAME_BATCH_SIZE)
         if (candidates.isEmpty() && keyframeCandidates.isEmpty()) {
@@ -44,7 +49,7 @@ internal class EmbeddingIndexBatchProcessor(
         val prepared = mutableListOf<Pair<GalleryItem, ModelImage>>()
         for (item in candidates) {
             if (!canContinue()) {
-                repository.recoverInterruptedJobs()
+                repository.recoverInterruptedJobs(IndexingPipeline.EMBEDDINGS)
                 return result(producer, allowedMediaIds, processed, retryableFailures, permanentFailures, stopped = true)
             }
             if (!repository.markEmbedding(item.id, producer, ownerId)) continue
@@ -63,7 +68,7 @@ internal class EmbeddingIndexBatchProcessor(
 
         if (prepared.isNotEmpty()) {
             if (!canContinue()) {
-                repository.recoverInterruptedJobs()
+                repository.recoverInterruptedJobs(IndexingPipeline.EMBEDDINGS)
                 return result(producer, allowedMediaIds, processed, retryableFailures, permanentFailures, stopped = true)
             }
             val embedded = try {
@@ -105,20 +110,64 @@ internal class EmbeddingIndexBatchProcessor(
             if (!canContinue()) {
                 return result(producer, allowedMediaIds, processed, retryableFailures, permanentFailures, stopped = true)
             }
-            try {
-                val preparedFrames = keyframeCandidates.map { frame -> frame to decodeKeyframeModelImage(frame) }
-                val images = preparedFrames.map { it.second }
-                val embedded = (engine as? LiteRtImageTextEmbeddingEngine)?.embedImages(images)
-                    ?: images.map { engine.embedImage(it) }
-                preparedFrames.zip(embedded).forEach { (entry, vector) ->
-                    vectors.upsert(entry.first.id, vector)
-                    repository.completeKeyframeEmbedding(entry.first.id, producer)
-                    processed++
+            val preparedFrames = mutableListOf<Pair<VideoKeyframeRecord, ModelImage>>()
+            keyframeCandidates.forEach { frame ->
+                try {
+                    preparedFrames += frame to decodeKeyframeModelImage(frame)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    when (repository.failKeyframeEmbedding(frame.id, producer, error::class.java.simpleName, isPermanent(error))) {
+                        StageStatus.FAILED_RETRYABLE -> retryableFailures++
+                        StageStatus.FAILED_EXHAUSTED, StageStatus.FAILED_PERMANENT -> permanentFailures++
+                        else -> Unit
+                    }
                 }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                retryableFailures += keyframeCandidates.size
+            }
+            if (preparedFrames.isNotEmpty()) {
+                val embedded = try {
+                    val images = preparedFrames.map { it.second }
+                    (engine as? LiteRtImageTextEmbeddingEngine)?.embedImages(images)
+                        ?: images.map { engine.embedImage(it) }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    preparedFrames.forEach { (frame) ->
+                        when (repository.failKeyframeEmbedding(frame.id, producer, error::class.java.simpleName, false)) {
+                            StageStatus.FAILED_RETRYABLE -> retryableFailures++
+                            StageStatus.FAILED_EXHAUSTED, StageStatus.FAILED_PERMANENT -> permanentFailures++
+                            else -> Unit
+                        }
+                    }
+                    null
+                }
+                if (embedded == null) {
+                    Unit
+                } else if (embedded.size != preparedFrames.size) {
+                    preparedFrames.forEach { (frame) ->
+                        when (repository.failKeyframeEmbedding(frame.id, producer, "EmbeddingCountMismatch", false)) {
+                            StageStatus.FAILED_RETRYABLE -> retryableFailures++
+                            StageStatus.FAILED_EXHAUSTED, StageStatus.FAILED_PERMANENT -> permanentFailures++
+                            else -> Unit
+                        }
+                    }
+                } else {
+                    preparedFrames.zip(embedded).forEach { (entry, vector) ->
+                        try {
+                            vectors.upsert(entry.first.id, vector)
+                            repository.completeKeyframeEmbedding(entry.first.id, producer)
+                            processed++
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Throwable) {
+                            when (repository.failKeyframeEmbedding(entry.first.id, producer, error::class.java.simpleName, false)) {
+                                StageStatus.FAILED_RETRYABLE -> retryableFailures++
+                                StageStatus.FAILED_EXHAUSTED, StageStatus.FAILED_PERMANENT -> permanentFailures++
+                                else -> Unit
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -171,7 +220,7 @@ internal class EmbeddingIndexBatchProcessor(
                 appContext.contentResolver.loadThumbnail(uri, Size(512, 512), null)
             }
         }
-        return bitmap.useAsModelImage()
+        return bitmap.useAsModelImage(item.filename)
     }
 
     private fun renderFirstPdfPage(item: GalleryItem): Bitmap {
@@ -199,10 +248,14 @@ internal class EmbeddingIndexBatchProcessor(
         val file = File(frame.previewPath).canonicalFile
         require(file.toPath().startsWith(root.toPath()) && file.isFile) { "Keyframe preview is unavailable" }
         val bitmap = requireNotNull(BitmapFactory.decodeFile(file.absolutePath)) { "Keyframe preview is invalid" }
-        return bitmap.useAsModelImage()
+        val fixtureKey = if (fixtureBackendsEnabled()) repository.itemById(frame.mediaId)?.filename else null
+        return bitmap.useAsModelImage(fixtureKey)
     }
 
-    private fun Bitmap.useAsModelImage(): ModelImage = try {
+    private fun isPermanent(error: Throwable): Boolean =
+        error is SecurityException || error is FileNotFoundException || error is IllegalArgumentException
+
+    private fun Bitmap.useAsModelImage(fixtureKey: String? = null): ModelImage = try {
         val pixels = IntArray(width * height)
         getPixels(pixels, 0, width, 0, 0, width, height)
         val rgb = ByteArray(pixels.size * 3)
@@ -211,7 +264,7 @@ internal class EmbeddingIndexBatchProcessor(
             rgb[index * 3 + 1] = (color shr 8).toByte()
             rgb[index * 3 + 2] = color.toByte()
         }
-        ModelImage(rgb, width, height)
+        ModelImage(rgb, width, height, fixtureKey = fixtureKey)
     } finally {
         if (!isRecycled) recycle()
     }

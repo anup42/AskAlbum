@@ -39,10 +39,12 @@ class GemmaVerificationCodec {
             }
         }
         val ordered = expected.map { requireNotNull(byId[it.id]) { "Verifier omitted a condition" } }
+        // Keep the field in the strict schema, but never trust the model to apply
+        // clause polarity. Kotlin owns positive/negative matching below.
+        json.getBoolean("overallMatch")
         val kotlinOverall = expected.zip(ordered)
             .filter { (spec, _) -> spec.hardness == ConstraintStrength.HARD }
-            .all { (_, evaluation) -> evaluation.satisfied }
-        require(json.getBoolean("overallMatch") == kotlinOverall) { "Verifier overallMatch disagrees with hard conditions" }
+            .all { (spec, evaluation) -> SemanticPolarityNormalizer.conditionMatched(spec, evaluation) }
         return CandidateVerificationPayload(ordered, kotlinOverall)
     }
 
@@ -58,7 +60,7 @@ class GemmaVerificationCodec {
         Required shape: {"conditions":[{"id":"c1","verdict":"VERIFIED_TRUE","confidence":0.95}],"overallMatch":true}
         verdict must be VERIFIED_TRUE, VERIFIED_FALSE, AMBIGUOUS, or NOT_VISIBLE.
         Include every required ID exactly once. confidence must be a finite number from 0 to 1.
-        overallMatch must be true exactly when every HARD condition is satisfied; SOFT conditions do not control it.
+        overallMatch is advisory; Kotlin applies each condition's polarity and derives the accepted result.
         Do not add media IDs, paths, URIs, explanations, boxes, tools, or any other fields.
         Invalid response: ${JSONObject.quote(invalidResponse.take(1200))}
     """.trimIndent()

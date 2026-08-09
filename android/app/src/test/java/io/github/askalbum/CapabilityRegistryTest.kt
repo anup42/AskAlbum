@@ -19,9 +19,24 @@ class CapabilityRegistryTest {
     @Test
     fun documentAllowlistContainsEveryRequiredField() {
         assertEquals(
-            setOf("total", "password", "flight_number", "flight_time", "order_id", "email", "phone", "date", "url", "merchant"),
+            setOf("total", "amount", "password", "flight_number", "flight_time", "order_id", "email", "phone", "date", "url", "merchant"),
             OcrFactAllowlist.fields.mapTo(mutableSetOf()) { it.key },
         )
+        assertEquals(OcrEntityType.RECEIPT_TOTAL, OcrFactAllowlist.resolve("amount paid")?.type)
+        assertEquals(OcrEntityType.AMOUNT, OcrFactAllowlist.resolve("amount")?.type)
+        assertEquals("flight_number", OcrFactAllowlist.resolve("document_flight_number")?.key)
+        assertEquals("password", OcrFactAllowlist.resolve("DOCUMENT-PASSWORD")?.key)
+    }
+
+    @Test
+    fun validatorRejectsUnknownOcrFieldsBeforeExecution() {
+        val plan = QueryCompiler().compile("What is the password in the latest screenshot?").copy(
+            ocrClause = OcrClause(requestedField = "not_allowlisted"),
+        )
+
+        val result = GalleryQueryPlanValidator().validate(plan)
+
+        assertTrue(result.errors.contains("Unsupported OCR field"))
     }
 
     @Test
@@ -43,12 +58,194 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun asciiCurrencyFormsAndSeparatorsRemainReadable() {
+        val rupee = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.SUM).copy(
+                hits = listOf(hit("rupee", "Trip", "Rs. 10.00", 1_700_000_000_000)),
+                deterministicHits = listOf(hit("rupee", "Trip", "Rs. 10.00", 1_700_000_000_000)),
+            ),
+        )
+        val mixed = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.SUM).copy(
+                hits = listOf(
+                    hit("inr", "Trip A", "INR 10.00", 1_700_000_000_000),
+                    hit("usd", "Trip B", "USD 20.00", 1_710_000_000_000),
+                ),
+            ),
+        )
+
+        assertEquals("INR 10", rupee.headline)
+        assertTrue(mixed.detail.contains("; "))
+        assertFalse(mixed.detail.contains("•"))
+    }
+
+    @Test
+    fun aggregationUsesCompleteDeterministicEvidenceInsteadOfRankedTopK() {
+        val complete = hit("three", "Trip C", "INR 30.00", 1_720_000_000_000)
+        val context = context(QueryIntent.SUM).copy(deterministicHits = context(QueryIntent.SUM).hits + complete)
+
+        assertEquals("INR 60", CapabilityAnswerExecutor.execute(context).headline)
+    }
+
+    @Test
+    fun boundedAggregationDoesNotPresentAnExactNumericAnswer() {
+        val partial = context(QueryIntent.SUM).copy(
+            exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+            indexedEligibleCount = 2,
+            totalEligibleCount = 10,
+            deterministicHits = emptyList(),
+        )
+        val sum = CapabilityAnswerExecutor.execute(partial)
+        val minMax = CapabilityAnswerExecutor.execute(
+            partial.copy(plan = partial.plan.copy(intent = QueryIntent.MIN_MAX))
+        )
+
+        assertEquals("Exact sum unavailable", sum.headline)
+        assertEquals("Exact minimum or maximum unavailable", minMax.headline)
+        assertTrue(sum.detail.contains("partial", ignoreCase = true))
+        assertTrue(minMax.detail.contains("partial", ignoreCase = true))
+    }
+
+    @Test
+    fun boundedDocumentFactDoesNotReturnAValueFromPartialOcrCoverage() {
+        val partial = context(QueryIntent.DOCUMENT_QA).copy(
+            exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+            indexedEligibleCount = 2,
+            totalEligibleCount = 10,
+        )
+
+        val answer = CapabilityAnswerExecutor.execute(partial)
+
+        assertEquals("Document fact unavailable", answer.headline)
+        assertTrue(answer.detail.contains("partial OCR", ignoreCase = true))
+        assertFalse(answer.headline.contains("INR", ignoreCase = true))
+    }
+
+    @Test
+    fun listUsesCompleteDeterministicEvidenceInsteadOfRankedTopK() {
+        val complete = hit("three", "Trip C", "INR 30.00", 1_720_000_000_000)
+        val base = context(QueryIntent.LIST)
+        val answer = CapabilityAnswerExecutor.execute(
+            base.copy(deterministicHits = base.hits + complete),
+        )
+
+        assertTrue(answer.detail.contains("Trip C"))
+    }
+
+    @Test
+    fun eventSummaryAndTimelineUseCompleteResolvedScope() {
+        val base = context(QueryIntent.EVENT_SUMMARY)
+        val complete = hit("three", "Trip C", "INR 30.00", 1_720_000_000_000)
+        val completeEvent = event(3, "Trip C")
+        val summary = CapabilityAnswerExecutor.execute(
+            base.copy(
+                hits = base.hits.take(1),
+                deterministicHits = listOf(complete),
+                eventsByMedia = mapOf("three" to completeEvent),
+                eventCoverageComplete = true,
+            ),
+        )
+        val timeline = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.TIMELINE).copy(
+                hits = base.hits.take(1),
+                deterministicHits = listOf(complete),
+                eventCoverageComplete = true,
+            ),
+        )
+
+        assertEquals("Trip C", summary.headline)
+        assertTrue(summary.detail.contains("complete", ignoreCase = true))
+        assertTrue(timeline.detail.contains("2024-07-03"))
+        assertTrue(timeline.detail.contains("Complete dates", ignoreCase = true))
+    }
+
+    @Test
+    fun boundedEventAnswersDoNotClaimCompleteMembership() {
+        val boundedSummary = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.EVENT_SUMMARY).copy(
+                exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+                deterministicHits = listOf(context(QueryIntent.EVENT_SUMMARY).hits.first()),
+            ),
+        )
+        val boundedTimeline = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.TIMELINE).copy(
+                exactness = ResultExactness.PARTIAL_INDEX,
+                deterministicHits = listOf(context(QueryIntent.TIMELINE).hits.first()),
+            ),
+        )
+        val boundedCompare = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.COMPARE).copy(
+                exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+                deterministicHits = context(QueryIntent.COMPARE).hits,
+                comparisonScopes = listOf("Trip A", "Trip B"),
+            ),
+        )
+
+        assertTrue(boundedSummary.detail.contains("current ranked retrieval pass", ignoreCase = true))
+        assertFalse(boundedSummary.detail.contains("evaluated completely", ignoreCase = true))
+        assertTrue(boundedTimeline.detail.contains("limited to the current retrieval pass", ignoreCase = true))
+        assertFalse(boundedCompare.detail.contains("Complete eligible membership", ignoreCase = true))
+    }
+
+    @Test
+    fun minAndMaxRespectTheRequestedOperation() {
+        val base = context(QueryIntent.MIN_MAX)
+        val minimum = CapabilityAnswerExecutor.execute(
+            base.copy(plan = base.plan.copy(aggregation = AggregationSpec(AggregationOperation.MIN, "total"))),
+        )
+        val maximum = CapabilityAnswerExecutor.execute(
+            base.copy(plan = base.plan.copy(aggregation = AggregationSpec(AggregationOperation.MAX, "total"))),
+        )
+
+        assertEquals("INR 10", minimum.headline)
+        assertEquals("INR 20", maximum.headline)
+    }
+
+    @Test
     fun passwordEvidenceAlwaysRequiresAuthentication() {
         val password = hit("secret", "Wi-Fi", "INR 10.00", 1_700_000_000_000).copy(
             evidence = listOf(EvidenceRecord("secret:password", "secret", "document_password", "mango-tree-2048", .95f)),
         )
 
         assertTrue(SensitiveEvidencePolicy.requiresAuthentication(password))
+    }
+
+    @Test
+    fun capabilityExecutorLocksSensitiveValuesEvenWhenCalledDirectly() {
+        val password = hit("secret", "Wi-Fi", "INR 10.00", 1_700_000_000_000).copy(
+            evidence = listOf(EvidenceRecord("secret:password", "secret", "document_password", "mango-tree-2048", .95f)),
+        )
+        val answer = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.LIST).copy(
+                hits = listOf(password),
+                deterministicHits = listOf(password),
+                plan = context(QueryIntent.LIST).plan.copy(
+                    ocrClause = OcrClause(requestedField = "password"),
+                ),
+            ),
+        )
+
+        assertEquals(SensitiveEvidencePolicy.LOCKED_HEADLINE, answer.headline)
+        assertTrue(answer.requiresAuthentication)
+        assertFalse(answer.detail.contains("mango-tree-2048"))
+    }
+
+    @Test
+    fun deterministicAnswerEvidenceAlsoRequiresAuthentication() {
+        val password = hit("secret", "Wi-Fi", "INR 10.00", 1_700_000_000_000).copy(
+            evidence = listOf(EvidenceRecord("secret:password", "secret", "document_password", "mango-tree-2048", .95f)),
+        )
+
+        assertTrue(requiresAuthenticationForAnswer(emptyList(), listOf(password)))
+    }
+
+    @Test
+    fun financialEvidenceAlwaysRequiresAuthentication() {
+        val receipt = hit("receipt", "Swiggy", "INR 1,248.00", 1_700_000_000_000).copy(
+            evidence = listOf(EvidenceRecord("receipt:total", "receipt", "document_total", "INR 1,248.00", .95f)),
+        )
+
+        assertTrue(SensitiveEvidencePolicy.requiresAuthentication(receipt))
     }
 
     @Test
@@ -67,6 +264,122 @@ class CapabilityRegistryTest {
         assertEquals(QueryIntent.COMPARE, QueryCompiler().compile("Compare Goa versus Singapore").intent)
         assertEquals(QueryIntent.TIMELINE, QueryCompiler().compile("Timeline of Singapore photos").intent)
         assertEquals(QueryIntent.LIST, QueryCompiler().compile("List places in recent photos").intent)
+    }
+
+    @Test
+    fun compilerDistinguishesGenericAmountFromReceiptTotal() {
+        val amount = QueryCompiler().compile("What is the amount on my latest receipt?")
+        val total = QueryCompiler().compile("What was the total on my latest receipt?")
+
+        assertEquals(QueryIntent.ANSWER_FACT, amount.intent)
+        assertEquals("amount", amount.ocrClause?.requestedField)
+        assertEquals("total", total.ocrClause?.requestedField)
+    }
+
+    @Test
+    fun unsupportedDocumentFieldsNeverFallbackToReceiptTotal() {
+        val fact = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.DOCUMENT_QA).copy(
+                plan = context(QueryIntent.DOCUMENT_QA).plan.copy(
+                    ocrClause = OcrClause(requestedField = "bank_account"),
+                ),
+            ),
+        )
+        val sum = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.SUM).copy(
+                plan = context(QueryIntent.SUM).plan.copy(
+                    aggregation = AggregationSpec(AggregationOperation.SUM, "bank_account"),
+                ),
+            ),
+        )
+        val minMax = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.MIN_MAX).copy(
+                plan = context(QueryIntent.MIN_MAX).plan.copy(
+                    aggregation = AggregationSpec(AggregationOperation.MIN_MAX, "bank_account"),
+                ),
+            ),
+        )
+
+        assertEquals("Unsupported document field", fact.headline)
+        assertEquals("Unsupported document field", sum.headline)
+        assertEquals("Unsupported document field", minMax.headline)
+        assertFalse(fact.headline.contains("INR"))
+    }
+
+    @Test
+    fun compareExecutorUsesBothExplicitScopes() {
+        val base = context(QueryIntent.COMPARE)
+        val goa = hit("goa", "Goa", "INR 10.00", 1_700_000_000_000).let {
+            it.copy(item = it.item.copy(location = "Goa"))
+        }
+        val singapore = hit("singapore", "Singapore", "INR 20.00", 1_710_000_000_000).let {
+            it.copy(item = it.item.copy(location = "Singapore"))
+        }
+
+        val answer = CapabilityAnswerExecutor.execute(
+            base.copy(
+                hits = listOf(goa, singapore),
+                deterministicHits = listOf(goa, singapore),
+                comparisonScopes = listOf("goa", "singapore"),
+            ),
+        )
+
+        assertTrue(answer.headline.contains("goa", ignoreCase = true))
+        assertTrue(answer.headline.contains("singapore", ignoreCase = true))
+        assertTrue(answer.detail.contains("Goa: 1"))
+        assertTrue(answer.detail.contains("Singapore: 1"))
+    }
+
+    @Test
+    fun emptyCapabilityResultsUseTypedExecutorsButVisualSearchRemainsNoResult() {
+        assertTrue(shouldExecuteCapabilityWithoutMediaHits(QueryIntent.COUNT, false))
+        assertTrue(shouldExecuteCapabilityWithoutMediaHits(QueryIntent.SUM, false))
+        assertTrue(shouldExecuteCapabilityWithoutMediaHits(QueryIntent.DOCUMENT_QA, false))
+        assertFalse(shouldExecuteCapabilityWithoutMediaHits(QueryIntent.FIND_MEDIA, false))
+        assertFalse(shouldExecuteCapabilityWithoutMediaHits(QueryIntent.COUNT, true))
+
+        val emptySum = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.SUM).copy(hits = emptyList(), deterministicHits = emptyList(), matchCount = 0),
+        )
+        assertEquals("No compatible numeric facts", emptySum.headline)
+    }
+
+    @Test
+    fun metadataCountIsDeterministicOnlyWithoutSemanticPredicates() {
+        val countPlan = context(QueryIntent.COUNT).plan
+
+        assertTrue(isDeterministicMetadataCount(countPlan, emptyList(), emptyList(), false))
+        assertFalse(isDeterministicMetadataCount(countPlan, listOf("dog"), emptyList(), false))
+        assertFalse(isDeterministicMetadataCount(countPlan, emptyList(), listOf("dog"), false))
+        assertFalse(isDeterministicMetadataCount(countPlan, emptyList(), emptyList(), true))
+    }
+
+    @Test
+    fun everyNonCompleteCountUsesRetrievalPassWording() {
+        val bounded = context(QueryIntent.COUNT).copy(
+            exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL,
+            channelReports = emptyList(),
+        )
+        val answer = CapabilityAnswerExecutor.execute(bounded)
+
+        assertTrue(answer.headline.contains("current retrieval pass", ignoreCase = true))
+    }
+
+    @Test
+    fun listPersonUsesReviewedLabelsOnly() {
+        val base = context(QueryIntent.LIST)
+        val answer = CapabilityAnswerExecutor.execute(
+            base.copy(
+                plan = base.plan.copy(grouping = Grouping.PERSON),
+                peopleByMedia = mapOf(
+                    "one" to listOf(
+                        IndexedPersonMetadata("person_dad", "Dad", "father", emptyList(), true, false, 2),
+                    ),
+                ),
+            ),
+        )
+
+        assertTrue(answer.detail.contains("Dad"))
     }
 
     private fun context(intent: QueryIntent): CapabilityAnswerContext {

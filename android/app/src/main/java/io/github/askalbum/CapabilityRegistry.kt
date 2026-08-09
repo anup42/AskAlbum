@@ -45,23 +45,27 @@ data class OcrFactField(
 
 object OcrFactAllowlist {
     val fields = listOf(
-        OcrFactField("total", OcrEntityType.RECEIPT_TOTAL, "document_total", setOf("total", "receipt_total", "amount", "amount_paid"), numeric = true),
+        OcrFactField("total", OcrEntityType.RECEIPT_TOTAL, "document_total", setOf("total", "receipt_total", "amount_paid"), numeric = true, sensitive = true),
+        OcrFactField("amount", OcrEntityType.AMOUNT, "document_amount", setOf("amount", "line_amount", "item_amount", "amount_due", "amount_charged", "amount_payable"), numeric = true, sensitive = true),
         OcrFactField("password", OcrEntityType.PASSWORD, "document_password", setOf("password", "wifi_password", "passcode"), sensitive = true),
         OcrFactField("flight_number", OcrEntityType.FLIGHT_NUMBER, "document_flight_number", setOf("flight", "flight_number")),
         OcrFactField("flight_time", OcrEntityType.FLIGHT_TIME, "document_flight_time", setOf("flight_time", "departure_time", "boarding_time")),
-        OcrFactField("order_id", OcrEntityType.ORDER_ID, "document_order_id", setOf("order", "order_id", "booking_id")),
-        OcrFactField("email", OcrEntityType.EMAIL, "document_email", setOf("email", "email_address")),
-        OcrFactField("phone", OcrEntityType.PHONE, "document_phone", setOf("phone", "phone_number", "mobile")),
+        OcrFactField("order_id", OcrEntityType.ORDER_ID, "document_order_id", setOf("order", "order_id", "booking_id"), sensitive = true),
+        OcrFactField("email", OcrEntityType.EMAIL, "document_email", setOf("email", "email_address"), sensitive = true),
+        OcrFactField("phone", OcrEntityType.PHONE, "document_phone", setOf("phone", "phone_number", "mobile"), sensitive = true),
         OcrFactField("date", OcrEntityType.DATE, "document_date", setOf("date")),
         OcrFactField("url", OcrEntityType.URL, "document_url", setOf("url", "website", "link")),
         OcrFactField("merchant", OcrEntityType.MERCHANT, "document_merchant", setOf("merchant", "store", "restaurant")),
     )
     private val byAlias = fields.flatMap { field -> field.aliases.map { it to field } }.toMap()
     private val bySource = fields.associateBy(OcrFactField::sourceField)
+    private val byCanonicalName = fields.flatMap { field ->
+        listOf(field.key, field.sourceField).map { it.lowercase(Locale.ROOT) to field }
+    }.toMap()
 
     fun resolve(value: String?): OcrFactField? = value?.trim()?.lowercase(Locale.ROOT)
         ?.replace(Regex("[^\\p{L}\\p{N}]+"), "_")
-        ?.let(byAlias::get)
+        ?.let { normalized -> byAlias[normalized] ?: byCanonicalName[normalized] }
 
     fun fromSource(sourceField: String): OcrFactField? = bySource[sourceField]
 }
@@ -76,12 +80,36 @@ data class CapabilityAnswerContext(
     val warnings: List<String>,
     val channelReports: List<RetrievalChannelReport<SearchHit>>,
     val eventsByMedia: Map<String, EventRecord> = emptyMap(),
+    val deterministicHits: List<SearchHit> = emptyList(),
+    val comparisonScopes: List<String> = emptyList(),
+    val peopleByMedia: Map<String, List<IndexedPersonMetadata>> = emptyMap(),
+    val eventCoverageComplete: Boolean = false,
 )
 
 object CapabilityAnswerExecutor {
+    private fun collectEvidenceIds(
+        hits: List<SearchHit>,
+        plan: GalleryQueryPlan,
+        limit: Int = 24,
+    ): List<String> =
+        hits.asSequence()
+            .flatMap { hit ->
+                hit.evidence.asSequence().filter {
+                    it.mediaId == hit.item.id && GroundedEvidencePolicy.allow(it, plan)
+                }
+            }
+            .distinctBy(EvidenceRecord::id)
+            .sortedWith(
+                compareBy<EvidenceRecord> { GroundedEvidencePolicy.evidencePriority(it) }
+                    .thenByDescending { it.confidence },
+            )
+            .map(EvidenceRecord::id)
+            .take(limit)
+            .toList()
+
     fun execute(context: CapabilityAnswerContext): SearchAnswer {
         CapabilityRegistry.requireExecutable(context.plan.intent)
-        val evidenceIds = context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24)
+        val evidenceIds = collectEvidenceIds(context.hits + context.deterministicHits, context.plan)
         val base = { headline: String, detail: String, ids: List<String> ->
             SearchAnswer(
                 headline,
@@ -94,7 +122,16 @@ object CapabilityAnswerExecutor {
                 channelReports = context.channelReports,
             )
         }
-        return when (context.plan.intent) {
+        if (listRequiresAuthentication(context) || factAnswerRequiresAuthentication(context)) {
+            return SensitiveEvidencePolicy.lock(
+                base(
+                    SensitiveEvidencePolicy.LOCKED_HEADLINE,
+                    SensitiveEvidencePolicy.LOCKED_DETAIL,
+                    emptyList(),
+                ),
+            )
+        }
+        val answer = when (context.plan.intent) {
             QueryIntent.FIND_MEDIA -> base(
                 "Found ${context.hits.size} ${if (context.hits.size == 1) "match" else "matches"}",
                 "Hybrid local ranking used only the eligible media scope and the retrieval channels shown below.",
@@ -104,42 +141,89 @@ object CapabilityAnswerExecutor {
             QueryIntent.COUNT -> base(
                 RetrievalAnswerWording.countHeadline(
                     context.matchCount,
-                    context.channelReports.any { it.channel == RetrievalChannel.SEMANTIC && it.status != ChannelStatus.NOT_REQUIRED },
+                    context.exactness != ResultExactness.EXACT &&
+                        context.exactness != ResultExactness.COMPLETE_PREDICATE_SCAN,
                 ),
-                if (context.exactness == ResultExactness.EXACT) {
+                if (context.exactness == ResultExactness.COMPLETE_PREDICATE_SCAN) {
+                    "An exhaustive local semantic predicate scan evaluated every eligible indexed item."
+                } else if (context.exactness == ResultExactness.EXACT) {
                     "This is a deterministic count over complete eligible coverage."
                 } else {
                     "This is not an exhaustive visual predicate count; channel coverage is shown below."
                 },
                 evidenceIds,
             )
-            QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA -> factAnswer(context, base)
+            QueryIntent.ANSWER_FACT -> factAnswer(context, base)
+            QueryIntent.DOCUMENT_QA -> if (
+                OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField) == null &&
+                context.hits.isEmpty()
+            ) {
+                base(
+                    "No supported matches found",
+                    "No eligible document matched the requested local constraints.",
+                    emptyList(),
+                )
+            } else {
+                factAnswer(context, base)
+            }
             QueryIntent.SUM -> sumAnswer(context, base)
             QueryIntent.MIN_MAX -> minMaxAnswer(context, base)
             QueryIntent.EVENT_SUMMARY -> eventSummary(context, base)
             QueryIntent.TIMELINE -> timeline(context, base)
             QueryIntent.COMPARE -> compare(context, base)
         }
+        return answer
+    }
+
+    private fun listRequiresAuthentication(context: CapabilityAnswerContext): Boolean {
+        if (context.plan.intent != QueryIntent.LIST) return false
+        val requested = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField) ?: return false
+        if (!requested.sensitive) return false
+        return (context.hits + context.deterministicHits)
+            .asSequence()
+            .flatMap(SearchHit::evidence)
+            .any { evidence ->
+                evidence.sourceField == requested.sourceField && SensitiveEvidencePolicy.requiresAuthentication(evidence)
+            }
+    }
+
+    private fun factAnswerRequiresAuthentication(context: CapabilityAnswerContext): Boolean {
+        if (context.plan.intent !in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA)) return false
+        if (!context.hasCompleteEligibleCoverage()) return false
+        val requested = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField) ?: return false
+        if (!requested.sensitive) return false
+        return (context.hits + context.deterministicHits)
+            .asSequence()
+            .flatMap(SearchHit::evidence)
+            .any { evidence ->
+                evidence.sourceField == requested.sourceField && SensitiveEvidencePolicy.requiresAuthentication(evidence)
+            }
     }
 
     private fun listAnswer(
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
         val values = when (context.plan.grouping) {
-            Grouping.PLACE -> context.hits.map { it.item.location }.filter(String::isNotBlank)
-            Grouping.EVENT -> context.hits.mapNotNull { context.eventsByMedia[it.item.id]?.title }
-            Grouping.DAY, Grouping.MONTH, Grouping.YEAR -> context.hits.mapNotNull { it.item.capturedAt }.map(::formatDate)
+            Grouping.PLACE -> sourceHits.map { it.item.location }.filter(String::isNotBlank)
+            Grouping.PERSON -> sourceHits.flatMap { hit ->
+                context.peopleByMedia[hit.item.id].orEmpty().mapNotNull { person ->
+                    person.label?.takeIf(String::isNotBlank) ?: person.relationship?.takeIf(String::isNotBlank)
+                }
+            }
+            Grouping.EVENT -> sourceHits.mapNotNull { context.eventsByMedia[it.item.id]?.title }
+            Grouping.DAY, Grouping.MONTH, Grouping.YEAR -> sourceHits.mapNotNull { it.item.capturedAt }.map(::formatDate)
             else -> {
                 val requested = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField)
                 if (requested == null) context.hits.map { it.item.title }
-                else context.hits.flatMap(SearchHit::evidence).filter { it.sourceField == requested.sourceField }.map(EvidenceRecord::text)
+                else sourceHits.flatMap(SearchHit::evidence).filter { it.sourceField == requested.sourceField }.map(EvidenceRecord::text)
             }
         }.map(String::trim).filter(String::isNotBlank).distinct()
-        val ids = context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24)
+        val ids = collectEvidenceIds(sourceHits, context.plan)
         return base(
             "${values.size} distinct ${if (values.size == 1) "result" else "results"}",
-            values.take(20).joinToString(" • ").ifBlank { "No allowlisted value was present in the eligible evidence." },
+            values.take(20).joinToString("; ").ifBlank { "No allowlisted value was present in the eligible evidence." },
             ids,
         )
     }
@@ -149,14 +233,27 @@ object CapabilityAnswerExecutor {
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
         val field = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField)
-            ?: OcrFactAllowlist.fields.first()
-        val selection = DocumentAnswerSelector.select(context.hits, setOf(field.sourceField))
+            ?: return base(
+                "Unsupported document field",
+                "The requested document field is not in the local allowlist, so no value was selected.",
+                emptyList(),
+            )
+        if (!context.hasCompleteEligibleCoverage()) {
+            return base(
+                "Document fact unavailable",
+                "The current retrieval pass covered ${context.indexedEligibleCount} of ${context.totalEligibleCount} eligible items. " +
+                    "A partial OCR pass cannot establish a trustworthy ${field.key.replace('_', ' ')} value.",
+                collectEvidenceIds(context.hits + context.deterministicHits, context.plan, 12),
+            )
+        }
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val selection = DocumentAnswerSelector.select(sourceHits, setOf(field.sourceField), context.plan.sort)
         val fact = selection?.fact
         return if (fact == null) {
             base(
                 "I found the document, but not a reliable ${field.key.replace('_', ' ')}",
                 "Open the OCR evidence to inspect the local document. The app will not invent the requested value.",
-                context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(12),
+                collectEvidenceIds(sourceHits, context.plan, 12),
             )
         } else {
             base(
@@ -171,15 +268,28 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
-        val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field) ?: OcrFactAllowlist.fields.first()
+        val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field)
+            ?: return base(
+                "Unsupported document field",
+                "The requested numeric field is not in the local allowlist, so no sum was computed.",
+                emptyList(),
+            )
         if (!field.numeric) return base("Cannot sum ${field.key}", "Only allowlisted numeric document facts can be summed.", emptyList())
-        val values = numericFacts(context.hits, field)
+        if (!context.hasCompleteEligibleCoverage()) {
+            return base(
+                "Exact sum unavailable",
+                "The current retrieval pass covered ${context.indexedEligibleCount} of ${context.totalEligibleCount} eligible items. " +
+                    "A partial pass cannot produce a trustworthy total.",
+                collectEvidenceIds(context.hits + context.deterministicHits, context.plan),
+            )
+        }
+        val values = numericFacts(context.deterministicHits.ifEmpty { context.hits }, field)
         if (values.isEmpty()) return base("No compatible numeric facts", "No reliable ${field.key} values were available.", emptyList())
         val currencies = values.map(ParsedFact::currency).distinct()
         if (currencies.size > 1) {
             return base(
                 "Mixed currencies were not summed",
-                currencies.joinToString(" • ") { currency -> "$currency: ${values.count { it.currency == currency }} document(s)" },
+                currencies.joinToString("; ") { currency -> "$currency: ${values.count { it.currency == currency }} document(s)" },
                 values.map { it.evidence.id },
             )
         }
@@ -195,14 +305,44 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
-        val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field) ?: OcrFactAllowlist.fields.first()
-        val values = numericFacts(context.hits, field)
+        val field = OcrFactAllowlist.resolve(context.plan.aggregation?.field)
+            ?: return base(
+                "Unsupported document field",
+                "The requested numeric field is not in the local allowlist, so no minimum or maximum was computed.",
+                emptyList(),
+            )
+        if (!context.hasCompleteEligibleCoverage()) {
+            return base(
+                "Exact minimum or maximum unavailable",
+                "The current retrieval pass covered ${context.indexedEligibleCount} of ${context.totalEligibleCount} eligible items. " +
+                    "A partial pass cannot establish a trustworthy minimum or maximum.",
+                collectEvidenceIds(context.hits + context.deterministicHits, context.plan),
+            )
+        }
+        val values = numericFacts(context.deterministicHits.ifEmpty { context.hits }, field)
         if (values.isEmpty()) return base("No compatible numeric facts", "No reliable ${field.key} values were available.", emptyList())
         if (values.map(ParsedFact::currency).distinct().size > 1) {
             return base("Mixed currencies cannot be compared", "Filter to one currency before requesting a minimum or maximum.", values.map { it.evidence.id })
         }
         val minimum = values.minBy(ParsedFact::value)
         val maximum = values.maxBy(ParsedFact::value)
+        val operation = context.plan.aggregation?.operation ?: AggregationOperation.MIN_MAX
+        val selected = when (operation) {
+            AggregationOperation.MIN -> minimum
+            AggregationOperation.MAX -> maximum
+            else -> null
+        }
+        if (selected != null) {
+            return base(
+                "${selected.currency} ${selected.value.stripTrailingZeros().toPlainString()}",
+                if (operation == AggregationOperation.MIN) {
+                    "Minimum: ${selected.hit.item.title}."
+                } else {
+                    "Maximum: ${selected.hit.item.title}."
+                },
+                listOf(selected.evidence.id),
+            )
+        }
         return base(
             "Min ${minimum.currency} ${minimum.value.stripTrailingZeros().toPlainString()}; max ${maximum.currency} ${maximum.value.stripTrailingZeros().toPlainString()}",
             "Minimum: ${minimum.hit.item.title}. Maximum: ${maximum.hit.item.title}.",
@@ -214,17 +354,24 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
-        val events = context.hits.mapNotNull { context.eventsByMedia[it.item.id] }.distinctBy(EventRecord::id)
-        val captures = context.hits.mapNotNull { it.item.capturedAt }
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val completeCoverage = context.eventCoverageComplete
+        val events = sourceHits.mapNotNull { context.eventsByMedia[it.item.id] }.distinctBy(EventRecord::id)
+        val captures = sourceHits.mapNotNull { it.item.capturedAt }
         val range = if (captures.isEmpty()) "date unavailable" else "${formatDate(captures.min())} to ${formatDate(captures.max())}"
-        val places = context.hits.map { it.item.location }.filter(String::isNotBlank).distinct().take(4)
+        val places = sourceHits.map { it.item.location }.filter(String::isNotBlank).distinct().take(4)
         val people = context.plan.peopleClauses.filter(PersonClause::mustBePresent).map(PersonClause::personId).distinct()
         return base(
             events.firstOrNull()?.title ?: "Event summary",
             "Date range: $range. Places: ${places.joinToString().ifBlank { "not recorded" }}. " +
                 "Reviewed people: ${people.joinToString().ifBlank { "none requested" }}. " +
-                "Representative media: ${context.hits.take(4).joinToString { it.item.title }}.",
-            context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+                "Representative media: ${sourceHits.take(4).joinToString { it.item.title }}. " +
+                if (completeCoverage) {
+                    "The matched event membership was evaluated completely over eligible local media."
+                } else {
+                    "This summary uses the current ranked retrieval pass and may not include every event member."
+                },
+            collectEvidenceIds(sourceHits, context.plan),
         )
     }
 
@@ -232,14 +379,21 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
-        val buckets = context.hits.filter { it.item.capturedAt != null }
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val completeCoverage = context.eventCoverageComplete
+        val buckets = sourceHits.filter { it.item.capturedAt != null }
             .groupBy { formatDate(requireNotNull(it.item.capturedAt)) }
             .toSortedMap()
         return base(
             "${buckets.size} chronological ${if (buckets.size == 1) "date" else "dates"}",
-            buckets.entries.take(20).joinToString(" • ") { (date, hits) -> "$date: ${hits.size}" }
-                .ifBlank { "No deterministic capture dates were available." },
-            context.hits.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+            buckets.entries.take(20).joinToString("; ") { (date, hits) -> "$date: ${hits.size}" }
+                .ifBlank { "No deterministic capture dates were available." } +
+                if (completeCoverage) {
+                    " Complete dates are shown for the resolved event scope."
+                } else {
+                    " Dates are limited to the current retrieval pass."
+                },
+            collectEvidenceIds(sourceHits, context.plan),
         )
     }
 
@@ -247,7 +401,9 @@ object CapabilityAnswerExecutor {
         context: CapabilityAnswerContext,
         base: (String, String, List<String>) -> SearchAnswer,
     ): SearchAnswer {
-        val grouped = context.hits.groupBy { hit ->
+        if (context.comparisonScopes.size >= 2) return compareExplicitScopes(context, base)
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val grouped = sourceHits.groupBy { hit ->
             when (context.plan.grouping) {
                 Grouping.EVENT -> context.eventsByMedia[hit.item.id]?.title
                 Grouping.PLACE -> hit.item.location
@@ -255,15 +411,63 @@ object CapabilityAnswerExecutor {
             }.orEmpty().ifBlank { hit.item.title }
         }.entries.sortedByDescending { it.value.size }.take(2)
         if (grouped.size < 2) return base("Two comparison scopes were not resolved", "Refine the query with two places, events, albums, or result sets.", emptyList())
-        val detail = grouped.joinToString(" • ") { (name, hits) ->
+        val detail = grouped.joinToString(" | ") { (name, hits) ->
             val captures = hits.mapNotNull { it.item.capturedAt }
             "$name: ${hits.size} item(s), ${captures.minOrNull()?.let(::formatDate) ?: "date unavailable"} to " +
                 (captures.maxOrNull()?.let(::formatDate) ?: "date unavailable")
         }
         return base(
             "${grouped[0].key} compared with ${grouped[1].key}",
-            detail,
-            grouped.flatMap { it.value }.flatMap(SearchHit::evidence).map(EvidenceRecord::id).distinct().take(24),
+            detail + if (context.hasCompleteEligibleCoverage()) {
+                " Complete eligible membership was used for the resolved comparison scopes."
+            } else {
+                " Comparison is based on the current ranked retrieval pass."
+            },
+            collectEvidenceIds(grouped.flatMap { it.value }, context.plan),
+        )
+    }
+
+    private fun compareExplicitScopes(
+        context: CapabilityAnswerContext,
+        base: (String, String, List<String>) -> SearchAnswer,
+    ): SearchAnswer {
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        val grouped = context.comparisonScopes.mapNotNull { scope ->
+            val needle = scope.trim().lowercase(Locale.ROOT).takeIf(String::isNotBlank) ?: return@mapNotNull null
+            val scopedHits = sourceHits.filter { hit ->
+                listOf(
+                    hit.item.location,
+                    hit.item.album,
+                    hit.item.title,
+                    hit.item.filename,
+                    hit.item.description,
+                    context.eventsByMedia[hit.item.id]?.title.orEmpty(),
+                    context.eventsByMedia[hit.item.id]?.locationName.orEmpty(),
+                    context.eventsByMedia[hit.item.id]?.searchText.orEmpty(),
+                ).plus(hit.item.tags).any { needle in it.lowercase(Locale.ROOT) }
+            }.distinctBy { it.item.id }
+            scope.trim().replaceFirstChar { it.uppercase(Locale.ROOT) } to scopedHits
+        }.filter { it.second.isNotEmpty() }.take(2)
+        if (grouped.size < 2) {
+            return base(
+                "Two comparison scopes were not resolved",
+                "Refine the query with two places, events, albums, or result sets.",
+                emptyList(),
+            )
+        }
+        val detail = grouped.joinToString("; ") { (name, hits) ->
+            val captures = hits.mapNotNull { it.item.capturedAt }
+            "$name: ${hits.size} item(s), ${captures.minOrNull()?.let(::formatDate) ?: "date unavailable"} to " +
+                (captures.maxOrNull()?.let(::formatDate) ?: "date unavailable")
+        }
+        return base(
+            "${grouped[0].first} compared with ${grouped[1].first}",
+            detail + if (context.hasCompleteEligibleCoverage()) {
+                " Complete eligible membership was used for the resolved comparison scopes."
+            } else {
+                " Comparison is based on the current ranked retrieval pass."
+            },
+            collectEvidenceIds(grouped.flatMap { it.second }, context.plan),
         )
     }
 
@@ -274,18 +478,28 @@ object CapabilityAnswerExecutor {
         val currency: String,
     )
 
-    private fun numericFacts(hits: List<SearchHit>, field: OcrFactField): List<ParsedFact> = hits.distinctBy { it.item.id }.mapNotNull { hit ->
+    private fun numericFacts(hits: List<SearchHit>, field: OcrFactField): List<ParsedFact> = hits
+        .distinctBy(::documentIdentity)
+        .mapNotNull { hit ->
         val evidence = hit.evidence.firstOrNull { it.sourceField == field.sourceField } ?: return@mapNotNull null
         val number = NUMBER.find(evidence.text)?.value?.replace(",", "")?.let { runCatching { BigDecimal(it) }.getOrNull() }
             ?: return@mapNotNull null
         ParsedFact(hit, evidence, number, currency(evidence.text))
     }
 
+    /** Exact content digests identify the same document across duplicate media rows. */
+    private fun documentIdentity(hit: SearchHit): String =
+        hit.item.exactContentDigest?.trim()?.takeIf(String::isNotBlank)?.let { "digest:$it" }
+            ?: "media:${hit.item.id}"
+
     private fun currency(text: String): String = when {
-        Regex("(?i)(₹|\\binr\\b|\\brs\\.?)").containsMatchIn(text) -> "INR"
+        Regex("(?i)(\\u20B9|\\binr\\b|\\brs\\.?)").containsMatchIn(text) -> "INR"
         Regex("(?i)(\\busd\\b|\\$)").containsMatchIn(text) -> "USD"
         else -> "UNSPECIFIED"
     }
+
+    private fun CapabilityAnswerContext.hasCompleteEligibleCoverage(): Boolean =
+        exactness == ResultExactness.EXACT || exactness == ResultExactness.COMPLETE_PREDICATE_SCAN
 
     private fun formatDate(epochMs: Long): String = DATE_FORMAT.format(Instant.ofEpochMilli(epochMs))
 

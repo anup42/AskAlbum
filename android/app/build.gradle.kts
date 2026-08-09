@@ -89,7 +89,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         create("benchmark") {
@@ -123,6 +124,14 @@ android {
             buildConfigField("boolean", "MODEL_INDEPENDENT", "true")
             buildConfigField("String", "DISTRIBUTION", "\"ci\"")
         }
+        create("fixtureCi") {
+            dimension = "distribution"
+            applicationIdSuffix = ".fixture"
+            versionNameSuffix = "-fixture"
+            buildConfigField("boolean", "ALLOW_MODEL_DOWNLOAD", "false")
+            buildConfigField("boolean", "MODEL_INDEPENDENT", "true")
+            buildConfigField("String", "DISTRIBUTION", "\"fixtureCi\"")
+        }
     }
 
     compileOptions {
@@ -154,6 +163,19 @@ tasks.configureEach {
     }
 }
 
+tasks.matching {
+    it.name in setOf("connectedConsumerDebugAndroidTest", "connectedOfflineDemoDebugAndroidTest")
+}.configureEach {
+    doFirst {
+        if (!project.hasProperty("allowProductionDeviceTests")) {
+            throw GradleException(
+                "Refusing connected instrumentation against the production package. " +
+                    "Use connectedFixtureCiDebugAndroidTest or pass -PallowProductionDeviceTests=true on a disposable device.",
+            )
+        }
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
@@ -180,7 +202,7 @@ dependencies {
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.8.1")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.14.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.15.0")
     implementation(libs.google.ai.edge.litert)
     implementation(libs.microsoft.onnxruntime.android)
     kapt(libs.androidx.room.compiler)
