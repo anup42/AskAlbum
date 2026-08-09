@@ -32,6 +32,10 @@ class QueryCompiler(
         "ocean" to "beach",
         "gardens" to "garden",
         "screenshots" to "screenshot",
+        "receipts" to "receipt",
+        "invoices" to "invoice",
+        "documents" to "document",
+        "totals" to "total",
         "trip" to "travel",
         "yatra" to "travel",
         "गोवा" to "goa",
@@ -66,6 +70,8 @@ class QueryCompiler(
             Regex("\\b(compare|comparison|versus|vs)\\b").containsMatchIn(normalized) -> QueryIntent.COMPARE
             Regex("\\b(timeline|chronological|chronology)\\b").containsMatchIn(normalized) -> QueryIntent.TIMELINE
             Regex("\\b(list|which places|which merchants|which people)\\b").containsMatchIn(normalized) -> QueryIntent.LIST
+            Regex("\\b(summarize|summary)\\b").containsMatchIn(normalized) &&
+                Regex("\\b(trip|event|occasion|travel)\\b").containsMatchIn(normalized) -> QueryIntent.EVENT_SUMMARY
             asksReceiptTotal || asksDocumentAmount || asksAllowlistedDocumentFact || asksPassword -> QueryIntent.ANSWER_FACT
             Regex("\\b(receipt|invoice|document)\\b").containsMatchIn(normalized) -> QueryIntent.DOCUMENT_QA
             Regex("\\b(when|where|kab|kahan)\\b").containsMatchIn(normalized) || "कब" in normalized || "कहाँ" in normalized -> QueryIntent.EVENT_SUMMARY
@@ -121,8 +127,13 @@ class QueryCompiler(
             else -> null
         }
         val merchantAfterFrom = Regex("\\breceipt\\s+from\\s+(.+)$").find(normalized)?.groupValues?.get(1)?.trim()
+        val receiptWords = normalized.split(' ')
+        val receiptIndex = receiptWords.indexOfFirst { it == "receipt" || it == "receipts" }
+        val merchantBeforeReceipt = receiptIndex.takeIf { it > 0 }
+            ?.let { receiptWords[it - 1] }
+            ?.takeIf { it !in stopWords && it !in MERCHANT_NOISE_WORDS }
         val merchant = if ("receipt" in terms) {
-            merchantAfterFrom ?: terms.firstOrNull { it !in setOf("receipt", "total", "paid", "grand") }
+            merchantAfterFrom ?: merchantBeforeReceipt
         } else {
             null
         }
@@ -139,12 +150,12 @@ class QueryCompiler(
             filter = timeFilter,
             semanticClauses = semanticClauses,
             ocrClause = if (
-                intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) ||
+                intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA, QueryIntent.SUM, QueryIntent.MIN_MAX) ||
                 intent == QueryIntent.LIST && requestedField != null
             ) OcrClause(
                 query = terms.joinToString(" ").takeIf(String::isNotBlank),
                 merchant = merchant,
-                requestedField = requestedField,
+                requestedField = requestedField ?: if (intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX)) "total" else null,
             ) else null,
             grouping = when {
                 intent == QueryIntent.LIST && Regex("\\b(event|events|occasion|occasions)\\b").containsMatchIn(normalized) -> Grouping.EVENT
@@ -157,7 +168,14 @@ class QueryCompiler(
             aggregation = when (intent) {
                 QueryIntent.COUNT -> AggregationSpec(AggregationOperation.COUNT)
                 QueryIntent.SUM -> AggregationSpec(AggregationOperation.SUM, requestedField ?: "total")
-                QueryIntent.MIN_MAX -> AggregationSpec(AggregationOperation.MIN_MAX, requestedField ?: "total")
+                QueryIntent.MIN_MAX -> AggregationSpec(
+                    when {
+                        Regex("\\b(highest|maximum|most expensive)\\b").containsMatchIn(normalized) -> AggregationOperation.MAX
+                        Regex("\\b(lowest|minimum|cheapest)\\b").containsMatchIn(normalized) -> AggregationOperation.MIN
+                        else -> AggregationOperation.MIN_MAX
+                    },
+                    requestedField ?: "total",
+                )
                 else -> null
             },
             sort = when {
@@ -195,6 +213,19 @@ class QueryCompiler(
             "\u0924\u0938\u094d\u0935\u0940\u0930\u0947\u0902",
             "\u091a\u093f\u0924\u094d\u0930",
             "\u091a\u093f\u0924\u094d\u0930\u094b\u0902",
+        )
+        val MERCHANT_NOISE_WORDS = setOf(
+            "receipt",
+            "invoice",
+            "document",
+            "sum",
+            "total",
+            "highest",
+            "lowest",
+            "maximum",
+            "minimum",
+            "expensive",
+            "cheapest",
         )
         val TEMPORAL_FOLLOW_UP_WORDS = setOf("about", "last", "previous", "year", "what", "now", "pichle", "saal")
     }

@@ -19,6 +19,25 @@ class GalleryQueryPlanValidatorTest {
     }
 
     @Test
+    fun minMaxIntentAcceptsDirectionalAndCombinedOperations() {
+        listOf(
+            AggregationOperation.MIN,
+            AggregationOperation.MAX,
+            AggregationOperation.MIN_MAX,
+        ).forEach { operation ->
+            val result = validator.validate(
+                GalleryQueryPlan(
+                    originalQuery = "receipt total",
+                    intent = QueryIntent.MIN_MAX,
+                    aggregation = AggregationSpec(operation, "total"),
+                ),
+            )
+
+            assertTrue("$operation was rejected: ${result.errors}", result.isValid)
+        }
+    }
+
+    @Test
     fun rejectsExcessiveLimitAndUnsafeGeneratedText() {
         val plan = GalleryQueryPlan(
             originalQuery = "photos",

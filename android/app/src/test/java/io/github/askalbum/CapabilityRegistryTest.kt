@@ -17,6 +17,23 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun findMediaWordingDistinguishesBoundedRetrievalFromCompleteCoverage() {
+        val base = context(QueryIntent.FIND_MEDIA)
+
+        val estimated = CapabilityAnswerExecutor.execute(
+            base.copy(exactness = ResultExactness.ESTIMATED_FROM_RETRIEVAL),
+        )
+        val exact = CapabilityAnswerExecutor.execute(
+            base.copy(exactness = ResultExactness.EXACT),
+        )
+
+        assertTrue(estimated.headline.contains("likely matches"))
+        assertTrue(estimated.headline.contains("retrieval pass"))
+        assertTrue(exact.headline.contains("matching items"))
+        assertFalse(exact.headline.contains("retrieval pass"))
+    }
+
+    @Test
     fun documentAllowlistContainsEveryRequiredField() {
         assertEquals(
             setOf("total", "amount", "password", "flight_number", "flight_time", "order_id", "email", "phone", "date", "url", "merchant"),
@@ -129,6 +146,7 @@ class CapabilityRegistryTest {
             base.copy(deterministicHits = base.hits + complete),
         )
 
+        assertTrue(answer.headline.contains("places"))
         assertTrue(answer.detail.contains("Trip C"))
     }
 
@@ -199,6 +217,8 @@ class CapabilityRegistryTest {
 
         assertEquals("INR 10", minimum.headline)
         assertEquals("INR 20", maximum.headline)
+        assertEquals(2, minimum.evidenceIds.size)
+        assertEquals(2, maximum.evidenceIds.size)
     }
 
     @Test
@@ -300,10 +320,24 @@ class CapabilityRegistryTest {
     @Test
     fun offlineCompilerCanReachAggregationAndComparisonExecutors() {
         assertEquals(QueryIntent.SUM, QueryCompiler().compile("Sum my receipt totals").intent)
-        assertEquals(QueryIntent.MIN_MAX, QueryCompiler().compile("Which receipt has the highest total?").intent)
+        val maximum = QueryCompiler().compile("Which receipt has the highest total?")
+        assertEquals(QueryIntent.MIN_MAX, maximum.intent)
+        assertEquals(AggregationOperation.MAX, maximum.aggregation?.operation)
+        assertEquals(null, maximum.ocrClause?.merchant)
         assertEquals(QueryIntent.COMPARE, QueryCompiler().compile("Compare Goa versus Singapore").intent)
         assertEquals(QueryIntent.TIMELINE, QueryCompiler().compile("Timeline of Singapore photos").intent)
         assertEquals(QueryIntent.LIST, QueryCompiler().compile("List places in recent photos").intent)
+    }
+
+    @Test
+    fun everyAdvertisedSuggestionRoutesToItsRegisteredIntent() {
+        CapabilityRegistry.descriptors.forEach { descriptor ->
+            assertEquals(
+                descriptor.suggestedQuery,
+                descriptor.intent,
+                QueryCompiler().compile(descriptor.suggestedQuery).intent,
+            )
+        }
     }
 
     @Test

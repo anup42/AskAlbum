@@ -1366,9 +1366,17 @@ class GalleryRepository(context: Context) {
         } else {
             deterministicAnswer
         }.copy(channelReports = channelReports)
+        val outcomeHits = GroundedAnswerEvidenceHits.closeCitations(
+            primary = hits,
+            supplemental = deterministicAnswerHits,
+            evidenceIds = (
+                answer.evidenceIds +
+                    if (requiresAuthentication) deterministicAnswer.evidenceIds else emptyList()
+                ).distinct(),
+        )
         val outcome = finalizeOutcome(sessionId, parentResultSetId, SearchOutcome(
             plan = plan,
-            hits = hits,
+            hits = outcomeHits,
             answer = answer,
             elapsedMs = max(1, SystemClock.elapsedRealtime() - started),
             planPatch = planPatch,

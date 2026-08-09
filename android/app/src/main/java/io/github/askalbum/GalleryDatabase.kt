@@ -843,7 +843,9 @@ class GalleryDatabase(
                 val orphanedThumbnailMediaIds =
                     "SELECT media_id FROM media_index_stage WHERE stage='THUMBNAIL' AND $leasePredicate"
                 val resetThumbnailSql =
-                    "UPDATE media_index_stage SET status='PENDING',updated_at=?,error=? " +
+                    "UPDATE media_index_stage SET status='PENDING'," +
+                        "attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END," +
+                        "updated_at=?,error=?,lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=0 " +
                         "WHERE stage='THUMBNAIL' AND status IN ('COMPLETE','RUNNING') AND media_id IN ($orphanedThumbnailMediaIds)"
                 db.execSQL(resetThumbnailSql, arrayOf(now, recoveryError, *leaseArgs))
             }
@@ -854,6 +856,14 @@ class GalleryDatabase(
                         "updated_at=?,error=?,lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=0 " +
                         "WHERE stage IN ($stageNames) AND $leasePredicate",
                     arrayOf(now, recoveryError, *leaseArgs),
+                )
+            }
+            if (mediaStages.isNotEmpty()) {
+                db.execSQL(
+                    "UPDATE media_item SET index_state='PENDING',index_error=NULL " +
+                        "WHERE index_state='READY' AND id IN (" +
+                        "SELECT media_id FROM media_index_stage " +
+                        "WHERE stage='THUMBNAIL' AND status='PENDING')",
                 )
             }
             if (IndexingRecoveryPolicy.recoversSemanticMemory(pipeline)) {

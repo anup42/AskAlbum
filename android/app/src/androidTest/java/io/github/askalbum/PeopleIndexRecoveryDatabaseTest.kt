@@ -88,6 +88,73 @@ class PeopleIndexRecoveryDatabaseTest {
     }
 
     @Test
+    fun pendingThumbnailRepairsReadyParentIntoSelectableWork() {
+        val database = GalleryDatabase(context, TEST_DATABASE).also { store = it }
+        database.seedDemoIfEmpty()
+        database.ensureStageRows()
+        val image = database.allItems().first { it.kind == MediaKind.IMAGE }
+
+        database.close()
+        store = null
+        SQLiteDatabase.openDatabase(
+            context.getDatabasePath(TEST_DATABASE).path,
+            null,
+            SQLiteDatabase.OPEN_READWRITE,
+        ).use { raw ->
+            raw.execSQL(
+                "UPDATE media_item SET source_kind='MEDIA_STORE',content_uri=?,index_state='READY' WHERE id=?",
+                arrayOf<Any>("content://askalbum.test/recovery/${image.id}", image.id),
+            )
+            raw.execSQL(
+                "UPDATE media_index_stage SET status='PENDING',lease_owner=NULL,lease_expires_at=NULL " +
+                    "WHERE media_id=? AND stage='THUMBNAIL'",
+                arrayOf<Any>(image.id),
+            )
+        }
+
+        val reopened = GalleryDatabase(context, TEST_DATABASE).also { store = it }
+        reopened.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
+
+        assertEquals(IndexState.PENDING, reopened.itemById(image.id)?.indexState)
+        assertEquals(listOf(image.id), reopened.pendingItems(10).map { it.id })
+    }
+
+    @Test
+    fun orphanedThumbnailRecoveryClearsLiveLeaseAndMakesItemSelectable() {
+        val database = GalleryDatabase(context, TEST_DATABASE).also { store = it }
+        database.seedDemoIfEmpty()
+        database.ensureStageRows()
+        val image = database.allItems().first { it.kind == MediaKind.IMAGE }
+
+        database.close()
+        store = null
+        SQLiteDatabase.openDatabase(
+            context.getDatabasePath(TEST_DATABASE).path,
+            null,
+            SQLiteDatabase.OPEN_READWRITE,
+        ).use { raw ->
+            raw.execSQL(
+                "UPDATE media_item SET source_kind='MEDIA_STORE',content_uri=?,index_state='PENDING' WHERE id=?",
+                arrayOf<Any>("content://askalbum.test/orphan/${image.id}", image.id),
+            )
+        }
+
+        val reopened = GalleryDatabase(context, TEST_DATABASE).also { store = it }
+        assertTrue(reopened.markIndexing(image.id, "repository-direct"))
+
+        reopened.recoverInterruptedJobs(
+            pipeline = IndexingPipeline.MEDIA_ANALYSIS,
+            reclaimOrphanedLeases = true,
+        )
+
+        val thumbnail = reopened.stageRecords(image.id).single { it.stage == IndexStage.THUMBNAIL }
+        assertEquals(StageStatus.PENDING, thumbnail.status)
+        assertEquals(0, thumbnail.attemptCount)
+        assertEquals(IndexState.PENDING, reopened.itemById(image.id)?.indexState)
+        assertEquals(listOf(image.id), reopened.pendingItems(10).map { it.id })
+    }
+
+    @Test
     fun canceledWorkerReleasesOnlyItsOwnedEmbeddingLease() {
         val database = GalleryDatabase(context, TEST_DATABASE).also { store = it }
         database.seedDemoIfEmpty()

@@ -172,4 +172,16 @@ class QueryCompilerTest {
         assertTrue(sum.semanticClauses.isEmpty())
         assertTrue(maximum.semanticClauses.isEmpty())
     }
+
+    @Test
+    fun pluralReceiptAggregationKeepsDocumentScopeAndOnlyExplicitMerchant() {
+        val allReceipts = compiler.compile("Sum my receipt totals")
+        val swiggy = compiler.compile("Sum the totals on my Swiggy receipts")
+
+        assertEquals(QueryIntent.SUM, allReceipts.intent)
+        assertEquals(MediaScope.DOCUMENTS, allReceipts.mediaScope)
+        assertEquals("total", allReceipts.ocrClause?.requestedField)
+        assertNull(allReceipts.ocrClause?.merchant)
+        assertEquals("swiggy", swiggy.ocrClause?.merchant)
+    }
 }

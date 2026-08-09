@@ -115,13 +115,24 @@ class GalleryQueryPlanValidator(
     }
 
     private fun validateAggregation(plan: GalleryQueryPlan, errors: MutableList<String>) {
-        val required = when (plan.intent) {
-            QueryIntent.COUNT -> AggregationOperation.COUNT
-            QueryIntent.SUM -> AggregationOperation.SUM
-            QueryIntent.MIN_MAX -> AggregationOperation.MIN_MAX
-            else -> null
+        when (plan.intent) {
+            QueryIntent.COUNT -> if (plan.aggregation?.operation != AggregationOperation.COUNT) {
+                errors += "Intent requires COUNT aggregation"
+            }
+            QueryIntent.SUM -> if (plan.aggregation?.operation != AggregationOperation.SUM) {
+                errors += "Intent requires SUM aggregation"
+            }
+            QueryIntent.MIN_MAX -> if (
+                plan.aggregation?.operation !in setOf(
+                    AggregationOperation.MIN,
+                    AggregationOperation.MAX,
+                    AggregationOperation.MIN_MAX,
+                )
+            ) {
+                errors += "Intent requires MIN, MAX, or MIN_MAX aggregation"
+            }
+            else -> Unit
         }
-        if (required != null && plan.aggregation?.operation != required) errors += "Intent requires $required aggregation"
         if (plan.intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX)) {
             val field = plan.aggregation?.field
             val resolved = OcrFactAllowlist.resolve(field)

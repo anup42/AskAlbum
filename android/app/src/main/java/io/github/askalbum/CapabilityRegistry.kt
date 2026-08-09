@@ -18,7 +18,7 @@ object CapabilityRegistry {
         CapabilityDescriptor(QueryIntent.LIST, "deterministic_list", "List places in my recent photos."),
         CapabilityDescriptor(QueryIntent.COUNT, "deterministic_or_estimated_count", "How many photos did I take in 2024?"),
         CapabilityDescriptor(QueryIntent.ANSWER_FACT, "ocr_fact", "What is the Wi-Fi password in the latest screenshot?"),
-        CapabilityDescriptor(QueryIntent.DOCUMENT_QA, "ocr_document_qa", "What is the flight number on my latest ticket?"),
+        CapabilityDescriptor(QueryIntent.DOCUMENT_QA, "ocr_document_qa", "What details are in my latest boarding pass document?"),
         CapabilityDescriptor(QueryIntent.SUM, "numeric_sum", "Sum the totals on my Swiggy receipts."),
         CapabilityDescriptor(QueryIntent.MIN_MAX, "numeric_min_max", "Which receipt has the highest total?"),
         CapabilityDescriptor(QueryIntent.EVENT_SUMMARY, "event_summary", "Summarize my latest trip."),
@@ -137,7 +137,13 @@ object CapabilityAnswerExecutor {
         }
         val answer = when (context.plan.intent) {
             QueryIntent.FIND_MEDIA -> base(
-                "Found ${context.hits.size} ${if (context.hits.size == 1) "match" else "matches"}",
+                if (context.exactness == ResultExactness.EXACT ||
+                    context.exactness == ResultExactness.COMPLETE_PREDICATE_SCAN
+                ) {
+                    "${context.hits.size} matching ${if (context.hits.size == 1) "item" else "items"}"
+                } else {
+                    "${context.hits.size} ${if (context.hits.size == 1) "likely match" else "likely matches"} in this retrieval pass"
+                },
                 "Hybrid local ranking used only the eligible media scope and the retrieval channels shown below.",
                 evidenceIds,
             )
@@ -225,8 +231,23 @@ object CapabilityAnswerExecutor {
             }
         }.map(String::trim).filter(String::isNotBlank).distinct()
         val ids = collectEvidenceIds(sourceHits, context.plan)
+        val resultNoun = when (context.plan.grouping) {
+            Grouping.PLACE -> "place"
+            Grouping.PERSON -> "person"
+            Grouping.EVENT -> "event"
+            Grouping.DAY, Grouping.MONTH, Grouping.YEAR -> "date"
+            else -> OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField)
+                ?.key
+                ?.replace('_', ' ')
+                ?: "result"
+        }
+        val displayNoun = when {
+            values.size == 1 -> resultNoun
+            resultNoun == "person" -> "people"
+            else -> "${resultNoun}s"
+        }
         return base(
-            "${values.size} distinct ${if (values.size == 1) "result" else "results"}",
+            "${values.size} distinct $displayNoun",
             values.take(20).joinToString("; ").ifBlank { "No allowlisted value was present in the eligible evidence." },
             ids,
         )
@@ -331,6 +352,7 @@ object CapabilityAnswerExecutor {
         val minimum = values.minBy(ParsedFact::value)
         val maximum = values.maxBy(ParsedFact::value)
         val operation = context.plan.aggregation?.operation ?: AggregationOperation.MIN_MAX
+        val comparisonEvidenceIds = values.map { it.evidence.id }.distinct()
         val selected = when (operation) {
             AggregationOperation.MIN -> minimum
             AggregationOperation.MAX -> maximum
@@ -344,7 +366,7 @@ object CapabilityAnswerExecutor {
                 } else {
                     "Maximum: ${selected.hit.item.title}."
                 },
-                listOf(selected.evidence.id),
+                (listOf(selected.evidence.id) + comparisonEvidenceIds).distinct().take(24),
             )
         }
         return base(

@@ -1407,3 +1407,17 @@ People cluster summaries now expose both the user-selected representative face a
 - Run-scoped cleanup deleted `20,000/20,000` items and left `0` rows, with no orphan recovery required.
 - `:app:assembleFixtureCiDebugAndroidTest`, `:app:testFixtureCiDebugUnitTest`, and 9 host acceptance-helper tests passed.
 - The next push is targeted to `anup42/AskAlbum`; the legacy Agentic Gallery repository is not a push destination.
+
+## 2026-08-09 - Advertised capability executor device gate
+
+- PASS: all ten `CapabilityRegistry` intents executed against one isolated 84-item fixture corpus on SM-F966B: FIND_MEDIA, LIST, COUNT, ANSWER_FACT, DOCUMENT_QA, SUM, MIN_MAX, EVENT_SUMMARY, TIMELINE, and COMPARE.
+- PASS: connected run `capability_20260809_150000` reported one passing test with evidence closure and no generic non-capability fallback.
+- Exactness reported by the app: FIND_MEDIA `ESTIMATED_FROM_RETRIEVAL`; LIST, COUNT, ANSWER_FACT, SUM, MIN_MAX, and COMPARE `EXACT`; DOCUMENT_QA `PARTIAL_INDEX`; EVENT_SUMMARY and TIMELINE `ESTIMATED_FROM_RETRIEVAL`.
+- Indexing repair: orphaned media-analysis recovery now clears the live thumbnail lease atomically; the focused connected recovery suite passed 5/5 tests.
+- Planner repair: plural document aliases are normalized, aggregation queries no longer invent a merchant, and highest/lowest map to deterministic MAX/MIN operations accepted by validation.
+- Grounding repair: answer citations now retain only the supplemental media needed for evidence closure, including protected citations required after authentication.
+- Truthfulness repair: bounded FIND_MEDIA wording says `likely matches in this retrieval pass`; deterministic LIST headlines name the requested entity type.
+- PASS: full `testFixtureCiDebugUnitTest`, `assembleFixtureCiDebug`, and `assembleOfflineDemoDebug` Gradle gate.
+- PASS: merged `offlineDemoDebug` manifest contains no `android.permission.INTERNET` permission.
+- PASS: fixture cleanup removed 84/84 database rows and 84/84 MediaStore items with zero remaining; consumer `lastUpdateTime` remained `2026-08-09 11:30:02`.
+- NOT RUN: production-model Gemma planner/composer behavior was not exercised by this fixture executor gate.

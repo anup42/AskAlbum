@@ -14,4 +14,17 @@ internal object GroundedAnswerEvidenceHits {
                         .distinctBy(EvidenceRecord::id),
                 )
             }
+
+    fun closeCitations(
+        primary: List<SearchHit>,
+        supplemental: List<SearchHit>,
+        evidenceIds: List<String>,
+    ): List<SearchHit> {
+        if (evidenceIds.isEmpty()) return primary
+        val required = evidenceIds.toSet()
+        return merge(
+            primary,
+            supplemental.filter { hit -> hit.evidence.any { it.id in required } },
+        )
+    }
 }
