@@ -2,6 +2,27 @@
 
 Last reviewed: 2026-08-09
 
+## 2026-08-09 - Repository-level person verification closure
+
+- `ProductionPersonVerifierDeviceTest` now enters through
+  `GalleryRepository.search()` instead of stopping at the verifier boundary.
+  It uses the production labelled-composite, prompt, parser, reviewed-cluster
+  binding, verdict cache, channel reporting, final filtering, and answer path
+  with a deterministic vision-engine response.
+- PASS on the isolated `fixtureCiDebug` package: one media item containing Me
+  and Wife reached visual verification; Wife's white dress was
+  `VERIFIED_TRUE`, the requested white-on-Me condition was `VERIFIED_FALSE`,
+  and the repository returned zero media hits, citations, and grounded claims.
+- The visual channel truthfully reported one eligible and searched candidate,
+  zero accepted hits, and successful verification. The resulting visual query
+  was not presented as exact.
+- Production application wiring remains fixed. The connected gate uses an
+  immutable per-repository dependency seam and cannot mutate the global service
+  graph. The separate retained-E2B test remains the real-model proof.
+- Fixture unit tests, consumer/offline builds, and the offline no-Internet
+  manifest gate passed. The consumer package and its gallery, People, indexes,
+  captions, consent, and model files were not installed, cleared, or modified.
+
 ## 2026-08-09 - Real Gemma swapped-person rejection
 
 - PASS: the retained verified E2B pack ran the production labelled-composite

@@ -63,14 +63,36 @@ internal fun requiresAuthenticationForAnswer(
         }
 }
 
-class GalleryRepository(context: Context) {
+private data class GalleryRepositoryOverrides(
+    val database: GalleryDatabase,
+    val planner: GalleryPlanCompiler,
+    val visualVerifier: CandidateVerifier,
+)
+
+class GalleryRepository private constructor(
+    context: Context,
+    overrides: GalleryRepositoryOverrides?,
+) {
+    constructor(context: Context) : this(context, null)
+
+    /** Immutable per-instance seam for connected acceptance tests; production wiring remains fixed. */
+    internal constructor(
+        context: Context,
+        database: GalleryDatabase,
+        planner: GalleryPlanCompiler,
+        visualVerifier: CandidateVerifier,
+    ) : this(
+        context = context,
+        overrides = GalleryRepositoryOverrides(database, planner, visualVerifier),
+    )
+
     private val appContext = context.applicationContext
     private val services = (context.applicationContext as AskAlbumApplication).services
-    private val database = services.galleryDatabase
-    private val planner = services.queryPlanCompiler
+    private val database = overrides?.database ?: services.galleryDatabase
+    private val planner = overrides?.planner ?: services.queryPlanCompiler
     private val semanticVectors = services.semanticVectorStore
     private val captionVectors = services.captionVectorStore
-    private val visualVerifier = services.visualVerifier
+    private val visualVerifier = overrides?.visualVerifier ?: services.visualVerifier
     private val groundedAnswerComposer = services.groundedAnswerComposer
     private val importer = MediaImporter(context.applicationContext)
     private val indexingRunCriteriaStore = IndexingRunCriteriaStore(appContext)

@@ -9,7 +9,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -35,7 +34,7 @@ class ProductionPersonVerifierDeviceTest {
     }
 
     @Test
-    fun swappedClothingCannotSatisfyTheWrongReviewedIdentity() = runBlocking {
+    fun repositoryExcludesSwappedClothingFromResultsAndGroundedEvidence() = runBlocking {
         val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
         store.seedDemoIfEmpty()
         store.ensureStageRows()
@@ -61,6 +60,10 @@ class ProductionPersonVerifierDeviceTest {
         val plan = GalleryQueryPlan(
             originalQuery = "Show pictures with my wife where I am wearing white",
             intent = QueryIntent.FIND_MEDIA,
+            peopleClauses = listOf(
+                PersonClause(ME_CLUSTER),
+                PersonClause(WIFE_CLUSTER),
+            ),
             semanticClauses = listOf(
                 SemanticClause(
                     text = "Me is wearing white",
@@ -77,6 +80,7 @@ class ProductionPersonVerifierDeviceTest {
                     relationToPerson = WIFE_CLUSTER,
                 ),
             ),
+            terms = listOf(item.title.lowercase()),
             verification = VerificationPolicy.REQUIRED,
         )
         val conditions = VisualVerificationPolicy.conditions(plan)
@@ -133,16 +137,25 @@ class ProductionPersonVerifierDeviceTest {
             },
         )
 
-        val result = verifier.verifyWhenNeeded(
-            plan,
-            listOf(SearchHit(item = item, score = 1.0, evidence = emptyList())),
+        val repository = GalleryRepository(
+            context = context,
+            database = store,
+            planner = FixedPlanCompiler(plan),
+            visualVerifier = verifier,
         )
+        val outcome = repository.search(plan.originalQuery)
+        val visualReport = outcome.channelReports.single {
+            it.channel == RetrievalChannel.VISUAL_VERIFICATION
+        }
 
-        assertTrue(result.applied)
-        assertTrue(result.failures.joinToString(), result.failures.isEmpty())
-        assertTrue(result.acceptedIds.isEmpty())
-        assertFalse(result.evaluations.single().overallMatch)
-        assertEquals(listOf(WIFE_CLUSTER), result.evidence.mapNotNull(EvidenceRecord::clusterId))
+        assertTrue("Wrong-person candidate escaped repository verification", outcome.hits.isEmpty())
+        assertTrue("Rejected candidate leaked answer evidence", outcome.answer.evidenceIds.isEmpty())
+        assertTrue("Rejected candidate produced a grounded claim", outcome.answer.claims.isEmpty())
+        assertTrue("Visual filtering was not applied", visualReport.status == ChannelStatus.SUCCESS)
+        assertEquals(1, visualReport.eligibleCount)
+        assertEquals(1, visualReport.searchedCount)
+        assertTrue("Visual channel exposed a rejected hit", visualReport.hits.isEmpty())
+        assertTrue("Visual retrieval was presented as exact", outcome.answer.exactness != ResultExactness.EXACT)
         assertEquals(
             mapOf(
                 ME_CLUSTER to PersonVisualVerdict.VERIFIED_FALSE,
@@ -158,6 +171,13 @@ class ProductionPersonVerifierDeviceTest {
 
         sessions.evictNow()
         assertEquals(1, engine.closeCalls)
+    }
+
+    private class FixedPlanCompiler(
+        private val plan: GalleryQueryPlan,
+    ) : GalleryPlanCompiler {
+        override suspend fun compile(query: String, activeResultIds: Set<String>?): GalleryQueryPlan =
+            plan.copy(originalQuery = query)
     }
 
     private fun face(
