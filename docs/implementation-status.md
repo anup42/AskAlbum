@@ -2,6 +2,28 @@
 
 Last reviewed: 2026-08-09
 
+## 2026-08-09 - Real Gemma swapped-person rejection
+
+- PASS: the retained verified E2B pack ran the production labelled-composite
+  verifier on `SM-F966B`; LiteRT-LM reported `GPU`, `mtpSupported=true`, and
+  `mtpEnabled=true`.
+- In the positive case, three Person A/Person B appearance and relationship
+  conditions were `VERIFIED_TRUE`. In the same image, a second query assigned
+  Person B's visible blue suit to Person A; it returned `VERIFIED_FALSE` at
+  `0.99` confidence, with zero accepted media and zero confirming evidence.
+- The negative verdict was cached against Person A's reviewed cluster rather
+  than Person B's cluster. Both verifier calls used the production parser,
+  cluster binding, verdict cache, and evidence filtering over an isolated
+  synthetic image and database.
+- PASS: the four-test planner/verifier/composer suite completed in `70,628 ms`
+  with exactly one Gemma initialization. The positive verifier, swapped-person
+  verifier, and grounded composer each reported `engineLoadMs=0` after the
+  planner initialized the shared engine.
+- Fixture unit/build gates and the offline build passed; the offline APK has no
+  `INTERNET` permission. This gate does not claim broad real-gallery acceptance.
+  No uninstall, clear-data, index reset, or consent change was performed, and
+  the retained consumer database and model/index file stores remained present.
+
 ## 2026-08-09 - One real Gemma session across query roles
 
 - PASS: one ordered connected instrumentation suite used the retained verified

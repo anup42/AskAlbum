@@ -123,6 +123,55 @@ class RealGemmaVisualVerifierAcceptanceTest {
             assertTrue(result.failures.isEmpty())
             assertTrue("Visual verification reported invalid model-load timing", trace.engineLoadMs >= 0)
             assertTrue(trace.generationMs > 0)
+
+            val swappedAttributePlan = GalleryQueryPlan(
+                originalQuery = "Show Person A with Person B where Person A is wearing a blue suit",
+                intent = QueryIntent.FIND_MEDIA,
+                peopleClauses = listOf(
+                    PersonClause(PERSON_A_CLUSTER),
+                    PersonClause(PERSON_B_CLUSTER),
+                ),
+                semanticClauses = listOf(
+                    SemanticClause(
+                        text = "P1 is wearing a blue suit",
+                        hardness = ConstraintStrength.HARD,
+                        subject = SemanticSubject.PERSON,
+                        relationToPerson = PERSON_A_CLUSTER,
+                    ),
+                ),
+                terms = listOf("blue suit"),
+                verification = VerificationPolicy.REQUIRED,
+            )
+            val swapped = withTimeout(6 * 60_000L) {
+                verifier.verifyWhenNeeded(
+                    swappedAttributePlan,
+                    listOf(SearchHit(item = item, score = 1.0, evidence = emptyList())),
+                )
+            }
+            val swappedCondition = swapped.evaluations.single().conditions.single()
+            instrumentation.sendStatus(
+                2,
+                Bundle().apply {
+                    putString(
+                        "real_gemma_swapped_person_trace",
+                        "REAL_GEMMA_SWAPPED_PERSON accepted=${swapped.acceptedIds.size} evidence=${swapped.evidence.size} " +
+                            "failures=${swapped.failures.size} verdict=${swappedCondition.verdict} " +
+                            "confidence=${swappedCondition.confidence} loadMs=${swapped.trace?.engineLoadMs} " +
+                            "generationMs=${swapped.trace?.generationMs}",
+                    )
+                },
+            )
+
+            assertTrue("Swapped-person verification failed: ${swapped.failures}", swapped.failures.isEmpty())
+            assertTrue("Attribute from Person B was accepted for Person A", swapped.acceptedIds.isEmpty())
+            assertTrue("A false person condition emitted confirming evidence", swapped.evidence.isEmpty())
+            assertEquals(PersonVisualVerdict.VERIFIED_FALSE, swappedCondition.verdict)
+            assertTrue(!swappedCondition.satisfied)
+            assertTrue(
+                database.personVisualFactsForMedia(item.id).any { fact ->
+                    fact.clusterId == PERSON_A_CLUSTER && fact.verdict == PersonVisualVerdict.VERIFIED_FALSE
+                },
+            )
         } finally {
             database.close()
             application.deleteDatabase(TEST_DATABASE)
