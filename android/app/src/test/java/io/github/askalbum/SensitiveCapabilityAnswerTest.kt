@@ -2,6 +2,7 @@ package io.github.anup42.askalbum
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -46,6 +47,47 @@ class SensitiveCapabilityAnswerTest {
             assertFalse(answer.detail.contains("mango-tree-2048"))
         }
     }
+
+    @Test
+    fun protectedDeterministicAnswerUsesOpaqueOneTimeStorage() {
+        val store = OneTimeSensitiveAnswerStore(maximumEntries = 2)
+        val protected = SearchAnswer(
+            headline = "Wi-Fi password: mango-tree-2048",
+            detail = "Read from the latest screenshot.",
+            evidenceIds = listOf("password-evidence"),
+            exactness = ResultExactness.EXACT,
+            indexedEligibleCount = 1,
+            totalEligibleCount = 1,
+        )
+
+        val token = store.put(protected)
+
+        assertFalse(token.contains("mango-tree-2048"))
+        assertEquals(protected, store.take(token))
+        assertNull("A protected answer token must be one-use", store.take(token))
+    }
+
+    @Test
+    fun protectedAnswerStoreEvictsOldestUnusedEntry() {
+        val store = OneTimeSensitiveAnswerStore(maximumEntries = 1)
+        val first = answer("first secret")
+        val second = answer("second secret")
+
+        val firstToken = store.put(first)
+        val secondToken = store.put(second)
+
+        assertNull(store.take(firstToken))
+        assertEquals(second, store.take(secondToken))
+    }
+
+    private fun answer(value: String) = SearchAnswer(
+        headline = value,
+        detail = "Protected deterministic fact",
+        evidenceIds = listOf("evidence"),
+        exactness = ResultExactness.EXACT,
+        indexedEligibleCount = 1,
+        totalEligibleCount = 1,
+    )
 
     private fun item(id: String) = GalleryItem(
         id = id,

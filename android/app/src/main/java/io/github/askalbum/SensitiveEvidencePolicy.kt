@@ -111,3 +111,26 @@ object SensitiveEvidencePolicy {
         requiresAuthentication = true,
     )
 }
+
+/** Bounded process-local storage for deterministic answers awaiting device authentication. */
+internal class OneTimeSensitiveAnswerStore(private val maximumEntries: Int = 8) {
+    private val answers = LinkedHashMap<String, SearchAnswer>()
+
+    init {
+        require(maximumEntries > 0) { "Sensitive answer capacity must be positive" }
+    }
+
+    @Synchronized
+    fun put(answer: SearchAnswer): String {
+        require(!answer.requiresAuthentication) { "Only an unwrapped deterministic answer may be stored" }
+        while (answers.size >= maximumEntries) {
+            answers.remove(answers.keys.first())
+        }
+        val token = java.util.UUID.randomUUID().toString()
+        answers[token] = answer
+        return token
+    }
+
+    @Synchronized
+    fun take(token: String): SearchAnswer? = answers.remove(token)
+}

@@ -264,6 +264,8 @@ data class SearchOutcome(
     val baseResultSetId: String? = null,
     val planPatch: PlanPatch? = null,
     val channelReports: List<RetrievalChannelReport<SearchHit>> = emptyList(),
+    /** Opaque, process-local handle. The protected answer itself never enters UI state before authentication. */
+    val sensitiveAnswerToken: String? = null,
 )
 
 sealed interface QueryProgress {

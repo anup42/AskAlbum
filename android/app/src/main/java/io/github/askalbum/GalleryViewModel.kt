@@ -1153,6 +1153,24 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         loadSelectedEvidenceMetadata(includeSensitiveContent = true)
     }
 
+    fun unlockSensitiveAnswer() {
+        val outcome = state.outcome ?: return
+        val token = outcome.sensitiveAnswerToken
+        if (token == null) {
+            state = state.copy(operationMessage = "The protected answer expired. Run the question again to unlock it.")
+            return
+        }
+        val revealed = repository.revealSensitiveAnswer(token)
+        if (revealed == null) {
+            state = state.copy(operationMessage = "The protected answer expired. Run the question again to unlock it.")
+            return
+        }
+        state = state.copy(
+            outcome = outcome.copy(answer = revealed, sensitiveAnswerToken = null),
+            operationMessage = "Sensitive answer unlocked on this device",
+        )
+    }
+
     private suspend fun reload(message: String? = state.operationMessage) {
         val refreshed = withContext(Dispatchers.IO) {
             GalleryRefresh(

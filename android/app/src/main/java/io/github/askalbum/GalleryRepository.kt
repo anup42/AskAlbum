@@ -59,6 +59,9 @@ class GalleryRepository(context: Context) {
     private val indexingJobControlsStore = IndexingJobControlsStore(appContext)
     private val planPatchResolver = ResultSetPlanPatchResolver()
     private val sessionPlans = ConcurrentHashMap<String, GalleryQueryPlan>()
+    private val sensitiveAnswers = OneTimeSensitiveAnswerStore()
+
+    fun revealSensitiveAnswer(token: String): SearchAnswer? = sensitiveAnswers.take(token)
 
     fun initialize(): IndexSummary {
         val restartWorkersAfterUpdate = consumeWorkerUpdateRestart()
@@ -1324,6 +1327,11 @@ class GalleryRepository(context: Context) {
             deterministicMetadataCount = deterministicMetadataCount,
         )
         val requiresAuthentication = requiresAuthenticationForAnswer(hits, deterministicAnswerHits)
+        val sensitiveAnswerToken = if (requiresAuthentication) {
+            sensitiveAnswers.put(deterministicAnswer.copy(channelReports = channelReports))
+        } else {
+            null
+        }
         val answer = if (requiresAuthentication) {
             SensitiveEvidencePolicy.lock(deterministicAnswer)
         } else if (shouldComposeGroundedAnswer(plan, hits, verification)) {
@@ -1345,6 +1353,7 @@ class GalleryRepository(context: Context) {
             elapsedMs = max(1, SystemClock.elapsedRealtime() - started),
             planPatch = planPatch,
             channelReports = channelReports,
+            sensitiveAnswerToken = sensitiveAnswerToken,
         ))
         emit(QueryProgress.Completed(outcome))
     }

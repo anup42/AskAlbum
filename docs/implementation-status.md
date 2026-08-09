@@ -2,6 +2,16 @@
 
 Last reviewed: 2026-08-09
 
+## 2026-08-09 - Authenticated sensitive fact answers
+
+- Passwords and other protected OCR answers remain locked and outside Gemma,
+  logs, and rendered answer text before device authentication.
+- The deterministic answer is held behind a bounded opaque one-use token in
+  process memory; successful biometric or device-credential authentication now
+  reveals it directly in the Q&A card without another search or model call.
+- Added focused one-use and eviction regressions; no persisted gallery data,
+  People corrections, vectors, captions, consent, or model packs are modified.
+
 ## 2026-08-09 - Identity-bound query-verification evidence
 
 - Visual-verification evidence now retains query scope, evidence media,

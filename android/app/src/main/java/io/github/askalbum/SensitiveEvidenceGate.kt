@@ -9,18 +9,19 @@ class SensitiveEvidenceGate(
     private val activity: FragmentActivity,
     private val onAuthorized: (SearchHit) -> Unit,
 ) {
-    private var pending: SearchHit? = null
+    private var pendingAction: (() -> Unit)? = null
     private val prompt = BiometricPrompt(
         activity,
         ContextCompat.getMainExecutor(activity),
         object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                pending?.let(onAuthorized)
-                pending = null
+                val action = pendingAction
+                pendingAction = null
+                action?.invoke()
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                pending = null
+                pendingAction = null
             }
         },
     )
@@ -30,7 +31,11 @@ class SensitiveEvidenceGate(
             onAuthorized(hit)
             return
         }
-        pending = hit
+        authenticate { onAuthorized(hit) }
+    }
+
+    fun authenticate(action: () -> Unit) {
+        pendingAction = action
         prompt.authenticate(
             BiometricPrompt.PromptInfo.Builder()
                 .setTitle("Unlock sensitive gallery evidence")

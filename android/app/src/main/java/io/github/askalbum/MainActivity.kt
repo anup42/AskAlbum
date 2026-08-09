@@ -263,6 +263,7 @@ private fun AskAlbumApp(viewModel: GalleryViewModel) {
                     outcome = state.outcome,
                     onEvidence = viewModel::showEvidence,
                     onAsk = { viewModel.navigate(AppDestination.ASK) },
+                    onUnlockSensitiveAnswer = { metadataGate.authenticate(viewModel::unlockSensitiveAnswer) },
                 )
                 state.destination == AppDestination.GALLERY -> GalleryScreen(
                     items = state.items,
@@ -2999,7 +3000,12 @@ private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel, onEvid
 }
 
 @Composable
-private fun ResultsScreen(outcome: SearchOutcome?, onEvidence: (SearchHit) -> Unit, onAsk: () -> Unit) {
+private fun ResultsScreen(
+    outcome: SearchOutcome?,
+    onEvidence: (SearchHit) -> Unit,
+    onAsk: () -> Unit,
+    onUnlockSensitiveAnswer: () -> Unit,
+) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
         modifier = Modifier.fillMaxSize().statusBarsPadding().semantics { contentDescription = "Ask results" },
@@ -3016,14 +3022,20 @@ private fun ResultsScreen(outcome: SearchOutcome?, onEvidence: (SearchHit) -> Un
                 }
             }
         } else {
-            item(span = { GridItemSpan(maxLineSpan) }) { AnswerCard(outcome, onAsk) }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                AnswerCard(outcome, onAsk, onUnlockSensitiveAnswer)
+            }
             items(outcome.hits, key = { it.item.id }) { hit -> ResultTile(hit) { onEvidence(hit) } }
         }
     }
 }
 
 @Composable
-private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
+private fun AnswerCard(
+    outcome: SearchOutcome,
+    onRefine: () -> Unit,
+    onUnlockSensitiveAnswer: () -> Unit = {},
+) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(12.dp).semantics { contentDescription = "Answer ${outcome.answer.headline}" },
         shape = RoundedCornerShape(24.dp),
@@ -3062,6 +3074,22 @@ private fun AnswerCard(outcome: SearchOutcome, onRefine: () -> Unit) {
                         color = MaterialTheme.colorScheme.error,
                         fontSize = 11.sp,
                         lineHeight = 15.sp,
+                    )
+                }
+            }
+            if (outcome.answer.requiresAuthentication) {
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = onUnlockSensitiveAnswer,
+                    enabled = outcome.sensitiveAnswerToken != null,
+                    modifier = Modifier.testTag("unlock-sensitive-answer"),
+                ) {
+                    Text(
+                        if (outcome.sensitiveAnswerToken != null) {
+                            "Authenticate to view answer"
+                        } else {
+                            "Run question again to unlock"
+                        },
                     )
                 }
             }
