@@ -2,6 +2,32 @@
 
 Last reviewed: 2026-08-09
 
+## 2026-08-09 - Installed Gemma production verifier gate
+
+- Pinned catalog downloads now remain usable after installation: an unsigned
+  downloaded generation is accepted only when its complete manifest, model,
+  license, sizes, and SHA-256 digests exactly match an immutable built-in
+  E2B/E4B catalog entry. Signed archive imports still require the existing APK
+  signing-key signature and artifact checks.
+- The declared LiteRT-LM runtime now matches dependency `0.15.0`; retained
+  catalog generations written by `0.14.0` remain compatibility-verified rather
+  than forcing a multi-gigabyte download. Narrowly named LiteRT GPU/MTP cache
+  files may coexist with the immutable verified model artifacts.
+- Normal model status verifies only the active generation and caches that
+  verification for unchanged protected files. It no longer hashes every
+  historical E2B/E4B generation during ordinary launch/status polling.
+- PASS: the retained E2B pack ran `RealGemmaVisualVerifierAcceptanceTest` on
+  `SM-F966B` with backend `GPU`, one vision call, one accepted image, three
+  grounded condition records, and zero failures. Measured load was `7,969 ms`,
+  generation was `9,650 ms`, and verifier elapsed time was `17,754 ms`.
+- PASS: `ProductionPersonVerifierDeviceTest` exercised the production composite,
+  prompt, parser, cluster binding, verdict cache, and evidence path. White
+  clothing attached to Wife remained `VERIFIED_TRUE`, the requested white-on-Me
+  condition remained `VERIFIED_FALSE`, and the image was excluded.
+- Replacement installation preserved the existing consumer sandbox, gallery
+  indexes, People corrections, consent, and model files. No uninstall, clear,
+  reset, redownload, or destructive migration was used.
+
 ## 2026-08-09 - Multilingual retrieval parity acceptance gate
 
 - Connected fixture acceptance: **PASS** on `SM-F966B` for run `multi_20260809_122000`.

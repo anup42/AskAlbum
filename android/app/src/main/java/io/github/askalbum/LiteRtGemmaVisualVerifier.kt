@@ -17,6 +17,7 @@ class LiteRtGemmaVisualVerifier(
     private val database: GalleryDatabase,
     private val imageLoader: GalleryImageLoader = GalleryImageLoader(context.applicationContext),
     private val compiler: BoundedGemmaVerificationCompiler = BoundedGemmaVerificationCompiler(),
+    private val modelStatus: () -> ModelPackStatus = modelPacks::status,
 ) : CandidateVerifier {
     override suspend fun verifyWhenNeeded(plan: GalleryQueryPlan, candidates: List<SearchHit>): VerificationResult {
         if (!VisualVerificationPolicy.requiresVerification(plan)) {
@@ -28,7 +29,7 @@ class LiteRtGemmaVisualVerifier(
         if (bounded.isEmpty() || conditions.isEmpty()) {
             return failedBeforeInference(started, bounded.size, "No bounded media conditions were available")
         }
-        val status = modelPacks.status()
+        val status = modelStatus()
         val path = status.path
         if (path == null || !status.installed || !status.multimodal) {
             return failedBeforeInference(started, bounded.size, "No verified multimodal Gemma pack is active")

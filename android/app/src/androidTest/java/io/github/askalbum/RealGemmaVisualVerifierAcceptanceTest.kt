@@ -27,26 +27,42 @@ class RealGemmaVisualVerifierAcceptanceTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val application = instrumentation.targetContext.applicationContext as AskAlbumApplication
         val status = application.modelPackManager.status()
-        assumeTrue("A verified multimodal E2B pack is required", status.installed && status.multimodal && status.tier == GemmaModelTier.E2B)
+        assumeTrue(
+            "A verified multimodal E2B pack is required: $status",
+            status.installed && status.multimodal && status.tier == GemmaModelTier.E2B,
+        )
         val fixture = File(application.cacheDir, "gemma-visual-acceptance-${System.nanoTime()}.jpg")
+        application.deleteDatabase(TEST_DATABASE)
+        val database = GalleryDatabase(application, TEST_DATABASE)
         try {
             writeRelationshipFixture(fixture)
-            val item = GalleryItem(
-                id = "synthetic_people_relation_runtime",
+            database.seedDemoIfEmpty()
+            database.ensureStageRows()
+            database.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+            database.ensureAutomaticPersonCluster(PERSON_A_CLUSTER)
+            database.ensureAutomaticPersonCluster(PERSON_B_CLUSTER)
+            val stored = database.allItems().first { it.kind == MediaKind.IMAGE }
+            database.completeEmbeddedFaces(
+                stored.id,
+                listOf(
+                    face(.1875f, .2333f, .3625f, .4667f, 0),
+                    face(.6375f, .2333f, .8125f, .4667f, 1),
+                ),
+                listOf(PERSON_A_CLUSTER, PERSON_B_CLUSTER),
+                "real-gemma-visual-acceptance-face-v1",
+            )
+            database.saveReviewedPersonCluster(PERSON_A_CLUSTER, "Person A", "Me", emptyList())
+            database.saveReviewedPersonCluster(PERSON_B_CLUSTER, "Person B", "partner", emptyList())
+            val item = stored.copy(
                 filename = fixture.name,
                 title = "Synthetic people relation fixture",
                 creator = "AskAlbum acceptance suite",
                 location = "Synthetic studio",
-                latitude = null,
-                longitude = null,
                 tags = listOf("person a", "person b", "yellow hat", "blue suit"),
                 description = "Locally generated visual-verification fixture",
                 license = "CC0-1.0",
                 sourceUrl = "local-synthetic-fixture",
-                assetPath = null,
                 previewPath = fixture.absolutePath,
-                source = MediaSource.PHOTO_PICKER,
-                kind = MediaKind.IMAGE,
                 mimeType = "image/jpeg",
                 width = 1200,
                 height = 900,
@@ -57,9 +73,9 @@ class RealGemmaVisualVerifierAcceptanceTest {
                 intent = QueryIntent.FIND_MEDIA,
                 mediaScope = MediaScope.IMAGES,
                 semanticClauses = listOf(
-                    SemanticClause("Person A is wearing a yellow hat", hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON, relationToPerson = "person_a"),
-                    SemanticClause("Person B is wearing a blue suit", hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON, relationToPerson = "person_b"),
-                    SemanticClause("Person A is wearing red clothing", hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON, relationToPerson = "person_a"),
+                    SemanticClause("Person A is wearing a yellow hat", hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON, relationToPerson = PERSON_A_CLUSTER),
+                    SemanticClause("Person B is wearing a blue suit", hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON, relationToPerson = PERSON_B_CLUSTER),
+                    SemanticClause("Person A is wearing red clothing", hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON, relationToPerson = PERSON_A_CLUSTER),
                 ),
                 terms = listOf("yellow hat", "blue suit"),
                 verification = VerificationPolicy.REQUIRED,
@@ -68,8 +84,14 @@ class RealGemmaVisualVerifierAcceptanceTest {
             val hit = SearchHit(item, 1.0, emptyList())
             val pssBeforeKb = Debug.getPss()
             val started = SystemClock.elapsedRealtime()
+            val verifier = LiteRtGemmaVisualVerifier(
+                application,
+                application.modelPackManager,
+                application.services.gemmaSessions,
+                database,
+            )
             val result = withTimeout(6 * 60_000L) {
-                application.services.visualVerifier.verifyWhenNeeded(plan, listOf(hit))
+                verifier.verifyWhenNeeded(plan, listOf(hit))
             }
             val wallMs = SystemClock.elapsedRealtime() - started
             val pssAfterCloseKb = Debug.getPss()
@@ -93,14 +115,32 @@ class RealGemmaVisualVerifierAcceptanceTest {
             assertEquals(setOf("c1", "c2", "c3"), result.evaluations.single().conditions.mapTo(mutableSetOf()) { it.id })
             assertEquals(3, result.evidence.size)
             assertTrue(result.evidence.all { it.mediaId == item.id && it.sourceField == "visual_verification" && it.producerVersion.contains("gemma-4-e2b") })
+            assertEquals(
+                setOf(PERSON_A_CLUSTER, PERSON_B_CLUSTER),
+                result.evidence.mapNotNull(EvidenceRecord::clusterId).toSet(),
+            )
             assertTrue(result.evidence.map { it.id }.all { evidenceId -> result.evidence.any { it.id == evidenceId } })
             assertTrue(result.failures.isEmpty())
             assertTrue(trace.engineLoadMs > 0)
             assertTrue(trace.generationMs > 0)
         } finally {
+            database.close()
+            application.deleteDatabase(TEST_DATABASE)
             fixture.delete()
         }
     }
+
+    private fun face(
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        embeddingIndex: Int,
+    ) = FaceInstance(
+        bounds = listOf(left, top, right, bottom),
+        embedding = FloatArray(FaceModelCatalog.sface.embeddingDimension).also { it[embeddingIndex] = 1f },
+        quality = .98f,
+    )
 
     private fun writeRelationshipFixture(file: File) {
         val bitmap = Bitmap.createBitmap(1200, 900, Bitmap.Config.ARGB_8888)
@@ -167,5 +207,11 @@ class RealGemmaVisualVerifierAcceptanceTest {
         paint.color = if (yellowHat) Color.rgb(160, 115, 0) else Color.rgb(10, 55, 140)
         paint.textSize = 38f
         canvas.drawText(if (yellowHat) "YELLOW HAT" else "BLUE SUIT", centerX, 770f, paint)
+    }
+
+    private companion object {
+        const val TEST_DATABASE = "real-gemma-visual-verifier-acceptance.db"
+        const val PERSON_A_CLUSTER = "person_a_real_gemma"
+        const val PERSON_B_CLUSTER = "person_b_real_gemma"
     }
 }
