@@ -2,6 +2,12 @@
 
 Last reviewed: 2026-08-09
 
+## 2026-08-09 - Truthful follow-up scope status
+
+- Replaced the idle `Refining N results` label with `Follow-up scope: N saved results`; the retained set is conversational context, not active work.
+- Added explicit accessibility semantics for the active local result set.
+- Extended the persistent follow-up UI test to assert the truthful scope label while preserving the result-set ID and members.
+
 ## 2026-08-09 - Screenshot eligibility before semantic top-K
 
 - Explicit positive screenshot requests now build a metadata-owned eligible set

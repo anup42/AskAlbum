@@ -38,6 +38,9 @@ class PersistentFollowUpUiTest {
         assertTrue(first.activeResultIds.isNotEmpty())
         rule.onNodeWithTag("refine-results").performScrollTo().assertIsDisplayed().performClick()
         rule.onNodeWithTag("active-result-set").performScrollTo().assertIsDisplayed()
+        val expectedScope = "Follow-up scope: ${first.activeResultIds.size} saved " +
+            if (first.activeResultIds.size == 1) "result" else "results"
+        rule.onNodeWithText(expectedScope).assertIsDisplayed()
 
         rule.onNodeWithContentDescription("Gallery question").performTextClearance()
         rule.onNodeWithContentDescription("Gallery question").performTextInput("Which is the best one?")

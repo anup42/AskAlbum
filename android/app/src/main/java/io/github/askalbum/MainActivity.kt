@@ -2922,10 +2922,17 @@ private fun AskScreen(state: GalleryUiState, viewModel: GalleryViewModel, onEvid
                     Surface(
                         color = MaterialTheme.colorScheme.primaryContainer,
                         shape = RoundedCornerShape(18.dp),
-                        modifier = Modifier.fillMaxWidth().testTag("active-result-set"),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("active-result-set")
+                            .semantics { contentDescription = "Active local result set" },
                     ) {
                         Text(
-                            if (count > 0) "Refining $count ${if (count == 1) "result" else "results"}" else "Previous search had no matches",
+                            if (count > 0) {
+                                "Follow-up scope: $count saved ${if (count == 1) "result" else "results"}"
+                            } else {
+                                "The last result set was empty"
+                            },
                             Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
