@@ -1,12 +1,31 @@
 # AskAlbum: AI Photo Search
 
-> Ask your photos anything — privately and offline.
+<p align="center">
+  <img src="docs/askalbum-hero.svg" width="100%" alt="AskAlbum - private, fully on-device AI photo search for Android">
+</p>
+
+<p align="center">
+  <strong>Ask your photos anything - privately and offline.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/anup42/AskAlbum/actions/workflows/android.yml"><img alt="Android CI" src="https://github.com/anup42/AskAlbum/actions/workflows/android.yml/badge.svg"></a>
+  <a href="https://github.com/anup42/AskAlbum/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/anup42/AskAlbum?display_name=tag&sort=semver"></a>
+  <a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/github/license/anup42/AskAlbum"></a>
+  <img alt="Android API 26+" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white">
+  <img alt="On-device inference" src="https://img.shields.io/badge/inference-on--device-0F766E">
+</p>
 
 AskAlbum is a native Android application for private, fully on-device
 photo, video, screenshot, PDF, OCR, people, place, event, and metadata search.
 It combines deterministic Kotlin execution with local SigLIP2 retrieval and
 optional Gemma inference. There is no application server and no cloud inference
 path.
+
+> [!IMPORTANT]
+> AskAlbum is an early open-source preview. The model-independent `fixtureCi`
+> variant is reproducible from source. Production model packs are intentionally
+> not committed, and accelerator support varies by Android device.
 
 The simplest mental model is:
 
