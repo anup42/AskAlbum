@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -19,6 +20,13 @@ DEFAULT_TEST_CLASSES = (
     "io.github.anup42.askalbum.IndexRecoveryTest",
     "io.github.anup42.askalbum.SeededGalleryDisplayTest",
 )
+
+SUCCESSFUL_INSTRUMENTATION = re.compile(rb"(?:^|\r?\n)OK \(([1-9][0-9]*) tests?\)(?:\r?\n|$)")
+
+
+def instrumentation_passed(output: bytes) -> bool:
+    """Accept one or more completed tests, while rejecting empty or failed runs."""
+    return b"INSTRUMENTATION_CODE: -1" in output and SUCCESSFUL_INSTRUMENTATION.search(output) is not None
 
 
 def variant_artifacts(variant: str) -> tuple[str, Path, Path]:
@@ -166,8 +174,8 @@ def main() -> None:
                 timeout_seconds=args.instrument_timeout_seconds,
             )
             (artifacts / log_name).write_bytes(instrumentation.stdout + instrumentation.stderr)
-            if b"OK (1 test)" not in instrumentation.stdout:
-                raise RuntimeError(f"{test_class} did not report one passing test")
+            if not instrumentation_passed(instrumentation.stdout):
+                raise RuntimeError(f"{test_class} did not report a successful non-empty test run")
         run(
             [sys.executable, "tools/device/collect_artifacts.py", "--serial", serial, "--package", package,
              "--output", str(artifacts / "diagnostics")],

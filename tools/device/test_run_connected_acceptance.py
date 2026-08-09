@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from run_connected_acceptance import GRADLE_ROOT, ROOT, component_name, variant_artifacts, variant_package
+from run_connected_acceptance import (
+    GRADLE_ROOT,
+    ROOT,
+    component_name,
+    instrumentation_passed,
+    variant_artifacts,
+    variant_package,
+)
 
 
 class VariantArtifactsTest(unittest.TestCase):
@@ -42,6 +49,15 @@ class VariantArtifactsTest(unittest.TestCase):
     def test_unknown_variant_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported variant"):
             variant_artifacts("debug")
+
+    def test_instrumentation_accepts_one_or_multiple_successful_tests(self) -> None:
+        self.assertTrue(instrumentation_passed(b"Time: 0.1\n\nOK (1 test)\n\nINSTRUMENTATION_CODE: -1\n"))
+        self.assertTrue(instrumentation_passed(b"Time: 0.2\r\n\r\nOK (12 tests)\r\n\r\nINSTRUMENTATION_CODE: -1\r\n"))
+
+    def test_instrumentation_rejects_empty_or_failed_runs(self) -> None:
+        self.assertFalse(instrumentation_passed(b"OK (0 tests)\nINSTRUMENTATION_CODE: -1\n"))
+        self.assertFalse(instrumentation_passed(b"FAILURES!!!\nTests run: 2, Failures: 1\nINSTRUMENTATION_CODE: -1\n"))
+        self.assertFalse(instrumentation_passed(b"OK (2 tests)\nINSTRUMENTATION_CODE: 0\n"))
 
 
 if __name__ == "__main__":
