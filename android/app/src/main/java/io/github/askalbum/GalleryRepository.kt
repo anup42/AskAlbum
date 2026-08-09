@@ -695,7 +695,8 @@ class GalleryRepository(context: Context) {
                 MediaScope.VIDEOS -> item.kind == MediaKind.VIDEO
                 MediaScope.DOCUMENTS -> item.kind == MediaKind.PDF || item.ocrText.isNotBlank() || item.looksLikeDocument()
             }
-            inScope && (baseAllowed == null || item.id in baseAllowed) &&
+            inScope && DeterministicScreenshotMediaPolicy.allows(plan, item) &&
+                (baseAllowed == null || item.id in baseAllowed) &&
                 GalleryFilterEvaluator.matches(item, plan.filter) &&
                 item.matchesRequiredPlace(if (hasExplicitComparisonScopes) null else plan.place) &&
                 item.matchesRequiredMerchant(plan.ocrClause?.merchant)

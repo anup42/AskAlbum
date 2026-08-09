@@ -31,6 +31,7 @@ class QueryCompiler(
         "lunch" to "food",
         "ocean" to "beach",
         "gardens" to "garden",
+        "screenshots" to "screenshot",
         "trip" to "travel",
         "yatra" to "travel",
         "गोवा" to "goa",

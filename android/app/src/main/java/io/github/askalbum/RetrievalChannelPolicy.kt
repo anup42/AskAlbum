@@ -215,17 +215,41 @@ internal object RetrievalCoverageWording {
     }
 }
 
-/** Applies only high-confidence, metadata-owned negative predicates before ranking. */
-internal object DeterministicNegativeClausePolicy {
+/** High-confidence screenshot identity derived only from media-owned metadata. */
+internal object DeterministicScreenshotMediaPolicy {
     private val screenshotPredicate = Regex(
         "\\b(?:screenshots?|screen\\s+shots?|screen\\s+captures?)\\b",
         RegexOption.IGNORE_CASE,
     )
 
+    fun requiresScreenshot(plan: GalleryQueryPlan): Boolean {
+        val hasNegativeScreenshotClause = plan.semanticClauses.any { clause ->
+            val normalized = SemanticPolarityNormalizer.normalize(clause)
+            normalized.polarity == Polarity.NEGATIVE && containsScreenshot(normalized.text)
+        }
+        if (hasNegativeScreenshotClause) return false
+        return containsScreenshot(plan.originalQuery) || plan.terms.any(::containsScreenshot)
+    }
+
+    fun allows(plan: GalleryQueryPlan, item: GalleryItem): Boolean =
+        !requiresScreenshot(plan) || isScreenshot(item)
+
+    fun isScreenshot(item: GalleryItem): Boolean = containsScreenshot(
+        listOf(item.filename, item.title, item.album).plus(item.tags).joinToString(" "),
+    )
+
+    fun containsScreenshot(text: String): Boolean = screenshotPredicate.containsMatchIn(
+        text.lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]+"), " "),
+    )
+}
+
+/** Applies only high-confidence, metadata-owned negative predicates before ranking. */
+internal object DeterministicNegativeClausePolicy {
+
     fun excludes(item: GalleryItem, clauses: Collection<SemanticClause>): Boolean = clauses.any { clause ->
         isDeterministicallyHandled(clause) &&
             containsScreenshot(clause.text) &&
-            containsScreenshot(listOf(item.filename, item.title, item.album).plus(item.tags).joinToString(" "))
+            DeterministicScreenshotMediaPolicy.isScreenshot(item)
     }
 
     fun requiresVisualRejection(clauses: Collection<SemanticClause>): Boolean = clauses.any { clause ->
@@ -236,12 +260,10 @@ internal object DeterministicNegativeClausePolicy {
         val normalized = SemanticPolarityNormalizer.normalize(clause)
         return normalized.polarity == Polarity.NEGATIVE &&
             normalized.hardness == ConstraintStrength.HARD &&
-            containsScreenshot(normalized.text)
+            DeterministicScreenshotMediaPolicy.containsScreenshot(normalized.text)
     }
 
-    private fun containsScreenshot(text: String): Boolean = screenshotPredicate.containsMatchIn(
-        text.lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]+"), " "),
-    )
+    private fun containsScreenshot(text: String): Boolean = DeterministicScreenshotMediaPolicy.containsScreenshot(text)
 }
 
 internal fun <T, R> RetrievalChannelReport<T>.mapHits(transform: (T) -> R?): RetrievalChannelReport<R> =

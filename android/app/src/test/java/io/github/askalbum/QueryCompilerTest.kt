@@ -68,6 +68,15 @@ class QueryCompilerTest {
     }
 
     @Test
+    fun pluralScreenshotCategoryUsesCanonicalHardFilterConcept() {
+        val plan = compiler.compile("Show screenshots")
+
+        assertEquals(QueryIntent.FIND_MEDIA, plan.intent)
+        assertEquals(listOf("screenshot"), plan.terms)
+        assertTrue(DeterministicScreenshotMediaPolicy.requiresScreenshot(plan))
+    }
+
+    @Test
     fun nonexistentReceiptMerchantIsARequiredDocumentConstraint() {
         val plan = compiler.compile("Show a receipt from a merchant that does not exist.")
 

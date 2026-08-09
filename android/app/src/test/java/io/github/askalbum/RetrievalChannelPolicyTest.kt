@@ -205,6 +205,41 @@ class RetrievalChannelPolicyTest {
     }
 
     @Test
+    fun positiveScreenshotRequestRestrictsEligibilityBeforeRanking() {
+        val plan = QueryCompiler().compile("Show screenshots")
+
+        assertTrue(DeterministicScreenshotMediaPolicy.requiresScreenshot(plan))
+        assertTrue(DeterministicScreenshotMediaPolicy.allows(plan, item("Screenshot_2024.png")))
+        assertTrue(
+            DeterministicScreenshotMediaPolicy.allows(
+                plan,
+                item("capture.png", tags = listOf("screen capture")),
+            ),
+        )
+        assertFalse(DeterministicScreenshotMediaPolicy.allows(plan, item("vacation.jpg")))
+        assertFalse(
+            DeterministicScreenshotMediaPolicy.allows(
+                plan,
+                item("vacation.jpg", description = "A screenshot is visible in the photograph"),
+            ),
+        )
+    }
+
+    @Test
+    fun negativeScreenshotClauseDoesNotBecomePositiveEligibilityFilter() {
+        val plan = GalleryQueryPlan(
+            originalQuery = "Exclude screenshots",
+            intent = QueryIntent.FIND_MEDIA,
+            semanticClauses = listOf(
+                SemanticClause("screenshots", polarity = Polarity.NEGATIVE, hardness = ConstraintStrength.HARD),
+            ),
+        )
+
+        assertFalse(DeterministicScreenshotMediaPolicy.requiresScreenshot(plan))
+        assertTrue(DeterministicScreenshotMediaPolicy.allows(plan, item("vacation.jpg")))
+    }
+
+    @Test
     fun totalEclipseDoesNotBecomeDocumentFactIntent() {
         val plan = QueryCompiler().compile("Show total eclipse photos.")
 

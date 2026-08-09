@@ -2,6 +2,16 @@
 
 Last reviewed: 2026-08-09
 
+## 2026-08-09 - Screenshot eligibility before semantic top-K
+
+- Explicit positive screenshot requests now build a metadata-owned eligible set
+  from filename, title, album, and tags before lexical or vector top-K ranking.
+- Plural screenshot wording is canonicalized, negative screenshot clauses remain
+  exclusions, and description-only mentions cannot classify an ordinary photo
+  as a screenshot.
+- Added focused eligibility regressions; no persisted media, indexes, People
+  corrections, captions, consent, or model packs are modified.
+
 ## 2026-08-09 - Authenticated sensitive fact answers
 
 - Passwords and other protected OCR answers remain locked and outside Gemma,
