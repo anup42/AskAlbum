@@ -1,6 +1,7 @@
 package io.github.anup42.askalbum
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -139,13 +140,22 @@ class GroundedEvidenceClosureTest {
                 ),
             ),
         )
+        val direct = evidence("direct", "m1", "visual_verification", "P1 wears white").copy(
+            scope = SemanticFactScope.QUERY_VERIFICATION,
+            scopeId = "query-verification:m1:c1",
+            evidenceMediaId = "m1",
+            clusterId = "wife",
+            applicability = SemanticProvenanceApplicability.EVIDENCE_MEDIA_ONLY,
+        )
         val hit = SearchHit(
             item("m1"),
             1.0,
             listOf(
                 evidence("context", "m1", "semantic_caption_candidate_expansion", "Wife wears white"),
                 evidence("foreign", "m2", "visual_verification", "P1 wears white"),
-                evidence("direct", "m1", "visual_verification", "P1 wears white"),
+                direct.copy(id = "wrong-cluster", clusterId = "me"),
+                direct.copy(id = "unbound", clusterId = null),
+                direct,
             ),
         )
 
@@ -154,6 +164,61 @@ class GroundedEvidenceClosureTest {
         )
 
         assertEquals(listOf("direct"), packet.evidence.map(EvidenceRecord::id))
+    }
+
+    @Test
+    fun verifierEvidenceRetainsQueryScopeAndReviewedClusterBinding() {
+        val spec = VerificationConditionSpec(
+            id = "c1",
+            text = "P2 is wearing white shoes",
+            polarity = Polarity.POSITIVE,
+            hardness = ConstraintStrength.HARD,
+            subject = SemanticSubject.PERSON,
+            relationToPerson = "wife-cluster",
+        )
+        val binding = PersonVerificationBinding(
+            faceId = "wife-face",
+            clusterId = "wife-cluster",
+            stableLabel = "P2",
+            identityTerms = setOf("wife"),
+            left = .1f,
+            top = .1f,
+            right = .4f,
+            bottom = .9f,
+        )
+
+        val record = visualVerificationEvidence(
+            mediaId = "m1",
+            spec = spec,
+            evaluation = VerificationConditionEvaluation("c1", true, .94f, PersonVisualVerdict.VERIFIED_TRUE),
+            binding = binding,
+            producerVersion = "gemma-fixture",
+            timestampMs = 12_000L,
+        )
+
+        assertEquals(SemanticFactScope.QUERY_VERIFICATION, record.scope)
+        assertEquals("m1", record.evidenceMediaId)
+        assertEquals("wife-cluster", record.clusterId)
+        assertEquals(SemanticProvenanceApplicability.EVIDENCE_MEDIA_ONLY, record.applicability)
+        assertTrue(GroundedEvidencePolicy.allow(record, GalleryQueryPlan(
+            originalQuery = "show wife wearing white shoes",
+            intent = QueryIntent.FIND_MEDIA,
+            peopleClauses = listOf(PersonClause("wife-cluster")),
+            semanticClauses = listOf(SemanticClause(
+                text = "wearing white shoes",
+                subject = SemanticSubject.PERSON,
+                relationToPerson = "wife-cluster",
+            )),
+        )))
+        assertFalse(GroundedEvidencePolicy.allow(record.copy(clusterId = "me-cluster"), GalleryQueryPlan(
+            originalQuery = "show wife wearing white shoes",
+            intent = QueryIntent.FIND_MEDIA,
+            semanticClauses = listOf(SemanticClause(
+                text = "wearing white shoes",
+                subject = SemanticSubject.PERSON,
+                relationToPerson = "wife-cluster",
+            )),
+        )))
     }
 
     @Test

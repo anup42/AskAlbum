@@ -32,15 +32,25 @@ internal object GroundedEvidencePolicy {
                 plan.intent == QueryIntent.LIST && plan.grouping == Grouping.EVENT
         }
         if (hasPersonVisualCondition(plan)) {
-            return record.sourceField == "visual_verification" ||
+            return if (record.sourceField == "visual_verification") {
+                isDirectVisualVerificationEvidence(record, plan)
+            } else {
                 isDirectCachedPersonEvidence(record, plan)
+            }
         }
         return true
     }
 
+    private fun isDirectVisualVerificationEvidence(record: EvidenceRecord, plan: GalleryQueryPlan): Boolean {
+        if (record.scope != SemanticFactScope.QUERY_VERIFICATION || record.evidenceMediaId != record.mediaId) {
+            return false
+        }
+        val requiredPeople = requiredPersonIds(plan)
+        return requiredPeople.isEmpty() || matchesRequiredPerson(record, requiredPeople)
+    }
+
     private fun isDirectCachedPersonEvidence(record: EvidenceRecord, plan: GalleryQueryPlan): Boolean {
         if (record.sourceField !in directPersonCaptionSources) return false
-        val clusterId = record.clusterId?.trim()?.takeIf(String::isNotBlank) ?: return false
         val evidenceMediaId = record.evidenceMediaId?.trim()?.takeIf(String::isNotBlank) ?: return false
         val directlyScoped = when (record.scope) {
             SemanticFactScope.MEDIA,
@@ -52,12 +62,20 @@ internal object GroundedEvidencePolicy {
         }
         if (!directlyScoped) return false
 
+        return matchesRequiredPerson(record, requiredPersonIds(plan))
+    }
+
+    private fun requiredPersonIds(plan: GalleryQueryPlan): List<String> {
         val conditionedPeople = plan.semanticClauses.mapNotNull { it.relationToPerson?.trim()?.takeIf(String::isNotBlank) }
-        val requiredPeople = if (conditionedPeople.isNotEmpty()) {
+        return if (conditionedPeople.isNotEmpty()) {
             conditionedPeople
         } else {
             plan.peopleClauses.filter(PersonClause::mustBePresent).map(PersonClause::personId)
         }
+    }
+
+    private fun matchesRequiredPerson(record: EvidenceRecord, requiredPeople: List<String>): Boolean {
+        val clusterId = record.clusterId?.trim()?.takeIf(String::isNotBlank) ?: return false
         return requiredPeople.isEmpty() || requiredPeople.any {
             PersonIdentityNormalization.normalize(it) == PersonIdentityNormalization.normalize(clusterId)
         }

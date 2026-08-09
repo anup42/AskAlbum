@@ -2,6 +2,16 @@
 
 Last reviewed: 2026-08-09
 
+## 2026-08-09 - Identity-bound query-verification evidence
+
+- Visual-verification evidence now retains query scope, evidence media,
+  applicability, and the reviewed cluster bound to each person condition.
+- Grounded answer packets reject unbound and wrong-cluster verification records
+  for identity-conditioned queries while retaining generic person-activity
+  verification when no reviewed identity is requested.
+- Added focused evidence-closure regressions; no gallery data, People
+  corrections, vectors, captions, consent, or model packs are modified.
+
 ## 2026-08-09 - Evidence-scoped people in event summaries
 
 - Event summaries now list only reviewed, visible People records attached to

@@ -10,6 +10,7 @@ internal object SemanticProvenanceApplicability {
     const val LEGACY_SCOPE_UNCERTAIN = "LEGACY_SCOPE_UNCERTAIN"
     const val STALE_PERSON_BINDING = "STALE_PERSON_BINDING"
     const val POSSIBLE_INFERENCE = "POSSIBLE_INFERENCE"
+    const val EVIDENCE_MEDIA_ONLY = "EVIDENCE_MEDIA_ONLY"
     const val SAFE_FOR_EXACT_DUPLICATES = "SAFE_FOR_EXACT_DUPLICATES"
     const val EXACT_DUPLICATE_SHARED = "EXACT_DUPLICATE_SHARED"
 
@@ -28,7 +29,7 @@ internal object SemanticProvenanceApplicability {
     /** Normalizes newly generated evidence so non-media scopes cannot look like item truth. */
     fun forGeneratedScope(scope: SemanticFactScope, requested: String?): String {
         val value = requested?.trim()?.uppercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
-            ?: "EVIDENCE_MEDIA_ONLY"
+            ?: EVIDENCE_MEDIA_ONLY
         return when (scope) {
             SemanticFactScope.EVENT,
             SemanticFactScope.VISUAL_GROUP,

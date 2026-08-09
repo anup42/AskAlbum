@@ -113,22 +113,17 @@ class LiteRtGemmaVisualVerifier(
                                     SemanticPolarityNormalizer.conditionMatched(spec, evaluation)
                                 }.forEach { evaluation ->
                                     val spec = boundConditions.single { it.id == evaluation.id }
-                                    evidence += EvidenceRecord(
-                                        id = "${hit.item.id}:visual_verification:${spec.id}",
-                                        mediaId = hit.item.id,
-                                        sourceField = "visual_verification",
-                                        text = if (spec.polarity == Polarity.NEGATIVE) {
-                                            "No visible ${spec.text}"
-                                        } else {
-                                            spec.text
-                                        },
-                                        confidence = evaluation.confidence,
-                                        producerVersion = producerVersion(status),
-                                        timestampMs = loaded.timestampMs,
-                                    )
                                     val binding = spec.relationToPerson?.let { clusterId ->
                                         bindings.singleOrNull { it.clusterId == clusterId }
                                     }
+                                    evidence += visualVerificationEvidence(
+                                        mediaId = hit.item.id,
+                                        spec = spec,
+                                        evaluation = evaluation,
+                                        binding = binding,
+                                        producerVersion = producerVersion(status),
+                                        timestampMs = loaded.timestampMs,
+                                    )
                                     if (binding != null) {
                                         database.saveVerifiedPersonAttributeFact(
                                             mediaId = hit.item.id,
@@ -268,6 +263,28 @@ class LiteRtGemmaVisualVerifier(
         const val MAX_CANDIDATES = 8
     }
 }
+
+internal fun visualVerificationEvidence(
+    mediaId: String,
+    spec: VerificationConditionSpec,
+    evaluation: VerificationConditionEvaluation,
+    binding: PersonVerificationBinding?,
+    producerVersion: String,
+    timestampMs: Long?,
+): EvidenceRecord = EvidenceRecord(
+    id = "$mediaId:visual_verification:${spec.id}",
+    mediaId = mediaId,
+    sourceField = "visual_verification",
+    text = if (spec.polarity == Polarity.NEGATIVE) "No visible ${spec.text}" else spec.text,
+    confidence = evaluation.confidence,
+    producerVersion = producerVersion,
+    timestampMs = timestampMs,
+    scope = SemanticFactScope.QUERY_VERIFICATION,
+    scopeId = "query-verification:$mediaId:${spec.id}",
+    evidenceMediaId = mediaId,
+    clusterId = binding?.clusterId,
+    applicability = SemanticProvenanceApplicability.EVIDENCE_MEDIA_ONLY,
+)
 
 internal object VisualVerificationPolicy {
     private const val MAX_CONDITIONS = 16
