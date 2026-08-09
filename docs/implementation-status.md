@@ -1,6 +1,16 @@
 # Public implementation status
 
-Last reviewed: 2026-08-06
+Last reviewed: 2026-08-09
+
+## 2026-08-09 - Evidence-scoped people in event summaries
+
+- Event summaries now list only reviewed, visible People records attached to
+  the event's actual source media instead of echoing requested identities.
+- Labels are preferred over relationships, duplicate display values are
+  collapsed case-insensitively, and unrelated, hidden, or unreviewed people
+  are excluded.
+- Added focused regression coverage; no gallery data, People corrections,
+  vectors, captions, events, consent, or model packs are modified.
 
 ## 2026-08-06 - Source-aware 5K fixture retrieval gate
 

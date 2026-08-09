@@ -360,11 +360,21 @@ object CapabilityAnswerExecutor {
         val captures = sourceHits.mapNotNull { it.item.capturedAt }
         val range = if (captures.isEmpty()) "date unavailable" else "${formatDate(captures.min())} to ${formatDate(captures.max())}"
         val places = sourceHits.map { it.item.location }.filter(String::isNotBlank).distinct().take(4)
-        val people = context.plan.peopleClauses.filter(PersonClause::mustBePresent).map(PersonClause::personId).distinct()
+        val people = sourceHits
+            .asSequence()
+            .flatMap { hit -> context.peopleByMedia[hit.item.id].orEmpty().asSequence() }
+            .filter { person -> person.reviewed && !person.hidden }
+            .mapNotNull { person ->
+                person.label?.trim()?.takeIf(String::isNotBlank)
+                    ?: person.relationship?.trim()?.takeIf(String::isNotBlank)
+            }
+            .distinctBy { person -> person.lowercase(java.util.Locale.ROOT) }
+            .sortedWith(String.CASE_INSENSITIVE_ORDER)
+            .toList()
         return base(
             events.firstOrNull()?.title ?: "Event summary",
             "Date range: $range. Places: ${places.joinToString().ifBlank { "not recorded" }}. " +
-                "Reviewed people: ${people.joinToString().ifBlank { "none requested" }}. " +
+                "Reviewed people: ${people.joinToString().ifBlank { "none identified in this event" }}. " +
                 "Representative media: ${sourceHits.take(4).joinToString { it.item.title }}. " +
                 if (completeCoverage) {
                     "The matched event membership was evaluated completely over eligible local media."
