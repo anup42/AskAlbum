@@ -2,6 +2,21 @@
 
 Last reviewed: 2026-08-09
 
+## 2026-08-09 - One real Gemma session across query roles
+
+- PASS: one ordered connected instrumentation suite used the retained verified
+  E2B pack for real query planning, visual verification, and grounded answer
+  composition in the same application process.
+- The planner initialized Gemma once on `GPU`; subsequent visual-verifier and
+  answer-composer traces each reported `engineLoadMs=0`. The suite measured an
+  initialization-count delta of exactly `1` across all four tests in `60,132 ms`.
+- English, Hindi, and Hinglish plans remained valid; the visual verifier returned
+  three media-scoped reviewed-person conditions; grounded composition retained
+  two identity-bound `QUERY_VERIFICATION` records and emitted two cited claims.
+- The deterministic no-answer path made no Gemma call and returned no fabricated
+  evidence. Existing gallery, People, index, consent, and model state remained
+  in place throughout the run.
+
 ## 2026-08-09 - Installed Gemma production verifier gate
 
 - Pinned catalog downloads now remain usable after installation: an unsigned

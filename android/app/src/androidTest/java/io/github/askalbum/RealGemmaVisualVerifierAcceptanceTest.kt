@@ -121,7 +121,7 @@ class RealGemmaVisualVerifierAcceptanceTest {
             )
             assertTrue(result.evidence.map { it.id }.all { evidenceId -> result.evidence.any { it.id == evidenceId } })
             assertTrue(result.failures.isEmpty())
-            assertTrue(trace.engineLoadMs > 0)
+            assertTrue("Visual verification reported invalid model-load timing", trace.engineLoadMs >= 0)
             assertTrue(trace.generationMs > 0)
         } finally {
             database.close()

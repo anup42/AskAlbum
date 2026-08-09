@@ -24,8 +24,30 @@ class RealGemmaGroundedAnswerAcceptanceTest {
         assumeTrue("A verified E2B pack is required", status.installed && status.tier == GemmaModelTier.E2B)
         val item = fixtureItem()
         val evidence = listOf(
-            EvidenceRecord("EV_A_HAT", item.id, "visual_verification", "Person A is wearing a yellow hat", .96f, "gemma-4-e2b-acceptance"),
-            EvidenceRecord("EV_B_SUIT", item.id, "visual_verification", "Person B is wearing a blue suit", .94f, "gemma-4-e2b-acceptance"),
+            EvidenceRecord(
+                "EV_A_HAT",
+                item.id,
+                "visual_verification",
+                "Person A is wearing a yellow hat",
+                .96f,
+                "gemma-4-e2b-acceptance",
+                scope = SemanticFactScope.QUERY_VERIFICATION,
+                scopeId = item.id,
+                evidenceMediaId = item.id,
+                clusterId = PERSON_A_CLUSTER,
+            ),
+            EvidenceRecord(
+                "EV_B_SUIT",
+                item.id,
+                "visual_verification",
+                "Person B is wearing a blue suit",
+                .94f,
+                "gemma-4-e2b-acceptance",
+                scope = SemanticFactScope.QUERY_VERIFICATION,
+                scopeId = item.id,
+                evidenceMediaId = item.id,
+                clusterId = PERSON_B_CLUSTER,
+            ),
         )
         val hit = SearchHit(item, 1.0, evidence)
         val baseline = SearchAnswer(
@@ -91,8 +113,18 @@ class RealGemmaGroundedAnswerAcceptanceTest {
         originalQuery = "Show Person A wearing a yellow hat and Person B wearing a blue suit",
         intent = QueryIntent.FIND_MEDIA,
         semanticClauses = listOf(
-            SemanticClause("Person A is wearing a yellow hat", hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON),
-            SemanticClause("Person B is wearing a blue suit", hardness = ConstraintStrength.HARD, subject = SemanticSubject.PERSON),
+            SemanticClause(
+                "Person A is wearing a yellow hat",
+                hardness = ConstraintStrength.HARD,
+                subject = SemanticSubject.PERSON,
+                relationToPerson = PERSON_A_CLUSTER,
+            ),
+            SemanticClause(
+                "Person B is wearing a blue suit",
+                hardness = ConstraintStrength.HARD,
+                subject = SemanticSubject.PERSON,
+                relationToPerson = PERSON_B_CLUSTER,
+            ),
         ),
         terms = listOf("yellow hat", "blue suit"),
         verification = VerificationPolicy.REQUIRED,
@@ -112,4 +144,9 @@ class RealGemmaGroundedAnswerAcceptanceTest {
         sourceUrl = "local-synthetic-fixture",
         assetPath = null,
     )
+
+    private companion object {
+        const val PERSON_A_CLUSTER = "person_a_grounded_answer"
+        const val PERSON_B_CLUSTER = "person_b_grounded_answer"
+    }
 }
