@@ -49,6 +49,44 @@ class SensitiveCapabilityAnswerTest {
     }
 
     @Test
+    fun authorizedInternalFactRenderingReturnsDeterministicValueWithoutGemma() {
+        val passwordHit = SearchHit(
+            item = item("password-media"),
+            score = 1.0,
+            evidence = listOf(
+                EvidenceRecord(
+                    id = "password-evidence",
+                    mediaId = "password-media",
+                    sourceField = "document_password",
+                    text = "mango-tree-2048",
+                    confidence = .95f,
+                ),
+            ),
+        )
+        val answer = CapabilityAnswerExecutor.execute(
+            CapabilityAnswerContext(
+                plan = GalleryQueryPlan(
+                    originalQuery = "What is the Wi-Fi password?",
+                    intent = QueryIntent.ANSWER_FACT,
+                    ocrClause = OcrClause(requestedField = "password"),
+                ),
+                hits = listOf(passwordHit),
+                matchCount = 1,
+                exactness = ResultExactness.EXACT,
+                indexedEligibleCount = 1,
+                totalEligibleCount = 1,
+                warnings = emptyList(),
+                channelReports = emptyList(),
+                deterministicHits = listOf(passwordHit),
+                sensitiveContentAuthorized = true,
+            ),
+        )
+
+        assertFalse(answer.requiresAuthentication)
+        assertTrue(answer.headline.contains("mango-tree-2048") || answer.detail.contains("mango-tree-2048"))
+    }
+
+    @Test
     fun protectedDeterministicAnswerUsesOpaqueOneTimeStorage() {
         val store = OneTimeSensitiveAnswerStore(maximumEntries = 2)
         val protected = SearchAnswer(

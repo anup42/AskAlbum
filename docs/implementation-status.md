@@ -9,6 +9,9 @@ Last reviewed: 2026-08-09
 - The deterministic answer is held behind a bounded opaque one-use token in
   process memory; successful biometric or device-credential authentication now
   reveals it directly in the Q&A card without another search or model call.
+- Connected-device testing exposed and corrected an executor double-lock: the
+  repository now requests a separate internal authorized deterministic render
+  for the one-time store while the public/default executor remains locked.
 - Added focused one-use and eviction regressions; no persisted gallery data,
   People corrections, vectors, captions, consent, or model packs are modified.
 

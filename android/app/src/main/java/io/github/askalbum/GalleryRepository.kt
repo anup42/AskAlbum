@@ -1314,6 +1314,7 @@ class GalleryRepository(context: Context) {
             exactPredicateMatchCount != null -> exactPredicateMatchCount
             else -> ranked.size
         }
+        val requiresAuthentication = requiresAuthenticationForAnswer(hits, deterministicAnswerHits)
         val deterministicAnswer = buildAnswer(
             plan,
             hits,
@@ -1325,8 +1326,8 @@ class GalleryRepository(context: Context) {
             deterministicAnswerHits,
             completePredicateScan = exactPredicateScan?.completeCoverage == true,
             deterministicMetadataCount = deterministicMetadataCount,
+            sensitiveContentAuthorized = requiresAuthentication,
         )
-        val requiresAuthentication = requiresAuthenticationForAnswer(hits, deterministicAnswerHits)
         val sensitiveAnswerToken = if (requiresAuthentication) {
             sensitiveAnswers.put(deterministicAnswer.copy(channelReports = channelReports))
         } else {
@@ -1472,6 +1473,7 @@ class GalleryRepository(context: Context) {
         deterministicAnswerHits: List<SearchHit>,
         completePredicateScan: Boolean = false,
         deterministicMetadataCount: Boolean = false,
+        sensitiveContentAuthorized: Boolean = false,
     ): SearchAnswer {
         val totalItems = eligibleIds.size
         val readyItems = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
@@ -1580,6 +1582,7 @@ class GalleryRepository(context: Context) {
                     (hits + deterministicAnswerHits).mapTo(mutableSetOf()) { it.item.id },
                 ),
                 eventCoverageComplete = eventCoverageComplete,
+                sensitiveContentAuthorized = sensitiveContentAuthorized,
             ),
         )
 

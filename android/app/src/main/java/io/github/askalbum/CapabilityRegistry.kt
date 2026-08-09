@@ -84,6 +84,8 @@ data class CapabilityAnswerContext(
     val comparisonScopes: List<String> = emptyList(),
     val peopleByMedia: Map<String, List<IndexedPersonMetadata>> = emptyMap(),
     val eventCoverageComplete: Boolean = false,
+    /** Internal post-auth rendering only. Callers must never expose this context before device authentication. */
+    val sensitiveContentAuthorized: Boolean = false,
 )
 
 object CapabilityAnswerExecutor {
@@ -122,7 +124,9 @@ object CapabilityAnswerExecutor {
                 channelReports = context.channelReports,
             )
         }
-        if (listRequiresAuthentication(context) || factAnswerRequiresAuthentication(context)) {
+        if (!context.sensitiveContentAuthorized &&
+            (listRequiresAuthentication(context) || factAnswerRequiresAuthentication(context))
+        ) {
             return SensitiveEvidencePolicy.lock(
                 base(
                     SensitiveEvidencePolicy.LOCKED_HEADLINE,
