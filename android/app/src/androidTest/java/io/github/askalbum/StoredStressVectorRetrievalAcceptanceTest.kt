@@ -18,7 +18,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class StoredStressVectorRetrievalAcceptanceTest {
     @Test
-    fun completeRunScoped5kIndexReturnsExpectedDomainsWithinLatencyGate() = runBlocking {
+    fun completeRunScopedStressIndexReturnsExpectedDomainsWithinLatencyGate() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val arguments = InstrumentationRegistry.getArguments()
         val runId = arguments.getString("galleryRunId")
@@ -44,7 +44,7 @@ class StoredStressVectorRetrievalAcceptanceTest {
         val allowedIds = itemsById.keys
         val indexedIds = application.services.semanticVectorStore.indexedIds()
         assertEquals(
-            "The run-scoped 5k index is incomplete",
+            "The run-scoped $requiredCount index is incomplete",
             allowedIds,
             indexedIds.intersect(allowedIds),
         )
@@ -105,7 +105,7 @@ class StoredStressVectorRetrievalAcceptanceTest {
             assertTrue(hits.isNotEmpty() && cases[2].matches(requireNotNull(itemsById[hits.first().mediaId]).filename))
         }
         val p95Ms = percentile95(warmLatencies)
-        assertTrue("Warm 5k text-to-results p95 was ${p95Ms}ms", p95Ms <= WARM_SEARCH_P95_GATE_MS)
+        assertTrue("Warm $requiredCount text-to-results p95 was ${p95Ms}ms", p95Ms <= WARM_SEARCH_P95_GATE_MS)
         val pssAfterKb = Debug.getPss()
 
         instrumentation.sendStatus(2, Bundle().apply {

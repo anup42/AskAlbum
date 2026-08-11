@@ -12,7 +12,13 @@ from common import adb, require_run_id, resolve_serial
 ROOT = Path(__file__).resolve().parents[2]
 GRADLE_ROOT = ROOT / "android"
 TEST_CLASS = "io.github.anup42.askalbum.StoredStressVectorRetrievalAcceptanceTest"
-EXPECTED_COUNT = 5_000
+DEFAULT_EXPECTED_COUNT = 5_000
+SUPPORTED_COUNTS = frozenset((5_000, 20_000))
+DEFAULT_PACKAGES = {
+    "consumerDebug": "io.github.anup42.askalbum",
+    "offlineDemoDebug": "io.github.anup42.askalbum",
+    "fixtureCiDebug": "io.github.anup42.askalbum.fixture",
+}
 
 
 def test_artifact(variant: str) -> tuple[str, Path]:
@@ -25,6 +31,10 @@ def test_artifact(variant: str) -> tuple[str, Path]:
             "OfflineDemoDebug",
             ROOT / "android/app/build/outputs/apk/androidTest/offlineDemo/debug/app-offlineDemo-debug-androidTest.apk",
         ),
+        "fixtureCiDebug": (
+            "FixtureCiDebug",
+            ROOT / "android/app/build/outputs/apk/androidTest/fixtureCi/debug/app-fixtureCi-debug-androidTest.apk",
+        ),
     }
     try:
         return variants[variant]
@@ -33,9 +43,26 @@ def test_artifact(variant: str) -> tuple[str, Path]:
 
 
 def require_expected_count(value: int) -> int:
-    if value != EXPECTED_COUNT:
-        raise RuntimeError(f"Stored retrieval acceptance requires exactly {EXPECTED_COUNT} items")
+    if value not in SUPPORTED_COUNTS:
+        raise RuntimeError("Stored retrieval acceptance requires exactly 5000 or 20000 items")
     return value
+
+
+def default_package(variant: str) -> str:
+    try:
+        return DEFAULT_PACKAGES[variant]
+    except KeyError as error:
+        raise ValueError(f"Unsupported variant: {variant}") from error
+
+
+def validate_variant_package(variant: str, package: str) -> str:
+    expected = default_package(variant)
+    if package != expected:
+        raise RuntimeError(
+            f"Package {package} does not match {variant}; expected {expected}. "
+            "Refusing to instrument a different app UID."
+        )
+    return package
 
 
 def run_build(task_variant: str, output: Path, env: dict[str, str]) -> None:
@@ -54,12 +81,16 @@ def run_build(task_variant: str, output: Path, env: dict[str, str]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run retained, fully indexed 5k stored-vector acceptance")
+    parser = argparse.ArgumentParser(description="Run retained, fully indexed 5k/20k stored-vector acceptance")
     parser.add_argument("--serial")
-    parser.add_argument("--package", default="io.github.anup42.askalbum")
+    parser.add_argument("--package")
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--variant", choices=("consumerDebug", "offlineDemoDebug"), default="consumerDebug")
-    parser.add_argument("--expected-count", type=int, default=EXPECTED_COUNT)
+    parser.add_argument(
+        "--variant",
+        choices=("consumerDebug", "offlineDemoDebug", "fixtureCiDebug"),
+        default="fixtureCiDebug",
+    )
+    parser.add_argument("--expected-count", type=int, default=DEFAULT_EXPECTED_COUNT)
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--timeout-seconds", type=int, default=600)
     parser.add_argument("--artifacts", type=Path, default=ROOT / "artifacts/device-runs")
@@ -68,16 +99,17 @@ def main() -> None:
     serial = resolve_serial(args.serial)
     run_id = require_run_id(args.run_id)
     expected_count = require_expected_count(args.expected_count)
+    package = validate_variant_package(args.variant, args.package or default_package(args.variant))
     if not 60 <= args.timeout_seconds <= 1_800:
         raise RuntimeError("--timeout-seconds must be between 60 and 1800")
-    artifacts = args.artifacts / run_id / "stored-5k-retrieval"
+    artifacts = args.artifacts / run_id / f"stored-{expected_count // 1_000}k-retrieval"
     artifacts.mkdir(parents=True, exist_ok=True)
     task_variant, test_apk = test_artifact(args.variant)
 
-    if adb(serial, "shell", "pm", "path", args.package, check=False).returncode:
-        raise RuntimeError(f"Target package is not installed: {args.package}")
+    if adb(serial, "shell", "pm", "path", package, check=False).returncode:
+        raise RuntimeError(f"Target package is not installed: {package}")
     marker = f"files/test-install-preservation-{run_id}"
-    adb(serial, "shell", "run-as", args.package, "touch", marker)
+    adb(serial, "shell", "run-as", package, "touch", marker)
     try:
         if not args.skip_build:
             sdk_root = str(Path(subprocess.check_output(["where.exe", "adb"], text=True).splitlines()[0]).parent.parent)
@@ -87,7 +119,7 @@ def main() -> None:
             raise RuntimeError(f"Android-test APK is missing: {test_apk}")
         install = adb(serial, "install", "-r", "-t", str(test_apk), timeout_seconds=300)
         (artifacts / "test-apk-install.txt").write_bytes(install.stdout + install.stderr)
-        if adb(serial, "shell", "run-as", args.package, "ls", marker, check=False).returncode:
+        if adb(serial, "shell", "run-as", package, "ls", marker, check=False).returncode:
             raise RuntimeError("Android-test install erased target app-private data")
 
         instrumentation = adb(
@@ -106,14 +138,17 @@ def main() -> None:
             "-e",
             "galleryExpectedCount",
             str(expected_count),
-            f"{args.package}.test/androidx.test.runner.AndroidJUnitRunner",
+            f"{package}.test/androidx.test.runner.AndroidJUnitRunner",
             timeout_seconds=args.timeout_seconds,
             check=False,
         )
         output = instrumentation.stdout + instrumentation.stderr
         (artifacts / "instrumentation.txt").write_bytes(output)
         if instrumentation.returncode or b"OK (1 test)" not in instrumentation.stdout:
-            raise RuntimeError(f"Stored 5k retrieval acceptance failed; see {artifacts / 'instrumentation.txt'}")
+            raise RuntimeError(
+                f"Stored {expected_count // 1_000}k retrieval acceptance failed; "
+                f"see {artifacts / 'instrumentation.txt'}"
+            )
         summary = {
             "state": "PASS",
             "runId": run_id,
@@ -122,9 +157,9 @@ def main() -> None:
             "variant": args.variant,
         }
         (artifacts / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-        print(f"Stored 5k retrieval acceptance passed; artifacts: {artifacts}")
+        print(f"Stored {expected_count // 1_000}k retrieval acceptance passed; artifacts: {artifacts}")
     finally:
-        adb(serial, "shell", "run-as", args.package, "rm", marker, check=False)
+        adb(serial, "shell", "run-as", package, "rm", marker, check=False)
 
 
 if __name__ == "__main__":
