@@ -1022,6 +1022,13 @@ class GalleryDatabase(
         return changed + removed.deletedItems
     }
 
+    fun markMediaStoreInaccessible(): Int = writableDatabase.update(
+        "media_item",
+        ContentValues().apply { put("access_state", MediaAccessState.INACCESSIBLE.name) },
+        "source_kind=? AND access_state=?",
+        arrayOf(MediaSource.MEDIA_STORE.name, MediaAccessState.ACCESSIBLE.name),
+    )
+
     fun removeImportedByUris(uris: Collection<String>, reason: String): MediaRemovalResult {
         val requested = uris.asSequence().map(String::trim).filter(String::isNotBlank).distinct().toList()
         require(requested.all { UriSafety.isMediaContentUri(it) }) { "Only MediaStore content URIs can be removed" }

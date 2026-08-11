@@ -149,7 +149,11 @@ class MainActivity : FragmentActivity() {
                         ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED)
             else -> ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
         }
-        if (permission) galleryViewModel.scheduleIncrementalScan()
+        if (permission) {
+            galleryViewModel.scheduleIncrementalScan()
+        } else {
+            galleryViewModel.reconcileRevokedMediaAccess()
+        }
     }
 }
 
@@ -214,8 +218,12 @@ private fun AskAlbumApp(viewModel: GalleryViewModel) {
     val faceModelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         viewModel.importFaceModel(uri)
     }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        viewModel.scanAccessibleGallery()
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        if (grants.values.any { it }) {
+            viewModel.scanAccessibleGallery()
+        } else {
+            viewModel.reconcileRevokedMediaAccess()
+        }
     }
     val requestFullGallery = {
         val permissions = when {

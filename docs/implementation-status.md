@@ -1570,3 +1570,13 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: connected fixture run `identity_video_cache_20260809` executed both `PersonVerificationBindingsDatabaseTest` cases and `SeededVideoKeyframeAcceptanceTest`, including reviewed/unreviewed identity labels, parent-video return, timestamp evidence, and play-at-match behavior.
 - PASS: run-scoped fixture cleanup completed before success was reported. The consumer package, its gallery indexes, People corrections, consent, and model packs were not modified.
 - NOT RUN: a real Gemma model inference for the swapped-person clothing case; the connected gate validates deterministic identity binding and video evidence with fixture engines.
+
+## 2026-08-11 - Media permission revocation eligibility reconciliation
+
+- Files changed: MainActivity, GalleryViewModel, GalleryRepository, GalleryDatabase, and MediaAccessRevocationDatabaseTest.
+- Migration added: none; the correction changes only current access eligibility.
+- Tests: MediaReconcilerTest PASS; MediaAccessRevocationDatabaseTest PASS on SM-F966B.
+- Builds: consumerDebug PASS; fixtureCiDebugAndroidTest PASS; offlineDemoDebug PASS; offlineDemo contains no INTERNET permission.
+- Device: replacement install PASS; 98 media rows, 882 stage rows, 8 events, and 84 event memberships were preserved. The 84 revoked MediaStore rows became INACCESSIBLE while 14 demo rows remained visible with an explicit access-off message.
+- Data preservation: databases remained 2072 KiB and files remained 11612162 KiB across install; normal launch added 8 KiB under files. No consumer crash or ANR was observed.
+- Remaining: physical permission-restoration acceptance is NOT RUN because media access remains denied; broad 5k/20k durability acceptance remains NOT RUN.

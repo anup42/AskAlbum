@@ -333,6 +333,23 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         monitorIndexing()
     }
 
+    fun reconcileRevokedMediaAccess() {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { repository.markMediaStoreInaccessible() }
+            }.onSuccess { hiddenCount ->
+                val message = if (hiddenCount > 0) {
+                    "Gallery access is off. $hiddenCount indexed items are hidden; local indexes are preserved."
+                } else {
+                    "Gallery access is off. Grant photo access to browse your gallery."
+                }
+                reload(message)
+            }.onFailure { error ->
+                state = state.copy(operationMessage = error.message ?: "Could not update gallery access")
+            }
+        }
+    }
+
     fun retryIndexing() {
         if (state.indexingActive) return
         state = state.copy(indexingActive = true, operationMessage = "Restarting local indexing...")
