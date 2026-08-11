@@ -13,20 +13,39 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
             "grouping", "aggregation", "sort", "verification", "answerMode", "limit", "terms", "place", "comparisonScopes",
         )
         val intent = enum<QueryIntent>(json, "intent")
-        val semantic = json.optJSONArray("semanticClauses")?.objects(MAX_SEMANTIC_CLAUSES) { item ->
-            item.requireOnly("text", "canonicalText", "polarity", "hardness", "subject", "relationToPerson")
-            SemanticPolarityNormalizer.normalize(SemanticClause(
-                text = item.getString("text").trim(),
-                canonicalText = item.optNullableString("canonicalText"),
-                polarity = item.optEnum("polarity", Polarity.POSITIVE),
-                hardness = item.optEnum("hardness", ConstraintStrength.SOFT),
-                subject = item.optEnum("subject", SemanticSubject.WHOLE_MEDIA),
-                relationToPerson = item.optNullableString("relationToPerson"),
-            ))
-        }.orEmpty()
+        val semanticShorthandTerms = mutableListOf<String>()
+        val semantic = buildList {
+            json.optJSONArray("semanticClauses")?.let { items ->
+                require(items.length() <= MAX_SEMANTIC_CLAUSES) { "Planner array exceeds its bound" }
+                repeat(items.length()) { index ->
+                    when (val value = items.get(index)) {
+                        is JSONObject -> {
+                            value.requireOnly("text", "canonicalText", "polarity", "hardness", "subject", "relationToPerson")
+                            add(SemanticPolarityNormalizer.normalize(SemanticClause(
+                                text = value.getString("text").trim(),
+                                canonicalText = value.optNullableString("canonicalText"),
+                                polarity = value.optEnum("polarity", Polarity.POSITIVE),
+                                hardness = value.optEnum("hardness", ConstraintStrength.SOFT),
+                                subject = value.optEnum("subject", SemanticSubject.WHOLE_MEDIA),
+                                relationToPerson = value.optNullableString("relationToPerson"),
+                            )))
+                        }
+                        is String -> {
+                            val text = value.trim()
+                            require(text.isNotBlank()) { "Planner semantic-clause shorthand must not be blank" }
+                            semanticShorthandTerms += text
+                        }
+                        else -> throw IllegalArgumentException(
+                            "Planner semanticClauses entries must be objects or nonblank strings",
+                        )
+                    }
+                }
+            }
+        }
         val filterJson = json.optJSONObject("filter")
         val terms = (
             json.optJSONArray("terms")?.strings(MAX_TERMS).orEmpty() +
+                semanticShorthandTerms +
                 filterJson?.takeIf { it.isTermsOnlyObject() }?.filterTerms().orEmpty()
             ).map { it.lowercase(Locale.ROOT) }.distinct()
         val place = json.optNullableString("place")

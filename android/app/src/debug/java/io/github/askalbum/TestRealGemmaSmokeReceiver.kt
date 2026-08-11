@@ -11,6 +11,9 @@ import android.graphics.Typeface
 import android.os.SystemClock
 import java.io.File
 import java.io.FileOutputStream
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,7 +35,6 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
         val operationId = intent.getStringExtra(EXTRA_OPERATION_ID)
             ?.takeIf(OPERATION_ID::matches)
             ?: return
-        val pending = goAsync()
         val application = context.applicationContext as AskAlbumApplication
         val reportFile = File(context.filesDir, "test-models/real-gemma-smoke-$operationId.json")
         val startedAt = System.currentTimeMillis()
@@ -62,8 +64,6 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
                         .put("errorType", error::class.java.simpleName.take(MAX_TEXT_LENGTH))
                         .put("error", error.message.safeReportText()),
                 )
-            } finally {
-                pending.finish()
             }
         }
     }
@@ -80,12 +80,35 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
         val modelPath = requireNotNull(status.path) { "The verified Gemma artifact path is absent" }
         val sessions = application.services.gemmaSessions
         val initializationsBefore = sessions.initializationCount
-        val plannerTrace = LiteRtLmQueryPlanner(application.modelPackManager, sessions)
-            .compileWithTrace(SMOKE_QUERY, activeResultIds = null)
+        val planner = LiteRtLmQueryPlanner(application.modelPackManager, sessions)
+        val previousYear = LocalDate.now().year - 1
+        val expectedRange = calendarYear(previousYear)
+        val plannerCases = PLANNER_CASES.map { case ->
+            val trace = planner.compileWithTrace(case.query, activeResultIds = null)
+            val caseValidation = GalleryQueryPlanValidator().validate(trace.plan)
+            val searchable = searchableText(trace.plan)
+            check(trace.usedGemma) { "${case.id}: ${trace.fallbackReason ?: "planner did not use Gemma"}" }
+            check(trace.modelTier == GemmaModelTier.E2B) { "${case.id}: planner did not use E2B" }
+            check(trace.backend in setOf(PlannerInferenceBackend.GPU, PlannerInferenceBackend.CPU)) {
+                "${case.id}: planner did not use a model backend"
+            }
+            check(caseValidation.isValid) { "${case.id}: invalid plan ${caseValidation.errors.joinToString()}" }
+            check(trace.plan.originalQuery == case.query) { "${case.id}: original language was not preserved" }
+            check(trace.plan.intent in setOf(QueryIntent.FIND_MEDIA, QueryIntent.LIST)) {
+                "${case.id}: unexpected intent ${trace.plan.intent}"
+            }
+            check(timeRanges(trace.plan.filter).singleOrNull() == expectedRange) {
+                "${case.id}: previous year was not overlaid as an exact calendar range"
+            }
+            case.requiredTermGroups.forEach { alternatives ->
+                check(alternatives.any(searchable::contains)) {
+                    "${case.id}: none of $alternatives appeared in searchable plan text"
+                }
+            }
+            PlannerSmokeEvidence(case, trace, searchable)
+        }
+        val plannerTrace = plannerCases.first().trace
         val validation = GalleryQueryPlanValidator().validate(plannerTrace.plan)
-        check(plannerTrace.usedGemma) { plannerTrace.fallbackReason ?: "Planner did not use Gemma" }
-        check(validation.isValid) { "Planner returned an invalid plan: ${validation.errors.joinToString()}" }
-        check(plannerTrace.modelTier == GemmaModelTier.E2B) { "Planner did not use E2B" }
 
         val runtime = sessions.withEngine(
             modelPath = modelPath,
@@ -98,7 +121,9 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
                 mtpEnabled = lease.engine.mtpEnabled,
             )
         }
-        check(runtime.backend == plannerTrace.backend) { "Planner and shared session reported different backends" }
+        check(plannerCases.all { it.trace.backend == runtime.backend }) {
+            "A planner case and the shared session reported different backends"
+        }
 
         val visual = runVisualSmoke(application, operationId)
         val expectedEvidenceIds = visual.evidence.mapTo(linkedSetOf(), EvidenceRecord::id)
@@ -158,6 +183,20 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
                 .put("generationMs", plannerTrace.generationMs)
                 .put("intent", plannerTrace.plan.intent.name)
                 .put("validationErrors", JSONArray(validation.errors)))
+            .put("plannerCases", JSONArray().apply {
+                plannerCases.forEach { result ->
+                    put(JSONObject()
+                        .put("id", result.case.id)
+                        .put("usedGemma", result.trace.usedGemma)
+                        .put("backend", result.trace.backend.name)
+                        .put("generationCalls", result.trace.generationCalls)
+                        .put("repaired", result.trace.repaired)
+                        .put("loadMs", result.trace.engineLoadMs)
+                        .put("generationMs", result.trace.generationMs)
+                        .put("intent", result.trace.plan.intent.name)
+                        .put("searchableText", result.searchableText.take(MAX_TEXT_LENGTH)))
+                }
+            })
             .put("verifier", JSONObject()
                 .put("usedGemma", true)
                 .put("backend", visual.backend.name)
@@ -424,6 +463,7 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
         } finally {
             database.close()
             application.deleteDatabase(databaseName)
+            File(application.cacheDir, "$databaseName.lck").delete()
             fixture.delete()
             videoFixture.delete()
         }
@@ -440,6 +480,38 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
         embedding = FloatArray(FaceModelCatalog.sface.embeddingDimension).also { it[embeddingIndex] = 1f },
         quality = .98f,
     )
+
+    private fun searchableText(plan: GalleryQueryPlan): String = buildList {
+        addAll(plan.terms)
+        plan.place?.let(::add)
+        plan.semanticClauses.forEach { clause ->
+            add(clause.text)
+            clause.canonicalText?.let(::add)
+        }
+        plan.peopleClauses.forEach { add(it.personId) }
+        collectAlbums(plan.filter, this)
+    }.joinToString(" ").lowercase(Locale.ROOT)
+
+    private fun collectAlbums(filter: FilterExpression, output: MutableList<String>) {
+        when (filter) {
+            is FilterExpression.AlbumIs -> output += filter.album
+            is FilterExpression.And -> filter.clauses.forEach { collectAlbums(it, output) }
+            else -> Unit
+        }
+    }
+
+    private fun timeRanges(filter: FilterExpression): List<FilterExpression.TimeRange> = when (filter) {
+        is FilterExpression.TimeRange -> listOf(filter)
+        is FilterExpression.And -> filter.clauses.flatMap(::timeRanges)
+        else -> emptyList()
+    }
+
+    private fun calendarYear(year: Int): FilterExpression.TimeRange {
+        val zone = ZoneId.systemDefault()
+        val start = LocalDate.of(year, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = LocalDate.of(year + 1, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+        return FilterExpression.TimeRange(start, end)
+    }
 
     private fun writeRelationshipFixture(file: File) {
         val bitmap = Bitmap.createBitmap(1200, 900, Bitmap.Config.ARGB_8888)
@@ -562,6 +634,18 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
         val mtpEnabled: Boolean,
     )
 
+    private data class PlannerCase(
+        val id: String,
+        val query: String,
+        val requiredTermGroups: List<Set<String>>,
+    )
+
+    private data class PlannerSmokeEvidence(
+        val case: PlannerCase,
+        val trace: PlannerExecutionTrace,
+        val searchableText: String,
+    )
+
     private data class VisualSmokeEvidence(
         val item: GalleryItem,
         val plan: GalleryQueryPlan,
@@ -596,10 +680,29 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
         const val EXTRA_OPERATION_ID = "operation_id"
         const val SMOKE_TIMEOUT_MS = 12 * 60_000L
         const val MAX_TEXT_LENGTH = 500
-        const val SMOKE_QUERY = "Show beach sunset photos."
         const val PERSON_A_CLUSTER = "person_a_debug_real_gemma"
         const val PERSON_B_CLUSTER = "person_b_debug_real_gemma"
         const val VIDEO_TIMESTAMP_MS = 9_000L
+        val PLANNER_CASES = listOf(
+            PlannerCase(
+                id = "english",
+                query = "Show family photos from last year's Goa trip.",
+                requiredTermGroups = listOf(setOf("goa"), setOf("family")),
+            ),
+            PlannerCase(
+                id = "hindi",
+                query = "\u092A\u093F\u091B\u0932\u0947 \u0938\u093E\u0932 \u0915\u0940 \u0917\u094B\u0935\u093E \u092B\u0948\u092E\u093F\u0932\u0940 \u092B\u094B\u091F\u094B \u0926\u093F\u0916\u093E\u0913\u0964",
+                requiredTermGroups = listOf(
+                    setOf("goa", "\u0917\u094B\u0935\u093E"),
+                    setOf("family", "\u092B\u0948\u092E\u093F\u0932\u0940", "\u092A\u0930\u093F\u0935\u093E\u0930"),
+                ),
+            ),
+            PlannerCase(
+                id = "hinglish",
+                query = "Pichle saal Goa wali family photos dikhao.",
+                requiredTermGroups = listOf(setOf("goa"), setOf("family")),
+            ),
+        )
         val OPERATION_ID = Regex("[a-fA-F0-9]{32}")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     }

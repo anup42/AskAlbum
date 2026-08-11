@@ -1703,3 +1703,14 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: consumerDebug, full `testFixtureCiDebugUnitTest`, fixtureCiDebug, and offlineDemoDebug; the offline APK contains no INTERNET permission.
 - PASS: replacement installation preserved the exact active E2B generation pointer and selection; all operation-scoped database/cache artifacts were deleted and final diagnostics observed no target crash, ANR, OOM, or SQLite failure.
 - UI seek/play-at-match was not rerun in this real-model phase; the earlier connected fixture video acceptance covers that deterministic UI path. Full real-gallery 5k/20k acceptance remains NOT RUN.
+
+## 2026-08-12 - Real Gemma multilingual planning gate
+
+- Files changed: GemmaPlanCodec, its focused unit test, the debug real-Gemma smoke receiver, and this status file; database schema and stored consumer data are unchanged.
+- Initial device gate FAIL: E2B returned Hinglish `semanticClauses` as a string array and the strict codec attempted `getJSONObject()`. String shorthand now becomes lexical candidate text only; it cannot invent polarity, person binding, or typed confirmation evidence.
+- A subsequent device run completed inference but diagnostics FAIL: the debug receiver retained `goAsync()` for the full run, triggered a broadcast ANR, and left one operation lock. The receiver now returns immediately after launching its background scope and removes the exact lock after database closure.
+- PASS: full fixture JVM suite before the parser correction; focused `GemmaPlanCodecTest` after it; consumerDebug, fixtureCiDebug, and offlineDemoDebug builds. The offline APK has no INTERNET permission.
+- PASS: final connected run on SM-F966B completed in 80,799 ms; English, Hindi, and Hinglish plans all used the active verified E2B pack on GPU with MTP enabled and exact prior-calendar-year overlays.
+- PASS: all roles shared one engine initialization; Hindi/Hinglish planning and image, swapped-identity, video-keyframe, and grounded-composition calls reported zero additional model-load time.
+- PASS: replacement installation used `adb install -r -d`; active E2B revision and SHA-256 remained unchanged. Only the bounded report remained, and timestamp-isolated diagnostics found zero post-fix ANR, crash, OOM, or SQLite markers.
+- Scope: real multilingual planner acceptance and fixture hybrid multilingual retrieval pass. Full multilingual retrieval over the consumer gallery and full 5k/20k acceptance remain NOT RUN.

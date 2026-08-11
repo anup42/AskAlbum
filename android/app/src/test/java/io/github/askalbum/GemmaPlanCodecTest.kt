@@ -27,6 +27,18 @@ class GemmaPlanCodecTest {
     }
 
     @Test
+    fun safelyDowngradesStringSemanticClauseShorthandToLexicalTerm() {
+        val plan = codec.decode(
+            "Pichle saal Goa wali family photos dikhao.",
+            """{"intent":"FIND_MEDIA","semanticClauses":["family photos in Goa"]}""",
+            null,
+        )
+
+        assertEquals(listOf("family photos in goa"), plan.terms)
+        assertTrue(plan.semanticClauses.isEmpty())
+    }
+
+    @Test
     fun rejectsUnknownFieldsAndModelSuppliedResultIds() {
         val unsafe = """{"intent":"FIND_MEDIA","terms":["beach"],"baseResultIds":["invented"]}"""
         assertThrows(IllegalArgumentException::class.java) { codec.decode("beach", unsafe, null) }
