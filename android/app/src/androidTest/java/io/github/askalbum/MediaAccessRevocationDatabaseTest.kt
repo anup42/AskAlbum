@@ -29,8 +29,8 @@ class MediaAccessRevocationDatabaseTest {
             val imageStages = database.stageRecords("revoked-image")
             val videoStages = database.stageRecords("revoked-video")
 
-            assertEquals(2, database.markMediaStoreInaccessible())
-            assertEquals(0, database.markMediaStoreInaccessible())
+            assertEquals(2, database.markMediaStoreInaccessible(Long.MAX_VALUE))
+            assertEquals(0, database.markMediaStoreInaccessible(Long.MAX_VALUE))
 
             val retained = database.mediaStoreItemsIncludingInaccessible().associateBy(GalleryItem::id)
             assertEquals(MediaAccessState.INACCESSIBLE, retained.getValue("revoked-image").accessState)
@@ -39,6 +39,45 @@ class MediaAccessRevocationDatabaseTest {
             assertTrue(database.allItems().any { it.source == MediaSource.DEMO_ASSET })
             assertEquals(imageStages, database.stageRecords("revoked-image"))
             assertEquals(videoStages, database.stageRecords("revoked-video"))
+        } finally {
+            database.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun revocationSnapshotCannotHideLaterImportAndReseenRestoresAccess() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val databaseName = "media-access-race-${UUID.randomUUID()}.db"
+        val database = GalleryDatabase(context, databaseName)
+        val existing = imported(
+            "existing-image",
+            "content://media/external/images/media/92001",
+            "image/jpeg",
+            MediaSource.MEDIA_STORE,
+        )
+        val later = imported(
+            "later-image",
+            "content://media/external/images/media/92002",
+            "image/jpeg",
+            MediaSource.MEDIA_STORE,
+        )
+        try {
+            database.upsertImported(listOf(existing))
+            database.ensureStageRows()
+            val existingStages = database.stageRecords(existing.stableId)
+            val permissionSnapshotAt = System.currentTimeMillis()
+            while (System.currentTimeMillis() <= permissionSnapshotAt) Thread.yield()
+            database.upsertImported(listOf(later))
+
+            assertEquals(1, database.markMediaStoreInaccessible(permissionSnapshotAt))
+            val afterRevocation = database.mediaStoreItemsIncludingInaccessible().associateBy(GalleryItem::id)
+            assertEquals(MediaAccessState.INACCESSIBLE, afterRevocation.getValue(existing.stableId).accessState)
+            assertEquals(MediaAccessState.ACCESSIBLE, afterRevocation.getValue(later.stableId).accessState)
+
+            assertEquals(1, database.upsertImported(listOf(existing)))
+            assertTrue(database.allItems().any { it.id == existing.stableId })
+            assertEquals(existingStages, database.stageRecords(existing.stableId))
         } finally {
             database.close()
             context.deleteDatabase(databaseName)

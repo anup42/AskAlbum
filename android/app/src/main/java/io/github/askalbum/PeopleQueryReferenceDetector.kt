@@ -35,6 +35,21 @@ internal object PeopleQueryReferenceDetector {
         "\u092e\u0948\u0902", // I / me
     ).associate { alias -> PersonIdentityNormalization.normalize(alias) to "me" }
 
+    private val firstPersonSubjectAliases = setOf("i", "main", "mai", "\u092e\u0948\u0902")
+        .map(PersonIdentityNormalization::normalize)
+        .toSet()
+    private val captureAuthorshipVerbs = setOf(
+        "take", "takes", "taking", "took", "taken",
+        "capture", "captures", "capturing", "captured",
+        "shoot", "shoots", "shooting", "shot",
+        "record", "records", "recording", "recorded",
+        "save", "saves", "saving", "saved",
+        "download", "downloads", "downloading", "downloaded",
+        "scan", "scans", "scanning", "scanned",
+        "create", "creates", "creating", "created",
+        "receive", "receives", "receiving", "received",
+    )
+
     private val negationTerms = setOf(
         "not", "no", "without", "exclude", "excluding", "except",
         "\u092c\u093f\u0928\u093e", // without
@@ -55,6 +70,7 @@ internal object PeopleQueryReferenceDetector {
             val positions = tokens.withIndex()
                 .filter { (_, token) -> token.value == queryToken }
                 .map { it.index }
+                .filterNot { index -> isCaptureAuthorshipReference(tokens, index, queryToken) }
             if (positions.isEmpty()) return@flatMap emptyList()
 
             val polarities = positions.map { index ->
@@ -78,5 +94,12 @@ internal object PeopleQueryReferenceDetector {
     fun canonicalReference(token: String): String? =
         referenceAliases[PersonIdentityNormalization.normalize(token)]
 
+    private fun isCaptureAuthorshipReference(tokens: List<Token>, index: Int, queryToken: String): Boolean {
+        if (queryToken !in firstPersonSubjectAliases) return false
+        val end = minOf(tokens.size, index + AUTHORSHIP_LOOKAHEAD + 1)
+        return tokens.subList(index + 1, end).any { it.value in captureAuthorshipVerbs }
+    }
+
     private const val NEGATION_LOOKBACK = 3
+    private const val AUTHORSHIP_LOOKAHEAD = 4
 }

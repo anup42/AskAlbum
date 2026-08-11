@@ -55,6 +55,26 @@ internal object PersonConditionCanonicalizationPolicy {
         "photo", "photos", "picture", "pictures", "image", "images", "show", "find", "display", "please",
         "dikhao",
     )
+    private val firstPersonClauseAliases = setOf("me", "myself", "i", "user", "self")
+    private val possessiveFirstPersonTokens = setOf(
+        "my", "mine", "mera", "mere", "meri", "\u092e\u0947\u0930\u093e", "\u092e\u0947\u0930\u0947", "\u092e\u0947\u0930\u0940",
+    ).map(PersonIdentityNormalization::normalize).toSet()
+    private val firstPersonSubjectTokens = setOf("i", "main", "mai", "\u092e\u0948\u0902")
+        .map(PersonIdentityNormalization::normalize)
+        .toSet()
+    private val captureAuthorshipVerbs = setOf(
+        "take", "takes", "taking", "took", "taken",
+        "capture", "captures", "capturing", "captured",
+        "shoot", "shoots", "shooting", "shot",
+        "record", "records", "recording", "recorded",
+        "save", "saves", "saving", "saved",
+        "download", "downloads", "downloading", "downloaded",
+        "scan", "scans", "scanning", "scanned",
+        "create", "creates", "creating", "created",
+        "receive", "receives", "receiving", "received",
+    )
+    private val imperativeRecipientVerbs = setOf("show", "find", "display", "give")
+    private val presenceMarkers = setOf("with", "beside", "alongside", "near", "at", "in", "and", "of")
 
     fun apply(
         query: String,
@@ -68,7 +88,15 @@ internal object PersonConditionCanonicalizationPolicy {
             if (canonicalPerson == null) clause else clause.copy(relationToPerson = canonicalPerson)
         }.toMutableList()
         val explicit = detect(query, resolveReviewedIds)
-        if (explicit.isEmpty()) return plan.copy(semanticClauses = canonicalClauses)
+        val canonicalPeople = removeNonPresenceFirstPersonClauses(
+            query = query,
+            clauses = plan.peopleClauses,
+            explicitConditions = explicit,
+            resolveReviewedIds = resolveReviewedIds,
+        )
+        if (explicit.isEmpty()) {
+            return plan.copy(peopleClauses = canonicalPeople, semanticClauses = canonicalClauses)
+        }
 
         val claimed = mutableSetOf<Int>()
         explicit.forEach { condition ->
@@ -95,7 +123,55 @@ internal object PersonConditionCanonicalizationPolicy {
                 )
             }
         }
-        return plan.copy(semanticClauses = canonicalClauses)
+        return plan.copy(peopleClauses = canonicalPeople, semanticClauses = canonicalClauses)
+    }
+
+    private fun removeNonPresenceFirstPersonClauses(
+        query: String,
+        clauses: List<PersonClause>,
+        explicitConditions: List<ExplicitCondition>,
+        resolveReviewedIds: (String) -> Set<String>,
+    ): List<PersonClause> {
+        if (clauses.isEmpty()) return clauses
+        val tokens = tokenPattern.findAll(PersonIdentityNormalization.normalize(query))
+            .map { Token(it.value) }
+            .toList()
+        if (!hasNonPresenceFirstPersonContext(tokens) || hasExplicitFirstPersonPresence(tokens)) return clauses
+
+        val reviewedSelfIds = resolveReviewedIds("me")
+        if (explicitConditions.any { it.personId in reviewedSelfIds }) return clauses
+        return clauses.filterNot { clause ->
+            clause.personId in reviewedSelfIds ||
+                PersonIdentityNormalization.normalize(clause.personId) in firstPersonClauseAliases
+        }
+    }
+
+    private fun hasNonPresenceFirstPersonContext(tokens: List<Token>): Boolean {
+        if (tokens.any { it.value in possessiveFirstPersonTokens }) return true
+        if (tokens.indices.any { index ->
+                tokens[index].value in firstPersonSubjectTokens &&
+                    tokens.subList(index + 1, minOf(tokens.size, index + AUTHORSHIP_LOOKAHEAD + 1))
+                        .any { it.value in captureAuthorshipVerbs }
+            }
+        ) {
+            return true
+        }
+        return tokens.indices.any { index ->
+            tokens[index].value == "me" && index > 0 && tokens[index - 1].value in imperativeRecipientVerbs
+        }
+    }
+
+    private fun hasExplicitFirstPersonPresence(tokens: List<Token>): Boolean = tokens.indices.any { index ->
+        val token = tokens[index].value
+        if (PeopleQueryReferenceDetector.canonicalReference(token) != "me") return@any false
+        if (token == "myself") return@any true
+
+        val before = tokens.getOrNull(index - 1)?.value
+        if (before in presenceMarkers) return@any true
+        val after = tokens.subList(index + 1, minOf(tokens.size, index + PRESENCE_LOOKAHEAD + 1))
+            .map(Token::value)
+        val firstMeaningful = after.firstOrNull { it !in auxiliaries }
+        firstMeaningful in presenceMarkers || after.any { it in visualVerbFamilies }
     }
 
     private fun detect(
@@ -184,4 +260,6 @@ internal object PersonConditionCanonicalizationPolicy {
     private const val MAX_SUBJECT_DISTANCE = 6
     private const val MAX_SUBJECT_TOKENS = 3
     private const val NEGATION_LOOKBACK = 3
+    private const val AUTHORSHIP_LOOKAHEAD = 4
+    private const val PRESENCE_LOOKAHEAD = 4
 }

@@ -251,6 +251,16 @@ class GalleryDatabase(
                     existing.album == imported.album && existing.capturedAt == imported.capturedAt &&
                     existing.latitude == imported.latitude && existing.longitude == imported.longitude
                 if (unchanged) {
+                    db.update(
+                        "media_item",
+                        ContentValues().apply {
+                            put("access_state", MediaAccessState.ACCESSIBLE.name)
+                            put("last_seen_at", System.currentTimeMillis())
+                        },
+                        "id=?",
+                        arrayOf(existing.id),
+                    )
+                    if (existing.accessState != MediaAccessState.ACCESSIBLE) changed++
                     initializeStages(db, existing, replace = false)
                     return@forEach
                 }
@@ -1022,12 +1032,19 @@ class GalleryDatabase(
         return changed + removed.deletedItems
     }
 
-    fun markMediaStoreInaccessible(): Int = writableDatabase.update(
-        "media_item",
-        ContentValues().apply { put("access_state", MediaAccessState.INACCESSIBLE.name) },
-        "source_kind=? AND access_state=?",
-        arrayOf(MediaSource.MEDIA_STORE.name, MediaAccessState.ACCESSIBLE.name),
-    )
+    fun markMediaStoreInaccessible(permissionSnapshotAt: Long): Int {
+        require(permissionSnapshotAt >= 0L) { "Permission snapshot time must be non-negative" }
+        return writableDatabase.update(
+            "media_item",
+            ContentValues().apply { put("access_state", MediaAccessState.INACCESSIBLE.name) },
+            "source_kind=? AND access_state=? AND (last_seen_at IS NULL OR last_seen_at<=?)",
+            arrayOf(
+                MediaSource.MEDIA_STORE.name,
+                MediaAccessState.ACCESSIBLE.name,
+                permissionSnapshotAt.toString(),
+            ),
+        )
+    }
 
     fun removeImportedByUris(uris: Collection<String>, reason: String): MediaRemovalResult {
         val requested = uris.asSequence().map(String::trim).filter(String::isNotBlank).distinct().toList()

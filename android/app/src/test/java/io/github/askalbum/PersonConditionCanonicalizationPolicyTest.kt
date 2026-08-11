@@ -90,5 +90,54 @@ class PersonConditionCanonicalizationPolicyTest {
         assertTrue(result.semanticClauses.none { it.relationToPerson == "me-cluster" })
     }
 
+    @Test
+    fun plannerSelfClauseIsRemovedForCaptureAuthorship() {
+        val plan = GalleryQueryPlan(
+            originalQuery = "How many photos did I take in 2024?",
+            intent = QueryIntent.COUNT,
+            peopleClauses = listOf(PersonClause("me-cluster", hardness = ConstraintStrength.HARD)),
+        )
+
+        val result = PersonConditionCanonicalizationPolicy.apply(plan.originalQuery, plan, ::resolve)
+
+        assertTrue(result.peopleClauses.isEmpty())
+    }
+
+    @Test
+    fun ownershipAndImperativeRecipientDoNotRequireVisibleSelf() {
+        listOf(
+            "List places in my recent photos",
+            "Show me beach sunset photos",
+        ).forEach { query ->
+            val plan = GalleryQueryPlan(
+                originalQuery = query,
+                intent = QueryIntent.FIND_MEDIA,
+                peopleClauses = listOf(PersonClause("me", hardness = ConstraintStrength.HARD)),
+            )
+
+            assertTrue(PersonConditionCanonicalizationPolicy.apply(query, plan, ::resolve).peopleClauses.isEmpty())
+        }
+    }
+
+    @Test
+    fun explicitSelfPresenceSurvivesNonPresenceGrammarElsewhere() {
+        listOf(
+            "Show photos with me that I took in Goa",
+            "Show my photos where I am wearing white",
+            "Show me carrying a black bag",
+        ).forEach { query ->
+            val plan = GalleryQueryPlan(
+                originalQuery = query,
+                intent = QueryIntent.FIND_MEDIA,
+                peopleClauses = listOf(PersonClause("me-cluster", hardness = ConstraintStrength.HARD)),
+            )
+
+            assertEquals(
+                listOf(PersonClause("me-cluster", hardness = ConstraintStrength.HARD)),
+                PersonConditionCanonicalizationPolicy.apply(query, plan, ::resolve).peopleClauses,
+            )
+        }
+    }
+
     private fun resolve(value: String): Set<String> = identities[value].orEmpty()
 }

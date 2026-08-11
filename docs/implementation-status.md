@@ -1580,3 +1580,14 @@ People cluster summaries now expose both the user-selected representative face a
 - Device: replacement install PASS; 98 media rows, 882 stage rows, 8 events, and 84 event memberships were preserved. The 84 revoked MediaStore rows became INACCESSIBLE while 14 demo rows remained visible with an explicit access-off message.
 - Data preservation: databases remained 2072 KiB and files remained 11612162 KiB across install; normal launch added 8 KiB under files. No consumer crash or ANR was observed.
 - Remaining: physical permission-restoration acceptance is NOT RUN because media access remains denied; broad 5k/20k durability acceptance remains NOT RUN.
+
+## 2026-08-11 - Permission snapshot race and first-person presence correction
+
+- Files changed: GalleryDatabase, GalleryRepository, GalleryViewModel, PeopleQueryReferenceDetector, PersonConditionCanonicalizationPolicy, LiteRtLmQueryPlanner, and focused tests.
+- Migration/data repair: none; completed media, stages, People corrections, vectors, events, captions, facts, and model packs were preserved.
+- PASS: focused first-person grammar and deterministic-overlay JVM tests; both MediaAccessRevocationDatabaseTest cases on SM-F966B.
+- PASS: isolated fixture run `accept_ba30ce984b31` imported 84/84 rows, executed all 10 registered capabilities, returned exact COUNT=67 for `How many photos did I take in 2024?`, and completed core Q01-Q13 with 11 PASS, 0 FAIL, 2 SKIPPED.
+- PASS: fixture cleanup deleted 84/84 database rows and 84/84 MediaStore items with zero remaining.
+- PASS: consumerDebug and offlineDemoDebug builds; the merged offline APK contains no INTERNET permission.
+- PASS: consumer replacement install with `adb install -r -d`; databases remained 2072 KiB, files remained 11612170 KiB, gallery permissions remained denied, and the app process launched.
+- Remaining: the two fixture-declared core cases remain SKIPPED; physical permission-restoration and full real-model 5k/20k acceptance are NOT RUN.

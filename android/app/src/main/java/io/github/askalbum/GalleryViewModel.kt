@@ -334,9 +334,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun reconcileRevokedMediaAccess() {
+        val permissionSnapshotAt = System.currentTimeMillis()
         viewModelScope.launch {
             runCatching {
-                withContext(Dispatchers.IO) { repository.markMediaStoreInaccessible() }
+                withContext(Dispatchers.IO) { repository.markMediaStoreInaccessible(permissionSnapshotAt) }
             }.onSuccess { hiddenCount ->
                 val message = if (hiddenCount > 0) {
                     "Gallery access is off. $hiddenCount indexed items are hidden; local indexes are preserved."

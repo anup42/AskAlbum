@@ -226,7 +226,8 @@ class GalleryRepository private constructor(
         return changed + reconciled
     }
 
-    fun markMediaStoreInaccessible(): Int = database.markMediaStoreInaccessible()
+    fun markMediaStoreInaccessible(permissionSnapshotAt: Long): Int =
+        database.markMediaStoreInaccessible(permissionSnapshotAt)
 
     fun removeImportedUris(uris: Collection<Uri>, reason: String = "source_removed"): MediaRemovalResult {
         IndexScheduler.cancelAndWait(appContext)

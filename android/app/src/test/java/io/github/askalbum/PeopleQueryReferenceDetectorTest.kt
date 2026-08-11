@@ -27,4 +27,14 @@ class PeopleQueryReferenceDetectorTest {
             PeopleQueryReferenceDetector.detect("\u092d\u093e\u0908 ke bina photos"),
         )
     }
+
+    @Test
+    fun captureAuthorshipDoesNotRequireVisibleSelf() {
+        assertTrue(PeopleQueryReferenceDetector.detect("How many photos did I take in 2024?").isEmpty())
+        assertTrue(PeopleQueryReferenceDetector.detect("Show photos I captured in Goa").isEmpty())
+        assertEquals(
+            listOf(PersonClause("me")),
+            PeopleQueryReferenceDetector.detect("Show photos I took where I am wearing white"),
+        )
+    }
 }
