@@ -653,7 +653,7 @@ data class SemanticEnrichmentJobEntity(
         SemanticPredicateScanHitEntity::class,
         SensitiveDataMigrationEntity::class,
     ],
-    version = 28,
+    version = 29,
     exportSchema = true,
 )
 abstract class GalleryRoomDatabase : RoomDatabase() {
@@ -692,6 +692,7 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
             MIGRATION_25_26,
             MIGRATION_26_27,
             MIGRATION_27_28,
+            MIGRATION_28_29,
         ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1489,6 +1490,19 @@ abstract class GalleryRoomDatabase : RoomDatabase() {
                     """.trimIndent(),
                 )
                 db.execSQL("DROP TABLE semantic_provenance_repair_caption")
+            }
+        }
+
+        internal val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS semantic_predicate_scan_scope_media_idx " +
+                        "ON semantic_predicate_scan_scope(media_id)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS semantic_predicate_scan_hit_media_idx " +
+                        "ON semantic_predicate_scan_hit(media_id)",
+                )
             }
         }
 

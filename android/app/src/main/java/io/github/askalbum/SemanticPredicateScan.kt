@@ -49,7 +49,10 @@ data class SemanticPredicateScanEntity(
 @Entity(
     tableName = "semantic_predicate_scan_scope",
     primaryKeys = ["scan_id", "media_id"],
-    indices = [Index(name = "semantic_predicate_scan_scope_ordinal_idx", value = ["scan_id", "ordinal"], unique = true)],
+    indices = [
+        Index(name = "semantic_predicate_scan_scope_ordinal_idx", value = ["scan_id", "ordinal"], unique = true),
+        Index(name = "semantic_predicate_scan_scope_media_idx", value = ["media_id"]),
+    ],
     foreignKeys = [
         ForeignKey(
             entity = SemanticPredicateScanEntity::class,
@@ -74,7 +77,10 @@ data class SemanticPredicateScanScopeEntity(
 @Entity(
     tableName = "semantic_predicate_scan_hit",
     primaryKeys = ["scan_id", "media_id"],
-    indices = [Index(name = "semantic_predicate_scan_hit_score_idx", value = ["scan_id", "score"])],
+    indices = [
+        Index(name = "semantic_predicate_scan_hit_score_idx", value = ["scan_id", "score"]),
+        Index(name = "semantic_predicate_scan_hit_media_idx", value = ["media_id"]),
+    ],
     foreignKeys = [
         ForeignKey(
             entity = SemanticPredicateScanEntity::class,
