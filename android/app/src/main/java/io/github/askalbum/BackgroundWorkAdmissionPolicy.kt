@@ -60,17 +60,40 @@ class IndexingRunCriteriaStore(context: Context) {
 }
 
 object ThermalWorkAdmission {
+    const val STATUS_UNKNOWN = -1
+
+    fun readStatus(reader: () -> Int): Int = runCatching(reader).getOrDefault(STATUS_UNKNOWN)
+
+    fun isKnown(thermalStatus: Int): Boolean = thermalStatus in
+        PowerManager.THERMAL_STATUS_NONE..PowerManager.THERMAL_STATUS_SHUTDOWN
+
     fun evaluate(
         thermalStatus: Int,
         pauseAtThermalStatus: Int = PowerManager.THERMAL_STATUS_MODERATE,
     ): BackgroundWorkAdmission {
-        val paused = thermalStatus >= pauseAtThermalStatus
+        val known = isKnown(thermalStatus)
+        val paused = !known || thermalStatus >= pauseAtThermalStatus
         return BackgroundWorkAdmission(
             allowed = !paused,
             thermalStatus = thermalStatus,
-            reason = if (paused) "thermal_status_$thermalStatus" else null,
+            reason = when {
+                !known -> "thermal_status_unknown"
+                paused -> "thermal_status_$thermalStatus"
+                else -> null
+            },
         )
     }
+}
+
+object BatteryWorkAdmission {
+    const val PERCENT_UNKNOWN = -1
+
+    fun percentage(level: Int, scale: Int): Int =
+        if (level >= 0 && scale > 0) {
+            (level * 100 / scale).coerceIn(0, 100)
+        } else {
+            PERCENT_UNKNOWN
+        }
 }
 
 class BackgroundWorkAdmissionPolicy(context: Context) {
@@ -80,20 +103,22 @@ class BackgroundWorkAdmissionPolicy(context: Context) {
 
     fun evaluate(): BackgroundWorkAdmission {
         val criteria = criteriaStore.load()
-        val thermalStatus = runCatching { powerManager.currentThermalStatus }
-            .getOrDefault(PowerManager.THERMAL_STATUS_NONE)
+        val thermalStatus = ThermalWorkAdmission.readStatus { powerManager.currentThermalStatus }
         val battery = appContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val level = battery?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = battery?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-        val batteryPercent = if (level >= 0 && scale > 0) (level * 100 / scale).coerceIn(0, 100) else 100
+        val batteryPercent = BatteryWorkAdmission.percentage(level, scale)
         val batteryStatus = battery?.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
             ?: BatteryManager.BATTERY_STATUS_UNKNOWN
         val charging = batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
             batteryStatus == BatteryManager.BATTERY_STATUS_FULL
         val thermal = ThermalWorkAdmission.evaluate(thermalStatus, criteria.pauseAtThermalStatus)
         val reason = when {
+            !thermal.allowed && !ThermalWorkAdmission.isKnown(thermalStatus) ->
+                "Thermal status unavailable; retrying later"
             !thermal.allowed ->
                 "Device thermal state is ${thermalStatusLabel(thermalStatus)}; resumes below ${thermalStatusLabel(criteria.pauseAtThermalStatus)}"
+            batteryPercent == BatteryWorkAdmission.PERCENT_UNKNOWN -> "Battery status unavailable; retrying later"
             criteria.requireCharging && !charging -> "Waiting for charger"
             !charging && batteryPercent < criteria.minimumBatteryPercent ->
                 "Battery $batteryPercent% is below the ${criteria.minimumBatteryPercent}% limit"

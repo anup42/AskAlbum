@@ -32,4 +32,25 @@ class BackgroundWorkAdmissionPolicyTest {
             assertEquals("thermal_status_$status", decision.reason)
         }
     }
+
+    @Test
+    fun unknownOrFailedThermalTelemetryPausesHeavyWork() {
+        val failedStatus = ThermalWorkAdmission.readStatus { error("thermal service unavailable") }
+        assertEquals(ThermalWorkAdmission.STATUS_UNKNOWN, failedStatus)
+
+        listOf(failedStatus, Int.MAX_VALUE).forEach { status ->
+            val decision = ThermalWorkAdmission.evaluate(status)
+            assertFalse(decision.allowed)
+            assertEquals("thermal_status_unknown", decision.reason)
+            assertEquals("unknown", thermalStatusLabel(status))
+        }
+    }
+
+    @Test
+    fun missingBatteryTelemetryIsNotReportedAsFullBattery() {
+        assertEquals(50, BatteryWorkAdmission.percentage(level = 50, scale = 100))
+        assertEquals(100, BatteryWorkAdmission.percentage(level = 150, scale = 100))
+        assertEquals(BatteryWorkAdmission.PERCENT_UNKNOWN, BatteryWorkAdmission.percentage(level = -1, scale = 100))
+        assertEquals(BatteryWorkAdmission.PERCENT_UNKNOWN, BatteryWorkAdmission.percentage(level = 50, scale = 0))
+    }
 }
