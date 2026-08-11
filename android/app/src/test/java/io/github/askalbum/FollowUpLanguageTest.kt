@@ -22,9 +22,10 @@ class FollowUpLanguageTest {
     }
 
     @Test
-    fun closeUpFollowUpRequestsQualityOrdering() {
+    fun closeUpFollowUpRequestsSearchableCompositionRefinement() {
         val plan = QueryCompiler().compile("Make them close-ups", active)
         assertEquals(active, plan.baseResultIds)
-        assertEquals(SortSpec.QUALITY, plan.sort)
+        assertEquals(SortSpec.RELEVANCE, plan.sort)
+        assertEquals(listOf("close-up"), plan.terms)
     }
 }

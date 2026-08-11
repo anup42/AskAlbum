@@ -52,7 +52,10 @@ class QueryCompiler(
         val isFollowUp = FollowUpLanguage.isFollowUp(query, !activeResultIds.isNullOrEmpty()) &&
             (!hasStandaloneSubject || FollowUpLanguage.permitsMediaScopeRefinement(query))
         require(!isFollowUp || !activeResultIds.isNullOrEmpty()) { "Follow-up requires an active result set" }
-        val qualityFollowUp = isFollowUp && Regex("\\b(best|best one|which is the best|which one is best|close[- ]?ups?)\\b").containsMatchIn(normalized)
+        val qualityFollowUp = isFollowUp &&
+            Regex("\\b(best|best one|which is the best|which one is best)\\b").containsMatchIn(normalized)
+        val closeUpFollowUp = isFollowUp &&
+            Regex("\\bclose(?:\\s+|-)?ups?\\b").containsMatchIn(normalized)
         val asksReceiptTotal = Regex(
             "\\b(amount paid|grand total|receipt total|total (?:on|of|for|from) .{0,40}\\b(?:receipt|invoice)|(?:receipt|invoice).{0,40}\\btotal)\\b",
         ).containsMatchIn(normalized)
@@ -97,7 +100,10 @@ class QueryCompiler(
         } else {
             candidateTerms.filterNot { term -> explicitYear != null && term == explicitYear.toString() }
         }
-        val terms = originalTerms.map { aliases[it] ?: it }.distinct()
+        val terms = (
+            originalTerms.map { aliases[it] ?: it } +
+                if (closeUpFollowUp) listOf("close-up") else emptyList()
+            ).distinct()
         val knownPlaces = listOf("singapore", "goa", "amsterdam", "netherlands", "california", "francisco", "marshall", "rockaway")
         val place = knownPlaces.firstOrNull { candidate -> candidate in terms }
         val comparisonScopes = if (intent == QueryIntent.COMPARE) {

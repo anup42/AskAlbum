@@ -198,7 +198,9 @@ class TestFollowUpSmokeReceiver : BroadcastReceiver() {
                 val person = clause.personId.lowercase(Locale.ROOT)
                 clause.mustBePresent && ("dad" in person || "father" in person)
             }) { "Dad was not represented as a required person" }
-            "close_ups" -> check(plan.sort == SortSpec.QUALITY) { "Close-ups did not select quality sorting" }
+            "close_ups" -> check("close-up" in searchableText(plan)) {
+                "Close-ups did not retain a searchable composition predicate"
+            }
             "year_2024" -> check(firstTimeRange(plan.filter) == calendarYear(2024)) { "2024 was not an exact calendar range" }
             "exclude_screenshots" -> check(plan.semanticClauses.any { clause ->
                 clause.polarity == Polarity.NEGATIVE && "screenshot" in clause.text.lowercase(Locale.ROOT)
@@ -284,7 +286,7 @@ class TestFollowUpSmokeReceiver : BroadcastReceiver() {
             FollowUpCase(
                 "close_ups",
                 "Show close-ups.",
-                setOf(PlanPatchField.SORT),
+                setOf(PlanPatchField.SEMANTIC_CLAUSES),
                 setOf(PlanPatchOperationType.ADD, PlanPatchOperationType.REPLACE),
             ),
             FollowUpCase(

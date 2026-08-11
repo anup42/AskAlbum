@@ -184,4 +184,15 @@ class QueryCompilerTest {
         assertNull(allReceipts.ocrClause?.merchant)
         assertEquals("swiggy", swiggy.ocrClause?.merchant)
     }
+
+    @Test
+    fun closeUpFollowUpAddsACompositionPredicateInsteadOfOnlySorting() {
+        val active = setOf("portrait", "wide-shot")
+
+        val plan = compiler.compile("Show close-ups", active)
+
+        assertEquals(active, plan.baseResultIds)
+        assertEquals(listOf("close-up"), plan.terms)
+        assertEquals(SortSpec.RELEVANCE, plan.sort)
+    }
 }

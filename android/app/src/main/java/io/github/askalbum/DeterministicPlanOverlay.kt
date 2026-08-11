@@ -18,6 +18,8 @@ class DeterministicPlanOverlay(
         val deterministic = compiler.compile(query, activeResultIds)
         val qualityOnlyFollowUp = deterministic.baseResultIds != null &&
             deterministic.sort == SortSpec.QUALITY && deterministic.terms.isEmpty()
+        val closeUpRefinement = deterministic.baseResultIds != null &&
+            "close-up" in deterministic.terms
         val filterOnlyFollowUp = deterministic.baseResultIds != null &&
             deterministic.filter != FilterExpression.True && deterministic.terms.isEmpty()
         val deterministicAggregationOnly = deterministic.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
@@ -36,7 +38,11 @@ class DeterministicPlanOverlay(
             sort = if (deterministic.sort != SortSpec.RELEVANCE) deterministic.sort else modelPlan.sort,
             aggregation = deterministic.aggregation ?: modelPlan.aggregation,
             semanticClauses = if (qualityOnlyFollowUp || filterOnlyFollowUp || deterministicAggregationOnly) emptyList() else modelPlan.semanticClauses,
-            terms = if (qualityOnlyFollowUp || filterOnlyFollowUp || deterministicAggregationOnly) emptyList() else modelPlan.terms,
+            terms = when {
+                qualityOnlyFollowUp || filterOnlyFollowUp || deterministicAggregationOnly -> emptyList()
+                closeUpRefinement -> (modelPlan.terms + deterministic.terms).distinct()
+                else -> modelPlan.terms
+            },
             place = deterministic.place ?: modelPlan.place,
             peopleClauses = PeopleClauseSanitizer.sanitize(modelPlan.peopleClauses + detectedPeople),
             baseResultIds = modelPlan.baseResultIds ?: deterministic.baseResultIds,

@@ -16,19 +16,23 @@ Last reviewed: 2026-08-12
   the media-refinement contract. Unsupported model fields and filter operations
   remain rejected; deterministic fallback is reported rather than hidden.
 - PASS on `SM-F966B`: the six-turn Singapore chain retained its app-owned result
-  scope and emitted typed PLACE/semantic, PEOPLE, SORT, TIME, negative screenshot,
-  and VIDEO operations. Four follow-ups used the retained E2B pack on GPU; two
+  scope and emitted typed PLACE/semantic, PEOPLE, close-up semantic refinement,
+  TIME, negative screenshot, and VIDEO operations. `Show close-ups` now carries a
+  canonical searchable composition predicate instead of merely sorting the parent
+  result set by quality. Four follow-ups used the retained E2B pack on GPU; two
   invalid schemas used explicit deterministic fallback. MTP was supported and
-  enabled, and the complete chain initialized Gemma once (`164,804 ms`, operation
-  `cd88371af08242268bb5b596b249e4cb`).
-- The model-independent focused tests and complete `fixtureCi` JVM suite passed.
+  enabled, and the corrected chain initialized Gemma once (`162,756 ms`, operation
+  `dc0f535e86384cce9438233cc47fd699`).
+- The model-independent focused tests, including a scoped filtering-policy case
+  that excludes an uncorroborated wide shot, and the complete `fixtureCi` JVM suite passed.
   `consumerDebug` and `offlineDemoDebug` built, the offline APK retained no
   `INTERNET` permission, and replacement installation preserved the original
   `firstInstallTime`. Package-scoped diagnostics found no app fatal, ANR, OOM, or
   SQLite marker.
 - The connected gate uses synthetic result IDs and validates planner, fallback,
   typed-patch, shared-session, and scope behavior only. It does not claim that the
-  full chain retrieved correct items from the user's real gallery. The debug
+  full chain or close-up refinement retrieved correct items from the user's real
+  gallery; that real-gallery ranking acceptance remains NOT RUN. The debug
   receiver must run while the app is foreground because Android may freeze a
   detached coroutine in an empty cached process.
 
