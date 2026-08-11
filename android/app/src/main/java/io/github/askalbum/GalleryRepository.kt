@@ -1053,7 +1053,7 @@ class GalleryRepository private constructor(
                 eventMediaRank.mapNotNull { itemById[it] }.map(deterministicScopeHit)
             else -> emptyList()
         }
-        val deterministicAnswerHits = deterministicCapabilityHits.ifEmpty {
+        val rawDeterministicAnswerHits = deterministicCapabilityHits.ifEmpty {
             deterministicAggregationHits.ifEmpty { deterministicDocumentHits }
         }
         val peopleCoverage = if (plan.peopleClauses.isEmpty()) {
@@ -1087,23 +1087,66 @@ class GalleryRepository private constructor(
             QueryIntent.SUM,
             QueryIntent.MIN_MAX,
         )
+        val deterministicOcrIntegrityRequired = plan.intent in setOf(
+            QueryIntent.ANSWER_FACT,
+            QueryIntent.DOCUMENT_QA,
+            QueryIntent.SUM,
+            QueryIntent.MIN_MAX,
+        )
+        val explicitOcrType = OcrFactAllowlist.resolve(
+            plan.ocrClause?.requestedField ?: plan.aggregation?.field,
+        )?.type
+        val ocrIntegrityTypes = buildSet<OcrEntityType> {
+            explicitOcrType?.let(::add)
+            if (plan.ocrClause?.merchant?.isNotBlank() == true) add(OcrEntityType.MERCHANT)
+        }
+        val ocrStoredDataIntegrity = if (ocrRequired) {
+            database.ocrStoredDataIntegrity(
+                mediaIds = eligibleIds,
+                entityTypes = if (deterministicOcrIntegrityRequired && explicitOcrType == null) {
+                    emptySet()
+                } else {
+                    ocrIntegrityTypes
+                },
+                includeBlocks = plan.ocrClause != null && explicitOcrType == null,
+            )
+        } else {
+            OcrStoredDataIntegrity()
+        }
         val ocrStageCoverage = if (ocrRequired) {
             database.indexStageCoverage(eligibleIds, IndexStage.OCR)
         } else {
             IndexStageCoverage(eligibleCount = 0)
         }
         val ocrModelAvailable = services.ocrEngines.activeDescriptor() != null
-        val ocrStatus = OcrChannelCoveragePolicy.status(ocrRequired, ocrStageCoverage, ocrModelAvailable)
+        val ocrStatus = OcrChannelCoveragePolicy.status(
+            required = ocrRequired,
+            coverage = ocrStageCoverage,
+            modelAvailable = ocrModelAvailable,
+            integrity = ocrStoredDataIntegrity,
+            requireCompleteIntegrity = deterministicOcrIntegrityRequired,
+        )
         val ocrChannelReport = RetrievalChannelReport<SearchHit>(
             channel = RetrievalChannel.OCR,
             status = ocrStatus,
             eligibleCount = ocrStageCoverage.eligibleCount,
             indexedCount = ocrStageCoverage.coveredCount,
-            searchedCount = if (ocrRequired) ocrStageCoverage.coveredCount else 0,
+            searchedCount = if (ocrRequired) {
+                (ocrStageCoverage.coveredCount - ocrStoredDataIntegrity.corruptMediaCount).coerceAtLeast(0)
+            } else {
+                0
+            },
             hits = emptyList(),
             modelVersion = services.ocrEngines.activeDescriptor()?.producerVersion,
-            errorCode = OcrChannelCoveragePolicy.errorCode(ocrStatus),
+            errorCode = OcrChannelCoveragePolicy.errorCode(ocrStatus, ocrStoredDataIntegrity),
         )
+        val deterministicAnswerHits = if (
+            deterministicOcrIntegrityRequired && ocrStatus == ChannelStatus.FAILED
+        ) {
+            emptyList()
+        } else {
+            rawDeterministicAnswerHits
+        }
         val refinementIds = FollowUpRefinementPolicy.corroboratedSemanticIds(
             scoped = plan.baseResultIds != null,
             semanticIds = semanticRanked.map { it.mediaId },

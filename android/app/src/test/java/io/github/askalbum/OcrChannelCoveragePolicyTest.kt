@@ -39,4 +39,53 @@ class OcrChannelCoveragePolicyTest {
 
         assertEquals(ChannelStatus.NOT_REQUIRED, OcrChannelCoveragePolicy.status(false, coverage, modelAvailable = false))
     }
+
+    @Test
+    fun corruptProtectedOcrFailsClosedForDeterministicFacts() {
+        val coverage = IndexStageCoverage(
+            eligibleCount = 4,
+            statusCounts = mapOf(StageStatus.COMPLETE to 4),
+        )
+        val integrity = OcrStoredDataIntegrity(
+            checkedMediaCount = 4,
+            checkedValueCount = 8,
+            corruptMediaCount = 1,
+            corruptValueCount = 1,
+        )
+
+        val status = OcrChannelCoveragePolicy.status(
+            required = true,
+            coverage = coverage,
+            modelAvailable = true,
+            integrity = integrity,
+            requireCompleteIntegrity = true,
+        )
+
+        assertEquals(ChannelStatus.FAILED, status)
+        assertEquals(OcrChannelCoveragePolicy.PROTECTED_DATA_CORRUPT, OcrChannelCoveragePolicy.errorCode(status, integrity))
+    }
+
+    @Test
+    fun corruptProtectedOcrIsPartialForNonDeterministicRetrieval() {
+        val coverage = IndexStageCoverage(
+            eligibleCount = 4,
+            statusCounts = mapOf(StageStatus.COMPLETE to 4),
+        )
+        val integrity = OcrStoredDataIntegrity(
+            checkedMediaCount = 4,
+            checkedValueCount = 8,
+            corruptMediaCount = 1,
+            corruptValueCount = 1,
+        )
+
+        val status = OcrChannelCoveragePolicy.status(
+            required = true,
+            coverage = coverage,
+            modelAvailable = true,
+            integrity = integrity,
+        )
+
+        assertEquals(ChannelStatus.PARTIAL, status)
+        assertEquals(OcrChannelCoveragePolicy.PROTECTED_DATA_PARTIAL, OcrChannelCoveragePolicy.errorCode(status, integrity))
+    }
 }

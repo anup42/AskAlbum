@@ -2700,6 +2700,68 @@ class GalleryDatabase(
         return result
     }
 
+    /** Authenticates relevant encrypted OCR payloads without exposing their contents. */
+    fun ocrStoredDataIntegrity(
+        mediaIds: Set<String>,
+        entityTypes: Set<OcrEntityType> = emptySet(),
+        includeBlocks: Boolean = false,
+    ): OcrStoredDataIntegrity {
+        if (mediaIds.isEmpty()) return OcrStoredDataIntegrity()
+        val checkedMedia = linkedSetOf<String>()
+        val corruptMedia = linkedSetOf<String>()
+        var checkedValueCount = 0
+        var corruptValueCount = 0
+
+        fun authenticate(mediaId: String, protectedValue: String) {
+            checkedMedia += mediaId
+            checkedValueCount += 1
+            if (sensitiveDataAtRest.revealChecked(protectedValue).isFailure) {
+                corruptMedia += mediaId
+                corruptValueCount += 1
+            }
+        }
+
+        val typeNames = entityTypes.map(OcrEntityType::name).sorted()
+        mediaIds.toList().chunked(SQLITE_ID_CHUNK).forEach { ids ->
+            val mediaPlaceholders = ids.joinToString(",") { "?" }
+            val typePredicate = if (typeNames.isEmpty()) {
+                ""
+            } else {
+                " AND entity_type IN (${typeNames.joinToString(",") { "?" }})"
+            }
+            readableDatabase.rawQuery(
+                "SELECT media_id,raw_text,normalized_value FROM ocr_entity " +
+                    "WHERE media_id IN ($mediaPlaceholders)$typePredicate",
+                (ids + typeNames).toTypedArray(),
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val mediaId = cursor.getString(0)
+                    authenticate(mediaId, cursor.getString(1))
+                    authenticate(mediaId, cursor.getString(2))
+                }
+            }
+            if (includeBlocks) {
+                readableDatabase.rawQuery(
+                    "SELECT media_id,text,normalized_text FROM ocr_block " +
+                        "WHERE media_id IN ($mediaPlaceholders)",
+                    ids.toTypedArray(),
+                ).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val mediaId = cursor.getString(0)
+                        authenticate(mediaId, cursor.getString(1))
+                        authenticate(mediaId, cursor.getString(2))
+                    }
+                }
+            }
+        }
+        return OcrStoredDataIntegrity(
+            checkedMediaCount = checkedMedia.size,
+            checkedValueCount = checkedValueCount,
+            corruptMediaCount = corruptMedia.size,
+            corruptValueCount = corruptValueCount,
+        )
+    }
+
     private fun cursorOcrEntity(cursor: android.database.Cursor): OcrEntityRecord {
         val entityType = OcrEntityType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow("entity_type")))
         return OcrEntityRecord(
