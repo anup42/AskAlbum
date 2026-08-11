@@ -1706,7 +1706,12 @@ class GalleryDatabase(
                     arrayOf(sourceClusterId, sourceClusterId),
                 )
             }
-            invalidatePersonalSemanticEvidence(db, eligible.mapTo(linkedSetOf()) { it.second })
+            val affectedClusterIds = eligible.mapNotNullTo(linkedSetOf()) { it.third }.apply { add(clusterId) }
+            invalidatePersonalSemanticEvidence(
+                db = db,
+                mediaIds = eligible.mapTo(linkedSetOf()) { it.second },
+                affectedClusterIds = affectedClusterIds,
+            )
             db.setTransactionSuccessful()
             eligible.size
         } finally {
@@ -2129,7 +2134,7 @@ class GalleryDatabase(
                         "cluster_id=? AND user_corrected=0 AND id IN ($placeholders)",
                         selectionArgs,
                     )
-                    invalidatePersonalSemanticEvidence(db, mediaIds)
+                    invalidatePersonalSemanticEvidence(db, mediaIds, setOf(clusterId))
                 }
                 if (moved == 0) db.delete("person_cluster", "id=? AND reviewed=0", arrayOf(quarantineId))
             }
@@ -2164,7 +2169,7 @@ class GalleryDatabase(
             db.update("person_cluster", ContentValues().apply {
                 putNull("representative_face_id")
             }, "id=? AND representative_face_id=?", arrayOf(source.first, faceId))
-            invalidatePersonalSemanticEvidence(db, setOf(source.second))
+            invalidatePersonalSemanticEvidence(db, setOf(source.second), setOf(source.first))
             db.setTransactionSuccessful()
             source.first
         } finally {
@@ -2175,28 +2180,44 @@ class GalleryDatabase(
     fun removePersonLabel(clusterId: String): PeopleIndexStatus {
         require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
         val db = writableDatabase
-        val affectedMediaIds = mediaIdsForClusters(db, setOf(clusterId))
-        db.update("person_cluster", ContentValues().apply {
-            putNull("label")
-            putNull("relationship")
-            put("aliases", "[]")
-            put("reviewed", 0)
-            put("include_in_personal_memory", 0)
-            put("updated_at", System.currentTimeMillis())
-        }, "id=?", arrayOf(clusterId))
-        dropPendingPersonalJobs(db, affectedMediaIds)
+        db.beginTransaction()
+        try {
+            val affectedMediaIds = mediaIdsForClusters(db, setOf(clusterId))
+            db.update("person_cluster", ContentValues().apply {
+                putNull("label")
+                putNull("relationship")
+                put("aliases", "[]")
+                put("reviewed", 0)
+                put("include_in_personal_memory", 0)
+                put("updated_at", System.currentTimeMillis())
+            }, "id=?", arrayOf(clusterId))
+            invalidatePersonalSemanticEvidence(db, affectedMediaIds, setOf(clusterId))
+            dropPendingPersonalJobs(db, affectedMediaIds)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
         return peopleIndexStatus()
     }
 
     fun setPersonClusterHidden(clusterId: String, hidden: Boolean): PeopleIndexStatus {
         require(PERSON_ID.matches(clusterId)) { "Invalid local person ID" }
         val db = writableDatabase
-        val affectedMediaIds = mediaIdsForClusters(db, setOf(clusterId))
-        db.update("person_cluster", ContentValues().apply {
-            put("hidden", if (hidden) 1 else 0)
-            put("updated_at", System.currentTimeMillis())
-        }, "id=?", arrayOf(clusterId))
-        if (hidden) dropPendingPersonalJobs(db, affectedMediaIds)
+        db.beginTransaction()
+        try {
+            val affectedMediaIds = mediaIdsForClusters(db, setOf(clusterId))
+            db.update("person_cluster", ContentValues().apply {
+                put("hidden", if (hidden) 1 else 0)
+                put("updated_at", System.currentTimeMillis())
+            }, "id=?", arrayOf(clusterId))
+            if (hidden) {
+                invalidatePersonalSemanticEvidence(db, affectedMediaIds, setOf(clusterId))
+                dropPendingPersonalJobs(db, affectedMediaIds)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
         return peopleIndexStatus()
     }
 
@@ -2261,7 +2282,11 @@ class GalleryDatabase(
                 )
                 put("updated_at", now)
             }, "id=?", arrayOf(targetClusterId))
-            invalidatePersonalSemanticEvidence(db, affectedMediaIds)
+            invalidatePersonalSemanticEvidence(
+                db = db,
+                mediaIds = affectedMediaIds,
+                affectedClusterIds = setOf(targetClusterId, sourceClusterId),
+            )
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -2290,7 +2315,11 @@ class GalleryDatabase(
             db.update("person_cluster", ContentValues().apply {
                 put("updated_at", now)
             }, "id=?", arrayOf(target))
-            invalidatePersonalSemanticEvidence(db, setOf(source.second))
+            invalidatePersonalSemanticEvidence(
+                db = db,
+                mediaIds = setOf(source.second),
+                affectedClusterIds = listOfNotNull(source.first, target),
+            )
             source.first?.let { sourceClusterId ->
                 db.update("person_cluster", ContentValues().apply {
                     put("updated_at", now)
@@ -3691,26 +3720,49 @@ class GalleryDatabase(
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
     }
 
-    private fun invalidatePersonalSemanticEvidence(db: GallerySqlDatabase, mediaIds: Collection<String>) {
-        mediaIds.distinct().chunked(SQLITE_ID_CHUNK).forEach { ids ->
+    private fun invalidatePersonalSemanticEvidence(
+        db: GallerySqlDatabase,
+        mediaIds: Collection<String>,
+        affectedClusterIds: Collection<String>,
+    ) {
+        val clusterIds = affectedClusterIds.filter(PERSON_ID::matches).distinct()
+        if (mediaIds.isEmpty() || clusterIds.isEmpty()) return
+        val scopedChunkSize = (SQLITE_ID_CHUNK / 3).coerceAtLeast(1)
+        val clusterChunks = clusterIds.chunked(scopedChunkSize)
+        mediaIds.distinct().chunked(scopedChunkSize).forEach { ids ->
             if (ids.isEmpty()) return@forEach
             val placeholders = ids.joinToString(",") { "?" }
             val args = ids.toTypedArray()
-            val personChunkIds = db.rawQuery(
-                "SELECT id FROM semantic_caption_chunk WHERE media_id IN ($placeholders) AND cluster_id IS NOT NULL",
-                args,
-            ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
-            personChunkIds.chunked(SQLITE_ID_CHUNK).forEach { chunkIds ->
+            val staleChunkIds = db.rawQuery(
+                "SELECT id FROM semantic_caption_chunk WHERE media_id IN ($placeholders) AND chunk_type=?",
+                args + CaptionChunkType.PERSON_RELATION.name,
+            ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }.toMutableSet()
+            clusterChunks.forEach { affectedIds ->
+                val clusterPlaceholders = affectedIds.joinToString(",") { "?" }
+                staleChunkIds += db.rawQuery(
+                    "SELECT id FROM semantic_caption_chunk WHERE media_id IN ($placeholders) " +
+                        "AND cluster_id IN ($clusterPlaceholders)",
+                    (ids + affectedIds).toTypedArray(),
+                ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+                db.delete(
+                    "person_attribute_fact",
+                    "media_id IN ($placeholders) AND " +
+                        "(cluster_id IN ($clusterPlaceholders) OR target_cluster_id IN ($clusterPlaceholders))",
+                    (ids + affectedIds + affectedIds).toTypedArray(),
+                )
+                db.delete(
+                    "semantic_caption_person_ref",
+                    "cluster_id IN ($clusterPlaceholders) AND " +
+                        "caption_id IN (SELECT id FROM semantic_caption WHERE evidence_media_id IN ($placeholders))",
+                    (affectedIds + ids).toTypedArray(),
+                )
+            }
+            staleChunkIds.chunked(SQLITE_ID_CHUNK).forEach { chunkIds ->
+                if (chunkIds.isEmpty()) return@forEach
                 val chunkPlaceholders = chunkIds.joinToString(",") { "?" }
                 db.delete("semantic_caption_chunk_fts", "chunk_id IN ($chunkPlaceholders)", chunkIds.toTypedArray())
                 db.delete("semantic_caption_chunk", "id IN ($chunkPlaceholders)", chunkIds.toTypedArray())
             }
-            db.delete("person_attribute_fact", "media_id IN ($placeholders)", args)
-            db.delete(
-                "semantic_caption_person_ref",
-                "caption_id IN (SELECT id FROM semantic_caption WHERE evidence_media_id IN ($placeholders))",
-                args,
-            )
             db.update(
                 "semantic_caption",
                 ContentValues().apply { put("applicability", "STALE_PERSON_BINDING") },
@@ -3750,7 +3802,11 @@ class GalleryDatabase(
             val placeholders = ids.joinToString(",") { "?" }
             db.delete(
                 "semantic_enrichment_job",
-                "representative_media_id IN ($placeholders) AND reason LIKE ? AND status<>?",
+                "representative_media_id IN ($placeholders) AND reason LIKE ? AND status<>? " +
+                    "AND NOT EXISTS (" +
+                    "SELECT 1 FROM face_instance f JOIN person_cluster p ON p.id=f.cluster_id " +
+                    "WHERE f.media_id=semantic_enrichment_job.representative_media_id " +
+                    "AND p.reviewed=1 AND p.hidden=0 AND p.include_in_personal_memory=1)",
                 ids.toTypedArray() + arrayOf(
                     "${PersonalSemanticMemoryPolicy.JOB_PREFIX}%",
                     SemanticEnrichmentStatus.COMPLETE.name,

@@ -141,9 +141,148 @@ class PersonalSemanticMemoryDatabaseTest {
         }
     }
 
-    private fun face() = FaceInstance(
+    @Test
+    fun hidingOnePersonInvalidatesOnlyThatIdentityEvidence() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "personal-semantic-scoped-${UUID.randomUUID()}.db"
+        val store = GalleryDatabase(context, name)
+        try {
+            store.seedDemoIfEmpty()
+            val media = store.allItems().first()
+            store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+            store.ensureAutomaticPersonCluster("person_me")
+            store.ensureAutomaticPersonCluster("person_wife")
+            store.completeEmbeddedFaces(
+                media.id,
+                listOf(face(0), face(1)),
+                listOf("person_me", "person_wife"),
+                "fixture-face",
+            )
+            store.saveReviewedPersonCluster("person_me", "Me", "Me", emptyList())
+            store.saveReviewedPersonCluster("person_wife", "Wife", "partner", emptyList())
+            assertEquals(1, store.queueEligiblePersonalSemanticMemoryJobs("fixture-gemma", true))
+            val job = requireNotNull(store.claimSemanticEnrichmentJob(owner = "caption-owner"))
+            val generationId = "generation-${UUID.randomUUID()}"
+            val promptVersion = SemanticEnrichmentCodec.PROMPT_VERSION
+            val faceRegion = listOf(.1f, .1f, .4f, .6f)
+            store.completeSemanticEnrichment(
+                job,
+                SemanticEnrichmentResult(
+                    facts = listOf(
+                        SemanticFactRecord(
+                            scope = SemanticFactScope.MEDIA,
+                            subjectId = media.id,
+                            predicate = "scene_setting",
+                            value = "outdoors beside a lake",
+                            confidence = .92f,
+                            evidenceMediaId = media.id,
+                            modelVersion = "fixture-gemma",
+                            promptVersion = promptVersion,
+                            generationId = generationId,
+                        ),
+                    ),
+                    caption = SemanticCaptionRecord(
+                        scope = SemanticFactScope.MEDIA,
+                        subjectId = media.id,
+                        text = "P1 is wearing red clothing beside P2, who is wearing a white dress.",
+                        confidence = .95f,
+                        evidenceMediaId = media.id,
+                        sourceType = "GEMMA_MEDIA_DIRECT",
+                        modelVersion = "fixture-gemma",
+                        promptVersion = promptVersion,
+                        personRefs = listOf(
+                            SemanticCaptionPersonRefRecord("P1", "person_me", faceRegion = faceRegion, associationStatus = PersonAssociationStatus.CONFIDENT),
+                            SemanticCaptionPersonRefRecord("P2", "person_wife", faceRegion = faceRegion, associationStatus = PersonAssociationStatus.CONFIDENT),
+                        ),
+                        generationId = generationId,
+                    ),
+                    personFacts = listOf(
+                        personFact(media.id, "person_me", "P1", "red clothing", generationId, promptVersion),
+                        personFact(media.id, "person_wife", "P2", "white dress", generationId, promptVersion),
+                    ),
+                    generation = SemanticGenerationProvenance(
+                        generationId = generationId,
+                        jobId = job.id,
+                        scope = SemanticFactScope.MEDIA,
+                        scopeId = media.id,
+                        evidenceMediaId = media.id,
+                        modelVersion = "fixture-gemma",
+                        promptVersion = promptVersion,
+                        bodyRegionVersion = PersonalSemanticMemoryPolicy.BODY_REGION_VERSION,
+                        createdAt = System.currentTimeMillis(),
+                    ),
+                ),
+            )
+
+            val chunksBeforeHide = store.semanticCaptionChunksForMedia(media.id)
+            val neutralChunkIds = chunksBeforeHide
+                .filter { it.clusterId == null && it.chunkType != CaptionChunkType.PERSON_RELATION }
+                .mapTo(linkedSetOf(), SemanticCaptionChunkRecord::id)
+            assertTrue(neutralChunkIds.isNotEmpty())
+            assertEquals(
+                setOf("person_me", "person_wife"),
+                store.personVisualFactsForMedia(media.id).mapTo(linkedSetOf(), PersonVisualFactRecord::clusterId),
+            )
+            assertTrue(chunksBeforeHide.any { it.clusterId == "person_me" })
+            assertTrue(chunksBeforeHide.any { it.clusterId == "person_wife" })
+
+            store.setPersonClusterHidden("person_me", true)
+
+            val chunksAfterFirstHide = store.semanticCaptionChunksForMedia(media.id)
+            assertEquals(
+                setOf("person_wife"),
+                store.personVisualFactsForMedia(media.id).mapTo(linkedSetOf(), PersonVisualFactRecord::clusterId),
+            )
+            assertFalse(chunksAfterFirstHide.any { it.clusterId == "person_me" })
+            assertTrue(chunksAfterFirstHide.any { it.clusterId == "person_wife" })
+            assertTrue(chunksAfterFirstHide.mapTo(linkedSetOf(), SemanticCaptionChunkRecord::id).containsAll(neutralChunkIds))
+            assertEquals(
+                setOf("person_wife"),
+                store.semanticCaptionsForMedia(media.id).single().personRefs.mapTo(linkedSetOf(), SemanticCaptionPersonRefRecord::clusterId),
+            )
+            assertEquals("STALE_PERSON_BINDING", store.semanticCaptionsForMedia(media.id).single().applicability)
+            assertEquals(1, store.semanticMemoryProgress().personalPendingCount)
+
+            store.setPersonClusterHidden("person_wife", true)
+
+            assertTrue(store.personVisualFactsForMedia(media.id).isEmpty())
+            assertFalse(store.semanticCaptionChunksForMedia(media.id).any { it.clusterId != null })
+            assertEquals(0, store.semanticMemoryProgress().personalEligibleCount)
+            assertEquals(0, store.semanticMemoryProgress().personalPendingCount)
+        } finally {
+            store.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    private fun face(axis: Int = 0) = FaceInstance(
         bounds = listOf(.1f, .1f, .4f, .5f),
-        embedding = FloatArray(FaceModelCatalog.sface.embeddingDimension).also { it[0] = 1f },
+        embedding = FloatArray(FaceModelCatalog.sface.embeddingDimension).also { it[axis] = 1f },
         quality = .9f,
+    )
+
+    private fun personFact(
+        mediaId: String,
+        clusterId: String,
+        personRef: String,
+        value: String,
+        generationId: String,
+        promptVersion: String,
+    ) = PersonVisualFactRecord(
+        mediaId = mediaId,
+        clusterId = clusterId,
+        personRef = personRef,
+        relation = PersonVisualRelation.WEARING,
+        category = WornItemCategory.CLOTHING,
+        itemType = "clothing",
+        value = value,
+        attributes = mapOf("colors" to listOf(value.substringBefore(' '))),
+        bodyRegion = BodyRegion.UPPER_BODY,
+        confidence = .95f,
+        faceRegion = listOf(.1f, .1f, .4f, .6f),
+        evidenceRegion = listOf(.1f, .2f, .4f, .8f),
+        modelVersion = "fixture-gemma",
+        promptVersion = promptVersion,
+        generationId = generationId,
     )
 }
