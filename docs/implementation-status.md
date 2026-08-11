@@ -1,6 +1,23 @@
 # Public implementation status
 
-Last reviewed: 2026-08-09
+Last reviewed: 2026-08-11
+
+## 2026-08-11 - Reproducible multilingual retrieval fixture
+
+- Added a public 21-query fixture with equivalent English, Hindi, and Hinglish
+  cases covering metadata, OCR, caption FTS, caption embeddings, image vectors,
+  reviewed People, events, and hard negative screenshot clauses.
+- The model-independent fixture tier uses the production query-variant builder,
+  People scope resolver, negative-clause policy, reference vector index, typed
+  channel reporting, and weighted reciprocal-rank fusion. It records deterministic
+  Recall@5, MRR, and per-language rank spread without private model packs.
+- Paraphrase cases cover automobile/car, sofa/couch, footwear/shoes, and
+  handbag/purse. Person-fact cases intentionally include swapped-identity decoys;
+  broad image evidence may retrieve them, but only the requested reviewed cluster
+  may confirm the result.
+- The existing connected `MultilingualRetrievalParityAcceptanceTest` remains the
+  separate device/model tier. It is not rerun in this phase without an ADB device;
+  no consumer app data, indexes, models, or People consent are modified.
 
 ## 2026-08-09 - Real repository person-appearance binding
 
