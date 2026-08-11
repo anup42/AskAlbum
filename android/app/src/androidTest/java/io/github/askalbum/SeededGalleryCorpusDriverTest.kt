@@ -65,6 +65,7 @@ class SeededGalleryCorpusDriverTest {
             Bundle().apply {
                 putString("total_bytes", archive.length().toString())
                 putString("sha256", digest)
+                putString(TestSeedContentProvider.EXTRA_ARCHIVE_NAME, archiveName)
             },
         ))
         assertEquals("COMPLETE", adopted.getString("state"))

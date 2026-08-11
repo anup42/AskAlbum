@@ -75,6 +75,37 @@ class TestSeedContentProviderTest {
         }
     }
 
+    @Test
+    fun namedExternalFileRoundTripUsesTheValidatedArchiveName() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val resolver = context.contentResolver
+        val uri = Uri.parse("content://${context.packageName}.testseed")
+        val runId = "provider_named_external_01"
+        val archiveName = "custom-seed-archive.zip"
+        val payload = ByteArray(32 * 1024) { index -> (index * 23).toByte() }
+        val sha256 = payload.sha256()
+        val name = Bundle().apply {
+            putString(TestSeedContentProvider.EXTRA_ARCHIVE_NAME, archiveName)
+        }
+        try {
+            val prepared = resolver.call(uri, "prepare_external", runId, name)
+            assertEquals("READY", prepared?.getString("state"))
+            val external = File(requireNotNull(prepared?.getString("path")))
+            assertEquals(archiveName, external.name)
+            external.writeBytes(payload)
+            val adopted = resolver.call(uri, "adopt_external", runId, Bundle(name).apply {
+                putString("total_bytes", payload.size.toString())
+                putString("sha256", sha256)
+            })
+            assertEquals("COMPLETE", adopted?.getString("state"))
+            assertEquals(payload.size.toLong(), adopted?.getLong("size"))
+            assertEquals(sha256, adopted?.getString("sha256"))
+            assertEquals(false, external.exists())
+        } finally {
+            resolver.call(uri, "abort", runId, name)
+        }
+    }
+
     private fun ByteArray.sha256(): String = MessageDigest.getInstance("SHA-256").digest(this)
         .joinToString("") { "%02x".format(it) }
 }

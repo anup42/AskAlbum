@@ -38,15 +38,15 @@ class TestSeedContentProvider : ContentProvider() {
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle = when (method) {
         "init" -> initializeTransfer(requireRunId(arg), requireNotNull(extras))
         "write_chunk" -> writeChunk(requireRunId(arg), requireNotNull(extras))
-        "prepare_external" -> prepareExternal(requireRunId(arg))
+        "prepare_external" -> prepareExternal(requireRunId(arg), extras?.getString(EXTRA_ARCHIVE_NAME))
         "adopt_external" -> adoptExternal(requireRunId(arg), requireNotNull(extras))
         "finalize" -> finalizeTransfer(requireRunId(arg))
-        "abort" -> abort(requireRunId(arg))
+        "abort" -> abort(requireRunId(arg), extras?.getString(EXTRA_ARCHIVE_NAME))
         else -> error("Unsupported test seed provider method")
     }
 
-    private fun prepareExternal(runId: String): Bundle {
-        val archive = externalArchive(runId)
+    private fun prepareExternal(runId: String, archiveName: String?): Bundle {
+        val archive = externalArchive(runId, archiveName)
         archive.parentFile?.mkdirs()
         require(!archive.exists() || archive.delete()) { "Could not replace external test seed input" }
         return Bundle().apply {
@@ -60,7 +60,7 @@ class TestSeedContentProvider : ContentProvider() {
         val expectedSha256 = requireNotNull(extras.getString("sha256")).lowercase()
         require(totalBytes in 1..MAX_TRANSFER_BYTES)
         require(expectedSha256.matches(Regex("[0-9a-f]{64}")))
-        val external = externalArchive(runId)
+        val external = externalArchive(runId, extras.getString(EXTRA_ARCHIVE_NAME))
         require(external.isFile && external.length() == totalBytes) {
             "External archive has ${if (external.isFile) external.length() else -1} bytes; expected $totalBytes"
         }
@@ -95,9 +95,9 @@ class TestSeedContentProvider : ContentProvider() {
         return completedBundle(totalBytes, copiedSha256)
     }
 
-    private fun abort(runId: String): Bundle = Bundle().apply {
+    private fun abort(runId: String, archiveName: String?): Bundle = Bundle().apply {
         val root = inputRoot(runId)
-        val external = externalArchive(runId)
+        val external = externalArchive(runId, archiveName)
         putBoolean("deleted", (!root.exists() || root.deleteRecursively()) && (!external.exists() || external.delete()))
         putString("state", "ABORTED")
     }
@@ -273,15 +273,19 @@ class TestSeedContentProvider : ContentProvider() {
         return root
     }
 
-    private fun externalArchive(runId: String): File {
+    private fun externalArchive(runId: String, archiveName: String? = null): File {
         val base = requireNotNull(requireNotNull(context).getExternalFilesDir("test-seed-transfer")).canonicalFile
-        val archive = File(base, "$runId.zip").canonicalFile
+        val safeName = archiveName ?: "$runId.zip"
+        require(ARCHIVE_NAME.matches(safeName)) { "Invalid external seed archive name" }
+        val archive = File(base, safeName).canonicalFile
         require(archive.toPath().startsWith(base.toPath())) { "External seed input escaped root" }
         return archive
     }
 
-    private companion object {
+    companion object {
+        const val EXTRA_ARCHIVE_NAME = "archive_name"
         const val MAX_CHUNK_BYTES = 64 * 1024
         const val MAX_TRANSFER_BYTES = 512L * 1024 * 1024
+        val ARCHIVE_NAME = Regex("[A-Za-z0-9._-]{1,180}")
     }
 }
