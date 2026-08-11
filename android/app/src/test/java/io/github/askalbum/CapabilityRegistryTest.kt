@@ -251,6 +251,23 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun directAggregationExecutorLocksSensitiveFinancialValues() {
+        val unauthorizedSum = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.SUM).copy(sensitiveContentAuthorized = false),
+        )
+        val unauthorizedMinMax = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.MIN_MAX).copy(sensitiveContentAuthorized = false),
+        )
+
+        listOf(unauthorizedSum, unauthorizedMinMax).forEach { answer ->
+            assertEquals(SensitiveEvidencePolicy.LOCKED_HEADLINE, answer.headline)
+            assertTrue(answer.requiresAuthentication)
+            assertTrue(answer.evidenceIds.isEmpty())
+            assertFalse(answer.detail.contains("INR"))
+        }
+    }
+
+    @Test
     fun deterministicAnswerEvidenceAlsoRequiresAuthentication() {
         val password = hit("secret", "Wi-Fi", "INR 10.00", 1_700_000_000_000).copy(
             evidence = listOf(EvidenceRecord("secret:password", "secret", "document_password", "mango-tree-2048", .95f)),
@@ -491,7 +508,8 @@ class CapabilityRegistryTest {
             hits.size,
             emptyList(),
             emptyList(),
-            events,
+            eventsByMedia = events,
+            sensitiveContentAuthorized = intent in setOf(QueryIntent.SUM, QueryIntent.MIN_MAX),
         )
     }
 

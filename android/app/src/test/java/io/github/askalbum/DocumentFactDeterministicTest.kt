@@ -103,6 +103,7 @@ class DocumentFactDeterministicTest {
                 warnings = emptyList(),
                 channelReports = emptyList(),
                 deterministicHits = listOf(first, duplicate, distinct),
+                sensitiveContentAuthorized = true,
             ),
         )
 

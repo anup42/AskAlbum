@@ -124,9 +124,7 @@ object CapabilityAnswerExecutor {
                 channelReports = context.channelReports,
             )
         }
-        if (!context.sensitiveContentAuthorized &&
-            (listRequiresAuthentication(context) || factAnswerRequiresAuthentication(context))
-        ) {
+        if (!context.sensitiveContentAuthorized && answerRequiresAuthentication(context)) {
             return SensitiveEvidencePolicy.lock(
                 base(
                     SensitiveEvidencePolicy.LOCKED_HEADLINE,
@@ -185,23 +183,24 @@ object CapabilityAnswerExecutor {
         return answer
     }
 
-    private fun listRequiresAuthentication(context: CapabilityAnswerContext): Boolean {
-        if (context.plan.intent != QueryIntent.LIST) return false
-        val requested = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField) ?: return false
-        if (!requested.sensitive) return false
-        return (context.hits + context.deterministicHits)
-            .asSequence()
-            .flatMap(SearchHit::evidence)
-            .any { evidence ->
-                evidence.sourceField == requested.sourceField && SensitiveEvidencePolicy.requiresAuthentication(evidence)
-            }
-    }
-
-    private fun factAnswerRequiresAuthentication(context: CapabilityAnswerContext): Boolean {
-        if (context.plan.intent !in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA)) return false
-        if (!context.hasCompleteEligibleCoverage()) return false
-        val requested = OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField) ?: return false
-        if (!requested.sensitive) return false
+    private fun answerRequiresAuthentication(context: CapabilityAnswerContext): Boolean {
+        val requested = when (context.plan.intent) {
+            QueryIntent.LIST,
+            QueryIntent.ANSWER_FACT,
+            QueryIntent.DOCUMENT_QA,
+            -> OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField)
+            QueryIntent.SUM,
+            QueryIntent.MIN_MAX,
+            -> OcrFactAllowlist.resolve(context.plan.aggregation?.field)
+            else -> null
+        }?.takeIf(OcrFactField::sensitive) ?: return false
+        val requiresCompleteCoverageBeforeRendering = context.plan.intent in setOf(
+            QueryIntent.ANSWER_FACT,
+            QueryIntent.DOCUMENT_QA,
+            QueryIntent.SUM,
+            QueryIntent.MIN_MAX,
+        )
+        if (requiresCompleteCoverageBeforeRendering && !context.hasCompleteEligibleCoverage()) return false
         return (context.hits + context.deterministicHits)
             .asSequence()
             .flatMap(SearchHit::evidence)
