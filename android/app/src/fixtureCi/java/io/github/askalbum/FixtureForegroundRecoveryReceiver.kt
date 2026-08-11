@@ -21,6 +21,7 @@ class FixtureForegroundRecoveryReceiver : BroadcastReceiver() {
             try {
                 when (intent.action) {
                     ACTION_ARM -> arm(context.applicationContext)
+                    ACTION_TIMEOUT -> timeout(context.applicationContext)
                     ACTION_VERIFY -> verify(context.applicationContext)
                     else -> error("Unsupported fixture recovery action")
                 }
@@ -81,6 +82,40 @@ class FixtureForegroundRecoveryReceiver : BroadcastReceiver() {
         stored.edit().clear().commit()
     }
 
+    private fun timeout(context: Context) {
+        resultFile(context).delete()
+        val workManager = WorkManager.getInstance(context)
+        val previousIds = workManager.getWorkInfosForUniqueWork(UNIQUE_WORK).get(10, TimeUnit.SECONDS)
+            .mapTo(mutableSetOf()) { it.id }
+        IndexScheduler.cancelAndWait(context)
+        require(!IndexScheduler.hasActiveWork(context)) { "Recovery work remained active before timeout" }
+
+        InitialImportService.triggerFixtureTimeout(context)
+        val deadline = System.currentTimeMillis() + WAIT_MILLIS
+        var recovery = emptyList<WorkInfo>()
+        while (
+            (recovery.none { it.id !in previousIds && it.state != WorkInfo.State.CANCELLED } ||
+                ForegroundIndexRuntime.active) &&
+            System.currentTimeMillis() < deadline
+        ) {
+            recovery = workManager.getWorkInfosForUniqueWork(UNIQUE_WORK).get(10, TimeUnit.SECONDS)
+            if (
+                recovery.none { it.id !in previousIds && it.state != WorkInfo.State.CANCELLED } ||
+                ForegroundIndexRuntime.active
+            ) {
+                Thread.sleep(100L)
+            }
+        }
+        val handedOff = recovery.filter { it.id !in previousIds && it.state != WorkInfo.State.CANCELLED }
+        require(handedOff.isNotEmpty()) { "System timeout did not enqueue recovery work" }
+        require(!ForegroundIndexRuntime.active) { "Foreground indexing remained active after timeout" }
+        writeResult(
+            context,
+            "TIMED_OUT|${Process.myPid()}|" +
+                handedOff.joinToString(",") { "${it.id}:${it.state.name}" },
+        )
+    }
+
     private fun preferences(context: Context) = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
     private fun resultFile(context: Context) = File(context.filesDir, RESULT_FILE)
@@ -94,6 +129,7 @@ class FixtureForegroundRecoveryReceiver : BroadcastReceiver() {
 
     companion object {
         const val ACTION_ARM = "io.github.anup42.askalbum.fixture.ARM_FOREGROUND_RECOVERY"
+        const val ACTION_TIMEOUT = "io.github.anup42.askalbum.fixture.TRIGGER_FOREGROUND_TIMEOUT"
         const val ACTION_VERIFY = "io.github.anup42.askalbum.fixture.VERIFY_FOREGROUND_RECOVERY"
         const val RESULT_FILE = "foreground-index-recovery-result.txt"
         private const val PREFERENCES = "fixture-foreground-index-recovery"

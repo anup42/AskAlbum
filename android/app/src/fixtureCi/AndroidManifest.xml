@@ -11,6 +11,7 @@
             android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="io.github.anup42.askalbum.fixture.ARM_FOREGROUND_RECOVERY" />
+                <action android:name="io.github.anup42.askalbum.fixture.TRIGGER_FOREGROUND_TIMEOUT" />
                 <action android:name="io.github.anup42.askalbum.fixture.VERIFY_FOREGROUND_RECOVERY" />
             </intent-filter>
         </receiver>

@@ -52,6 +52,18 @@ class InitialImportService : Service() {
             pauseIndexing()
             return START_NOT_STICKY
         }
+        if (action == ACTION_FIXTURE_TIMEOUT) {
+            if (!BuildConfig.MODEL_INDEPENDENT || BuildConfig.DISTRIBUTION != "fixtureCi") {
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
+            explicitUserStop = false
+            recoveryHandoffScheduled = false
+            startIndexingForeground(notification("Testing system timeout recovery", indeterminate = true))
+            ForegroundIndexRuntime.started()
+            handoffAfterSystemTimeout()
+            return START_NOT_STICKY
+        }
         if (action != ACTION_IMPORT && action != ACTION_INDEX && action != ACTION_RESUME) {
             stopSelf(startId)
             return START_NOT_STICKY
@@ -153,7 +165,12 @@ class InitialImportService : Service() {
     }
 
     override fun onDestroy() {
-        if (ForegroundIndexHandoffPolicy.shouldScheduleRecovery(explicitUserStop, importJob?.isActive == true)) {
+        if (
+            ForegroundIndexHandoffPolicy.shouldScheduleRecovery(
+                termination = ForegroundIndexTermination.UNEXPECTED_DESTRUCTION,
+                importJobActive = importJob?.isActive == true,
+            ) && !explicitUserStop
+        ) {
             scheduleWorkManagerRecovery()
         }
         ForegroundIndexRuntime.stopped()
@@ -162,9 +179,7 @@ class InitialImportService : Service() {
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        importJob?.cancel()
-        scheduleWorkManagerRecovery()
-        stopForegroundAndSelf()
+        handoffAfterSystemTimeout()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -263,6 +278,7 @@ class InitialImportService : Service() {
         private const val ACTION_STOP = "io.github.anup42.askalbum.action.STOP_INDEX"
         private const val ACTION_PAUSE = "io.github.anup42.askalbum.action.PAUSE_INDEX"
         private const val ACTION_RESUME = "io.github.anup42.askalbum.action.RESUME_INDEX"
+        private const val ACTION_FIXTURE_TIMEOUT = "io.github.anup42.askalbum.fixture.action.SYSTEM_TIMEOUT"
         private const val CHANNEL_ID = "gallery_initial_import"
         private const val NOTIFICATION_ID = 4102
 
@@ -279,6 +295,27 @@ class InitialImportService : Service() {
                 Intent(context, InitialImportService::class.java).setAction(ACTION_INDEX),
             )
         }
+
+        internal fun triggerFixtureTimeout(context: Context) {
+            check(BuildConfig.MODEL_INDEPENDENT && BuildConfig.DISTRIBUTION == "fixtureCi")
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, InitialImportService::class.java).setAction(ACTION_FIXTURE_TIMEOUT),
+            )
+        }
+    }
+
+    private fun handoffAfterSystemTimeout() {
+        importJob?.cancel()
+        if (
+            ForegroundIndexHandoffPolicy.shouldScheduleRecovery(
+                termination = ForegroundIndexTermination.SYSTEM_TIMEOUT,
+                importJobActive = importJob?.isActive == true,
+            )
+        ) {
+            scheduleWorkManagerRecovery()
+        }
+        stopForegroundAndSelf()
     }
 
     private fun pauseIndexing() {

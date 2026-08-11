@@ -75,9 +75,26 @@ internal object ForegroundIndexLanePolicy {
     fun shouldDeferBackgroundWorker(foregroundActive: Boolean): Boolean = foregroundActive
 }
 
+internal enum class ForegroundIndexTermination {
+    USER_STOP,
+    USER_PAUSE,
+    COMPLETED,
+    SYSTEM_TIMEOUT,
+    UNEXPECTED_DESTRUCTION,
+}
+
 internal object ForegroundIndexHandoffPolicy {
-    fun shouldScheduleRecovery(explicitUserStop: Boolean, importJobActive: Boolean): Boolean =
-        importJobActive && !explicitUserStop
+    fun shouldScheduleRecovery(
+        termination: ForegroundIndexTermination,
+        importJobActive: Boolean,
+    ): Boolean = when (termination) {
+        ForegroundIndexTermination.SYSTEM_TIMEOUT -> true
+        ForegroundIndexTermination.UNEXPECTED_DESTRUCTION -> importJobActive
+        ForegroundIndexTermination.USER_STOP,
+        ForegroundIndexTermination.USER_PAUSE,
+        ForegroundIndexTermination.COMPLETED,
+        -> false
+    }
 }
 
 internal object IndexingSupervisorPolicy {

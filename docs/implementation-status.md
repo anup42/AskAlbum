@@ -1653,3 +1653,15 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: indexing reliability/lease policy tests, fixture AndroidTest compilation, consumerDebug, fixtureCiDebug, offlineDemoDebug, and offline no-INTERNET scan.
 - Fixture-only control is protected by `android.permission.DUMP`; the fixture package was removed after each host run and the consumer package was not targeted.
 - Remaining: the platform six-hour `onTimeout()` callback and a full real-model 5k/20k media run remain NOT RUN.
+
+## 2026-08-12 - Verify media-processing timeout handoff
+
+- Files changed: indexing reliability policy/test, InitialImportService, fixture recovery receiver/manifest, host recovery runner, and this status file.
+- Migration added: none; completed indexes, People corrections, captions, facts, events, model packs, and consent are unchanged.
+- Platform `onTimeout()` and the fixture trigger now share one typed SYSTEM_TIMEOUT handoff that cancels foreground work, schedules enabled WorkManager recovery, and stops the foreground lane.
+- PASS: fixture timeout cancelled prior recovery and produced new WorkRequest `7fe4d1ef-ebb6-470e-82a3-9f3a6f8a6a6f` in RUNNING state.
+- PASS: independent process-death gate preserved WorkRequest `67de7e79-eb3f-493a-997e-a143018a2e37` across PID 9228 to PID 9358 as ENQUEUED.
+- PASS: connected forced-Doze recovery, full fixture JVM suite, fixture AndroidTest compilation, consumerDebug, fixtureCiDebug, and offlineDemoDebug.
+- PASS: fixture-only receiver remains `android.permission.DUMP` protected, is absent from consumer/offline APKs, and offlineDemo has no INTERNET permission.
+- Device ended ACTIVE with fixture removed; the consumer package and its data were not targeted.
+- Remaining: a physical six-hour platform-triggered timeout and a full real-model 5k/20k media run remain NOT RUN.

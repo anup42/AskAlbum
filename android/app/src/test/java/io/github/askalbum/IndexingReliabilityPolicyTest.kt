@@ -58,9 +58,40 @@ class IndexingReliabilityPolicyTest {
 
     @Test
     fun unexpectedServiceDestructionSchedulesRecoveryButExplicitStopDoesNot() {
-        assertTrue(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(false, true))
-        assertFalse(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(true, true))
-        assertFalse(ForegroundIndexHandoffPolicy.shouldScheduleRecovery(false, false))
+        assertTrue(
+            ForegroundIndexHandoffPolicy.shouldScheduleRecovery(
+                ForegroundIndexTermination.UNEXPECTED_DESTRUCTION,
+                importJobActive = true,
+            ),
+        )
+        assertFalse(
+            ForegroundIndexHandoffPolicy.shouldScheduleRecovery(
+                ForegroundIndexTermination.UNEXPECTED_DESTRUCTION,
+                importJobActive = false,
+            ),
+        )
+        assertFalse(
+            ForegroundIndexHandoffPolicy.shouldScheduleRecovery(
+                ForegroundIndexTermination.USER_STOP,
+                importJobActive = true,
+            ),
+        )
+    }
+
+    @Test
+    fun systemTimeoutAlwaysHandsOffToBackgroundRecovery() {
+        assertTrue(
+            ForegroundIndexHandoffPolicy.shouldScheduleRecovery(
+                ForegroundIndexTermination.SYSTEM_TIMEOUT,
+                importJobActive = false,
+            ),
+        )
+        assertFalse(
+            ForegroundIndexHandoffPolicy.shouldScheduleRecovery(
+                ForegroundIndexTermination.COMPLETED,
+                importJobActive = true,
+            ),
+        )
     }
 
     @Test

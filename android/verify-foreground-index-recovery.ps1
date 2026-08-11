@@ -18,6 +18,7 @@ $gradle = Join-Path $androidRoot 'gradlew.bat'
 $fixturePackage = 'io.github.anup42.askalbum.fixture'
 $receiver = "$fixturePackage/io.github.anup42.askalbum.FixtureForegroundRecoveryReceiver"
 $armAction = 'io.github.anup42.askalbum.fixture.ARM_FOREGROUND_RECOVERY'
+$timeoutAction = 'io.github.anup42.askalbum.fixture.TRIGGER_FOREGROUND_TIMEOUT'
 $verifyAction = 'io.github.anup42.askalbum.fixture.VERIFY_FOREGROUND_RECOVERY'
 $resultPath = 'files/foreground-index-recovery-result.txt'
 $fixtureApk = Join-Path $androidRoot 'app\build\outputs\apk\fixtureCi\debug\app-fixtureCi-debug.apk'
@@ -89,6 +90,15 @@ try {
         throw 'Fixture APK was not produced'
     }
 
+    Invoke-Adb @('install', '-r', '-d', $fixtureApk) | Write-Host
+    Invoke-Adb @(
+        'shell', 'am', 'start', '-W',
+        '-n', "$fixturePackage/io.github.anup42.askalbum.MainActivity"
+    ) | Out-Null
+    Invoke-RecoveryAction -Action $timeoutAction -ExpectedPrefix 'TIMED_OUT|' | Out-Null
+
+    Invoke-Adb @('shell', 'am', 'force-stop', $fixturePackage) | Out-Null
+    Invoke-Adb @('uninstall', $fixturePackage) | Out-Null
     Invoke-Adb @('install', '-r', '-d', $fixtureApk) | Write-Host
     Invoke-Adb @(
         'shell', 'am', 'start', '-W',
