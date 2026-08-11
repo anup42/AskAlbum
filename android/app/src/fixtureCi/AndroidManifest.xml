@@ -3,4 +3,16 @@
     <uses-permission
         android:name="android.permission.INTERNET"
         tools:node="remove" />
+    <application>
+        <receiver
+            android:name=".FixtureForegroundRecoveryReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="io.github.anup42.askalbum.fixture.ARM_FOREGROUND_RECOVERY" />
+                <action android:name="io.github.anup42.askalbum.fixture.VERIFY_FOREGROUND_RECOVERY" />
+            </intent-filter>
+        </receiver>
+    </application>
 </manifest>

@@ -1642,3 +1642,14 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: run-scoped cleanup deleted 84/84 fixture database rows and 84/84 MediaStore items with zero remaining.
 - Build: fixtureCiDebug and fixtureCiDebugAndroidTest PASS through the connected acceptance driver. Consumer/offline runtime artifacts are unchanged from the preceding PASS build.
 - Remaining: Q08 uses exact persisted fixture verdicts rather than a real Gemma image inference; the separate production verifier test covers one-call generation and cache reuse, while full real-model 5k/20k acceptance remains NOT RUN.
+
+## 2026-08-12 - Host-verified foreground indexing recovery
+
+- Files changed: InitialImportService, fixture recovery receiver/manifest, foreground recovery AndroidTest, host recovery runner, and this status file.
+- Migration added: none; gallery, People, vectors, captions, facts, events, models, and consent are unchanged.
+- Foreground promotion now precedes synchronous preference I/O for valid start/resume actions.
+- PASS: host-separated process-death gate killed fixture PID 3237 and recovered the exact WorkRequest `777f36fa-3da0-4ab0-a46f-fc0f8019fbfd` as ENQUEUED in PID 3634.
+- PASS: connected forced-Doze gate retained recovery work during idle and after unforce on SM-F966B.
+- PASS: indexing reliability/lease policy tests, fixture AndroidTest compilation, consumerDebug, fixtureCiDebug, offlineDemoDebug, and offline no-INTERNET scan.
+- Fixture-only control is protected by `android.permission.DUMP`; the fixture package was removed after each host run and the consumer package was not targeted.
+- Remaining: the platform six-hour `onTimeout()` callback and a full real-model 5k/20k media run remain NOT RUN.

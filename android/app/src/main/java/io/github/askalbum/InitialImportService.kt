@@ -58,8 +58,10 @@ class InitialImportService : Service() {
         }
         explicitUserStop = false
         recoveryHandoffScheduled = false
-        IndexingJobControlsStore(this).setForegroundPaused(false)
+        // Android starts the foreground-service deadline before this callback. Promote the
+        // service before synchronous preference or indexing I/O can delay startForeground().
         startIndexingForeground(notification("Reading your permitted gallery", indeterminate = true))
+        IndexingJobControlsStore(this).setForegroundPaused(false)
         if (importJob?.isActive != true) {
             ForegroundIndexRuntime.started()
             ensureWorkManagerRecovery()
