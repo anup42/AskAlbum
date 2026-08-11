@@ -1678,3 +1678,16 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: `testFixtureCiDebugUnitTest`, fixtureCiDebug, and offlineDemoDebug; the offline APK contains no INTERNET permission.
 - PASS: the debug receiver is `exported=false`, protected by `android.permission.DUMP`, and a non-app-UID broadcast created no private report.
 - Consumer instrumentation was NOT RUN. A full real-model 5k/20k query-and-indexing acceptance remains NOT RUN.
+
+## 2026-08-12 - Real Gemma identity-bound three-role gate
+
+- Files changed: the debug real-Gemma smoke receiver and this status file; production runtime code and database schema are unchanged.
+- Migration added: none; the visual fixture uses an operation-scoped temporary database and cache image, both deleted after the run.
+- One initial device attempt FAIL: an unrelated package initialized another E2B GPU model, AskAlbum was killed under contention, and its report remained RUNNING. The exact temporary operation files were identified and removed; no consumer gallery/model/index data was touched.
+- PASS: uncontended connected run completed in 44,158 ms using the active verified E2B pack on GPU with MTP supported and enabled.
+- PASS: planner, two identity-bound visual calls, and grounded composition shared one Gemma initialization; all calls after planning reported zero model-load time.
+- PASS: the true fixture emitted three `VERIFIED_TRUE` evidence records bound to the correct reviewed clusters; asking for Person A's attribute actually shown on Person B returned `VERIFIED_FALSE`, zero accepted media, and zero confirming evidence.
+- PASS: grounded composition cited exactly the three media-scoped visual-verification records and introduced no evidence ID.
+- PASS: consumerDebug, full `testFixtureCiDebugUnitTest`, fixtureCiDebug, and offlineDemoDebug; the offline APK contains no INTERNET permission.
+- PASS: replacement installation preserved the exact active E2B generation pointer and E2B selection; final diagnostics observed no target crash, ANR, OOM, or SQLite failure.
+- Consumer instrumentation and a full real-gallery 5k/20k model acceptance remain NOT RUN.
