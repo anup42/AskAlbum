@@ -189,7 +189,7 @@ internal object PersonConditionCanonicalizationPolicy {
             val predicateTokens = tokens.subList(verb.index, predicateEnd(tokens, verb.index, verbs))
                 .map(Token::value)
                 .toMutableList()
-                .also { values -> while (values.lastOrNull() in trailingQueryWords) values.removeLast() }
+                .also { values -> while (values.lastOrNull() in trailingQueryWords) values.removeAt(values.lastIndex) }
             if (predicateTokens.isEmpty()) return@mapNotNull null
             val polarity = if (
                 tokens.subList(maxOf(0, verb.index - NEGATION_LOOKBACK), verb.index)

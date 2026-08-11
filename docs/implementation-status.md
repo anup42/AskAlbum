@@ -1791,3 +1791,16 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: the synthetic high-risk OCR round-tripped through protected storage while plaintext was absent from SQLite/WAL files; Gemma initialization remained `0 -> 0`, so protected evidence did not enter answer composition before authentication.
 - PASS: the consumer database footprint remained 2080 KiB; only the bounded report added about 4 KiB under files. Temporary database/lock files were removed, timestamp-bounded diagnostics found no crash/ANR/OOM/SQLite marker, and the synthetic secret had zero logcat occurrences.
 - Scope: the post-auth repository reveal was exercised through the protected same-UID hook. A physical BiometricPrompt gesture and a real consumer-gallery password query remain NOT RUN.
+
+## 2026-08-12 - Permission-bounded exactness and min-SDK lint closure
+
+- Files changed: media-access coverage policy, repository exactness/warnings, count wording, importer permission reuse, focused unit tests, one API-29 compatibility call, and this status file.
+- Migration added: none; media, indexes, People corrections, captions, facts, events, model packs, and consent are unchanged.
+- Defect fixed: denied or selected-only Android gallery access can no longer produce an exact whole-gallery count; explicit closed result sets remain eligible for exact deterministic answers.
+- Initial focused test invocation was NOT RUN because the shell lacked `ANDROID_HOME`; the same command was rerun with the local SDK and PASS.
+- PASS: media-access coverage, retrieval exactness, capability wording, the full fixture JVM suite, consumerDebug, fixtureCiDebug, and offlineDemoDebug.
+- PASS: offlineDemo manifest contains no INTERNET permission.
+- Initial consumer lint FAIL exposed a pre-existing API-35 `List.removeLast()` call on minSdk 29; it now uses the compatible indexed removal path. The focused canonicalization test and final consumer lint PASS.
+- PASS: replacement install on SM-F966B preserved first-install time and unchanged database files. READ_MEDIA_IMAGES and READ_MEDIA_VIDEO remained ignored.
+- PASS: connected query `How many photos did I take in 2024` now reports `partial index`, `0 matches in the current retrieval pass`, and explicitly says gallery access is off and the result is not a complete gallery count.
+- Consumer instrumentation was NOT RUN. Full real-gallery 5k/20k model acceptance remains NOT RUN.
