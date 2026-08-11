@@ -3,8 +3,13 @@ package io.github.anup42.askalbum
 import java.util.PriorityQueue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -15,7 +20,7 @@ import kotlinx.coroutines.sync.withLock
 class SerializedInferenceResourceManager : InferenceResourceManager {
     private val state = Mutex()
     private val waiters = PriorityQueue<Waiter>(compareBy<Waiter> { it.priority.rank }.thenBy { it.sequence })
-    private var active = false
+    private var active: Waiter? = null
     private var sequence = 0L
 
     override suspend fun <T> withModel(capability: ModelCapability, block: suspend () -> T): T =
@@ -25,22 +30,48 @@ class SerializedInferenceResourceManager : InferenceResourceManager {
         capability: ModelCapability,
         priority: InferencePriority,
         block: suspend () -> T,
-    ): T {
-        val waiter = Waiter(priority, sequence++)
+    ): T = coroutineScope {
+        val waiter = Waiter(priority)
+        var activeExecutionToPreempt: Job? = null
         val admittedImmediately = state.withLock {
-            if (!active) {
-                active = true
+            waiter.sequence = sequence++
+            val current = active
+            if (current == null) {
+                active = waiter
                 waiter.admitted = true
                 true
             } else {
                 waiters.add(waiter)
+                if (
+                    priority == InferencePriority.INTERACTIVE &&
+                    current.priority == InferencePriority.BACKGROUND &&
+                    !current.preemptionRequested
+                ) {
+                    current.preemptionRequested = true
+                    activeExecutionToPreempt = current.execution
+                }
                 false
             }
         }
+        activeExecutionToPreempt?.cancel(InferencePreemptedCancellationException())
         try {
             if (!admittedImmediately) waiter.granted.await()
             currentCoroutineContext().ensureActive()
-            return block()
+            val execution = async(start = CoroutineStart.LAZY) { block() }
+            val preemptBeforeStart = state.withLock {
+                waiter.execution = execution
+                waiter.preemptionRequested
+            }
+            if (preemptBeforeStart) execution.cancel(InferencePreemptedCancellationException())
+            execution.start()
+            try {
+                execution.await()
+            } catch (cancelled: CancellationException) {
+                if (waiter.preemptionRequested && currentCoroutineContext().isActive) {
+                    throw InferencePreemptedException()
+                }
+                throw cancelled
+            }
         } catch (cancelled: CancellationException) {
             if (cancelWaiter(waiter)) advance()
             throw cancelled
@@ -56,6 +87,7 @@ class SerializedInferenceResourceManager : InferenceResourceManager {
             false
         } else if (!waiter.released) {
             waiter.released = true
+            if (active === waiter) active = null
             true
         } else {
             false
@@ -67,6 +99,7 @@ class SerializedInferenceResourceManager : InferenceResourceManager {
             false
         } else {
             waiter.released = true
+            if (active === waiter) active = null
             true
         }
     }
@@ -75,28 +108,52 @@ class SerializedInferenceResourceManager : InferenceResourceManager {
         while (true) {
             val next = state.withLock {
                 while (waiters.isNotEmpty()) {
-                    val candidate = waiters.poll()
+                    val candidate = requireNotNull(waiters.poll())
                     if (candidate.cancelled) continue
                     candidate.admitted = true
+                    active = candidate
                     return@withLock candidate
                 }
-                active = false
+                active = null
                 null
             }
-            if (next == null) return
-            if (next.granted.complete(Unit)) return
-            state.withLock { next.released = true }
+            val admitted = next ?: return
+            if (admitted.granted.complete(Unit)) return
+            state.withLock { admitted.released = true }
         }
     }
 
     private class Waiter(
         val priority: InferencePriority,
-        val sequence: Long,
+        var sequence: Long = 0L,
         val granted: CompletableDeferred<Unit> = CompletableDeferred(),
         var admitted: Boolean = false,
         var cancelled: Boolean = false,
         var released: Boolean = false,
+        var preemptionRequested: Boolean = false,
+        var execution: Job? = null,
     )
+}
+
+internal class InferencePreemptedException : IllegalStateException(
+    "Background inference yielded to an interactive request",
+)
+
+private class InferencePreemptedCancellationException : CancellationException(
+    "Background inference yielded to an interactive request",
+)
+
+internal suspend fun <T> retryBackgroundInferenceAfterPreemption(
+    priority: InferencePriority,
+    block: suspend () -> T,
+): T {
+    while (true) {
+        try {
+            return block()
+        } catch (preempted: InferencePreemptedException) {
+            if (priority != InferencePriority.BACKGROUND) throw preempted
+        }
+    }
 }
 
 class GroundedClaimValidator {

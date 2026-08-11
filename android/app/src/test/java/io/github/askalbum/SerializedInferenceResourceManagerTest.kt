@@ -19,7 +19,7 @@ class SerializedInferenceResourceManagerTest {
         val order = mutableListOf<String>()
 
         val first = async {
-            manager.withModel(ModelCapability.GENERATIVE, InferencePriority.BACKGROUND) {
+            manager.withModel(ModelCapability.GENERATIVE, InferencePriority.INTERACTIVE) {
                 firstStarted.complete(Unit)
                 releaseFirst.await()
                 order += "first"
@@ -46,13 +46,39 @@ class SerializedInferenceResourceManagerTest {
     }
 
     @Test
+    fun interactiveLeasePreemptsAnActiveBackgroundLease() = runBlocking {
+        val manager = SerializedInferenceResourceManager()
+        val backgroundStarted = CompletableDeferred<Unit>()
+        val background = async {
+            runCatching {
+                manager.withModel(ModelCapability.GENERATIVE, InferencePriority.BACKGROUND) {
+                    backgroundStarted.complete(Unit)
+                    awaitCancellation()
+                }
+            }.exceptionOrNull()
+        }
+        backgroundStarted.await()
+
+        val interactive = async {
+            manager.withModel(ModelCapability.TEXT_EMBEDDING, InferencePriority.INTERACTIVE) { "interactive" }
+        }
+
+        assertEquals("interactive", kotlinx.coroutines.withTimeout(2_000) { interactive.await() })
+        assertTrue(kotlinx.coroutines.withTimeout(2_000) { background.await() } is InferencePreemptedException)
+        assertEquals(
+            "background-resumed",
+            manager.withModel(ModelCapability.IMAGE_EMBEDDING, InferencePriority.BACKGROUND) { "background-resumed" },
+        )
+    }
+
+    @Test
     fun cancelledQueuedLeaseDoesNotStarveTheNextRequest() = runBlocking {
         val manager = SerializedInferenceResourceManager()
         val firstStarted = CompletableDeferred<Unit>()
         val releaseFirst = CompletableDeferred<Unit>()
 
         val first = async {
-            manager.withModel(ModelCapability.GENERATIVE, InferencePriority.BACKGROUND) {
+            manager.withModel(ModelCapability.GENERATIVE, InferencePriority.INTERACTIVE) {
                 firstStarted.complete(Unit)
                 releaseFirst.await()
             }

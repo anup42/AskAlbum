@@ -33,14 +33,16 @@ class LiteRtImageTextEmbeddingEngine(
     override suspend fun embedImage(image: ModelImage): FloatArray = embedImages(listOf(image)).single()
 
     internal suspend fun embedImages(images: List<ModelImage>): List<FloatArray> =
-        resources.withModel(ModelCapability.IMAGE_EMBEDDING) {
-            withContext(Dispatchers.Default) {
-                val pack = modelPacks.current() ?: error("No verified retrieval model pack is installed")
-                val pixels = images.map { Siglip2ImagePreprocessor.preprocess(it, pack.manifest) }
-                when (pack.manifest.runtime) {
-                    RETRIEVAL_RUNTIME_LITERT -> runLiteRtFloatModels(pack.artifact(ROLE_IMAGE_ENCODER), pixels, pack.manifest.embeddingDimension)
-                    RETRIEVAL_RUNTIME_ONNX -> runOnnxImageModels(pack.artifact(ROLE_IMAGE_ENCODER), pixels, pack.manifest)
-                    else -> error("Unsupported retrieval runtime")
+        retryBackgroundInferenceAfterPreemption(InferencePriority.BACKGROUND) {
+            resources.withModel(ModelCapability.IMAGE_EMBEDDING, InferencePriority.BACKGROUND) {
+                withContext(Dispatchers.Default) {
+                    val pack = modelPacks.current() ?: error("No verified retrieval model pack is installed")
+                    val pixels = images.map { Siglip2ImagePreprocessor.preprocess(it, pack.manifest) }
+                    when (pack.manifest.runtime) {
+                        RETRIEVAL_RUNTIME_LITERT -> runLiteRtFloatModels(pack.artifact(ROLE_IMAGE_ENCODER), pixels, pack.manifest.embeddingDimension)
+                        RETRIEVAL_RUNTIME_ONNX -> runOnnxImageModels(pack.artifact(ROLE_IMAGE_ENCODER), pixels, pack.manifest)
+                        else -> error("Unsupported retrieval runtime")
+                    }
                 }
             }
         }
@@ -53,7 +55,8 @@ class LiteRtImageTextEmbeddingEngine(
     internal suspend fun embedTexts(
         texts: List<String>,
         priority: InferencePriority = InferencePriority.BACKGROUND,
-    ): List<FloatArray> = resources.withModel(ModelCapability.TEXT_EMBEDDING, priority) {
+    ): List<FloatArray> = retryBackgroundInferenceAfterPreemption(priority) {
+        resources.withModel(ModelCapability.TEXT_EMBEDDING, priority) {
             withContext(Dispatchers.Default) {
                 val pack = modelPacks.current() ?: error("No verified retrieval model pack is installed")
                 val tokenizer = tokenizerFor(pack)
@@ -72,6 +75,7 @@ class LiteRtImageTextEmbeddingEngine(
                 }
             }
         }
+    }
 
     private fun tokenizerFor(pack: InstalledRetrievalPack): Siglip2VocabTokenizer {
         val key = pack.directory.absolutePath

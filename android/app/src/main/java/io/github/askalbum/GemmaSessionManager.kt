@@ -108,31 +108,33 @@ class GemmaSessionManager internal constructor(
         priority: InferencePriority = InferencePriority.BACKGROUND,
         block: suspend (SharedGemmaLease) -> T,
     ): T {
-        return resources.withModel(ModelCapability.GENERATIVE, priority) {
-            sessionLock.withLock {
-                idleEviction?.cancel()
-                try {
-                    val current = active
-                    val reused = current != null &&
-                        current.modelPath == modelPath &&
-                        current.multimodal == multimodal
-                    val selected = if (reused) {
-                        requireNotNull(current)
-                    } else {
-                        val started = System.nanoTime()
-                        val engine = factory.create(modelPath, multimodal)
-                        initializationCounter.incrementAndGet()
-                        current?.engine?.closeSafely()
-                        ActiveEngine(
-                            modelPath = modelPath,
-                            multimodal = multimodal,
-                            engine = engine,
-                            loadMs = (System.nanoTime() - started) / 1_000_000L,
-                        ).also { active = it }
+        return retryBackgroundInferenceAfterPreemption(priority) {
+            resources.withModel(ModelCapability.GENERATIVE, priority) {
+                sessionLock.withLock {
+                    idleEviction?.cancel()
+                    try {
+                        val current = active
+                        val reused = current != null &&
+                            current.modelPath == modelPath &&
+                            current.multimodal == multimodal
+                        val selected = if (reused) {
+                            requireNotNull(current)
+                        } else {
+                            val started = System.nanoTime()
+                            val engine = factory.create(modelPath, multimodal)
+                            initializationCounter.incrementAndGet()
+                            current?.engine?.closeSafely()
+                            ActiveEngine(
+                                modelPath = modelPath,
+                                multimodal = multimodal,
+                                engine = engine,
+                                loadMs = (System.nanoTime() - started) / 1_000_000L,
+                            ).also { active = it }
+                        }
+                        block(SharedGemmaLease(selected.engine, if (reused) 0L else selected.loadMs))
+                    } finally {
+                        scheduleIdleEvictionLocked()
                     }
-                    block(SharedGemmaLease(selected.engine, if (reused) 0L else selected.loadMs))
-                } finally {
-                    scheduleIdleEvictionLocked()
                 }
             }
         }

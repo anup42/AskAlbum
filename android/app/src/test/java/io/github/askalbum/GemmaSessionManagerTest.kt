@@ -173,6 +173,42 @@ class GemmaSessionManagerTest {
         manager.evictNow()
     }
 
+    @Test
+    fun interactiveCallPreemptsAndRestartsBackgroundWithoutReloadingGemma() = runBlocking {
+        val created = mutableListOf<FakeEngine>()
+        val manager = GemmaSessionManager(
+            resources = SerializedInferenceResourceManager(),
+            factory = SharedGemmaEngineFactory { _, _ -> FakeEngine().also(created::add) },
+            idleTimeoutMs = 60_000,
+        )
+        val backgroundStarted = CompletableDeferred<Unit>()
+        var backgroundAttempts = 0
+        val background = async {
+            manager.withEngine("pack-e2b", multimodal = true, priority = InferencePriority.BACKGROUND) {
+                backgroundAttempts += 1
+                if (backgroundAttempts == 1) {
+                    backgroundStarted.complete(Unit)
+                    awaitCancellation()
+                }
+                "background-complete"
+            }
+        }
+        backgroundStarted.await()
+
+        val interactive = async {
+            manager.withEngine("pack-e2b", multimodal = true, priority = InferencePriority.INTERACTIVE) {
+                "interactive-complete"
+            }
+        }
+
+        assertEquals("interactive-complete", withTimeout(2_000) { interactive.await() })
+        assertEquals("background-complete", withTimeout(2_000) { background.await() })
+        assertEquals(2, backgroundAttempts)
+        assertEquals(1, manager.initializationCount)
+        assertEquals(1, created.size)
+        manager.evictNow()
+    }
+
     private class PassthroughResources : InferenceResourceManager {
         override suspend fun <T> withModel(capability: ModelCapability, block: suspend () -> T): T = block()
     }
