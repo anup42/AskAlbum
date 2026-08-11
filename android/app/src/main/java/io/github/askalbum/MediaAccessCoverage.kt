@@ -45,8 +45,11 @@ data class GalleryAccessCoverageReport(
 }
 
 internal object MediaAccessCoveragePolicy {
-    fun requiredKinds(plan: GalleryQueryPlan): Set<MediaKind> {
-        if (plan.baseResultIds != null) return emptySet()
+    fun requiredKinds(
+        plan: GalleryQueryPlan,
+        closedExecutionScope: Boolean = false,
+    ): Set<MediaKind> {
+        if (closedExecutionScope || plan.baseResultIds != null) return emptySet()
         return when (plan.mediaScope) {
             MediaScope.IMAGES -> setOf(MediaKind.IMAGE)
             MediaScope.VIDEOS -> setOf(MediaKind.VIDEO)
@@ -81,8 +84,11 @@ internal object MediaAccessCoveragePolicy {
 internal class AndroidMediaAccessCoverage(context: Context) {
     private val appContext = context.applicationContext
 
-    fun reportFor(plan: GalleryQueryPlan): GalleryAccessCoverageReport {
-        val requiredKinds = MediaAccessCoveragePolicy.requiredKinds(plan)
+    fun reportFor(
+        plan: GalleryQueryPlan,
+        closedExecutionScope: Boolean = false,
+    ): GalleryAccessCoverageReport {
+        val requiredKinds = MediaAccessCoveragePolicy.requiredKinds(plan, closedExecutionScope)
         return MediaAccessCoveragePolicy.resolve(
             requiredKinds = requiredKinds,
             fullyGrantedKinds = requiredKinds.filterTo(mutableSetOf(), ::hasFullPermission),

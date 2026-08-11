@@ -767,6 +767,7 @@ class GalleryRepository private constructor(
             emit(QueryProgress.Completed(outcome))
             return@flow
         }
+        val closedExecutionScope = hasClosedExecutionScope(plan.baseResultIds, activeResultIds)
         val baseAllowed = resolveExecutionScope(plan.baseResultIds, activeResultIds)
         val peopleScope = PeopleClauseResolver.resolve(plan.peopleClauses) { personId ->
             database.mediaIdsForReviewedPeople(listOf(personId))
@@ -1495,6 +1496,7 @@ class GalleryRepository private constructor(
             completePredicateScan = exactPredicateScan?.completeCoverage == true,
             deterministicMetadataCount = deterministicMetadataCount,
             sensitiveContentAuthorized = requiresAuthentication,
+            closedExecutionScope = closedExecutionScope,
         )
         val sensitiveAnswerToken = if (requiresAuthentication) {
             sensitiveAnswers.put(deterministicAnswer.copy(channelReports = channelReports))
@@ -1660,10 +1662,11 @@ class GalleryRepository private constructor(
         completePredicateScan: Boolean = false,
         deterministicMetadataCount: Boolean = false,
         sensitiveContentAuthorized: Boolean = false,
+        closedExecutionScope: Boolean = false,
     ): SearchAnswer {
         val totalItems = eligibleIds.size
         val readyItems = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
-        val mediaAccessReport = mediaAccessCoverage.reportFor(plan)
+        val mediaAccessReport = mediaAccessCoverage.reportFor(plan, closedExecutionScope)
         val semanticReport = channelReports.first { it.channel == RetrievalChannel.SEMANTIC }
         val peopleReport = channelReports.first { it.channel == RetrievalChannel.PEOPLE }
         val ocrReport = channelReports.first { it.channel == RetrievalChannel.OCR }
@@ -1862,6 +1865,9 @@ class GalleryRepository private constructor(
 
 internal fun resolveExecutionScope(planResultIds: Set<String>?, explicitScopeIds: Set<String>?): Set<String>? =
     planResultIds ?: explicitScopeIds
+
+internal fun hasClosedExecutionScope(planResultIds: Set<String>?, explicitScopeIds: Set<String>?): Boolean =
+    resolveExecutionScope(planResultIds, explicitScopeIds) != null
 
 internal fun ocrEvidenceSourceField(entityType: OcrEntityType?): String =
     entityType?.let { type -> OcrFactAllowlist.fields.firstOrNull { it.type == type }?.sourceField }

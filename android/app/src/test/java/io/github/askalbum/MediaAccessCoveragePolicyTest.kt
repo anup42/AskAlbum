@@ -67,6 +67,18 @@ class MediaAccessCoveragePolicyTest {
         assertTrue(report.complete)
     }
 
+    @Test
+    fun repositorySuppliedExecutionScopeIsClosedEvenWhenPlanOmitsBaseIds() {
+        val required = MediaAccessCoveragePolicy.requiredKinds(
+            plan(MediaScope.IMAGES),
+            closedExecutionScope = true,
+        )
+        val report = MediaAccessCoveragePolicy.resolve(required, emptySet(), selectedVisualAccess = false)
+
+        assertEquals(GalleryAccessCoverageStatus.NOT_REQUIRED, report.status)
+        assertTrue(report.complete)
+    }
+
     private fun plan(scope: MediaScope) = GalleryQueryPlan(
         originalQuery = "How many photos did I take?",
         intent = QueryIntent.COUNT,
