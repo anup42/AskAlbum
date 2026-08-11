@@ -2407,7 +2407,12 @@ private fun PeopleScreen(
                         Text("Or create a new person", fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(8.dp))
                     }
-                    OutlinedTextField(value = label, onValueChange = { label = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        value = label,
+                        onValueChange = { label = it },
+                        label = { Text("Name") },
+                        modifier = Modifier.fillMaxWidth().testTag("person-name-input"),
+                    )
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = relationship,
@@ -2502,6 +2507,7 @@ private fun PeopleScreen(
             confirmButton = {
                 Button(
                     enabled = label.isNotBlank(),
+                    modifier = Modifier.testTag("person-save"),
                     onClick = {
                         onReviewCluster(
                             cluster.id,
@@ -2656,8 +2662,14 @@ private fun PersonClusterCard(
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = onEdit) { Text(actionLabel) }
-                TextButton(onClick = { onSetHidden(cluster.id, !cluster.hidden) }) { Text(if (cluster.hidden) "Unhide" else "Hide") }
+                Button(
+                    onClick = onEdit,
+                    modifier = Modifier.testTag("person-edit-${cluster.id}"),
+                ) { Text(actionLabel) }
+                TextButton(
+                    onClick = { onSetHidden(cluster.id, !cluster.hidden) },
+                    modifier = Modifier.testTag("person-visibility-${cluster.id}"),
+                ) { Text(if (cluster.hidden) "Unhide" else "Hide") }
             }
         }
     }
