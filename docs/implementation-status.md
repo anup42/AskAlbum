@@ -1665,3 +1665,16 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: fixture-only receiver remains `android.permission.DUMP` protected, is absent from consumer/offline APKs, and offlineDemo has no INTERNET permission.
 - Device ended ACTIVE with fixture removed; the consumer package and its data were not targeted.
 - Remaining: a physical six-hour platform-triggered timeout and a full real-model 5k/20k media run remain NOT RUN.
+
+## 2026-08-12 - Non-instrumentation real Gemma shared-session gate
+
+- Files changed: debug real-Gemma smoke receiver/manifest and this status file; production runtime code is unchanged.
+- Migration added: none; gallery rows, indexes, People corrections, captions, facts, events, consent, and model packs are not rewritten.
+- Initial consumer compilation FAIL: the new debug receiver used incorrect `EvidenceRecord` argument names; corrected before installation. Final consumerDebug build PASS.
+- PASS: connected synthetic smoke used the active verified E2B pack on GPU with MTP supported and enabled, in 42,082 ms.
+- PASS: planner used one unrepaired Gemma call; grounded composition used one unrepaired Gemma call and retained the only supplied evidence ID.
+- PASS: planner and composer shared one engine initialization; planner load was 8,802 ms and composer load was 0 ms.
+- PASS: replacement install used `adb install -r -d`; the active E2B generation pointer was identical before and after installation and remained selected after inference.
+- PASS: `testFixtureCiDebugUnitTest`, fixtureCiDebug, and offlineDemoDebug; the offline APK contains no INTERNET permission.
+- PASS: the debug receiver is `exported=false`, protected by `android.permission.DUMP`, and a non-app-UID broadcast created no private report.
+- Consumer instrumentation was NOT RUN. A full real-model 5k/20k query-and-indexing acceptance remains NOT RUN.

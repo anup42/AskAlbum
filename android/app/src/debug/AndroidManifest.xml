@@ -52,5 +52,10 @@
             android:finishOnTaskLaunch="true"
             android:noHistory="true"
             android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <receiver
+            android:name=".TestRealGemmaSmokeReceiver"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.DUMP" />
     </application>
 </manifest>
