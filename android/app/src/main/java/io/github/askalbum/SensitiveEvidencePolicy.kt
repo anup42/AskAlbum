@@ -96,19 +96,41 @@ object SensitiveEvidencePolicy {
     const val LOCKED_HEADLINE = "Sensitive result found"
     const val LOCKED_DETAIL = "Authenticate on this device to view the matching private OCR evidence."
     const val LOCKED_WARNING = "Sensitive OCR was withheld from Gemma and the answer card."
+    const val REDACTED_EVIDENCE_TEXT = "Hidden until device authentication"
 
     fun requiresAuthentication(evidence: EvidenceRecord): Boolean =
         OcrFactAllowlist.fromSource(evidence.sourceField)?.sensitive == true ||
             evidence.sourceField == "document_password" ||
             SensitiveContentClassifier.isSensitive(evidence.text)
     fun requiresAuthentication(hit: SearchHit): Boolean =
-        hit.evidence.any { evidence -> requiresAuthentication(evidence) }    fun lock(answer: SearchAnswer): SearchAnswer = answer.copy(
+        hit.evidence.any { evidence -> requiresAuthentication(evidence) }
+
+    fun redactHit(hit: SearchHit): SearchHit = hit.copy(
+        evidence = hit.evidence.map { evidence ->
+            if (requiresAuthentication(evidence)) {
+                evidence.copy(text = REDACTED_EVIDENCE_TEXT)
+            } else {
+                evidence
+            }
+        },
+    )
+
+    fun redactHits(hits: List<SearchHit>): List<SearchHit> = hits.map(::redactHit)
+
+    fun redactChannelReports(
+        reports: List<RetrievalChannelReport<SearchHit>>,
+    ): List<RetrievalChannelReport<SearchHit>> = reports.map { report ->
+        report.copy(hits = redactHits(report.hits))
+    }
+
+    fun lock(answer: SearchAnswer): SearchAnswer = answer.copy(
         headline = LOCKED_HEADLINE,
         detail = LOCKED_DETAIL,
         evidenceIds = emptyList(),
         claims = emptyList(),
         warnings = (answer.warnings + LOCKED_WARNING).distinct(),
         requiresAuthentication = true,
+        channelReports = redactChannelReports(answer.channelReports),
     )
 }
 

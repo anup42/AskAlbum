@@ -1500,6 +1500,11 @@ class GalleryRepository private constructor(
         } else {
             null
         }
+        val publicChannelReports = if (requiresAuthentication) {
+            SensitiveEvidencePolicy.redactChannelReports(channelReports)
+        } else {
+            channelReports
+        }
         val answer = if (requiresAuthentication) {
             SensitiveEvidencePolicy.lock(deterministicAnswer)
         } else if (shouldComposeGroundedAnswer(plan, hits, verification)) {
@@ -1513,8 +1518,8 @@ class GalleryRepository private constructor(
             ).answer
         } else {
             deterministicAnswer
-        }.copy(channelReports = channelReports)
-        val outcomeHits = GroundedAnswerEvidenceHits.closeCitations(
+        }.copy(channelReports = publicChannelReports)
+        val citedOutcomeHits = GroundedAnswerEvidenceHits.closeCitations(
             primary = hits,
             supplemental = deterministicAnswerHits,
             evidenceIds = (
@@ -1522,13 +1527,18 @@ class GalleryRepository private constructor(
                     if (requiresAuthentication) deterministicAnswer.evidenceIds else emptyList()
                 ).distinct(),
         )
+        val outcomeHits = if (requiresAuthentication) {
+            SensitiveEvidencePolicy.redactHits(citedOutcomeHits)
+        } else {
+            citedOutcomeHits
+        }
         val outcome = finalizeOutcome(sessionId, parentResultSetId, SearchOutcome(
             plan = plan,
             hits = outcomeHits,
             answer = answer,
             elapsedMs = max(1, SystemClock.elapsedRealtime() - started),
             planPatch = planPatch,
-            channelReports = channelReports,
+            channelReports = publicChannelReports,
             sensitiveAnswerToken = sensitiveAnswerToken,
         ))
         emit(QueryProgress.Completed(outcome))

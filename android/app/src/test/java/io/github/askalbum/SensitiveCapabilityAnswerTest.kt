@@ -118,6 +118,40 @@ class SensitiveCapabilityAnswerTest {
         assertEquals(second, store.take(secondToken))
     }
 
+    @Test
+    fun unauthenticatedProjectionRedactsHitsAndTypedChannelReports() {
+        val password = EvidenceRecord(
+            id = "password-evidence",
+            mediaId = "password-media",
+            sourceField = "document_password",
+            text = "mango-tree-2048",
+            confidence = .95f,
+        )
+        val metadata = EvidenceRecord(
+            id = "metadata-evidence",
+            mediaId = "password-media",
+            sourceField = "metadata",
+            text = "Wi-Fi screenshot",
+            confidence = 1f,
+        )
+        val hit = SearchHit(item("password-media"), 1.0, listOf(password, metadata))
+        val redactedHit = SensitiveEvidencePolicy.redactHit(hit)
+        val report = RetrievalChannelReport(
+            channel = RetrievalChannel.OCR,
+            status = ChannelStatus.SUCCESS,
+            eligibleCount = 1,
+            indexedCount = 1,
+            searchedCount = 1,
+            hits = listOf(hit),
+        )
+        val redactedReport = SensitiveEvidencePolicy.redactChannelReports(listOf(report)).single()
+
+        assertEquals(listOf("password-evidence", "metadata-evidence"), redactedHit.evidence.map(EvidenceRecord::id))
+        assertEquals(SensitiveEvidencePolicy.REDACTED_EVIDENCE_TEXT, redactedHit.evidence.first().text)
+        assertEquals("Wi-Fi screenshot", redactedHit.evidence.last().text)
+        assertFalse(redactedReport.hits.single().evidence.any { it.text.contains("mango-tree-2048") })
+    }
+
     private fun answer(value: String) = SearchAnswer(
         headline = value,
         detail = "Protected deterministic fact",

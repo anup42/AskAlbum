@@ -1714,3 +1714,14 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: all roles shared one engine initialization; Hindi/Hinglish planning and image, swapped-identity, video-keyframe, and grounded-composition calls reported zero additional model-load time.
 - PASS: replacement installation used `adb install -r -d`; active E2B revision and SHA-256 remained unchanged. Only the bounded report remained, and timestamp-isolated diagnostics found zero post-fix ANR, crash, OOM, or SQLite markers.
 - Scope: real multilingual planner acceptance and fixture hybrid multilingual retrieval pass. Full multilingual retrieval over the consumer gallery and full 5k/20k acceptance remain NOT RUN.
+
+## 2026-08-12 - Connected sensitive OCR evidence boundary
+
+- Files changed: SensitiveEvidencePolicy, GalleryRepository, focused security tests, a DUMP-protected debug receiver/manifest entry, and this status file. Migration added: none.
+- Defect fixed: a locked answer could still retain protected OCR text inside public `SearchOutcome` hits and typed channel reports. Unauthenticated projections now preserve evidence IDs/provenance while replacing sensitive text with a fixed redaction; the complete deterministic answer exists only in the bounded one-time store.
+- PASS: SensitiveCapabilityAnswerTest, GenericPasswordQueryTest, DocumentFactDeterministicTest, GroundedAnswerEvidenceHitsTest, and the full fixture JVM suite.
+- PASS: consumerDebug, fixtureCiDebug, and offlineDemoDebug builds; offlineDemo contains no INTERNET permission. The connected receiver is non-exported and protected by `android.permission.DUMP`.
+- PASS: replacement-installed connected run on SM-F966B completed in 682 ms. Explicit `ANSWER_FACT` and generic `DOCUMENT_QA` were exact, publicly redacted, revealed once, and rejected token reuse.
+- PASS: the synthetic high-risk OCR round-tripped through protected storage while plaintext was absent from SQLite/WAL files; Gemma initialization remained `0 -> 0`, so protected evidence did not enter answer composition before authentication.
+- PASS: the consumer database footprint remained 2080 KiB; only the bounded report added about 4 KiB under files. Temporary database/lock files were removed, timestamp-bounded diagnostics found no crash/ANR/OOM/SQLite marker, and the synthetic secret had zero logcat occurrences.
+- Scope: the post-auth repository reveal was exercised through the protected same-UID hook. A physical BiometricPrompt gesture and a real consumer-gallery password query remain NOT RUN.
