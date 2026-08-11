@@ -175,6 +175,16 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
                 .put("swappedGenerationCalls", visual.swappedGenerationCalls)
                 .put("swappedLoadMs", visual.swappedLoadMs)
                 .put("swappedGenerationMs", visual.swappedGenerationMs))
+            .put("videoVerifier", JSONObject()
+                .put("usedGemma", true)
+                .put("backend", visual.videoBackend.name)
+                .put("generationCalls", visual.videoGenerationCalls)
+                .put("loadMs", visual.videoLoadMs)
+                .put("generationMs", visual.videoGenerationMs)
+                .put("parentVideoId", visual.videoParentId)
+                .put("timestampMs", visual.videoTimestampMs)
+                .put("acceptedCount", 1)
+                .put("evidenceCount", 1))
             .put("composer", JSONObject()
                 .put("usedGemma", composition.trace.usedGemma)
                 .put("generationCalls", composition.trace.generationCalls)
@@ -191,9 +201,11 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
     ): VisualSmokeEvidence {
         val databaseName = "debug-real-gemma-vision-$operationId.db"
         val fixture = File(application.cacheDir, "debug-real-gemma-vision-$operationId.jpg")
+        val videoFixture = File(application.cacheDir, "debug-real-gemma-video-$operationId.jpg")
         val database = GalleryDatabase(application, databaseName)
         try {
             writeRelationshipFixture(fixture)
+            writeVideoKeyframeFixture(videoFixture)
             database.seedDemoIfEmpty()
             database.ensureStageRows()
             database.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
@@ -293,6 +305,100 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
                 fact.clusterId == PERSON_A_CLUSTER && fact.verdict == PersonVisualVerdict.VERIFIED_FALSE
             }) { "The identity-bound false verdict was not cached" }
 
+            val videoId = "debug-real-gemma-video-$operationId"
+            check(database.upsertImported(listOf(
+                ImportedMedia(
+                    stableId = videoId,
+                    uri = "content://media/external/video/media/$operationId",
+                    displayName = "synthetic-yellow-bicycle.mp4",
+                    mimeType = "video/mp4",
+                    source = MediaSource.MEDIA_STORE,
+                    capturedAt = 1_700_000_000_000L,
+                    modifiedAt = 1_700_000_000_000L,
+                    durationMs = 20_000L,
+                    width = 1200,
+                    height = 900,
+                    sizeBytes = 1_024L,
+                    album = "Debug acceptance",
+                ),
+            )) == 1) { "Synthetic parent video was not inserted" }
+            val keyframe = VideoKeyframeRecord(
+                id = "$videoId:keyframe:9000",
+                mediaId = videoId,
+                timestampMs = VIDEO_TIMESTAMP_MS,
+                previewPath = videoFixture.absolutePath,
+                labels = listOf("yellow bicycle", "video keyframe"),
+                ocrText = "",
+                perceptualHash = 0xA11B1C1L,
+                qualityScore = .99f,
+                producerVersion = VideoKeyframePolicy.PRODUCER_VERSION,
+                embeddingVersion = "siglip-debug-smoke",
+                embeddingState = "COMPLETE",
+            )
+            database.completeIndex(
+                id = videoId,
+                labels = keyframe.labels,
+                description = "Synthetic video with a yellow bicycle at nine seconds",
+                ocrText = "",
+                faceCount = 0,
+                previewPath = null,
+                blocks = emptyList(),
+                entities = emptyList(),
+                ocrAttempted = false,
+                ocrProducerVersion = null,
+                visualFeatures = VisualFeatures(0L, 0f, 0f, 1f),
+                keyframes = listOf(keyframe),
+            )
+            val video = database.allItems().single { it.id == videoId }
+            check(video.kind == MediaKind.VIDEO) { "Synthetic parent media is not a video" }
+            val selectorEvidence = EvidenceRecord(
+                id = "$videoId:video_keyframe:9000",
+                mediaId = videoId,
+                sourceField = "video_keyframe",
+                text = "A yellow bicycle appears in the matched video keyframe.",
+                confidence = .99f,
+                producerVersion = "debug-keyframe-selector-v1",
+                timestampMs = VIDEO_TIMESTAMP_MS,
+                scope = SemanticFactScope.MEDIA,
+                scopeId = videoId,
+                evidenceMediaId = videoId,
+            )
+            val videoPlan = GalleryQueryPlan(
+                originalQuery = "Show the video where a yellow bicycle appears.",
+                intent = QueryIntent.FIND_MEDIA,
+                mediaScope = MediaScope.VIDEOS,
+                semanticClauses = listOf(
+                    SemanticClause(
+                        text = "A yellow bicycle is visible",
+                        hardness = ConstraintStrength.HARD,
+                        subject = SemanticSubject.WHOLE_MEDIA,
+                    ),
+                ),
+                terms = listOf("yellow bicycle"),
+                verification = VerificationPolicy.REQUIRED,
+            )
+            val videoResult = verifier.verifyWhenNeeded(
+                videoPlan,
+                listOf(SearchHit(video, 1.0, listOf(selectorEvidence))),
+            )
+            val videoTrace = requireNotNull(videoResult.trace) { "Video verification trace is absent" }
+            check(videoTrace.usedGemma) { videoTrace.fallbackReason ?: "Video verifier did not use Gemma" }
+            check(videoTrace.modelTier == GemmaModelTier.E2B) { "Video verifier did not use E2B" }
+            check(videoId in videoResult.acceptedIds && videoResult.failures.isEmpty()) {
+                "Matched video keyframe was not accepted"
+            }
+            val videoCondition = videoResult.evaluations.single().conditions.single()
+            check(videoCondition.satisfied && videoCondition.verdict == PersonVisualVerdict.VERIFIED_TRUE) {
+                "Matched video keyframe predicate was not verified"
+            }
+            val videoEvidence = videoResult.evidence.single()
+            check(videoEvidence.mediaId == videoId && videoEvidence.evidenceMediaId == videoId) {
+                "Video verification did not return the parent video"
+            }
+            check(videoEvidence.timestampMs == VIDEO_TIMESTAMP_MS) {
+                "Video verification lost the matched keyframe timestamp"
+            }
+
             return VisualSmokeEvidence(
                 item = item,
                 plan = plan,
@@ -308,11 +414,18 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
                 swappedGenerationCalls = swappedTrace.generationCalls,
                 swappedLoadMs = swappedTrace.engineLoadMs,
                 swappedGenerationMs = swappedTrace.generationMs,
+                videoParentId = videoId,
+                videoTimestampMs = requireNotNull(videoEvidence.timestampMs),
+                videoBackend = videoTrace.backend,
+                videoGenerationCalls = videoTrace.generationCalls,
+                videoLoadMs = videoTrace.engineLoadMs,
+                videoGenerationMs = videoTrace.generationMs,
             )
         } finally {
             database.close()
             application.deleteDatabase(databaseName)
             fixture.delete()
+            videoFixture.delete()
         }
     }
 
@@ -394,6 +507,44 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
         canvas.drawText(if (yellowHat) "YELLOW HAT" else "BLUE SUIT", centerX, 770f, paint)
     }
 
+    private fun writeVideoKeyframeFixture(file: File) {
+        val bitmap = Bitmap.createBitmap(1200, 900, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.rgb(247, 249, 244))
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+            color = Color.rgb(25, 32, 42)
+            textSize = 56f
+        }
+        canvas.drawText("MATCHED VIDEO KEYFRAME AT 00:09", 600f, 90f, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 28f
+        paint.color = Color.rgb(35, 42, 52)
+        canvas.drawCircle(360f, 610f, 145f, paint)
+        canvas.drawCircle(850f, 610f, 145f, paint)
+        paint.strokeWidth = 42f
+        paint.color = Color.rgb(244, 195, 0)
+        canvas.drawLine(360f, 610f, 560f, 390f, paint)
+        canvas.drawLine(560f, 390f, 680f, 610f, paint)
+        canvas.drawLine(680f, 610f, 360f, 610f, paint)
+        canvas.drawLine(560f, 390f, 790f, 390f, paint)
+        canvas.drawLine(790f, 390f, 850f, 610f, paint)
+        canvas.drawLine(790f, 390f, 830f, 310f, paint)
+        canvas.drawLine(810f, 310f, 900f, 310f, paint)
+        canvas.drawLine(540f, 365f, 500f, 300f, paint)
+        canvas.drawLine(455f, 300f, 545f, 300f, paint)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.rgb(25, 32, 42)
+        paint.textSize = 62f
+        canvas.drawText("YELLOW BICYCLE", 600f, 840f, paint)
+        FileOutputStream(file).use { output ->
+            check(bitmap.compress(Bitmap.CompressFormat.JPEG, 96, output))
+            output.fd.sync()
+        }
+        bitmap.recycle()
+    }
+
     private suspend fun writeReport(file: File, report: JSONObject) = withContext(Dispatchers.IO) {
         file.parentFile?.mkdirs()
         val temporary = File(file.parentFile, ".${file.name}.tmp")
@@ -426,6 +577,12 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
         val swappedGenerationCalls: Int,
         val swappedLoadMs: Long,
         val swappedGenerationMs: Long,
+        val videoParentId: String,
+        val videoTimestampMs: Long,
+        val videoBackend: VerificationInferenceBackend,
+        val videoGenerationCalls: Int,
+        val videoLoadMs: Long,
+        val videoGenerationMs: Long,
     )
 
     private fun String?.safeReportText(): String = this
@@ -442,6 +599,7 @@ class TestRealGemmaSmokeReceiver : BroadcastReceiver() {
         const val SMOKE_QUERY = "Show beach sunset photos."
         const val PERSON_A_CLUSTER = "person_a_debug_real_gemma"
         const val PERSON_B_CLUSTER = "person_b_debug_real_gemma"
+        const val VIDEO_TIMESTAMP_MS = 9_000L
         val OPERATION_ID = Regex("[a-fA-F0-9]{32}")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     }

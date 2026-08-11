@@ -1691,3 +1691,15 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: consumerDebug, full `testFixtureCiDebugUnitTest`, fixtureCiDebug, and offlineDemoDebug; the offline APK contains no INTERNET permission.
 - PASS: replacement installation preserved the exact active E2B generation pointer and E2B selection; final diagnostics observed no target crash, ANR, OOM, or SQLite failure.
 - Consumer instrumentation and a full real-gallery 5k/20k model acceptance remain NOT RUN.
+
+## 2026-08-12 - Real Gemma video-keyframe verification gate
+
+- Files changed: the debug real-Gemma smoke receiver and this status file; production runtime code and database schema are unchanged.
+- Migration added: none; the parent video, selected keyframe, selector evidence, and generated image exist only in an operation-scoped temporary database/cache boundary.
+- The first device gate was NOT RUN because another package retained a Gemma process. Read-only diagnostics later showed it was idle, not foreground, and only about 117 MB RSS, so validation proceeded without stopping or changing that process.
+- PASS: connected run completed in 30,590 ms with active verified E2B on GPU and MTP enabled.
+- PASS: timestamped retrieval evidence selected the private 9-second keyframe; real Gemma verified the yellow-bicycle predicate and returned the parent video ID with `timestampMs=9000`.
+- PASS: planner, true image verification, swapped-person rejection, video-keyframe verification, and grounded composition shared one model initialization; every role after planning reported zero model-load time.
+- PASS: consumerDebug, full `testFixtureCiDebugUnitTest`, fixtureCiDebug, and offlineDemoDebug; the offline APK contains no INTERNET permission.
+- PASS: replacement installation preserved the exact active E2B generation pointer and selection; all operation-scoped database/cache artifacts were deleted and final diagnostics observed no target crash, ANR, OOM, or SQLite failure.
+- UI seek/play-at-match was not rerun in this real-model phase; the earlier connected fixture video acceptance covers that deterministic UI path. Full real-gallery 5k/20k acceptance remains NOT RUN.
