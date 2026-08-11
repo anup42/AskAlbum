@@ -49,8 +49,9 @@ class QueryCompiler(
         val hasStandaloneSubject = Regex(
             "\\b(photo|photos|picture|pictures|image|images|video|videos|receipt|receipts|invoice|invoices|document|documents|trip|trips)\\b",
         ).containsMatchIn(normalized)
+        val referentialCount = FollowUpLanguage.isReferentialCount(query)
         val isFollowUp = FollowUpLanguage.isFollowUp(query, !activeResultIds.isNullOrEmpty()) &&
-            (!hasStandaloneSubject || FollowUpLanguage.permitsMediaScopeRefinement(query))
+            (!hasStandaloneSubject || FollowUpLanguage.permitsMediaScopeRefinement(query) || referentialCount)
         require(!isFollowUp || !activeResultIds.isNullOrEmpty()) { "Follow-up requires an active result set" }
         val qualityFollowUp = isFollowUp &&
             Regex("\\b(best|best one|which is the best|which one is best)\\b").containsMatchIn(normalized)
@@ -95,7 +96,7 @@ class QueryCompiler(
         }
         val temporalOnlyFollowUp = isFollowUp && timeFilter != FilterExpression.True &&
             candidateTerms.all { it in TEMPORAL_FOLLOW_UP_WORDS || it.matches(Regex("(?:19|20)\\d{2}")) }
-        val originalTerms = if (temporalOnlyFollowUp) {
+        val originalTerms = if (temporalOnlyFollowUp || referentialCount) {
             emptyList()
         } else {
             candidateTerms.filterNot { term -> explicitYear != null && term == explicitYear.toString() }

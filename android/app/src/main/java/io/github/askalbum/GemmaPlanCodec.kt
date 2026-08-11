@@ -66,6 +66,9 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
                 .map { it.lowercase(Locale.ROOT) }
                 .distinct()
         }
+        val referentialCount = FollowUpLanguage.isReferentialCount(query)
+        val retrievalTerms = if (referentialCount) emptyList() else finalTerms
+        val retrievalSemantics = if (referentialCount) emptyList() else structuralListSemantics
         val heuristicFollowUp = FollowUpLanguage.isFollowUp(query, !activeResultIds.isNullOrEmpty())
         val modelFollowUp = if (!json.has("followUp") || json.isNull("followUp")) {
             false
@@ -77,7 +80,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         // but it cannot de-scope an unambiguous app-owned refinement such as "Only ...".
         val followUp = heuristicFollowUp || modelFollowUp
         if (followUp) require(!activeResultIds.isNullOrEmpty()) { "Follow-up requires an active result set" }
-        require(finalTerms.isNotEmpty() || structuralListSemantics.isNotEmpty() || followUp || intent in setOf(QueryIntent.COUNT, QueryIntent.LIST, QueryIntent.TIMELINE, QueryIntent.COMPARE)) {
+        require(retrievalTerms.isNotEmpty() || retrievalSemantics.isNotEmpty() || followUp || intent in setOf(QueryIntent.COUNT, QueryIntent.LIST, QueryIntent.TIMELINE, QueryIntent.COMPARE)) {
             "Planner produced no searchable constraints"
         }
         val comparisonScopes = json.optJSONArray("comparisonScopes")?.strings(MAX_COMPARISON_SCOPES).orEmpty()
@@ -108,7 +111,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
             // Terms already drive lexical, concept, and original-query retrieval.
             // Do not turn ordinary terms into semantic predicates: doing so makes
             // deterministic OCR and aggregation plans look like bounded visual work.
-            semanticClauses = structuralListSemantics,
+            semanticClauses = retrievalSemantics,
             peopleClauses = people,
             ocrClause = ocr,
             grouping = json.optEnum("grouping", Grouping.NONE),
@@ -116,7 +119,7 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
             sort = json.optEnum("sort", SortSpec.RELEVANCE),
             verification = json.optEnum("verification", VerificationPolicy.AUTO),
             answerMode = json.optAnswerMode(),
-            terms = finalTerms,
+            terms = retrievalTerms,
             place = place,
             comparisonScopes = comparisonScopes,
             baseResultIds = if (followUp) activeResultIds else null,
@@ -250,14 +253,32 @@ object FollowUpLanguage {
         """\b(?:same\s+(?:event|trip)|from\s+those|among\s+them)\b.*\b(?:photos?|pictures?|images?|videos?)\b""",
         RegexOption.IGNORE_CASE,
     )
+    private val referentialCountForms = listOf(
+        Regex(
+            """^how\s+many(?:\s+(?:are\s+there|did\s+(?:you|we)\s+find|of\s+(?:them|these|those)|(?:of\s+)?(?:these|those)\s+(?:items?|results?|matches?|photos?|pictures?|images?|videos?)))?$""",
+        ),
+        Regex("""^count\s+(?:them|these|those|the\s+(?:items?|results?|matches?))$"""),
+        Regex(
+            """^(?:(?:inme(?:in)?|isme(?:in)?|unme(?:in)?|usme(?:in)?)\s+)?kitn[aei](?:\s+(?:photos?|pictures?|images?|videos?|items?|results?|matches?))?(?:\s+(?:hai|hain))?$""",
+        ),
+        Regex("""^(?:(?:इनमें|इसमें|उनमें|उसमें)\s+)?(?:कितने|कितनी|कितना)(?:\s+\p{L}+){0,4}(?:\s+(?:हैं|है))?$"""),
+    )
 
     fun isFollowUp(query: String, activeResultAvailable: Boolean = false): Boolean {
         val normalized = query.trim().lowercase(Locale.ROOT)
         if (prefixes.any(normalized::startsWith)) return true
         return activeResultAvailable && (
+            isReferentialCount(normalized) ||
             contextualForms.any { it.containsMatchIn(normalized) } ||
                 naturalRefinements.any { it.containsMatchIn(normalized) }
         )
+    }
+
+    fun isReferentialCount(query: String): Boolean {
+        val normalized = query.lowercase(Locale.ROOT)
+            .replace(Regex("[^\\p{L}\\p{M}\\p{N}]+"), " ")
+            .trim()
+        return referentialCountForms.any { it.matches(normalized) }
     }
 
     fun permitsMediaScopeRefinement(query: String): Boolean = mediaScopeRefinement.containsMatchIn(query)

@@ -21,9 +21,29 @@ class Phase4OrchestrationTest {
             "Now 2024.",
             "Exclude screenshots.",
             "Same event but videos.",
+            "How many are there?",
+            "Count them.",
+            "Inme kitni photos hain?",
+            "इनमें कितनी हैं?",
         ).forEach { query ->
             assertTrue(query, FollowUpRefinementPolicy.isContextualFollowUp(query, state))
         }
+    }
+
+    @Test
+    fun standaloneGalleryCountIsNotMistakenForAReferentialFollowUp() {
+        val state = ConversationSearchState(
+            sessionId = "s",
+            activeResultSetId = "rs_12345678",
+            activeResultIds = setOf("m1"),
+        )
+
+        assertFalse(
+            FollowUpRefinementPolicy.isContextualFollowUp(
+                "How many photos did I take in 2024?",
+                state,
+            ),
+        )
     }
 
     @Test

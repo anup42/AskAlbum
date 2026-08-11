@@ -1804,3 +1804,15 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: replacement install on SM-F966B preserved first-install time and unchanged database files. READ_MEDIA_IMAGES and READ_MEDIA_VIDEO remained ignored.
 - PASS: connected query `How many photos did I take in 2024` now reports `partial index`, `0 matches in the current retrieval pass`, and explicitly says gallery access is off and the result is not a complete gallery count.
 - Consumer instrumentation was NOT RUN. Full real-gallery 5k/20k model acceptance remains NOT RUN.
+
+## 2026-08-12 - Closed execution scopes and referential count follow-ups
+
+- Files changed: GalleryRepository, MediaAccessCoverage, GemmaPlanCodec, QueryCompiler, focused scope/follow-up tests, and this status file. Migration added: none.
+- Defects fixed: repository-supplied closed fixture/result scopes retain exact deterministic coverage; stale conversation state no longer makes a new gallery query exhaustive; unambiguous English, Hindi, and Hinglish referential counts inherit the active result set and discard planner filler terms.
+- Direct core-corpus instrumentation was SKIPPED because no `galleryRunId` was supplied. The first host-driven corpus run FAIL exposed Q04/Q05 closed-scope exactness; the corrected host runs passed all 13 cases.
+- Initial filtered JVM commands were NOT RUN because they used the obsolete package prefix. PASS: the six focused scope, exactness, compiler, codec, and follow-up test classes with the current `io.github.anup42.askalbum` package.
+- PASS: consumerDebug, offlineDemoDebug, fixtureCiDebug, fixtureCiDebugAndroidTest, and final serialized consumer lint. One combined lint invocation FAIL was an Android Lint/KAPT missing-stub race; serial fixture-test assembly followed by lint PASS.
+- PASS: final connected fixture run `accept_83126870b4eb` completed Q01-Q13 with 13 PASS, 0 FAIL, 0 SKIPPED; cleanup removed 84/84 database rows and 84/84 MediaStore items with zero remaining and zero recovered orphans.
+- PASS: replacement-installed consumer UI returned `0 matches in the current retrieval pass` with `partial index` and an explicit access-off warning for a standalone 2024 count; `Show beach sunset photos` followed by `How many are there?` returned `2 matching items` as an exact deterministic count over the closed two-result scope.
+- PASS: replacement install preserved first-install time and database files; gallery app-ops remained denied, offlineDemo contains no INTERNET permission, and final exit history showed package-update stops rather than a target crash or ANR.
+- Remaining: consumer instrumentation, physical permission-restoration acceptance, and a full real-model real-gallery 5k/20k run remain NOT RUN.

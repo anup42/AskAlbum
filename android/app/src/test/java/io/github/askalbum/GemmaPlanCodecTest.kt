@@ -128,6 +128,21 @@ class GemmaPlanCodecTest {
     }
 
     @Test
+    fun referentialCountCannotBeDescopedOrPollutedByModelFillerTerms() {
+        val active = setOf("sunset-one", "sunset-two")
+        val plan = codec.decode(
+            "How many are there?",
+            """{"intent":"COUNT","followUp":false,"terms":["many","there"],"semanticClauses":[{"text":"there","subject":"WHOLE_MEDIA"}]}""",
+            active,
+        )
+
+        assertEquals(QueryIntent.COUNT, plan.intent)
+        assertEquals(active, plan.baseResultIds)
+        assertTrue(plan.terms.isEmpty())
+        assertTrue(plan.semanticClauses.isEmpty())
+    }
+
+    @Test
     fun decodesBoundedComparisonScopes() {
         val plan = codec.decode(
             "Compare Goa and Singapore",

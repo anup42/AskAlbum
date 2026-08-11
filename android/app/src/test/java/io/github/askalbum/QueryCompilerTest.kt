@@ -44,6 +44,32 @@ class QueryCompilerTest {
     }
 
     @Test
+    fun referentialCountUsesOnlyTheClosedActiveResultSet() {
+        val ids = setOf("sunset-one", "sunset-two")
+
+        val plan = compiler.compile("How many are there?", ids)
+
+        assertEquals(QueryIntent.COUNT, plan.intent)
+        assertEquals(AggregationSpec(AggregationOperation.COUNT), plan.aggregation)
+        assertEquals(ids, plan.baseResultIds)
+        assertTrue(plan.terms.isEmpty())
+        assertTrue(plan.semanticClauses.isEmpty())
+    }
+
+    @Test
+    fun explicitStandaloneCountStartsANewGalleryScope() {
+        val fixed = QueryCompiler(clock = Clock.fixed(Instant.parse("2026-07-22T00:00:00Z"), ZoneOffset.UTC))
+        val plan = fixed.compile(
+            "How many photos did I take in 2024?",
+            setOf("prior-result"),
+        )
+
+        assertNull(plan.baseResultIds)
+        assertEquals(QueryIntent.COUNT, plan.intent)
+        assertEquals(FilterExpression.TimeRange(1704067200000, 1735689599999), plan.filter)
+    }
+
+    @Test
     fun aliasesAreCanonicalized() {
         val plan = compiler.compile("Find bike pictures")
         assertEquals(listOf("bicycle"), plan.terms)
