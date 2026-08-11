@@ -2325,6 +2325,29 @@ class GalleryDatabase(
         }
     }
 
+    internal fun reviewedPeopleIdentityIntegrity(): ReviewedPeopleIdentityIntegrity = readableDatabase.rawQuery(
+        "SELECT label,relationship,aliases FROM person_cluster WHERE reviewed=1 AND hidden=0",
+        null,
+    ).use { cursor ->
+        while (cursor.moveToNext()) {
+            if (!cursor.isNull(0) && sensitiveDataAtRest.revealChecked(cursor.getString(0)).isFailure) {
+                return@use ReviewedPeopleIdentityIntegrity.CORRUPT
+            }
+            if (!cursor.isNull(1) && sensitiveDataAtRest.revealChecked(cursor.getString(1)).isFailure) {
+                return@use ReviewedPeopleIdentityIntegrity.CORRUPT
+            }
+            if (cursor.isNull(2)) return@use ReviewedPeopleIdentityIntegrity.CORRUPT
+            val aliases = sensitiveDataAtRest.revealChecked(cursor.getString(2)).getOrNull()
+                ?: return@use ReviewedPeopleIdentityIntegrity.CORRUPT
+            val validAliases = runCatching {
+                val json = JSONArray(aliases)
+                (0 until json.length()).all { index -> json.opt(index) is String }
+            }.getOrDefault(false)
+            if (!validAliases) return@use ReviewedPeopleIdentityIntegrity.CORRUPT
+        }
+        ReviewedPeopleIdentityIntegrity.AVAILABLE
+    }
+
     internal fun resolveReviewedPersonGroups(query: String): List<ReviewedPersonMatchGroup> {
         val normalizedQuery = PersonIdentityNormalization.normalize(query)
         val candidates = readableDatabase.rawQuery(

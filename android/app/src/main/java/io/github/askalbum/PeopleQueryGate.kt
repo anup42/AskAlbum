@@ -28,6 +28,8 @@ internal object PeopleQueryGate {
 }
 
 internal object PeopleUnavailableCoveragePolicy {
+    const val IDENTITY_DATA_CORRUPT = "PEOPLE_IDENTITY_DATA_CORRUPT"
+
     fun report(eligibleMediaCount: Int): RetrievalChannelReport<SearchHit> {
         return RetrievalChannelReport(
             channel = RetrievalChannel.PEOPLE,
@@ -37,6 +39,30 @@ internal object PeopleUnavailableCoveragePolicy {
             searchedCount = 0,
             hits = emptyList(),
             errorCode = "REVIEWED_IDENTITY_UNAVAILABLE",
+        )
+    }
+
+    fun integrityFailureReport(eligibleMediaCount: Int): RetrievalChannelReport<SearchHit> =
+        RetrievalChannelReport(
+            channel = RetrievalChannel.PEOPLE,
+            status = ChannelStatus.FAILED,
+            eligibleCount = eligibleMediaCount.coerceAtLeast(0),
+            indexedCount = 0,
+            searchedCount = 0,
+            hits = emptyList(),
+            errorCode = IDENTITY_DATA_CORRUPT,
+        )
+}
+
+internal data class ReviewedPeopleIdentityIntegrity(
+    val available: Boolean,
+    val errorCode: String? = null,
+) {
+    companion object {
+        val AVAILABLE = ReviewedPeopleIdentityIntegrity(available = true)
+        val CORRUPT = ReviewedPeopleIdentityIntegrity(
+            available = false,
+            errorCode = PeopleUnavailableCoveragePolicy.IDENTITY_DATA_CORRUPT,
         )
     }
 }

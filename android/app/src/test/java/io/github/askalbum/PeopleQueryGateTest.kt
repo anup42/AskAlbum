@@ -55,6 +55,18 @@ class PeopleQueryGateTest {
     }
 
     @Test
+    fun corruptProtectedIdentityDataIsAFailedUnsearchedPeopleChannel() {
+        val report = PeopleUnavailableCoveragePolicy.integrityFailureReport(5_000)
+
+        assertEquals(5_000, report.eligibleCount)
+        assertEquals(0, report.indexedCount)
+        assertEquals(0, report.searchedCount)
+        assertEquals(ChannelStatus.FAILED, report.status)
+        assertEquals(PeopleUnavailableCoveragePolicy.IDENTITY_DATA_CORRUPT, report.errorCode)
+        assertTrue(report.hits.isEmpty())
+    }
+
+    @Test
     fun anotherClusterCannotUnlockARequestedClusterWithoutAnIdentityEmbedding() {
         val status = PeopleIndexStatus(enabled = true, reviewedClusterCount = 1, identityReadyFaceCount = 1)
         val reason = PeopleQueryGate.unavailableReason(

@@ -111,6 +111,35 @@ class PeopleIdentityProtectionDeviceTest {
         assertFalse(fact.verdict == PersonVisualVerdict.VERIFIED_TRUE)
     }
 
+    @Test
+    fun tamperedReviewedIdentityIsDetectedBeforePeopleResolution() {
+        val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
+        store.ensureAutomaticPersonCluster("person_fixture")
+        store.saveReviewedPersonCluster("person_fixture", "Alice Example", "partner", listOf("Wife"))
+        assertTrue(store.reviewedPeopleIdentityIntegrity().available)
+
+        val sensitive = SensitiveDataAtRest()
+        val protectedAliases = sensitive.protect("[\"Wife\"]")
+        val tamperedAliases = protectedAliases.dropLast(1) + if (protectedAliases.last() == 'A') 'B' else 'A'
+        assertTrue(sensitive.revealChecked(tamperedAliases).isFailure)
+
+        store.close()
+        database = null
+        rawIdentity().use { raw ->
+            raw.update(
+                "person_cluster",
+                ContentValues().apply { put("aliases", tamperedAliases) },
+                "id=?",
+                arrayOf("person_fixture"),
+            )
+        }
+
+        val reopened = GalleryDatabase(context, TEST_DATABASE).also { database = it }
+        val integrity = reopened.reviewedPeopleIdentityIntegrity()
+        assertFalse(integrity.available)
+        assertEquals(PeopleUnavailableCoveragePolicy.IDENTITY_DATA_CORRUPT, integrity.errorCode)
+    }
+
     private fun rawIdentity(): SQLiteDatabase =
         SQLiteDatabase.openDatabase(
             context.getDatabasePath(TEST_DATABASE).path,

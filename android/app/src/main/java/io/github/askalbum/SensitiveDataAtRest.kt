@@ -25,7 +25,12 @@ internal class SensitiveDataAtRest {
     }
 
     fun reveal(value: String): String {
+        return revealChecked(value).getOrDefault("")
+    }
+
+    fun revealChecked(value: String): Result<String> {
         if (!value.startsWith(PREFIX)) return value
+            .let(Result.Companion::success)
         return runCatching {
             val payload = Base64.decode(value.removePrefix(PREFIX), Base64.DEFAULT)
             require(payload.size > GCM_IV_BYTES) { "Protected OCR value is truncated" }
@@ -34,7 +39,7 @@ internal class SensitiveDataAtRest {
             Cipher.getInstance(TRANSFORMATION).apply {
                 init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(GCM_TAG_BITS, iv))
             }.doFinal(ciphertext).toString(Charsets.UTF_8)
-        }.getOrDefault("")
+        }
     }
 
     private fun key(): SecretKey {

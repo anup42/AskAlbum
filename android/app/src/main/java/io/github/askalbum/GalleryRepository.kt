@@ -650,25 +650,61 @@ class GalleryRepository private constructor(
         val sanitizedPatchedPlan = patchedPlan.copy(
             peopleClauses = PeopleClauseSanitizer.sanitize(patchedPlan.peopleClauses),
         )
+        val detectedPeopleClauses = PeopleQueryReferenceDetector.detect(query)
+        val peopleIdentityIntegrity = database.reviewedPeopleIdentityIntegrity()
+        val resolveReviewedIds: (String) -> Set<String> = if (peopleIdentityIntegrity.available) {
+            database::resolveReviewedPersonIds
+        } else {
+            { emptySet() }
+        }
         val peopleMergedPlan = sanitizedPatchedPlan.copy(
             peopleClauses = PeopleClauseMergePolicy.merge(
                 plannerClauses = sanitizedPatchedPlan.peopleClauses,
-                detectedClauses = PeopleQueryReferenceDetector.detect(query),
-                reviewedGroups = database.resolveReviewedPersonGroups(query),
-                resolveReviewedIds = database::resolveReviewedPersonIds,
+                detectedClauses = detectedPeopleClauses,
+                reviewedGroups = if (peopleIdentityIntegrity.available) {
+                    database.resolveReviewedPersonGroups(query)
+                } else {
+                    emptyList()
+                },
+                resolveReviewedIds = resolveReviewedIds,
             ),
         )
         val personConditionCanonicalizedPlan = PersonConditionCanonicalizationPolicy.apply(
             query = query,
             plan = peopleMergedPlan,
-            resolveReviewedIds = database::resolveReviewedPersonIds,
+            resolveReviewedIds = resolveReviewedIds,
         )
         val plan = PeopleRetrievalConstraintPolicy.apply(
             personConditionCanonicalizedPlan,
-            database::resolveReviewedPersonIds,
+            resolveReviewedIds,
         )
         sessionId?.let { sessionPlans[it] = plan }
         emit(QueryProgress.PlanReady(plan))
+        if (!peopleIdentityIntegrity.available && plan.peopleClauses.isNotEmpty()) {
+            val eligibleImageCount = database.allItems().count { it.kind == MediaKind.IMAGE }
+            val peopleReport = PeopleUnavailableCoveragePolicy.integrityFailureReport(eligibleImageCount)
+            val detail = "People search stopped because locally protected identity data could not be authenticated. No identity match was attempted."
+            emit(QueryProgress.InitialResults(plan, emptyList()))
+            val outcome = finalizeOutcome(sessionId, parentResultSetId, SearchOutcome(
+                plan = plan,
+                hits = emptyList(),
+                answer = SearchAnswer(
+                    headline = "People search could not run",
+                    detail = detail,
+                    evidenceIds = emptyList(),
+                    exactness = ResultExactness.PARTIAL_INDEX,
+                    indexedEligibleCount = peopleReport.indexedCount,
+                    totalEligibleCount = peopleReport.eligibleCount,
+                    warnings = listOf(detail),
+                    channelReports = listOf(peopleReport),
+                ),
+                elapsedMs = max(1, SystemClock.elapsedRealtime() - started),
+                planPatch = planPatch,
+                channelReports = listOf(peopleReport),
+            ))
+            emit(QueryProgress.Completed(outcome))
+            return@flow
+        }
         val peopleStatus = database.peopleIndexStatus()
         val identityReadiness = mutableMapOf<String, Boolean>()
         val peopleUnavailable = PeopleQueryGate.unavailableReason(plan, peopleStatus) { requested ->
