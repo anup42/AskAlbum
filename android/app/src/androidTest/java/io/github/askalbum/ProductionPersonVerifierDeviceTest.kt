@@ -169,6 +169,28 @@ class ProductionPersonVerifierDeviceTest {
         assertTrue(Regex("(?s)P1.*wearing white").containsMatchIn(engine.lastPrompt))
         assertTrue(Regex("(?s)P2.*white dress").containsMatchIn(engine.lastPrompt))
 
+        val wifeCondition = plan.semanticClauses[1]
+        val cachedPositivePlan = plan.copy(
+            originalQuery = "Show pictures where my wife is wearing a white dress",
+            peopleClauses = listOf(PersonClause(WIFE_CLUSTER)),
+            semanticClauses = listOf(wifeCondition),
+        )
+        val cachedRepository = GalleryRepository(
+            context = context,
+            database = store,
+            planner = FixedPlanCompiler(cachedPositivePlan),
+            visualVerifier = verifier,
+        )
+        val cachedPositive = cachedRepository.search(cachedPositivePlan.originalQuery)
+        assertEquals(listOf(item.id), cachedPositive.hits.map { it.item.id })
+        assertTrue(
+            cachedPositive.hits.single().evidence.any { evidence ->
+                evidence.sourceField == "visual_verification" && evidence.clusterId == WIFE_CLUSTER
+            },
+        )
+        assertEquals("Cached person verification performed another vision call", 1, engine.visionCalls)
+        assertEquals("Cached person verification initialized another engine", 1, sessions.initializationCount)
+
         sessions.evictNow()
         assertEquals(1, engine.closeCalls)
     }

@@ -1591,3 +1591,14 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: consumerDebug and offlineDemoDebug builds; the merged offline APK contains no INTERNET permission.
 - PASS: consumer replacement install with `adb install -r -d`; databases remained 2072 KiB, files remained 11612170 KiB, gallery permissions remained denied, and the app process launched.
 - Remaining: the two fixture-declared core cases remain SKIPPED; physical permission-restoration and full real-model 5k/20k acceptance are NOT RUN.
+
+## 2026-08-11 - Exact person-verification cache reuse
+
+- Files changed: LiteRtGemmaVisualVerifier, GalleryDatabase, SemanticCaptionModels, ProductionPersonVerifierDeviceTest, and PersonVerificationCachePolicyTest.
+- Migration/data repair: none; the existing person-fact predicate column is now exposed to the typed model and no stored fact was rewritten.
+- Cache safety: reuse requires the exact media, reviewed cluster, visible face region, normalized bound predicate, prompt version, body-region version, confident association, and compatible model producer. Videos and partial, stale, ambiguous, cross-person, or paraphrased cache entries still require inference or fail closed.
+- PASS: PersonVerificationCachePolicyTest, PersonVerificationPromptBindingTest, PersonVerificationResultPolicyTest, and PersonConditionCanonicalizationPolicyTest.
+- PASS: ProductionPersonVerifierDeviceTest on SM-F966B; the first query rejected swapped clothing and cached verdicts, while a second Wife-only query returned cluster-bound evidence with zero additional vision calls and zero additional Gemma initializations.
+- PASS: consumerDebug, fixtureCiDebugAndroidTest, and offlineDemoDebug builds; the offline APK contains no INTERNET permission.
+- PASS: consumer replacement install with `adb install -r -d`; databases remained 2072 KiB, files remained 11612170 KiB, and the app process launched.
+- Remaining: unified core Q07/Q08 remain SKIPPED because the disposable corpus still lacks reviewed People fixtures; real-model cache reuse and full 5k/20k acceptance are NOT RUN.

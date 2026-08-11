@@ -31,56 +31,104 @@ class LiteRtGemmaVisualVerifier(
             return failedBeforeInference(started, bounded.size, "No bounded media conditions were available")
         }
         val status = modelStatus()
+        val accepted = linkedSetOf<String>()
+        val evidence = mutableListOf<EvidenceRecord>()
+        val evaluations = mutableListOf<CandidateVerification>()
+        val failures = mutableListOf<VerificationFailure>()
+        val cachedModelVersions = linkedSetOf<String>()
+        val pending = mutableListOf<PreparedVerificationCandidate>()
+        val activeProducerVersion = status.takeIf { it.installed && it.packVersion != null }
+            ?.let(::producerVersion)
+
+        withContext(Dispatchers.IO) {
+            bounded.forEach { hit ->
+                runCatching { prepareCandidate(plan, conditions, hit) }
+                    .onSuccess { prepared ->
+                        val cached = if (hit.item.kind == MediaKind.IMAGE) {
+                            PersonVerificationCachePolicy.resolve(
+                                mediaId = hit.item.id,
+                                conditions = prepared.boundConditions,
+                                bindings = prepared.bindings,
+                                facts = database.personVisualFactsForMedia(hit.item.id),
+                                activeProducerVersion = activeProducerVersion,
+                            )
+                        } else {
+                            null
+                        }
+                        if (cached == null) {
+                            pending += prepared
+                        } else {
+                            evaluations += cached.candidate
+                            evidence += cached.evidence
+                            cachedModelVersions += cached.modelVersions
+                            if (cached.candidate.overallMatch) accepted += hit.item.id
+                        }
+                    }
+                    .onFailure { error ->
+                        if (error is CancellationException) throw error
+                        candidateErrorObserver?.invoke(error)
+                        failures += VerificationFailure(hit.item.id, sanitize(error))
+                    }
+            }
+        }
+
+        if (pending.isEmpty()) {
+            return VerificationResult(
+                acceptedIds = accepted,
+                evidence = evidence,
+                applied = true,
+                evaluations = evaluations,
+                failures = failures,
+                trace = VerificationExecutionTrace(
+                    usedGemma = false,
+                    backend = VerificationInferenceBackend.NOT_RUN,
+                    modelRevision = cachedModelVersions.singleOrNull(),
+                    requestedCandidates = bounded.size,
+                    verifiedCandidates = evaluations.size,
+                    elapsedMs = SystemClock.elapsedRealtime() - started,
+                ),
+            )
+        }
         val path = status.path
         if (path == null || !status.installed || !status.multimodal) {
-            return failedBeforeInference(started, bounded.size, "No verified multimodal Gemma pack is active")
+            return failedWithCached(
+                started,
+                bounded.size,
+                accepted,
+                evidence,
+                evaluations,
+                failures,
+                pending,
+                "No verified multimodal Gemma pack is active",
+                cachedModelVersions.singleOrNull(),
+            )
         }
         if (status.deviceAssessment?.supported == false) {
-            return failedBeforeInference(started, bounded.size, status.deviceAssessment.reason)
+            return failedWithCached(
+                started,
+                bounded.size,
+                accepted,
+                evidence,
+                evaluations,
+                failures,
+                pending,
+                status.deviceAssessment.reason,
+                cachedModelVersions.singleOrNull(),
+            )
         }
 
         return try {
             sessions.withEngine(path, multimodal = true, priority = InferencePriority.INTERACTIVE) { initialized ->
                 withContext(Dispatchers.IO) {
                     require(File(path).isFile) { "Verified Gemma artifact is unavailable" }
-                    val accepted = linkedSetOf<String>()
-                    val evidence = mutableListOf<EvidenceRecord>()
-                    val evaluations = mutableListOf<CandidateVerification>()
-                    val failures = mutableListOf<VerificationFailure>()
                     var generationCalls = 0
                     var repairedCandidates = 0
                     var generationMs = 0L
-                    bounded.forEach { hit ->
+                    pending.forEach { prepared ->
+                        val hit = prepared.hit
                             runCatching {
-                                val requiredGroups = PeopleClauseResolver.requiredGroups(plan.peopleClauses)
-                                val conditionPeople = PersonVerificationBindingPolicy.conditionPersonIds(conditions)
-                                val requiredPeople = requiredGroups.flatten().map(PersonClause::personId).toSet() + conditionPeople
-                                val requestedBindings = database.reviewedFaceBindings(hit.item.id, requiredPeople)
-                                if (requiredPeople.isNotEmpty()) {
-                                    val grouped = requestedBindings.groupBy(PersonVerificationBinding::clusterId)
-                                    val everyRequestedIdentityBound = requiredGroups.all { alternatives ->
-                                        alternatives.any { clause ->
-                                            requestedBindings.any { binding ->
-                                                PersonVerificationBindingPolicy.matchesRequestedIdentity(
-                                                    binding,
-                                                    clause.personId,
-                                                )
-                                            }
-                                        }
-                                    }
-                                    require(everyRequestedIdentityBound && grouped.values.all { it.size == 1 }) {
-                                        "Required reviewed identities could not be bound unambiguously to visible faces"
-                                    }
-                                }
-                                require(PersonVerificationBindingPolicy.allConditionPeopleBound(conditionPeople, requestedBindings)) {
-                                    "Person visual conditions could not be bound to exactly one reviewed visible face"
-                                }
-                                val bindings = if (requiredPeople.isNotEmpty() || conditions.any { it.subject == SemanticSubject.PERSON }) {
-                                    database.verificationFaceBindingsForMedia(hit.item.id)
-                                } else {
-                                    emptyList()
-                                }
-                                val boundConditions = PersonVerificationPromptBinding.bind(conditions, bindings)
+                                val bindings = prepared.bindings
+                                val boundConditions = prepared.boundConditions
                                 val loaded = imageLoader.loadForVerification(hit, database.videoKeyframes(hit.item.id))
                                 val bytes = PersonVerificationImageComposer.compose(loaded.bytes, bindings)
                                 val generationStarted = SystemClock.elapsedRealtime()
@@ -179,8 +227,55 @@ class LiteRtGemmaVisualVerifier(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            failedBeforeInference(started, bounded.size, sanitize(error))
+            failedWithCached(
+                started,
+                bounded.size,
+                accepted,
+                evidence,
+                evaluations,
+                failures,
+                pending,
+                sanitize(error),
+                cachedModelVersions.singleOrNull(),
+            )
         }
+    }
+
+    private fun prepareCandidate(
+        plan: GalleryQueryPlan,
+        conditions: List<VerificationConditionSpec>,
+        hit: SearchHit,
+    ): PreparedVerificationCandidate {
+        val requiredGroups = PeopleClauseResolver.requiredGroups(plan.peopleClauses)
+        val conditionPeople = PersonVerificationBindingPolicy.conditionPersonIds(conditions)
+        val requiredPeople = requiredGroups.flatten().map(PersonClause::personId).toSet() + conditionPeople
+        val requestedBindings = database.reviewedFaceBindings(hit.item.id, requiredPeople)
+        if (requiredPeople.isNotEmpty()) {
+            val grouped = requestedBindings.groupBy(PersonVerificationBinding::clusterId)
+            val everyRequestedIdentityBound = requiredGroups.all { alternatives ->
+                alternatives.any { clause ->
+                    requestedBindings.any { binding ->
+                        PersonVerificationBindingPolicy.matchesRequestedIdentity(binding, clause.personId)
+                    }
+                }
+            }
+            require(everyRequestedIdentityBound && grouped.values.all { it.size == 1 }) {
+                "Required reviewed identities could not be bound unambiguously to visible faces"
+            }
+        }
+        require(PersonVerificationBindingPolicy.allConditionPeopleBound(conditionPeople, requestedBindings)) {
+            "Person visual conditions could not be bound to exactly one reviewed visible face"
+        }
+        val bindings = if (requiredPeople.isNotEmpty() || conditions.any { it.subject == SemanticSubject.PERSON }) {
+            database.verificationFaceBindingsForMedia(hit.item.id)
+        } else {
+            emptyList()
+        }
+        return PreparedVerificationCandidate(
+            hit = hit,
+            bindings = bindings,
+            boundConditions = PersonVerificationPromptBinding.bind(conditions, bindings),
+        )
     }
 
     private fun prompt(
@@ -255,6 +350,36 @@ class LiteRtGemmaVisualVerifier(
         )
     }
 
+    private fun failedWithCached(
+        started: Long,
+        count: Int,
+        accepted: Set<String>,
+        evidence: List<EvidenceRecord>,
+        evaluations: List<CandidateVerification>,
+        existingFailures: List<VerificationFailure>,
+        pending: List<PreparedVerificationCandidate>,
+        reason: String,
+        cachedModelVersion: String?,
+    ): VerificationResult {
+        val safe = reason.take(240)
+        return VerificationResult(
+            acceptedIds = accepted,
+            evidence = evidence,
+            applied = true,
+            evaluations = evaluations,
+            failures = existingFailures + pending.map { VerificationFailure(it.hit.item.id, safe) },
+            trace = VerificationExecutionTrace(
+                usedGemma = false,
+                backend = VerificationInferenceBackend.NOT_RUN,
+                modelRevision = cachedModelVersion,
+                requestedCandidates = count,
+                verifiedCandidates = evaluations.size,
+                elapsedMs = SystemClock.elapsedRealtime() - started,
+                fallbackReason = safe,
+            ),
+        )
+    }
+
     private fun sanitize(error: Throwable): String = when (error) {
         is SecurityException -> "Gallery image access was denied"
         is java.io.FileNotFoundException -> "Gallery image is unavailable"
@@ -269,6 +394,98 @@ class LiteRtGemmaVisualVerifier(
     companion object {
         const val MAX_CANDIDATES = 8
     }
+}
+
+private data class PreparedVerificationCandidate(
+    val hit: SearchHit,
+    val bindings: List<PersonVerificationBinding>,
+    val boundConditions: List<VerificationConditionSpec>,
+)
+
+internal data class CachedPersonVerification(
+    val candidate: CandidateVerification,
+    val evidence: List<EvidenceRecord>,
+    val modelVersions: Set<String>,
+)
+
+internal object PersonVerificationCachePolicy {
+    const val PROMPT_VERSION = "query-visual-verification-v2"
+    private val predicateTokens = Regex("[\\p{L}\\p{M}\\p{N}]+")
+
+    fun resolve(
+        mediaId: String,
+        conditions: List<VerificationConditionSpec>,
+        bindings: List<PersonVerificationBinding>,
+        facts: List<PersonVisualFactRecord>,
+        activeProducerVersion: String?,
+    ): CachedPersonVerification? {
+        if (conditions.isEmpty() || conditions.any { it.relationToPerson == null }) return null
+        val matched = conditions.map { condition ->
+            val clusterId = requireNotNull(condition.relationToPerson)
+            val binding = bindings.singleOrNull { it.clusterId == clusterId } ?: return null
+            val predicate = canonicalPredicate(condition.text)
+            val fact = facts.asSequence()
+                .filter { it.clusterId == clusterId }
+                .filter { canonicalPredicate(it.predicate.orEmpty()) == predicate }
+                .filter { it.promptVersion == PROMPT_VERSION }
+                .filter { it.bodyRegionVersion == PersonalSemanticMemoryPolicy.BODY_REGION_VERSION }
+                .filter { it.associationStatus == PersonAssociationStatus.CONFIDENT }
+                .filter { activeProducerVersion == null || it.modelVersion == activeProducerVersion }
+                .filter { sameFace(it.faceRegion, binding) }
+                .maxByOrNull(PersonVisualFactRecord::updatedAt)
+                ?: return null
+            CachedCondition(condition, binding, fact)
+        }
+        val modelVersions = matched.mapTo(linkedSetOf()) { it.fact.modelVersion }
+        if (activeProducerVersion == null && modelVersions.size != 1) return null
+        val conditionEvaluations = matched.map { cached ->
+            VerificationConditionEvaluation(
+                id = cached.condition.id,
+                satisfied = cached.fact.verdict == PersonVisualVerdict.VERIFIED_TRUE,
+                confidence = cached.fact.confidence,
+                verdict = cached.fact.verdict,
+            )
+        }
+        val byId = conditionEvaluations.associateBy(VerificationConditionEvaluation::id)
+        val overallMatch = conditions.filter { it.hardness == ConstraintStrength.HARD }.all { condition ->
+            byId[condition.id]?.let { SemanticPolarityNormalizer.conditionMatched(condition, it) } == true
+        }
+        val evidence = matched.mapNotNull { cached ->
+            val evaluation = requireNotNull(byId[cached.condition.id])
+            if (!SemanticPolarityNormalizer.conditionMatched(cached.condition, evaluation)) return@mapNotNull null
+            visualVerificationEvidence(
+                mediaId = mediaId,
+                spec = cached.condition,
+                evaluation = evaluation,
+                binding = cached.binding,
+                producerVersion = cached.fact.modelVersion,
+                timestampMs = null,
+            )
+        }
+        return CachedPersonVerification(
+            candidate = CandidateVerification(mediaId, conditionEvaluations, overallMatch),
+            evidence = evidence,
+            modelVersions = modelVersions,
+        )
+    }
+
+    private fun canonicalPredicate(value: String): String = predicateTokens.findAll(
+        PersonIdentityNormalization.normalize(value),
+    ).joinToString(" ") { it.value }
+
+    private fun sameFace(region: List<Float>, binding: PersonVerificationBinding): Boolean {
+        if (region.size != 4) return false
+        val expected = listOf(binding.left, binding.top, binding.right, binding.bottom)
+        return region.zip(expected).all { (actual, target) -> kotlin.math.abs(actual - target) <= FACE_TOLERANCE }
+    }
+
+    private data class CachedCondition(
+        val condition: VerificationConditionSpec,
+        val binding: PersonVerificationBinding,
+        val fact: PersonVisualFactRecord,
+    )
+
+    private const val FACE_TOLERANCE = 0.02f
 }
 
 internal fun visualVerificationEvidence(

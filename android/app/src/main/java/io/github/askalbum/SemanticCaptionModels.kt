@@ -62,6 +62,7 @@ data class PersonVisualFactRecord(
     val bodyRegionVersion: String = PersonalSemanticMemoryPolicy.BODY_REGION_VERSION,
     val updatedAt: Long = 0L,
     val generationId: String? = null,
+    val predicate: String? = null,
 )
 
 data class SemanticEnrichmentResult(

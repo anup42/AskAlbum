@@ -2557,7 +2557,7 @@ class GalleryDatabase(
             put("face_region", JSONArray(region).toString())
             put("association_status", PersonAssociationStatus.CONFIDENT.name)
             put("verdict", verdict.name)
-            put("prompt_version", "query-visual-verification-v2")
+            put("prompt_version", PersonVerificationCachePolicy.PROMPT_VERSION)
             put("body_region_version", PersonalSemanticMemoryPolicy.BODY_REGION_VERSION)
             put("updated_at", System.currentTimeMillis())
         }, SQLiteDatabase.CONFLICT_REPLACE)
@@ -5058,6 +5058,7 @@ class GalleryDatabase(
             bodyRegionVersion = cursor.text("body_region_version"),
             updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
             generationId = cursor.nullableText("generation_id"),
+            predicate = cursor.nullableText("predicate"),
         )
     }
 
