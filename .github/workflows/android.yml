@@ -22,6 +22,8 @@ jobs:
           java-version: '21'
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+      - name: Validate sample-gallery contracts
+        run: python tools/sample_gallery/test_expected_queries.py
       - name: Run fixture unit tests and build
         working-directory: android
         run: ./gradlew :app:testFixtureCiDebugUnitTest :app:assembleFixtureCiDebug :app:assembleOfflineDemoDebug --no-daemon
