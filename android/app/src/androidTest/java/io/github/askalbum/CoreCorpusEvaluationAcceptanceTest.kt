@@ -109,25 +109,92 @@ class CoreCorpusEvaluationAcceptanceTest {
             }.metrics(listOf("goa_beach_01", "legacy_demo-beach"))
         }
 
-        val people = repository.peopleIndexStatus()
-        records += CaseRecord(
-            id = "Q07",
-            status = "SKIP",
-            latencyMs = 0,
-            hitCount = 0,
-            expectedRank = null,
-            exactness = ResultExactness.PARTIAL_INDEX.name,
-            detail = peopleSkipReason(people),
-        )
-        records += CaseRecord(
-            id = "Q08",
-            status = "SKIP",
-            latencyMs = 0,
-            hitCount = 0,
-            expectedRank = null,
-            exactness = ResultExactness.PARTIAL_INDEX.name,
-            detail = peopleSkipReason(people) + "; targeted Gemma verification is covered by RealGemmaVisualVerifierAcceptanceTest",
-        )
+        val store = application.services.galleryDatabase
+        val peopleFixtures = repository.allItems()
+            .filter { it.id in seededIds && it.filename.startsWith("singapore_marina_bay_01_v") }
+            .sortedBy(GalleryItem::filename)
+            .take(3)
+        assertEquals("People acceptance requires three run-scoped fixture images", 3, peopleFixtures.size)
+        val together = peopleFixtures[0]
+        val meOnly = peopleFixtures[1]
+        val swapped = peopleFixtures[2]
+        store.resetPeopleIndex()
+        try {
+            seedReviewedPeopleFixtures(store, together.id, meOnly.id, swapped.id)
+            records.evaluate("Q07") {
+                repository.search(
+                    "Show photos with me and my brother.",
+                    setOf(together.id, meOnly.id),
+                ).also { outcome ->
+                    val peopleReport = outcome.channelReports.single { it.channel == RetrievalChannel.PEOPLE }
+                    assertEquals(setOf(ME_CLUSTER, BROTHER_CLUSTER), requiredPeople(store, outcome.plan))
+                    assertEquals(listOf(together.id), outcome.hits.map { it.item.id })
+                    assertEquals(ChannelStatus.SUCCESS, peopleReport.status)
+                    assertEquals(peopleReport.eligibleCount, peopleReport.indexedCount)
+                    assertEvidenceClosure(outcome)
+                }.metrics(listOf(together.filename.substringBeforeLast('.')))
+            }
+
+            val appearancePlan = GalleryQueryPlan(
+                originalQuery = APPEARANCE_QUERY,
+                intent = QueryIntent.FIND_MEDIA,
+                mediaScope = MediaScope.IMAGES,
+                peopleClauses = listOf(PersonClause(ME_CLUSTER), PersonClause(BROTHER_CLUSTER)),
+                semanticClauses = listOf(
+                    SemanticClause(
+                        text = "wearing a yellow hat",
+                        hardness = ConstraintStrength.HARD,
+                        subject = SemanticSubject.PERSON,
+                        relationToPerson = ME_CLUSTER,
+                    ),
+                    SemanticClause(
+                        text = "wearing a blue suit",
+                        hardness = ConstraintStrength.HARD,
+                        subject = SemanticSubject.PERSON,
+                        relationToPerson = BROTHER_CLUSTER,
+                    ),
+                ),
+                terms = listOf("singapore"),
+                verification = VerificationPolicy.REQUIRED,
+                limit = 10,
+            )
+            val cachedVerifier = LiteRtGemmaVisualVerifier(
+                context = application,
+                modelPacks = application.services.modelPackManager,
+                sessions = application.services.gemmaSessions,
+                database = store,
+            )
+            val peopleRepository = GalleryRepository(
+                context = application,
+                database = store,
+                planner = FixedPlanCompiler(appearancePlan),
+                visualVerifier = cachedVerifier,
+            )
+            records.evaluate("Q08") {
+                peopleRepository.search(APPEARANCE_QUERY, setOf(together.id, swapped.id)).also { outcome ->
+                    val visualReport = outcome.channelReports.single { it.channel == RetrievalChannel.VISUAL_VERIFICATION }
+                    assertEquals(listOf(together.id), outcome.hits.map { it.item.id })
+                    assertEquals(ChannelStatus.SUCCESS, visualReport.status)
+                    assertEquals(2, visualReport.searchedCount)
+                    assertEquals(
+                        setOf(ME_CLUSTER, BROTHER_CLUSTER),
+                        outcome.hits.single().evidence
+                            .filter { it.sourceField == "visual_verification" }
+                            .mapNotNull(EvidenceRecord::clusterId)
+                            .toSet(),
+                    )
+                    assertTrue(
+                        "Swapped fixture lacks opposite-person truth",
+                        store.personVisualFactsForMedia(swapped.id).count {
+                            it.verdict == PersonVisualVerdict.VERIFIED_TRUE
+                        } == 2,
+                    )
+                    assertEvidenceClosure(outcome)
+                }.metrics(listOf(together.filename.substringBeforeLast('.')))
+            }
+        } finally {
+            store.resetPeopleIndex()
+        }
 
         records.evaluate("Q09") {
             repository.search("Pichle saal Goa wali photos dikhao.", seededIds).also { outcome ->
@@ -279,8 +346,79 @@ class CoreCorpusEvaluationAcceptanceTest {
         assertTrue("Claim cites unknown evidence", outcome.answer.claims.flatMap(GroundedClaim::evidenceIds).all(evidence::containsKey))
     }
 
-    private fun peopleSkipReason(status: PeopleIndexStatus): String =
-        "identity pack unavailable or not consented: enabled=${status.enabled}, identityReadyFaces=${status.identityReadyFaceCount}"
+    private fun seedReviewedPeopleFixtures(
+        store: GalleryDatabase,
+        togetherId: String,
+        meOnlyId: String,
+        swappedId: String,
+    ) {
+        store.enablePeopleIndexing(GalleryDatabase.PEOPLE_CONSENT_VERSION)
+        store.ensureAutomaticPersonCluster(ME_CLUSTER)
+        store.ensureAutomaticPersonCluster(BROTHER_CLUSTER)
+        store.completeEmbeddedFaces(
+            togetherId,
+            listOf(face(.08f, .10f, .28f, .48f, 0), face(.56f, .11f, .77f, .50f, 1)),
+            listOf(ME_CLUSTER, BROTHER_CLUSTER),
+            FACE_PRODUCER,
+        )
+        store.completeEmbeddedFaces(
+            meOnlyId,
+            listOf(face(.20f, .12f, .43f, .52f, 0)),
+            listOf(ME_CLUSTER),
+            FACE_PRODUCER,
+        )
+        store.completeEmbeddedFaces(
+            swappedId,
+            listOf(face(.08f, .10f, .28f, .48f, 0), face(.56f, .11f, .77f, .50f, 1)),
+            listOf(ME_CLUSTER, BROTHER_CLUSTER),
+            FACE_PRODUCER,
+        )
+        store.saveReviewedPersonCluster(ME_CLUSTER, "Me", "Me", listOf("myself", "main"))
+        store.saveReviewedPersonCluster(BROTHER_CLUSTER, "Brother", "brother", listOf("bhaiya", "\u092d\u0948\u092f\u093e"))
+
+        saveFixtureVerdict(store, togetherId, ME_CLUSTER, "P1 is wearing a yellow hat", ME_REGION, PersonVisualVerdict.VERIFIED_TRUE)
+        saveFixtureVerdict(store, togetherId, BROTHER_CLUSTER, "P2 is wearing a blue suit", BROTHER_REGION, PersonVisualVerdict.VERIFIED_TRUE)
+        saveFixtureVerdict(store, swappedId, ME_CLUSTER, "P1 is wearing a yellow hat", ME_REGION, PersonVisualVerdict.VERIFIED_FALSE)
+        saveFixtureVerdict(store, swappedId, BROTHER_CLUSTER, "P2 is wearing a blue suit", BROTHER_REGION, PersonVisualVerdict.VERIFIED_FALSE)
+        saveFixtureVerdict(store, swappedId, ME_CLUSTER, "P1 is wearing a blue suit", ME_REGION, PersonVisualVerdict.VERIFIED_TRUE)
+        saveFixtureVerdict(store, swappedId, BROTHER_CLUSTER, "P2 is wearing a yellow hat", BROTHER_REGION, PersonVisualVerdict.VERIFIED_TRUE)
+    }
+
+    private fun saveFixtureVerdict(
+        store: GalleryDatabase,
+        mediaId: String,
+        clusterId: String,
+        predicate: String,
+        region: List<Float>,
+        verdict: PersonVisualVerdict,
+    ) = store.saveVerifiedPersonAttributeFact(
+        mediaId = mediaId,
+        clusterId = clusterId,
+        predicate = predicate,
+        value = verdict.name,
+        confidence = .99f,
+        region = region,
+        modelVersion = FIXTURE_VERIFIER_VERSION,
+        verdict = verdict,
+    )
+
+    private fun face(left: Float, top: Float, right: Float, bottom: Float, index: Int) = FaceInstance(
+        bounds = listOf(left, top, right, bottom),
+        embedding = FloatArray(FaceModelCatalog.sface.embeddingDimension).also { it[index] = 1f },
+        quality = .99f,
+    )
+
+    private fun requiredPeople(store: GalleryDatabase, plan: GalleryQueryPlan): Set<String> =
+        PeopleClauseResolver.requiredGroups(plan.peopleClauses).flatMapTo(linkedSetOf()) { group ->
+            group.flatMap { clause ->
+                store.resolveReviewedPersonIds(clause.personId).ifEmpty { setOf(clause.personId) }
+            }
+        }
+
+    private class FixedPlanCompiler(private val plan: GalleryQueryPlan) : GalleryPlanCompiler {
+        override suspend fun compile(query: String, activeResultIds: Set<String>?): GalleryQueryPlan =
+            plan.copy(originalQuery = query, baseResultIds = activeResultIds)
+    }
 
     private data class CaseMetrics(
         val hitCount: Int,
@@ -311,5 +449,13 @@ class CoreCorpusEvaluationAcceptanceTest {
 
     private companion object {
         const val INDEX_TIMEOUT_MS = 10 * 60_000L
+        const val ME_CLUSTER = "person_core_me"
+        const val BROTHER_CLUSTER = "person_core_brother"
+        const val FACE_PRODUCER = "fixture-core-people-v1"
+        const val FIXTURE_VERIFIER_VERSION = "gemma-4-e2b-fixture-cache-v1"
+        const val APPEARANCE_QUERY =
+            "Show photos where I am wearing a yellow hat and my brother is wearing a blue suit."
+        val ME_REGION = listOf(.08f, .10f, .28f, .48f)
+        val BROTHER_REGION = listOf(.56f, .11f, .77f, .50f)
     }
 }

@@ -1602,3 +1602,13 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: consumerDebug, fixtureCiDebugAndroidTest, and offlineDemoDebug builds; the offline APK contains no INTERNET permission.
 - PASS: consumer replacement install with `adb install -r -d`; databases remained 2072 KiB, files remained 11612170 KiB, and the app process launched.
 - Remaining: unified core Q07/Q08 remain SKIPPED because the disposable corpus still lacks reviewed People fixtures; real-model cache reuse and full 5k/20k acceptance are NOT RUN.
+
+## 2026-08-11 - Execute core People and identity-binding cases
+
+- Files changed: CoreCorpusEvaluationAcceptanceTest and this status file; production runtime code is unchanged from the preceding cache-reuse commit.
+- Fixture isolation: Q07/Q08 create reviewed Me/Brother identities, five face bindings, and exact person verdicts only inside the disposable fixture package, then reset all fixture People data.
+- Q07 validates hard reviewed-People intersection; Q08 validates Me/Brother attribute ownership against a swapped-attribute distractor through the production repository and cached production verifier path.
+- PASS: connected run `accept_16030d48a437` on SM-F966B completed core Q01-Q13 with 13 PASS, 0 FAIL, and 0 SKIPPED. Q07 and Q08 each returned one expected rank-1 hit; Q08 returned two cluster-bound verification evidence records.
+- PASS: run-scoped cleanup deleted 84/84 fixture database rows and 84/84 MediaStore items with zero remaining.
+- Build: fixtureCiDebug and fixtureCiDebugAndroidTest PASS through the connected acceptance driver. Consumer/offline runtime artifacts are unchanged from the preceding PASS build.
+- Remaining: Q08 uses exact persisted fixture verdicts rather than a real Gemma image inference; the separate production verifier test covers one-call generation and cache reuse, while full real-model 5k/20k acceptance remains NOT RUN.
