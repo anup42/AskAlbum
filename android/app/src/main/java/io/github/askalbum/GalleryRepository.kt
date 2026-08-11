@@ -125,6 +125,7 @@ class GalleryRepository private constructor(
     private val visualVerifier = overrides?.visualVerifier ?: services.visualVerifier
     private val groundedAnswerComposer = services.groundedAnswerComposer
     private val importer = MediaImporter(context.applicationContext)
+    private val mediaAccessCoverage = AndroidMediaAccessCoverage(appContext)
     private val indexingRunCriteriaStore = IndexingRunCriteriaStore(appContext)
     private val indexingJobControlsStore = IndexingJobControlsStore(appContext)
     private val planPatchResolver = ResultSetPlanPatchResolver()
@@ -1662,6 +1663,7 @@ class GalleryRepository private constructor(
     ): SearchAnswer {
         val totalItems = eligibleIds.size
         val readyItems = allItems.count { it.id in eligibleIds && it.indexState == IndexState.READY }
+        val mediaAccessReport = mediaAccessCoverage.reportFor(plan)
         val semanticReport = channelReports.first { it.channel == RetrievalChannel.SEMANTIC }
         val peopleReport = channelReports.first { it.channel == RetrievalChannel.PEOPLE }
         val ocrReport = channelReports.first { it.channel == RetrievalChannel.OCR }
@@ -1708,6 +1710,7 @@ class GalleryRepository private constructor(
             semanticReport = semanticReport,
             verificationApplied = verification.applied,
             completePredicateScan = completePredicateScan,
+            mediaAccessComplete = mediaAccessReport.complete,
         )
         val warnings = buildList {
             if (verification.failures.isNotEmpty()) {
@@ -1721,6 +1724,7 @@ class GalleryRepository private constructor(
                             "searched ${report.searchedCount} of ${report.eligibleCount} eligible items.",
                     )
                 }
+            mediaAccessReport.warning()?.let(::add)
         }.distinct()
         val evidenceIds = hits.flatMap { it.evidence }.map { it.id }.distinct().take(12)
         if (hits.isEmpty() && !shouldExecuteCapabilityWithoutMediaHits(plan.intent, verification.applied)) {
@@ -1733,6 +1737,8 @@ class GalleryRepository private constructor(
                         "${semanticReport.eligibleCount} eligible local items and found no supported matches."
                 } else if (usedSemanticRetrieval) {
                     RetrievalCoverageWording.boundedSemanticNoResult(semanticReport)
+                } else if (!mediaAccessReport.complete) {
+                    mediaAccessReport.countDetail(totalItems)
                 } else {
                     "All $totalItems eligible local items were checked. " +
                         if (readyItems < totalItems) "Some items are still indexing." else "Try a place, object, OCR word, or scene."
@@ -1764,6 +1770,7 @@ class GalleryRepository private constructor(
                 ),
                 eventCoverageComplete = eventCoverageComplete,
                 sensitiveContentAuthorized = sensitiveContentAuthorized,
+                mediaAccessCoverage = mediaAccessReport,
             ),
         )
 

@@ -52,4 +52,27 @@ class RetrievalExactnessPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun incompleteGalleryAccessPreventsDeterministicExactness() {
+        val notRequired = RetrievalChannelReport<Any>(
+            channel = RetrievalChannel.SEMANTIC,
+            status = ChannelStatus.NOT_REQUIRED,
+            eligibleCount = 4,
+            indexedCount = 4,
+            searchedCount = 0,
+            hits = emptyList(),
+        )
+
+        assertEquals(
+            ResultExactness.PARTIAL_INDEX,
+            RetrievalExactnessPolicy.resolve(
+                allEligibleIndexed = true,
+                deterministicOperation = true,
+                semanticReport = notRequired,
+                verificationApplied = false,
+                mediaAccessComplete = false,
+            ),
+        )
+    }
 }

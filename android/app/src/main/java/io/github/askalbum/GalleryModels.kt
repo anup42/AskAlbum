@@ -253,6 +253,9 @@ data class SearchAnswer(
     val warnings: List<String> = emptyList(),
     val requiresAuthentication: Boolean = false,
     val channelReports: List<RetrievalChannelReport<SearchHit>> = emptyList(),
+    val mediaAccessCoverage: GalleryAccessCoverageReport = GalleryAccessCoverageReport(
+        GalleryAccessCoverageStatus.NOT_REQUIRED,
+    ),
 )
 
 data class SearchOutcome(

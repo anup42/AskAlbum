@@ -157,8 +157,9 @@ internal object RetrievalExactnessPolicy {
         semanticReport: RetrievalChannelReport<*>,
         verificationApplied: Boolean,
         completePredicateScan: Boolean = false,
+        mediaAccessComplete: Boolean = true,
     ): ResultExactness = when {
-        !allEligibleIndexed -> ResultExactness.PARTIAL_INDEX
+        !allEligibleIndexed || !mediaAccessComplete -> ResultExactness.PARTIAL_INDEX
         // A full semantic scan only evaluates its semantic predicate. If bounded
         // visual verification was also needed, the visual predicate was not
         // evaluated across the complete eligible set and cannot be called exact.

@@ -574,6 +574,25 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun permissionLimitedCountExplainsAccessibleCorpus() {
+        val access = GalleryAccessCoverageReport(
+            status = GalleryAccessCoverageStatus.UNAVAILABLE,
+            requiredKinds = setOf(MediaKind.IMAGE),
+        )
+        val answer = CapabilityAnswerExecutor.execute(
+            context(QueryIntent.COUNT).copy(
+                exactness = ResultExactness.PARTIAL_INDEX,
+                mediaAccessCoverage = access,
+            ),
+        )
+
+        assertTrue(answer.headline.contains("current retrieval pass", ignoreCase = true))
+        assertTrue(answer.detail.contains("Gallery access is off"))
+        assertTrue(answer.detail.contains("not a complete gallery count"))
+        assertEquals(access, answer.mediaAccessCoverage)
+    }
+
+    @Test
     fun listPersonUsesReviewedLabelsOnly() {
         val base = context(QueryIntent.LIST)
         val answer = CapabilityAnswerExecutor.execute(

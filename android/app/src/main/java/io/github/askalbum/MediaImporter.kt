@@ -5,21 +5,20 @@ import android.content.Context
 import android.content.Intent
 import android.media.ExifInterface
 import android.net.Uri
-import android.os.Build
 import android.provider.MediaStore
 import android.provider.OpenableColumns
-import androidx.core.content.ContextCompat
 import java.security.MessageDigest
 
 class MediaImporter(private val context: Context) {
     private val resolver = context.contentResolver
+    private val mediaAccessCoverage = AndroidMediaAccessCoverage(context)
 
     fun scanAccessibleMediaStore(): MediaScanSnapshot {
         val imageScan = scanCollection(MediaKind.IMAGE)
         val videoScan = scanCollection(MediaKind.VIDEO)
         val complete = buildSet {
-            if (imageScan.completed && hasFullPermission(MediaKind.IMAGE)) add(MediaKind.IMAGE)
-            if (videoScan.completed && hasFullPermission(MediaKind.VIDEO)) add(MediaKind.VIDEO)
+            if (imageScan.completed && mediaAccessCoverage.hasFullPermission(MediaKind.IMAGE)) add(MediaKind.IMAGE)
+            if (videoScan.completed && mediaAccessCoverage.hasFullPermission(MediaKind.VIDEO)) add(MediaKind.VIDEO)
         }
         return MediaScanSnapshot(imageScan.items + videoScan.items, complete)
     }
@@ -148,19 +147,6 @@ class MediaImporter(private val context: Context) {
                 }
             }
         }, true)
-    }
-
-    private fun hasFullPermission(kind: MediaKind): Boolean = when {
-        Build.VERSION.SDK_INT < 33 -> ContextCompat.checkSelfPermission(
-            context, android.Manifest.permission.READ_EXTERNAL_STORAGE,
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        kind == MediaKind.IMAGE -> ContextCompat.checkSelfPermission(
-            context, android.Manifest.permission.READ_MEDIA_IMAGES,
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        kind == MediaKind.VIDEO -> ContextCompat.checkSelfPermission(
-            context, android.Manifest.permission.READ_MEDIA_VIDEO,
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        else -> false
     }
 
     private data class CollectionScan(val items: List<ImportedMedia>, val completed: Boolean)

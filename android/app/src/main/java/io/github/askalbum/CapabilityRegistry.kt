@@ -86,6 +86,9 @@ data class CapabilityAnswerContext(
     val eventCoverageComplete: Boolean = false,
     /** Internal post-auth rendering only. Callers must never expose this context before device authentication. */
     val sensitiveContentAuthorized: Boolean = false,
+    val mediaAccessCoverage: GalleryAccessCoverageReport = GalleryAccessCoverageReport(
+        GalleryAccessCoverageStatus.NOT_REQUIRED,
+    ),
 )
 
 object CapabilityAnswerExecutor {
@@ -122,6 +125,7 @@ object CapabilityAnswerExecutor {
                 context.totalEligibleCount,
                 warnings = context.warnings,
                 channelReports = context.channelReports,
+                mediaAccessCoverage = context.mediaAccessCoverage,
             )
         }
         if (!context.sensitiveContentAuthorized && answerRequiresAuthentication(context)) {
@@ -156,6 +160,8 @@ object CapabilityAnswerExecutor {
                     "An exhaustive local semantic predicate scan evaluated every eligible indexed item."
                 } else if (context.exactness == ResultExactness.EXACT) {
                     "This is a deterministic count over complete eligible coverage."
+                } else if (!context.mediaAccessCoverage.complete) {
+                    context.mediaAccessCoverage.countDetail(context.totalEligibleCount)
                 } else {
                     "This is not an exhaustive visual predicate count; channel coverage is shown below."
                 },
