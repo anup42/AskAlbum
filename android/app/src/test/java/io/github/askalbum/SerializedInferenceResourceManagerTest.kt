@@ -2,6 +2,8 @@ package io.github.anup42.askalbum
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -70,5 +72,26 @@ class SerializedInferenceResourceManagerTest {
         first.await()
         assertEquals("next", next.await())
         assertTrue(cancelled.isCancelled)
+    }
+
+    @Test
+    fun cancellingTheActiveLeaseAdmitsTheNextRequest() = runBlocking {
+        val manager = SerializedInferenceResourceManager()
+        val firstStarted = CompletableDeferred<Unit>()
+        val active = async {
+            manager.withModel(ModelCapability.GENERATIVE, InferencePriority.BACKGROUND) {
+                firstStarted.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        firstStarted.await()
+        val next = async {
+            manager.withModel(ModelCapability.TEXT_EMBEDDING, InferencePriority.INTERACTIVE) { "next" }
+        }
+
+        active.cancelAndJoin()
+
+        assertEquals("next", next.await())
+        assertTrue(active.isCancelled)
     }
 }

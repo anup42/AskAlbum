@@ -1,6 +1,12 @@
 package io.github.anup42.askalbum
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -86,6 +92,85 @@ class GemmaSessionManagerTest {
         assertEquals(3, created.size)
         assertEquals(2, created.count { it.closeCount == 1 })
         assertEquals(1, created.count { it.closeCount == 0 })
+    }
+
+    @Test
+    fun idleTimeoutEvictsAndRecreatesTheEngine() = runBlocking {
+        val created = mutableListOf<FakeEngine>()
+        val manager = GemmaSessionManager(
+            resources = PassthroughResources(),
+            factory = SharedGemmaEngineFactory { _, _ -> FakeEngine().also(created::add) },
+            idleTimeoutMs = 25,
+        )
+
+        manager.withEngine("pack-e2b", multimodal = true) { }
+        withTimeout(2_000) {
+            while (created.single().closeCount == 0) delay(5)
+        }
+        manager.withEngine("pack-e2b", multimodal = true) { }
+
+        assertEquals(2, manager.initializationCount)
+        assertEquals(2, created.size)
+        assertEquals(1, created.first().closeCount)
+        manager.evictNow()
+    }
+
+    @Test
+    fun memoryPressureWaitsForTheActiveCallThenEvictsBeforeReuse() = runBlocking {
+        val created = mutableListOf<FakeEngine>()
+        val manager = GemmaSessionManager(
+            resources = PassthroughResources(),
+            factory = SharedGemmaEngineFactory { _, _ -> FakeEngine().also(created::add) },
+            idleTimeoutMs = 60_000,
+        )
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val activeCall = async {
+            manager.withEngine("pack-e2b", multimodal = true) {
+                entered.complete(Unit)
+                release.await()
+            }
+        }
+        entered.await()
+
+        manager.evictForMemoryPressure()
+        delay(25)
+        assertEquals(0, created.single().closeCount)
+        release.complete(Unit)
+        activeCall.await()
+        withTimeout(2_000) {
+            while (created.single().closeCount == 0) delay(5)
+        }
+
+        manager.withEngine("pack-e2b", multimodal = true) { }
+        assertEquals(2, manager.initializationCount)
+        assertEquals(2, created.size)
+        manager.evictNow()
+    }
+
+    @Test
+    fun cancellingAHeavyCallReleasesTheSessionWithoutDiscardingTheEngine() = runBlocking {
+        val created = mutableListOf<FakeEngine>()
+        val manager = GemmaSessionManager(
+            resources = PassthroughResources(),
+            factory = SharedGemmaEngineFactory { _, _ -> FakeEngine().also(created::add) },
+            idleTimeoutMs = 60_000,
+        )
+        val entered = CompletableDeferred<Unit>()
+        val cancelledCall = async {
+            manager.withEngine("pack-e2b", multimodal = true) {
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        entered.await()
+        cancelledCall.cancelAndJoin()
+
+        manager.withEngine("pack-e2b", multimodal = true) { lease ->
+            assertSame(created.single(), lease.engine)
+        }
+        assertEquals(1, manager.initializationCount)
+        manager.evictNow()
     }
 
     private class PassthroughResources : InferenceResourceManager {
