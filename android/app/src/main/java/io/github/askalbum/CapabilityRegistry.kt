@@ -162,17 +162,14 @@ object CapabilityAnswerExecutor {
                 evidenceIds,
             )
             QueryIntent.ANSWER_FACT -> factAnswer(context, base)
-            QueryIntent.DOCUMENT_QA -> if (
-                OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField) == null &&
-                context.hits.isEmpty()
-            ) {
-                base(
+            QueryIntent.DOCUMENT_QA -> when {
+                context.plan.ocrClause?.requestedField.isNullOrBlank() -> documentDetailsAnswer(context, base)
+                OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField) == null && context.hits.isEmpty() -> base(
                     "No supported matches found",
                     "No eligible document matched the requested local constraints.",
                     emptyList(),
                 )
-            } else {
-                factAnswer(context, base)
+                else -> factAnswer(context, base)
             }
             QueryIntent.SUM -> sumAnswer(context, base)
             QueryIntent.MIN_MAX -> minMaxAnswer(context, base)
@@ -184,16 +181,27 @@ object CapabilityAnswerExecutor {
     }
 
     private fun answerRequiresAuthentication(context: CapabilityAnswerContext): Boolean {
-        val requested = when (context.plan.intent) {
+        val requestedField = when (context.plan.intent) {
             QueryIntent.LIST,
             QueryIntent.ANSWER_FACT,
             QueryIntent.DOCUMENT_QA,
-            -> OcrFactAllowlist.resolve(context.plan.ocrClause?.requestedField)
+            -> context.plan.ocrClause?.requestedField
             QueryIntent.SUM,
             QueryIntent.MIN_MAX,
-            -> OcrFactAllowlist.resolve(context.plan.aggregation?.field)
+            -> context.plan.aggregation?.field
             else -> null
-        }?.takeIf(OcrFactField::sensitive) ?: return false
+        }
+        val evidence = (context.hits + context.deterministicHits)
+            .asSequence()
+            .flatMap(SearchHit::evidence)
+        val genericDocumentDetails = context.plan.intent == QueryIntent.DOCUMENT_QA && requestedField.isNullOrBlank()
+        if (genericDocumentDetails) {
+            return evidence.any { item ->
+                OcrFactAllowlist.fromSource(item.sourceField) != null &&
+                    SensitiveEvidencePolicy.requiresAuthentication(item)
+            }
+        }
+        val requested = OcrFactAllowlist.resolve(requestedField)?.takeIf(OcrFactField::sensitive) ?: return false
         val requiresCompleteCoverageBeforeRendering = context.plan.intent in setOf(
             QueryIntent.ANSWER_FACT,
             QueryIntent.DOCUMENT_QA,
@@ -201,12 +209,9 @@ object CapabilityAnswerExecutor {
             QueryIntent.MIN_MAX,
         )
         if (requiresCompleteCoverageBeforeRendering && !context.hasCompleteEligibleCoverage()) return false
-        return (context.hits + context.deterministicHits)
-            .asSequence()
-            .flatMap(SearchHit::evidence)
-            .any { evidence ->
-                evidence.sourceField == requested.sourceField && SensitiveEvidencePolicy.requiresAuthentication(evidence)
-            }
+        return evidence.any { item ->
+            item.sourceField == requested.sourceField && SensitiveEvidencePolicy.requiresAuthentication(item)
+        }
     }
 
     private fun listAnswer(
@@ -286,6 +291,53 @@ object CapabilityAnswerExecutor {
                 listOf(fact.id),
             )
         }
+    }
+
+    private fun documentDetailsAnswer(
+        context: CapabilityAnswerContext,
+        base: (String, String, List<String>) -> SearchAnswer,
+    ): SearchAnswer {
+        if (!context.hasCompleteEligibleCoverage()) {
+            return base(
+                "Document details unavailable",
+                "The current retrieval pass covered ${context.indexedEligibleCount} of ${context.totalEligibleCount} eligible items. " +
+                    "A partial OCR pass cannot establish a trustworthy document summary.",
+                emptyList(),
+            )
+        }
+        val sourceHits = context.deterministicHits.ifEmpty { context.hits }
+        if (sourceHits.isEmpty()) {
+            return base(
+                "No supported matches found",
+                "No eligible document matched the requested local constraints.",
+                emptyList(),
+            )
+        }
+        val allowedSources = OcrFactAllowlist.fields.mapTo(linkedSetOf(), OcrFactField::sourceField)
+        val selectedDocument = DocumentAnswerSelector.select(sourceHits, allowedSources, context.plan.sort)?.document
+            ?: sourceHits.first()
+        val facts = selectedDocument.evidence
+            .asSequence()
+            .filter { evidence -> evidence.mediaId == selectedDocument.item.id }
+            .mapNotNull { evidence -> OcrFactAllowlist.fromSource(evidence.sourceField)?.let { it to evidence } }
+            .groupBy { it.first.sourceField }
+            .mapNotNull { (_, candidates) -> candidates.maxByOrNull { it.second.confidence } }
+            .sortedBy { (field, _) -> OcrFactAllowlist.fields.indexOf(field) }
+        if (facts.isEmpty()) {
+            return base(
+                "No reliable document details found",
+                "The document matched, but no allowlisted structured OCR facts were available. Open its OCR evidence to inspect it locally.",
+                collectEvidenceIds(listOf(selectedDocument), context.plan, 12),
+            )
+        }
+        val details = facts.joinToString("; ") { (field, evidence) ->
+            "${field.key.replace('_', ' ')}: ${evidence.text}"
+        }
+        return base(
+            "${facts.size} document ${if (facts.size == 1) "detail" else "details"}",
+            "From ${selectedDocument.item.title}: $details",
+            facts.map { it.second.id },
+        )
     }
 
     private fun sumAnswer(

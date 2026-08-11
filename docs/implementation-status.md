@@ -2,6 +2,19 @@
 
 Last reviewed: 2026-08-11
 
+## 2026-08-11 - Generic document-QA executor closure
+
+- The advertised generic boarding-pass/document question now resolves every
+  allowlisted structured OCR fact from one deterministically selected document
+  instead of ending at `Unsupported document field`.
+- Generic document details retain per-field evidence IDs and require complete
+  eligible OCR coverage. Repository retrieval gathers highest-confidence facts
+  for total, amount, password, flight number/time, order ID, email, phone, date,
+  URL, and merchant without using Gemma arithmetic or generated SQL.
+- If any selected generic detail is sensitive, the deterministic answer is put
+  behind the existing one-time device-authentication flow before answer
+  composition or evidence display. Unsupported nonblank fields still fail closed.
+
 ## 2026-08-11 - Reproducible multilingual retrieval fixture
 
 - Added a public 21-query fixture with equivalent English, Hindi, and Hinglish

@@ -46,6 +46,123 @@ class CapabilityRegistryTest {
     }
 
     @Test
+    fun everyAllowlistedDocumentFieldHasADeterministicExecutor() {
+        OcrFactAllowlist.fields.forEach { field ->
+            val value = when (field.key) {
+                "total" -> "INR 1248.00"
+                "amount" -> "INR 42.00"
+                "password" -> "mango-tree-2048"
+                "flight_number" -> "AI 302"
+                "flight_time" -> "10:45 PM"
+                "order_id" -> "ORDER-42"
+                "email" -> "fixture@example.test"
+                "phone" -> "+91 90000 00000"
+                "date" -> "2026-08-11"
+                "url" -> "https://example.test/order/42"
+                else -> "Swiggy"
+            }
+            val document = hit("field-${field.key}", "Document", "INR 1.00", 1_700_000_000_000).copy(
+                evidence = listOf(
+                    EvidenceRecord("evidence-${field.key}", "field-${field.key}", field.sourceField, value, .99f),
+                ),
+            )
+            val base = context(QueryIntent.ANSWER_FACT)
+            val answer = CapabilityAnswerExecutor.execute(
+                base.copy(
+                    plan = base.plan.copy(ocrClause = OcrClause(requestedField = field.key)),
+                    hits = listOf(document),
+                    deterministicHits = listOf(document),
+                    matchCount = 1,
+                    indexedEligibleCount = 1,
+                    totalEligibleCount = 1,
+                    sensitiveContentAuthorized = true,
+                ),
+            )
+
+            assertEquals(field.key, value, answer.headline)
+            assertEquals(field.key, listOf("evidence-${field.key}"), answer.evidenceIds)
+        }
+    }
+
+    @Test
+    fun advertisedGenericDocumentQaReturnsAllAllowlistedDetails() {
+        val descriptor = CapabilityRegistry.descriptors.single { it.intent == QueryIntent.DOCUMENT_QA }
+        val plan = QueryCompiler().compile(descriptor.suggestedQuery)
+        assertEquals(QueryIntent.DOCUMENT_QA, plan.intent)
+        assertEquals(null, plan.ocrClause?.requestedField)
+        val document = hit("boarding-pass", "Boarding pass", "INR 1.00", 1_700_000_000_000).copy(
+            evidence = listOf(
+                EvidenceRecord("flight-number", "boarding-pass", "document_flight_number", "AI 302", .99f),
+                EvidenceRecord("flight-time", "boarding-pass", "document_flight_time", "10:45 PM", .98f),
+                EvidenceRecord("merchant", "boarding-pass", "document_merchant", "Air India", .97f),
+            ),
+        )
+        val base = context(QueryIntent.DOCUMENT_QA)
+        val answer = CapabilityAnswerExecutor.execute(
+            base.copy(
+                plan = plan,
+                hits = listOf(document),
+                deterministicHits = listOf(document),
+                matchCount = 1,
+                indexedEligibleCount = 1,
+                totalEligibleCount = 1,
+            ),
+        )
+
+        assertEquals("3 document details", answer.headline)
+        assertTrue(answer.detail.contains("flight number: AI 302"))
+        assertTrue(answer.detail.contains("flight time: 10:45 PM"))
+        assertTrue(answer.detail.contains("merchant: Air India"))
+        assertEquals(setOf("flight-number", "flight-time", "merchant"), answer.evidenceIds.toSet())
+        assertTrue(hasDeterministicDocumentAnswer(plan, listOf(document), true, false))
+        assertFalse(hasDeterministicDocumentAnswer(plan, listOf(document), false, false))
+        assertFalse(hasDeterministicDocumentAnswer(plan, listOf(document), true, true))
+    }
+
+    @Test
+    fun unsupportedDocumentFieldCannotBecomeADeterministicGenericAnswer() {
+        val plan = GalleryQueryPlan(
+            originalQuery = "What is the bank account in this document?",
+            intent = QueryIntent.DOCUMENT_QA,
+            ocrClause = OcrClause(requestedField = "bank_account"),
+        )
+        val document = hit("unsupported-field", "Document", "INR 1.00", 1_700_000_000_000)
+
+        assertFalse(hasDeterministicDocumentAnswer(plan, listOf(document), true, false))
+    }
+
+    @Test
+    fun genericDocumentQaIsLockedBeforeAnySensitiveDetailCanBeRenderedOrComposed() {
+        val plan = QueryCompiler().compile("What details are in my latest document?")
+        val document = hit("private-document", "Private document", "INR 1.00", 1_700_000_000_000).copy(
+            evidence = listOf(
+                EvidenceRecord("flight-number", "private-document", "document_flight_number", "AI 302", .99f),
+                EvidenceRecord("password", "private-document", "document_password", "mango-tree-2048", .99f),
+            ),
+        )
+        val base = context(QueryIntent.DOCUMENT_QA).copy(
+            plan = plan,
+            hits = listOf(document),
+            deterministicHits = listOf(document),
+            matchCount = 1,
+            indexedEligibleCount = 1,
+            totalEligibleCount = 1,
+        )
+
+        assertTrue(requiresAuthenticationForAnswer(plan, listOf(document), listOf(document)))
+        val locked = CapabilityAnswerExecutor.execute(base)
+        assertTrue(locked.requiresAuthentication)
+        assertEquals(SensitiveEvidencePolicy.LOCKED_HEADLINE, locked.headline)
+        assertTrue(locked.evidenceIds.isEmpty())
+        assertFalse(locked.detail.contains("mango-tree-2048"))
+
+        val authorized = CapabilityAnswerExecutor.execute(base.copy(sensitiveContentAuthorized = true))
+        assertFalse(authorized.requiresAuthentication)
+        assertTrue(authorized.detail.contains("password: mango-tree-2048"))
+        assertEquals(setOf("flight-number", "password"), authorized.evidenceIds.toSet())
+    }
+
+    @Test
     fun validatorRejectsUnknownOcrFieldsBeforeExecution() {
         val plan = QueryCompiler().compile("What is the password in the latest screenshot?").copy(
             ocrClause = OcrClause(requestedField = "not_allowlisted"),

@@ -45,22 +45,52 @@ internal fun requiresAuthenticationForAnswer(
     rankedHits: List<SearchHit>,
     deterministicAnswerHits: List<SearchHit>,
 ): Boolean {
-    val requested = when (plan.intent) {
+    val requestedField = when (plan.intent) {
         QueryIntent.ANSWER_FACT,
         QueryIntent.DOCUMENT_QA,
         QueryIntent.LIST,
-        -> OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)
+        -> plan.ocrClause?.requestedField
         QueryIntent.SUM,
         QueryIntent.MIN_MAX,
-        -> OcrFactAllowlist.resolve(plan.aggregation?.field)
+        -> plan.aggregation?.field
         else -> null
-    }?.takeIf(OcrFactField::sensitive) ?: return false
-    return (rankedHits + deterministicAnswerHits)
+    }
+    val evidence = (rankedHits + deterministicAnswerHits)
         .asSequence()
         .flatMap(SearchHit::evidence)
-        .any { evidence ->
-            evidence.sourceField == requested.sourceField && SensitiveEvidencePolicy.requiresAuthentication(evidence)
+    val genericDocumentDetails = plan.intent == QueryIntent.DOCUMENT_QA && requestedField.isNullOrBlank()
+    if (genericDocumentDetails) {
+        return evidence.any { item ->
+            OcrFactAllowlist.fromSource(item.sourceField) != null &&
+                SensitiveEvidencePolicy.requiresAuthentication(item)
         }
+    }
+    val requested = OcrFactAllowlist.resolve(requestedField)?.takeIf(OcrFactField::sensitive) ?: return false
+    return evidence.any { item ->
+        item.sourceField == requested.sourceField && SensitiveEvidencePolicy.requiresAuthentication(item)
+    }
+}
+
+internal fun hasDeterministicDocumentAnswer(
+    plan: GalleryQueryPlan,
+    deterministicAnswerHits: List<SearchHit>,
+    ocrCoverageComplete: Boolean,
+    verificationApplied: Boolean,
+): Boolean {
+    if (plan.intent !in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) ||
+        !ocrCoverageComplete || verificationApplied
+    ) {
+        return false
+    }
+    val requested = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)
+    val allowedSources = when {
+        requested != null -> setOf(requested.sourceField)
+        plan.intent == QueryIntent.DOCUMENT_QA && plan.ocrClause?.requestedField.isNullOrBlank() ->
+            OcrFactAllowlist.fields.mapTo(linkedSetOf(), OcrFactField::sourceField)
+        else -> emptySet()
+    }
+    return allowedSources.isNotEmpty() &&
+        DocumentAnswerSelector.select(deterministicAnswerHits, allowedSources, plan.sort)?.fact != null
 }
 
 private data class GalleryRepositoryOverrides(
@@ -808,28 +838,33 @@ class GalleryRepository private constructor(
             plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) ||
             plan.intent == QueryIntent.LIST && plan.ocrClause?.requestedField != null
         ) {
-            OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)?.let { field ->
-                val entities = database.ocrEntitiesForMediaIds(eligibleIds, field.type)
-                allItems.mapNotNull { item ->
-                    entities[item.id]?.let { entity ->
-                        SearchHit(
-                            item = item,
-                            score = 0.0,
-                            evidence = listOf(
-                                EvidenceRecord(
-                                    id = "${item.id}:${field.sourceField}:${StableDerivedId.sha256(entity.normalizedValue)}",
-                                    mediaId = item.id,
-                                    sourceField = field.sourceField,
-                                    text = entity.rawText,
-                                    confidence = entity.confidence,
-                                    producerVersion = entity.producerVersion,
-                                    region = listOf(entity.left, entity.top, entity.right, entity.bottom),
-                                ),
-                            ),
+            val requested = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)
+            val fields = when {
+                requested != null -> listOf(requested)
+                plan.intent == QueryIntent.DOCUMENT_QA && plan.ocrClause?.requestedField.isNullOrBlank() -> OcrFactAllowlist.fields
+                else -> emptyList()
+            }
+            val entitiesByField = fields.associateWith { field ->
+                database.ocrEntitiesForMediaIds(eligibleIds, field.type)
+            }
+            allItems.mapNotNull { item ->
+                val evidence = fields.mapNotNull { field ->
+                    entitiesByField.getValue(field)[item.id]?.let { entity ->
+                        EvidenceRecord(
+                            id = "${item.id}:${field.sourceField}:${StableDerivedId.sha256(entity.normalizedValue)}",
+                            mediaId = item.id,
+                            sourceField = field.sourceField,
+                            text = entity.rawText,
+                            confidence = entity.confidence,
+                            producerVersion = entity.producerVersion,
+                            region = listOf(entity.left, entity.top, entity.right, entity.bottom),
                         )
                     }
                 }
-            }.orEmpty()
+                evidence.takeIf(List<EvidenceRecord>::isNotEmpty)?.let {
+                    SearchHit(item = item, score = 0.0, evidence = it)
+                }
+            }
         } else {
             emptyList()
         }
@@ -1644,16 +1679,12 @@ class GalleryRepository private constructor(
             )
         val deterministicComparison = plan.intent == QueryIntent.COMPARE &&
             plan.comparisonScopes.size >= 2 && !verification.applied
-        val requestedDocumentField = OcrFactAllowlist.resolve(plan.ocrClause?.requestedField)
-        val deterministicDocumentFact = plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) &&
-            requestedDocumentField != null &&
-            ocrCoverageComplete &&
-            DocumentAnswerSelector.select(
-                deterministicAnswerHits,
-                setOf(requestedDocumentField.sourceField),
-                plan.sort,
-            )?.fact != null &&
-            !verification.applied
+        val deterministicDocumentFact = hasDeterministicDocumentAnswer(
+            plan = plan,
+            deterministicAnswerHits = deterministicAnswerHits,
+            ocrCoverageComplete = ocrCoverageComplete,
+            verificationApplied = verification.applied,
+        )
         val deterministicDocumentConstraint = plan.intent in setOf(QueryIntent.ANSWER_FACT, QueryIntent.DOCUMENT_QA) &&
             plan.ocrClause?.merchant?.isNotBlank() == true &&
             plan.terms.isEmpty() &&
