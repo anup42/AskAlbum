@@ -42,6 +42,7 @@ class SeededGalleryCorpusDriverTest {
             ACTION_RECOVERY_PREPARE -> TestGallerySeederReceiver().prepareIndexInterruption(context, safeRunId)
             ACTION_RECOVERY_VERIFY -> TestGallerySeederReceiver().verifyIndexRecovery(context, safeRunId)
             ACTION_INDEX -> index(context, safeRunId, arguments)
+            ACTION_RESUME -> resume(context, safeRunId, arguments)
             ACTION_REPORT -> report(context, safeRunId)
             ACTION_DIAGNOSE -> diagnose(context, safeRunId)
             else -> error("Unsupported galleryDriverAction")
@@ -163,6 +164,16 @@ class SeededGalleryCorpusDriverTest {
         waitForState(context, runId, "index-coverage-status.json")
     }
 
+    private fun resume(context: android.content.Context, runId: String, arguments: Bundle) {
+        val operationId = requireNotNull(arguments.getString("galleryOperationId"))
+        require(TestGallerySeederReceiver.OPERATION_ID.matches(operationId)) { "Invalid galleryOperationId" }
+        clearStatus(context, runId, "index-resume-status.json")
+        TestGallerySeederReceiver().resumeIndexing(context, runId, operationId)
+        val resumed = waitForState(context, runId, "index-resume-status.json")
+        assertEquals("COMPLETE", resumed.optString("state"))
+        assertEquals(operationId, resumed.optString("operationId"))
+    }
+
     private fun diagnose(context: android.content.Context, runId: String) {
         val application = context.applicationContext as AskAlbumApplication
         val seed = JSONObject(File(context.filesDir, "test-seed/$runId/seed-result.json").readText())
@@ -261,6 +272,7 @@ class SeededGalleryCorpusDriverTest {
         const val ACTION_RECOVERY_PREPARE = "recovery_prepare"
         const val ACTION_RECOVERY_VERIFY = "recovery_verify"
         const val ACTION_INDEX = "index"
+        const val ACTION_RESUME = "resume"
         const val ACTION_CLEANUP = "cleanup"
         const val ACTION_REPORT = "report"
         const val ACTION_DIAGNOSE = "diagnose"

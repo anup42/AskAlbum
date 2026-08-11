@@ -20,7 +20,7 @@
         <receiver
             android:name=".TestGallerySeederReceiver"
             android:enabled="true"
-            android:exported="true"
+            android:exported="false"
             android:permission="${applicationId}.permission.TEST_HARNESS">
             <intent-filter>
                 <action android:name="io.github.anup42.askalbum.test.SEED_GALLERY" />
@@ -36,7 +36,7 @@
         <receiver
             android:name=".TestGemmaModelReceiver"
             android:enabled="true"
-            android:exported="true"
+            android:exported="false"
             android:permission="${applicationId}.permission.TEST_HARNESS">
             <intent-filter>
                 <action android:name="io.github.anup42.askalbum.test.DOWNLOAD_GEMMA" />

@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-from common import adb, mask_serial, require_run_id, resolve_serial, run_as_read, run_instrumentation_driver
+from common import mask_serial, require_run_id, resolve_serial, run_as_read, run_instrumentation_driver
 
 EXPECTED_INDEX_STAGES = {
     "DISCOVERY", "METADATA", "THUMBNAIL", "VIDEO_KEYFRAMES", "EMBEDDING",
@@ -158,24 +158,25 @@ def main() -> None:
         filename = "foreground-index-result.json"
     elif args.action == "resume":
         operation_id = uuid.uuid4().hex
-        adb(
-            serial, "shell", "am", "broadcast", "-n",
-            component_name(args.package, args.component_package, "TestGallerySeederReceiver"),
-            "-a", "io.github.anup42.askalbum.test.RESUME_INDEXING", "--es", "run_id", run_id,
-            "--es", "operation_id", operation_id,
+        run_instrumentation_driver(
+            serial,
+            args.package,
+            run_id,
+            "resume",
+            arguments={"galleryOperationId": operation_id},
+            timeout_seconds=args.timeout_seconds,
         )
         result = wait_for_operation(
             serial, args.package, run_id, operation_id, "index-resume-status.json", args.timeout_seconds,
         )
         filename = "index-resume-result.json"
     else:
-        action = (
-            "io.github.anup42.askalbum.test.REPORT_INDEX_COVERAGE"
-        )
-        adb(
-            serial, "shell", "am", "broadcast", "-n",
-            component_name(args.package, args.component_package, "TestGallerySeederReceiver"),
-            "-a", action, "--es", "run_id", run_id,
+        run_instrumentation_driver(
+            serial,
+            args.package,
+            run_id,
+            "report",
+            timeout_seconds=args.timeout_seconds,
         )
         status_name = "index-coverage-status.json"
         result = read_complete_status(serial, args.package, run_id, status_name)
