@@ -11,7 +11,7 @@ internal object IndexingLeaseRecoveryPolicy {
             IndexingLeaseSqlFilter("status='RUNNING'", emptyArray())
         } else {
             IndexingLeaseSqlFilter(
-                "status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?",
+                "status='RUNNING' AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at<=?)",
                 arrayOf(now),
             )
         }
@@ -20,6 +20,6 @@ internal object IndexingLeaseRecoveryPolicy {
         if (reclaimOrphanedLeases) {
             "1=1"
         } else {
-            "lease_expires_at IS NOT NULL AND lease_expires_at<=$now"
+            "(lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at<=$now)"
         }
 }

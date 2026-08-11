@@ -2,6 +2,38 @@
 
 Last reviewed: 2026-08-12
 
+## 2026-08-12 - Isolated 5K indexing and lease-invariant closure
+
+- The model-independent `fixtureCi` workload `scale5k_20260812` seeded and
+  imported exactly 5,000 app-owned MediaStore images. An independent ownership
+  assertion found exactly 5,000 visible run-scoped rows, and SQLite integrity
+  remained `ok`.
+- The external seed provider now accepts the driver's validated archive name
+  instead of assuming that every staged archive is named after the run ID. Size,
+  SHA-256, canonical-path, private-copy, and source-removal checks remain intact.
+- The workload exposed a cross-pipeline lease defect after a thermal checkpoint:
+  media-analysis completion could clear an embedding claim without changing its
+  `RUNNING` state. Nineteen ownerless embedding rows then became permanently
+  ineligible for both pending selection and expired-lease recovery.
+- Media-analysis completion now clears only media-analysis leases. Any impossible
+  `RUNNING` claim with no owner or no expiry is recovered, and foreground indexing
+  releases its own media/embedding claims in `finally` on every exit path.
+- PASS on `SM-F966B`: after non-destructive recovery, all 5,000 media rows were
+  `READY`, all 5,000 embeddings were `COMPLETE`, no claims remained active, and
+  retryable, exhausted, and permanent failure counts were all zero. Android's
+  thermal gate paused at `MODERATE` and resumed below it without resetting prior
+  progress. The media-analysis completion span was 512,874 ms.
+- Focused lease-policy tests, seven connected database recovery tests, the full
+  `fixtureCi` JVM suite, `consumerDebug`, and `offlineDemoDebug` passed. Fixture
+  diagnostics found no fatal exception, ANR, or OOM marker. The consumer package
+  retained its original `firstInstallTime` and an `ok` database; it was never
+  uninstalled, cleared, reset, or instrumented.
+- This gate uses fixture engines and validates storage, checkpoint, recovery,
+  coverage, and scale behavior. It does not claim real Gemma/SigLIP quality over
+  5,000 items. The retained 2026-08-11 run was restart-required because its fixture
+  package checkpoint no longer existed; it was not reported as resumed. The full
+  20K workload remains NOT RUN.
+
 ## 2026-08-12 - Real Gemma conversational follow-up gate
 
 - Strong app-owned follow-up cues such as `Only`, `Now`, `Exclude`, and

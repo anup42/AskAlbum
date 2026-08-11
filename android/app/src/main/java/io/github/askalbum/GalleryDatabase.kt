@@ -785,7 +785,7 @@ class GalleryDatabase(
             } else {
                 updateStage(db, id, IndexStage.FACES, StageStatus.SKIPPED, "disabled-until-opt-in")
             }
-            clearMediaIndexLeases(db, id)
+            clearMediaAnalysisLeases(db, id)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -933,13 +933,14 @@ class GalleryDatabase(
         arrayOf(IndexingRetryPolicy.MAX_ITEM_ATTEMPTS.toString()),
     ).use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null }
 
-    private fun clearMediaIndexLeases(db: GallerySqlDatabase, id: String) {
+    private fun clearMediaAnalysisLeases(db: GallerySqlDatabase, id: String) {
+        val stageNames = IndexingRecoveryPolicy.mediaAnalysisStages.joinToString(",") { "'${it.name}'" }
         db.update("media_index_stage", ContentValues().apply {
             putNull("lease_owner")
             putNull("lease_expires_at")
             put("next_attempt_at", 0L)
             put("last_progress_at", System.currentTimeMillis())
-        }, "media_id=?", arrayOf(id))
+        }, "media_id=? AND stage IN ($stageNames)", arrayOf(id))
     }
 
     private fun clearStageLease(db: GallerySqlDatabase, id: String, stage: IndexStage) {

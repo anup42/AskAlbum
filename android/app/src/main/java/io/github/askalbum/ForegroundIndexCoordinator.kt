@@ -61,24 +61,25 @@ internal class ForegroundIndexCoordinator(context: Context) {
         onProgress: (ForegroundIndexProgress) -> Unit = {},
     ): ForegroundIndexRunResult {
         require(allowedMediaIds == null || allowedMediaIds.isNotEmpty()) { "Foreground index scope is empty" }
-        repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
-        repository.recoverInterruptedJobs(IndexingPipeline.EMBEDDINGS)
-        val started = SystemClock.elapsedRealtime()
-        val job = currentCoroutineContext()[Job]
-        var cycles = 0
-        var galleryProcessed = 0
-        var embeddingsProcessed = 0
-        var retryableFailures = 0
-        var permanentFailures = 0
+        try {
+            repository.recoverInterruptedJobs(IndexingPipeline.MEDIA_ANALYSIS)
+            repository.recoverInterruptedJobs(IndexingPipeline.EMBEDDINGS)
+            val started = SystemClock.elapsedRealtime()
+            val job = currentCoroutineContext()[Job]
+            var cycles = 0
+            var galleryProcessed = 0
+            var embeddingsProcessed = 0
+            var retryableFailures = 0
+            var permanentFailures = 0
 
-        GalleryIndexBatchProcessor(appContext, repository).use { gallery ->
-            val embeddings = EmbeddingIndexBatchProcessor(
-                context = appContext,
-                repository = repository,
-                vectors = app.services.semanticVectorStore,
-                engine = app.services.embeddingEngine,
-            )
-            while (cycles < limits.maxCycles) {
+            GalleryIndexBatchProcessor(appContext, repository).use { gallery ->
+                val embeddings = EmbeddingIndexBatchProcessor(
+                    context = appContext,
+                    repository = repository,
+                    vectors = app.services.semanticVectorStore,
+                    engine = app.services.embeddingEngine,
+                )
+                while (cycles < limits.maxCycles) {
                 val before = admissionPolicy.evaluate()
                 if (!before.allowed) {
                     return finish(
@@ -116,7 +117,7 @@ internal class ForegroundIndexCoordinator(context: Context) {
                         gallery.processBatch(
                             allowedMediaIds = allowedMediaIds,
                             rebuildEvents = false,
-                            ownerId = "foreground-gallery",
+                            ownerId = FOREGROUND_GALLERY_OWNER,
                             canContinue = { canContinue() && jobControls.load().mediaAnalysisEnabled },
                         )
                     } else {
@@ -127,7 +128,7 @@ internal class ForegroundIndexCoordinator(context: Context) {
                     if (controls.embeddingsEnabled) {
                         embeddings.processBatch(
                             allowedMediaIds,
-                            ownerId = "foreground-embeddings",
+                            ownerId = FOREGROUND_EMBEDDINGS_OWNER,
                             canContinue = { canContinue() && jobControls.load().embeddingsEnabled },
                         )
                     } else {
@@ -172,20 +173,24 @@ internal class ForegroundIndexCoordinator(context: Context) {
                         errorCode = embeddingBatch.errorCode.takeIf { reason == ForegroundIndexStopReason.UNAVAILABLE },
                     )
                 }
+                }
             }
+            val thermalStatus = admissionPolicy.evaluate().thermalStatus
+            return finish(
+                ForegroundIndexStopReason.CYCLE_LIMIT,
+                cycles,
+                galleryProcessed,
+                embeddingsProcessed,
+                retryableFailures,
+                permanentFailures,
+                started,
+                thermalStatus,
+                allowedMediaIds,
+            )
+        } finally {
+            repository.releaseIndexingLeases(IndexingPipeline.MEDIA_ANALYSIS, FOREGROUND_GALLERY_OWNER)
+            repository.releaseIndexingLeases(IndexingPipeline.EMBEDDINGS, FOREGROUND_EMBEDDINGS_OWNER)
         }
-        val thermalStatus = admissionPolicy.evaluate().thermalStatus
-        return finish(
-            ForegroundIndexStopReason.CYCLE_LIMIT,
-            cycles,
-            galleryProcessed,
-            embeddingsProcessed,
-            retryableFailures,
-            permanentFailures,
-            started,
-            thermalStatus,
-            allowedMediaIds,
-        )
     }
 
     private fun finish(
@@ -221,5 +226,10 @@ internal class ForegroundIndexCoordinator(context: Context) {
             thermalStatus = thermalStatus,
             errorCode = errorCode,
         )
+    }
+
+    private companion object {
+        const val FOREGROUND_GALLERY_OWNER = "foreground-gallery"
+        const val FOREGROUND_EMBEDDINGS_OWNER = "foreground-embeddings"
     }
 }

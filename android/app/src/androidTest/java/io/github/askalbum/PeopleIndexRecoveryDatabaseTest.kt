@@ -170,6 +170,60 @@ class PeopleIndexRecoveryDatabaseTest {
         assertEquals(StageStatus.RUNNING, database.stageRecords(images[1].id).single { it.stage == IndexStage.EMBEDDING }.status)
     }
 
+    @Test
+    fun completingMediaAnalysisPreservesAnotherPipelinesEmbeddingLease() {
+        val database = GalleryDatabase(context, TEST_DATABASE).also { store = it }
+        database.seedDemoIfEmpty()
+        database.ensureStageRows()
+        val image = database.allItems().first { it.kind == MediaKind.IMAGE }
+        assertTrue(database.markEmbedding(image.id, "embedding-test-v1", "embedding-owner"))
+
+        database.completeIndex(
+            id = image.id,
+            labels = emptyList(),
+            description = "",
+            ocrText = "",
+            faceCount = 0,
+            previewPath = null,
+            blocks = emptyList(),
+            entities = emptyList(),
+            ocrAttempted = false,
+            ocrProducerVersion = null,
+            visualFeatures = VisualFeatures(1L, 1f, 1f, 1f),
+            keyframes = emptyList(),
+        )
+        database.releaseIndexingLeases(IndexingPipeline.EMBEDDINGS, "embedding-owner")
+
+        assertEquals(StageStatus.PENDING, database.stageRecords(image.id).single { it.stage == IndexStage.EMBEDDING }.status)
+    }
+
+    @Test
+    fun ownerlessRunningEmbeddingClaimIsRecovered() {
+        val database = GalleryDatabase(context, TEST_DATABASE).also { store = it }
+        database.seedDemoIfEmpty()
+        database.ensureStageRows()
+        val image = database.allItems().first { it.kind == MediaKind.IMAGE }
+
+        database.close()
+        store = null
+        SQLiteDatabase.openDatabase(
+            context.getDatabasePath(TEST_DATABASE).path,
+            null,
+            SQLiteDatabase.OPEN_READWRITE,
+        ).use { raw ->
+            raw.execSQL(
+                "UPDATE media_index_stage SET status='RUNNING',lease_owner=NULL,lease_expires_at=NULL " +
+                    "WHERE media_id=? AND stage='EMBEDDING'",
+                arrayOf<Any>(image.id),
+            )
+        }
+
+        val reopened = GalleryDatabase(context, TEST_DATABASE).also { store = it }
+        reopened.recoverInterruptedJobs(IndexingPipeline.EMBEDDINGS)
+
+        assertEquals(StageStatus.PENDING, reopened.stageRecords(image.id).single { it.stage == IndexStage.EMBEDDING }.status)
+    }
+
     private companion object {
         const val TEST_DATABASE = "people-index-recovery-test.db"
     }

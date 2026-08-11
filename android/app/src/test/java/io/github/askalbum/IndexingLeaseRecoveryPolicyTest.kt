@@ -11,11 +11,16 @@ class IndexingLeaseRecoveryPolicyTest {
         val filter = IndexingLeaseRecoveryPolicy.runningFilter(reclaimOrphanedLeases = false, now = 123L)
 
         assertTrue(filter.sql.contains("lease_expires_at"))
+        assertTrue(filter.sql.contains("lease_owner IS NULL"))
+        assertTrue(filter.sql.contains("lease_expires_at IS NULL"))
         assertFalse(filter.sql.contains("updated_at"))
         assertFalse(filter.sql.contains("last_progress_at"))
         assertEquals(1, filter.args.size)
         assertEquals(123L, filter.args[0])
-        assertFalse(IndexingLeaseRecoveryPolicy.semanticFilter(false, 123L).contains("updated_at"))
+        val semanticFilter = IndexingLeaseRecoveryPolicy.semanticFilter(false, 123L)
+        assertTrue(semanticFilter.contains("lease_owner IS NULL"))
+        assertTrue(semanticFilter.contains("lease_expires_at IS NULL"))
+        assertFalse(semanticFilter.contains("updated_at"))
     }
 
     @Test
