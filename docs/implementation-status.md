@@ -1,6 +1,36 @@
 # Public implementation status
 
-Last reviewed: 2026-08-11
+Last reviewed: 2026-08-12
+
+## 2026-08-12 - Real Gemma conversational follow-up gate
+
+- Strong app-owned follow-up cues such as `Only`, `Now`, `Exclude`, and
+  `Same event but videos` can no longer be de-scoped when Gemma emits
+  `followUp:false`; contextual forms recognized only by Gemma remain supported.
+- The bounded local planner context now includes the prior utterance and bounded
+  referenced People/event sets. Known relationship references are applied by the
+  existing deterministic People detector before typed `PlanPatch` construction,
+  while request-recipient wording such as `Show me beach photos` remains outside
+  the Me identity filter.
+- The one-shot schema-repair prompt now repeats the exact allowed root fields and
+  the media-refinement contract. Unsupported model fields and filter operations
+  remain rejected; deterministic fallback is reported rather than hidden.
+- PASS on `SM-F966B`: the six-turn Singapore chain retained its app-owned result
+  scope and emitted typed PLACE/semantic, PEOPLE, SORT, TIME, negative screenshot,
+  and VIDEO operations. Four follow-ups used the retained E2B pack on GPU; two
+  invalid schemas used explicit deterministic fallback. MTP was supported and
+  enabled, and the complete chain initialized Gemma once (`164,804 ms`, operation
+  `cd88371af08242268bb5b596b249e4cb`).
+- The model-independent focused tests and complete `fixtureCi` JVM suite passed.
+  `consumerDebug` and `offlineDemoDebug` built, the offline APK retained no
+  `INTERNET` permission, and replacement installation preserved the original
+  `firstInstallTime`. Package-scoped diagnostics found no app fatal, ANR, OOM, or
+  SQLite marker.
+- The connected gate uses synthetic result IDs and validates planner, fallback,
+  typed-patch, shared-session, and scope behavior only. It does not claim that the
+  full chain retrieved correct items from the user's real gallery. The debug
+  receiver must run while the app is foreground because Android may freeze a
+  detached coroutine in an empty cached process.
 
 ## 2026-08-11 - Generic document-QA executor closure
 

@@ -148,6 +148,7 @@ class LiteRtLmQueryPlanner(
         A people clause has personId, mustBePresent, hardness and means that identity must be visibly present. Do not add one for ownership, authorship, or request-recipient grammar such as "my photos", "my trip", "photos I took", or "show me beach photos". ocrClause has optional query,merchant,requestedField. When requestedField is present, use exactly one allowlisted key: ${OcrFactAllowlist.fields.joinToString(",") { it.key }}. For SUM or MIN_MAX, aggregation.field must be one of the numeric allowlisted keys. For COMPARE, put each requested place or event name in comparisonScopes (maximum 4) and do not reduce the comparison to one place filter.
         verification is exactly one quoted scalar enum string: AUTO, REQUIRED, or NEVER. Never emit an array or object there.
         Set followUp to true only when the current utterance modifies or narrows the active result set described below. Set it to false for a new gallery-wide request, even when a previous result set exists. Never emit or infer result-set IDs.
+        For "Same event but videos" or an equivalent media-type refinement, set followUp to true and mediaScope to VIDEOS. The active result set carries event continuity; do not emit event, eventId, eventScope, result IDs, or media IDs.
         Preserve the user's language in text and add a short English canonicalText when useful for retrieval.
         Set verification to REQUIRED only for relational, negative, comparative, or fine-grained visual conditions. Otherwise use AUTO. Do not relax HARD constraints.
         Active conversation context: ${followUpContext?.let(::followUpContextJson) ?: "none"}
@@ -160,6 +161,9 @@ class LiteRtLmQueryPlanner(
             put("activeResultSetPresent", context.state.activeResultSetId != null)
             put("activeItemCount", context.state.activeResultIds.size)
             put("lastQueryAvailable", !context.state.lastQuery.isNullOrBlank())
+            put("lastQuery", context.state.lastQuery?.take(MAX_CONTEXT_TEXT) ?: JSONObject.NULL)
+            put("referencedPeople", JSONArray(context.state.referencedPeople.take(MAX_CONTEXT_ENTITIES)))
+            put("referencedEvents", JSONArray(context.state.referencedEvents.take(MAX_CONTEXT_ENTITIES)))
             put("currentGrouping", context.state.grouping.name)
             put("currentPlaceScope", JSONArray(context.state.currentPlaceScope.take(8)))
             context.state.currentTimeScope?.let { range ->
@@ -183,6 +187,11 @@ class LiteRtLmQueryPlanner(
                 })
             }
         }.toString()
+    }
+
+    private companion object {
+        const val MAX_CONTEXT_TEXT = 240
+        const val MAX_CONTEXT_ENTITIES = 8
     }
 }
 

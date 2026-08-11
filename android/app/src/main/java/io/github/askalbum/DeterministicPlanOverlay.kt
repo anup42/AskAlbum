@@ -22,6 +22,7 @@ class DeterministicPlanOverlay(
             deterministic.filter != FilterExpression.True && deterministic.terms.isEmpty()
         val deterministicAggregationOnly = deterministic.intent in setOf(QueryIntent.COUNT, QueryIntent.SUM, QueryIntent.MIN_MAX) &&
             deterministic.aggregation != null && deterministic.semanticClauses.isEmpty() && deterministic.terms.isEmpty()
+        val detectedPeople = PeopleQueryReferenceDetector.detect(query)
         val merged = modelPlan.copy(
             intent = when {
                 shouldForceMediaDisplayIntent(query) -> QueryIntent.FIND_MEDIA
@@ -37,6 +38,7 @@ class DeterministicPlanOverlay(
             semanticClauses = if (qualityOnlyFollowUp || filterOnlyFollowUp || deterministicAggregationOnly) emptyList() else modelPlan.semanticClauses,
             terms = if (qualityOnlyFollowUp || filterOnlyFollowUp || deterministicAggregationOnly) emptyList() else modelPlan.terms,
             place = deterministic.place ?: modelPlan.place,
+            peopleClauses = PeopleClauseSanitizer.sanitize(modelPlan.peopleClauses + detectedPeople),
             baseResultIds = modelPlan.baseResultIds ?: deterministic.baseResultIds,
         )
         return DeterministicPlanOverlayResult(

@@ -49,6 +49,12 @@ internal object PeopleQueryReferenceDetector {
         "create", "creates", "creating", "created",
         "receive", "receives", "receiving", "received",
     )
+    private val requestRecipientVerbs = setOf("show", "find", "give", "display", "open", "locate")
+    private val explicitFirstPersonContinuations = setOf(
+        "and", "with", "wear", "wears", "wearing", "wore", "hold", "holds", "holding",
+        "carry", "carries", "carrying", "use", "uses", "using", "stand", "stands", "standing",
+        "sit", "sits", "sitting", "dance", "dances", "dancing", "run", "runs", "running",
+    )
 
     private val negationTerms = setOf(
         "not", "no", "without", "exclude", "excluding", "except",
@@ -71,6 +77,7 @@ internal object PeopleQueryReferenceDetector {
                 .filter { (_, token) -> token.value == queryToken }
                 .map { it.index }
                 .filterNot { index -> isCaptureAuthorshipReference(tokens, index, queryToken) }
+                .filterNot { index -> isRequestRecipientReference(tokens, index, queryToken) }
             if (positions.isEmpty()) return@flatMap emptyList()
 
             val polarities = positions.map { index ->
@@ -98,6 +105,11 @@ internal object PeopleQueryReferenceDetector {
         if (queryToken !in firstPersonSubjectAliases) return false
         val end = minOf(tokens.size, index + AUTHORSHIP_LOOKAHEAD + 1)
         return tokens.subList(index + 1, end).any { it.value in captureAuthorshipVerbs }
+    }
+
+    private fun isRequestRecipientReference(tokens: List<Token>, index: Int, queryToken: String): Boolean {
+        if (queryToken != "me" || index == 0 || tokens[index - 1].value !in requestRecipientVerbs) return false
+        return tokens.getOrNull(index + 1)?.value !in explicitFirstPersonContinuations
     }
 
     private const val NEGATION_LOOKBACK = 3

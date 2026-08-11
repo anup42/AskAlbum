@@ -150,6 +150,20 @@ class DeterministicPlanOverlayTest {
         assertEquals(QueryIntent.EVENT_SUMMARY, result.plan.intent)
     }
 
+    @Test
+    fun explicitRelationshipIsAppliedBeforeTypedFollowUpPatchConstruction() {
+        val active = setOf("one", "two")
+        val model = plan(FilterExpression.True, null).copy(
+            peopleClauses = emptyList(),
+            baseResultIds = active,
+        )
+
+        val result = overlay.apply("Only with Dad.", model, active)
+
+        assertEquals(listOf(PersonClause("dad")), result.plan.peopleClauses)
+        assertEquals(active, result.plan.baseResultIds)
+    }
+
     private fun plan(filter: FilterExpression, place: String?) = GalleryQueryPlan(
         originalQuery = "fixture",
         intent = QueryIntent.FIND_MEDIA,

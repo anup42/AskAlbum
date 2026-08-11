@@ -67,12 +67,15 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
                 .distinct()
         }
         val heuristicFollowUp = FollowUpLanguage.isFollowUp(query, !activeResultIds.isNullOrEmpty())
-        val followUp = if (!json.has("followUp") || json.isNull("followUp")) {
-            heuristicFollowUp
+        val modelFollowUp = if (!json.has("followUp") || json.isNull("followUp")) {
+            false
         } else {
             require(json.get("followUp") is Boolean) { "Planner followUp must be a boolean" }
             json.getBoolean("followUp")
         }
+        // Gemma may recognize contextual forms beyond the deterministic language policy,
+        // but it cannot de-scope an unambiguous app-owned refinement such as "Only ...".
+        val followUp = heuristicFollowUp || modelFollowUp
         if (followUp) require(!activeResultIds.isNullOrEmpty()) { "Follow-up requires an active result set" }
         require(finalTerms.isNotEmpty() || structuralListSemantics.isNotEmpty() || followUp || intent in setOf(QueryIntent.COUNT, QueryIntent.LIST, QueryIntent.TIMELINE, QueryIntent.COMPARE)) {
             "Planner produced no searchable constraints"
@@ -127,10 +130,12 @@ class GemmaPlanCodec(private val validator: GalleryQueryPlanValidator = GalleryQ
         Error: ${JSONObject.quote(error.take(240))}
         Original query: ${JSONObject.quote(query)}
         Invalid response: ${JSONObject.quote(invalidResponse.take(1200))}
+        Allowed root fields are exactly: version,intent,followUp,mediaScope,filter,semanticClauses,peopleClauses,ocrClause,grouping,aggregation,sort,verification,answerMode,limit,terms,place,comparisonScopes.
         Required shape: {"version":1,"intent":"FIND_MEDIA","mediaScope":"IMAGES","filter":{"op":"TRUE"},"semanticClauses":[],"peopleClauses":[],"grouping":"NONE","sort":"RELEVANCE","verification":"AUTO","answerMode":"RESULTS_AND_SUMMARY","limit":100,"terms":["search phrase"]}
         The root field "verification" must be exactly one quoted scalar string: "AUTO", "REQUIRED", or "NEVER". It must never be an array or object.
         For ordinary category, scene, activity, place, event-name, or free-text search, use terms/place and return semanticClauses as []. Use semanticClauses only for relational, negative, comparative, or fine-grained visual conditions.
         Each semanticClauses item uses subject "WHOLE_MEDIA", "PERSON", "EVENT", or "DOCUMENT" only. Categories such as family, pet, trip, food, or clothing belong in text/canonicalText, never in subject.
+        For a request such as "Same event but videos", set followUp to true and mediaScope to "VIDEOS". The active result set already carries event continuity; never emit event, eventId, eventScope, result IDs, or media IDs.
         Use integer version 1. Copy numbers as uninterrupted decimal digits. Omit optional fields instead of guessing them.
         Do not add SQL, code, paths, URIs, tool names, result IDs, or fields outside the supplied schema.
     """.trimIndent()

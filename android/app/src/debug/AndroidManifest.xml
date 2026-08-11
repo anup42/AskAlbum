@@ -58,6 +58,11 @@
             android:exported="false"
             android:permission="android.permission.DUMP" />
         <receiver
+            android:name=".TestFollowUpSmokeReceiver"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.DUMP" />
+        <receiver
             android:name=".TestSensitiveOcrSmokeReceiver"
             android:enabled="true"
             android:exported="false"

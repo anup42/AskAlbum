@@ -37,4 +37,13 @@ class PeopleQueryReferenceDetectorTest {
             PeopleQueryReferenceDetector.detect("Show photos I took where I am wearing white"),
         )
     }
+
+    @Test
+    fun requestRecipientDoesNotBecomeMeUnlessItHasAVisiblePredicate() {
+        assertTrue(PeopleQueryReferenceDetector.detect("Show me beach sunset photos").isEmpty())
+        assertEquals(
+            listOf(PersonClause("me")),
+            PeopleQueryReferenceDetector.detect("Show me wearing a red dress"),
+        )
+    }
 }

@@ -121,6 +121,10 @@ class GemmaPlanCodecTest {
         assertTrue(prompt.contains("Omit optional fields"))
         assertTrue(prompt.contains("quoted scalar string"))
         assertTrue(prompt.contains("never be an array or object"))
+        assertTrue(prompt.contains("Allowed root fields are exactly:"))
+        assertTrue(prompt.contains("followUp,mediaScope"))
+        assertTrue(prompt.contains("Same event but videos"))
+        assertTrue(prompt.contains("never emit event, eventId, eventScope"))
     }
 
     @Test

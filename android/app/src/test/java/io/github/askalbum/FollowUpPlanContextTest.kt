@@ -31,6 +31,19 @@ class FollowUpPlanContextTest {
         assertNull(plan.baseResultIds)
     }
 
+    @Test
+    fun appOwnedFollowUpCueCannotBeDeScopedByModel() {
+        val active = setOf("media-1", "media-2")
+
+        val plan = codec.decode(
+            "Only Marina Bay.",
+            planJson(false, "marina", "bay"),
+            active,
+        )
+
+        assertEquals(active, plan.baseResultIds)
+    }
+
     private fun planJson(followUp: Boolean, vararg terms: String): String =
         """
         {
