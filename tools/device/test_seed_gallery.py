@@ -6,8 +6,9 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
-from seed_gallery import parse_complete_seed, parse_external_path, print_result_summary, sha256_file, validate_transport_mode
+from seed_gallery import parse_complete_seed, parse_external_path, print_result_summary, sha256_file, start_seed_service, validate_transport_mode
 
 
 class ExistingSeedResultTest(unittest.TestCase):
@@ -64,6 +65,23 @@ class ExistingSeedResultTest(unittest.TestCase):
             validate_transport_mode("chunked", True)
         with self.assertRaises(RuntimeError):
             validate_transport_mode("instrumentation", True)
+
+    @patch("seed_gallery.run_instrumentation_driver")
+    def test_non_exported_seed_service_starts_through_instrumentation(self, driver) -> None:
+        start_seed_service(
+            "device-serial",
+            "io.github.anup42.askalbum.fixture",
+            "stress_run",
+            timeout_seconds=45.0,
+        )
+
+        driver.assert_called_once_with(
+            "device-serial",
+            "io.github.anup42.askalbum.fixture",
+            "stress_run",
+            "start",
+            timeout_seconds=45.0,
+        )
 
     def test_console_summary_omits_large_uri_lists_but_keeps_the_count(self) -> None:
         output = io.StringIO()

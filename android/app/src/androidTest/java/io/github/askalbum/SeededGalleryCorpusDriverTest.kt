@@ -36,6 +36,7 @@ class SeededGalleryCorpusDriverTest {
         val safeRunId = requireNotNull(runId)
         when (arguments.getString("galleryDriverAction") ?: ACTION_PREPARE) {
             ACTION_PREPARE -> prepare(context, safeRunId, arguments)
+            ACTION_START -> start(context, safeRunId)
             ACTION_IMPORT -> importSeeded(context, safeRunId, arguments)
             ACTION_REMOVE -> removeImported(context, safeRunId)
             ACTION_CLEANUP -> cleanup(context, safeRunId, arguments)
@@ -79,6 +80,10 @@ class SeededGalleryCorpusDriverTest {
         val imported = waitForState(context, runId, "import-status.json")
         assertEquals("COMPLETE", imported.optString("state"))
         assertTrue(imported.optInt("importedCount", 0) > 0)
+    }
+
+    private fun start(context: android.content.Context, runId: String) {
+        TestGallerySeederService.start(context, runId, TestGallerySeederService.ACTION_SEED)
     }
 
     private fun importSeeded(context: android.content.Context, runId: String, arguments: Bundle) {
@@ -267,6 +272,7 @@ class SeededGalleryCorpusDriverTest {
 
     private companion object {
         const val ACTION_PREPARE = "prepare"
+        const val ACTION_START = "start"
         const val ACTION_IMPORT = "import"
         const val ACTION_REMOVE = "remove"
         const val ACTION_RECOVERY_PREPARE = "recovery_prepare"
