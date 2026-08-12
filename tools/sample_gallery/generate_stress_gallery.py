@@ -15,6 +15,12 @@ def generate(core: Path, output: Path, count: int) -> None:
     if count <= 0:
         raise ValueError("count must be positive")
     manifest = json.loads((core / "gallery-manifest.json").read_text(encoding="utf-8"))
+    profile = manifest.get("profile")
+    if profile != "core":
+        raise ValueError(
+            "Stress galleries must be generated from the canonical core profile; "
+            f"received {profile!r}. Nested stress profiles corrupt source-position lineage."
+        )
     sources = [entry for entry in manifest["items"] if entry["filename"].lower().endswith((".jpg", ".jpeg", ".png"))]
     if not sources:
         raise SystemExit("Core profile contains no raster images")

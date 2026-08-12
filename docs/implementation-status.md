@@ -1828,3 +1828,13 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: exact run cleanup deleted 5,000/5,000 MediaStore rows and 5,000/5,000 fixture database rows; final database integrity was `ok`, with 14 demo media, 126 stage rows, and no imported or stress rows.
 - PASS: consumerDebug, fixtureCiDebug, fixtureCiDebugAndroidTest, offlineDemoDebug, and consumer lint. The offline APK contains no INTERNET permission; the consumer package was not installed, instrumented, or modified.
 - Remaining: a process-death gate must be scheduled while work is pending; full real-model 5K and 20K gallery acceptance remain NOT RUN.
+
+## 2026-08-12 - Retained-scale fixture gates
+
+- **PASS - 5K forced-process recovery:** `recovery5k_20260812a` preserved 5,000 unique media rows and 45,000 stage rows across force-stop/recovery, resumed to 5,000 stored vectors with zero failures, passed stored retrieval, and cleaned exactly 5,000 fixture-owned items.
+- **FAIL - invalid first 20K corpus:** `scale20k_20260812` was generated from an already-expanded 5K stress profile. Its 82-source positional lineage drifted after each 5K block and the Singapore precision gate correctly failed at `0.4`; this run is not product retrieval evidence.
+- **FIXED - fixture provenance:** `generate_stress_gallery.py` now rejects any source manifest whose profile is not canonical `core`; a regression test covers nested stress rejection.
+- **PASS - corrected 20K indexing:** `scale20k_20260812b`, generated from the 82-raster core with mapping SHA-256 `5e0d7a370a8ceae779d8e12dfd6a648163543dd45989bc67af50da61e1656bf6`, reached 20,000 unique media, 20,000 ready vectors, zero pending/running rows, and zero retryable, exhausted, or permanent failures.
+- **PASS - thermal recovery:** foreground operation `9f53c3b2dbdb47378bf335edb683b273` checkpointed at thermal status moderate after 12,984 gallery items and 17,312 embeddings; operation `f230b8b5d9b7478f8380dd6c9a70f9d3` resumed after cooling and completed the run without duplicate or failed processing.
+- **PASS - corrected 20K retrieval:** stored-vector acceptance passed all Singapore, beach, dog, and football precision/top-hit gates plus warm-query latency for `scale20k_20260812b`.
+- **PASS - data preservation:** cleanup deleted exactly 20,000 items only from `Pictures/AskAlbumTest/scale20k_20260812b/`, left zero run-scoped media/vectors/stages, and restored fixture database integrity `ok` with 14 demo media and 126 stage rows. Consumer first-install and last-update timestamps remained unchanged.

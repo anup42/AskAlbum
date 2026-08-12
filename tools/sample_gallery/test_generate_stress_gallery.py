@@ -64,6 +64,20 @@ class StressGalleryGeneratorTest(unittest.TestCase):
             self.assertEqual(3, len(checksum_lines))
             self.assertTrue(all("  stress/media/stress_" in line for line in checksum_lines))
 
+    def test_rejects_nested_stress_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "stress"
+            source.mkdir()
+            (source / "gallery-manifest.json").write_text(json.dumps({
+                "profile": "stress-5k",
+                "source_profile": "core",
+                "items": [],
+            }), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "canonical core profile"):
+                generate(source, root / "nested-stress", 20_000)
+
 
 if __name__ == "__main__":
     unittest.main()
