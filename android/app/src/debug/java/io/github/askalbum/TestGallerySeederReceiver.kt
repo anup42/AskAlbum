@@ -65,12 +65,13 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
             deleted += context.contentResolver.delete(uri, null, null)
         }
         val recovered = ownedRunUris(context, runId)
-        val recoveryRecord = JSONObject()
-            .put("state", "RECOVERED")
-            .put("runId", runId)
-            .put("createdUris", JSONArray(recovered.map(Uri::toString)))
-            .put("createdCount", recovered.size)
-            .put("proof", "exact reserved run-scoped AskAlbumTest paths")
+        val recoveryFile = child(runRoot(context, runId), "orphan-recovery.json")
+        val previousRecovery = recoveryFile.takeIf(File::isFile)?.let { JSONObject(it.readText()) }
+        val recoveryRecord = TestGalleryCleanupEvidence.mergeRecovery(
+            runId = runId,
+            previous = previousRecovery,
+            currentlyOwnedUris = recovered.map(Uri::toString),
+        )
         writeStatus(context, runId, "orphan-recovery.json", recoveryRecord)
         var recoveredDeleted = 0
         recovered.forEach { uri -> recoveredDeleted += context.contentResolver.delete(uri, null, null) }
@@ -90,7 +91,9 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
         val cleanup = JSONObject().put("state", "COMPLETE").put("runId", runId)
             .put("relativePaths", relativePaths).put("requestedCount", uris.length())
             .put("deletedCount", deleted).put("recoveredOrphanCount", recovered.size)
-            .put("recoveredOrphanDeletedCount", recoveredDeleted).put("remainingCount", remaining)
+            .put("recoveredOrphanDeletedCount", recoveredDeleted)
+            .put("cumulativeRecoveryCount", recoveryRecord.getInt("createdCount"))
+            .put("remainingCount", remaining)
         operationId?.let { cleanup.put("operationId", it) }
         writeStatus(context, runId, "cleanup-result.json", cleanup)
         writeStatus(context, runId, "cleanup-status.json", cleanup)
@@ -188,7 +191,8 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
     }
 
     fun removeImported(context: Context, runId: String) {
-        val uris = seededUris(context, runId)
+        val evidence = cleanupUris(context, runId)
+        val uris = evidence.values.map(Uri::parse)
         writeStatus(context, runId, "db-cleanup-status.json", JSONObject().put("state", "RUNNING"))
         val repository = (context.applicationContext as AskAlbumApplication).repository
         val result = repository.removeImportedUris(uris, "test_cleanup:$runId")
@@ -202,8 +206,16 @@ class TestGallerySeederReceiver : BroadcastReceiver() {
             JSONObject().put("state", "COMPLETE").put("runId", runId)
                 .put("requestedCount", result.requestedUris).put("matchedCount", result.matchedItems)
                 .put("deletedCount", result.deletedItems).put("tombstonesWritten", result.tombstonesWritten)
-                .put("previewFilesDeleted", result.previewFilesDeleted).put("remainingCount", remaining),
+                .put("previewFilesDeleted", result.previewFilesDeleted).put("remainingCount", remaining)
+                .put("evidenceSource", evidence.source),
         )
+    }
+
+    private fun cleanupUris(context: Context, runId: String): TestGalleryCleanupUris {
+        val root = runRoot(context, runId)
+        val seed = child(root, "seed-result.json").takeIf(File::isFile)?.let { JSONObject(it.readText()) }
+        val recovery = child(root, "orphan-recovery.json").takeIf(File::isFile)?.let { JSONObject(it.readText()) }
+        return TestGalleryCleanupEvidence.resolve(runId, seed, recovery)
     }
 
     internal fun seededUris(context: Context, runId: String): List<Uri> {

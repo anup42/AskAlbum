@@ -121,6 +121,7 @@ class SeededGalleryCorpusDriverTest {
         val result = waitForState(context, runId, "cleanup-status.json")
         assertEquals("COMPLETE", result.optString("state"))
         assertEquals(0, result.optInt("remainingCount", -1))
+        removeImported(context, runId)
     }
 
     private fun cleanup(context: android.content.Context, runId: String) {
@@ -128,18 +129,7 @@ class SeededGalleryCorpusDriverTest {
         TestGallerySeederService.start(context, runId, TestGallerySeederService.ACTION_CLEANUP)
         waitForState(context, runId, "cleanup-status.json")
 
-        // A seed can fail after publishing MediaStore rows but before writing seed-result.json.
-        // The foreground cleanup already recovers rows by the exact reserved paths; there is no
-        // imported database scope to remove in that case.
-        if (!File(context.filesDir, "test-seed/$runId/seed-result.json").isFile) return
-
-        context.sendBroadcast(
-            Intent(TestGallerySeederReceiver.ACTION_REMOVE_IMPORTED)
-                .setComponent(ComponentName(context, TestGallerySeederReceiver::class.java))
-                .putExtra(TestGallerySeederReceiver.EXTRA_RUN_ID, runId),
-        )
-        val database = waitForState(context, runId, "db-cleanup-status.json")
-        assertEquals(0, database.optInt("remainingCount", -1))
+        removeImported(context, runId)
     }
 
     private fun index(context: android.content.Context, runId: String, arguments: Bundle) {

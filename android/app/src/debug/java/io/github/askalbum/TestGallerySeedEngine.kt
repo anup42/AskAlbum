@@ -133,7 +133,7 @@ internal class TestGallerySeedEngine(
     }
 
     private fun clearCompletedCleanupMarker(runId: String) {
-        listOf("cleanup-status.json", "cleanup-result.json").forEach { name ->
+        listOf("cleanup-status.json", "cleanup-result.json", "orphan-recovery.json").forEach { name ->
             val file = child(runRoot(runId), name)
             require(!file.exists() || file.delete()) { "Could not clear stale $name" }
         }
