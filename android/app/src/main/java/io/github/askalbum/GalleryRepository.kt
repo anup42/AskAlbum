@@ -453,6 +453,10 @@ class GalleryRepository private constructor(
         database.embeddingPendingItemsForIds(producerVersion, mediaIds, limit)
     fun accessibleIds(): Set<String> = database.accessibleIds()
     fun accessibleVectorIds(): Set<String> = database.accessibleVectorIds()
+    fun completeAccessibleEmbeddingVectorIds(producerVersion: String, mediaIds: Set<String>? = null): Set<String> =
+        database.completeAccessibleEmbeddingVectorIds(producerVersion, mediaIds)
+    fun requeueMissingEmbeddingVectors(vectorIds: Set<String>, producerVersion: String): Int =
+        database.requeueMissingEmbeddingVectors(vectorIds, producerVersion)
     fun keyframeEmbeddingPendingItems(producerVersion: String, limit: Int): List<VideoKeyframeRecord> =
         database.keyframeEmbeddingPendingItems(producerVersion, limit)
     fun keyframeEmbeddingPendingItemsForIds(

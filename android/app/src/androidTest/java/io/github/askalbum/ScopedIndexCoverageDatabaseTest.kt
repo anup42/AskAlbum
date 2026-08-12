@@ -89,6 +89,31 @@ class ScopedIndexCoverageDatabaseTest {
         )
     }
 
+    @Test
+    fun missingPersistedVectorRequeuesOnlyItsCompletedScopedEmbedding() {
+        val store = GalleryDatabase(context, TEST_DATABASE).also { database = it }
+        val target = imported("target", "content://media/external_primary/file/1")
+        val unrelated = imported("unrelated", "content://media/external_primary/file/2")
+        val producer = "siglip-test"
+        assertEquals(2, store.upsertImported(listOf(target, unrelated)))
+        store.completeEmbedding(target.stableId, producer)
+        store.completeEmbedding(unrelated.stableId, producer)
+
+        assertEquals(
+            setOf(target.stableId),
+            store.completeAccessibleEmbeddingVectorIds(producer, setOf(target.stableId)),
+        )
+        assertEquals(1, store.requeueMissingEmbeddingVectors(setOf(target.stableId), producer))
+        assertEquals(
+            listOf(target.stableId),
+            store.embeddingPendingItemsForIds(producer, setOf(target.stableId), 1).map(GalleryItem::id),
+        )
+        assertEquals(
+            emptyList<String>(),
+            store.embeddingPendingItemsForIds(producer, setOf(unrelated.stableId), 1).map(GalleryItem::id),
+        )
+    }
+
     private fun imported(id: String, uri: String) = ImportedMedia(
         stableId = id,
         uri = uri,

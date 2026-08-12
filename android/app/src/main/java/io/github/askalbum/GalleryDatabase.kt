@@ -464,6 +464,88 @@ class GalleryDatabase(
         null,
     ).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
 
+    fun completeAccessibleEmbeddingVectorIds(
+        producerVersion: String,
+        mediaIds: Set<String>? = null,
+    ): Set<String> {
+        if (mediaIds?.isEmpty() == true) return emptySet()
+        val result = linkedSetOf<String>()
+        val mediaSql = StringBuilder(
+            "SELECT s.media_id FROM media_index_stage s JOIN media_item m ON m.id=s.media_id " +
+                "WHERE m.access_state='ACCESSIBLE' AND s.stage=? AND s.status=? AND s.producer_version=?",
+        )
+        val keyframeSql = StringBuilder(
+            "SELECT v.id FROM video_keyframe v JOIN media_item m ON m.id=v.media_id " +
+                "WHERE m.access_state='ACCESSIBLE' AND v.embedding_state='COMPLETE' AND v.embedding_version=?",
+        )
+        if (mediaIds == null) {
+            readableDatabase.rawQuery(
+                mediaSql.toString(),
+                arrayOf(IndexStage.EMBEDDING.name, StageStatus.COMPLETE.name, producerVersion),
+            ).use { cursor -> while (cursor.moveToNext()) result += cursor.getString(0) }
+            readableDatabase.rawQuery(keyframeSql.toString(), arrayOf(producerVersion)).use { cursor ->
+                while (cursor.moveToNext()) result += cursor.getString(0)
+            }
+        } else {
+            mediaIds.chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                val placeholders = ids.joinToString(",") { "?" }
+                readableDatabase.rawQuery(
+                    "$mediaSql AND m.id IN ($placeholders)",
+                    (listOf(IndexStage.EMBEDDING.name, StageStatus.COMPLETE.name, producerVersion) + ids).toTypedArray(),
+                ).use { cursor -> while (cursor.moveToNext()) result += cursor.getString(0) }
+                readableDatabase.rawQuery(
+                    "$keyframeSql AND m.id IN ($placeholders)",
+                    (listOf(producerVersion) + ids).toTypedArray(),
+                ).use { cursor -> while (cursor.moveToNext()) result += cursor.getString(0) }
+            }
+        }
+        return result
+    }
+
+    fun requeueMissingEmbeddingVectors(vectorIds: Set<String>, producerVersion: String): Int =
+        writableDatabase.transaction { db ->
+            var repaired = 0
+            val now = System.currentTimeMillis()
+            vectorIds.chunked(SQLITE_ID_CHUNK).forEach { ids ->
+                if (ids.isEmpty()) return@forEach
+                val placeholders = ids.joinToString(",") { "?" }
+                repaired += db.update(
+                    "media_index_stage",
+                    ContentValues().apply {
+                        put("status", StageStatus.PENDING.name)
+                        put("producer_version", producerVersion)
+                        put("attempt_count", 0)
+                        put("updated_at", now)
+                        putNull("error")
+                        putNull("lease_owner")
+                        putNull("lease_expires_at")
+                        put("next_attempt_at", 0L)
+                        put("last_progress_at", now)
+                    },
+                    "media_id IN ($placeholders) AND stage=? AND status=? AND producer_version=?",
+                    arrayOf(
+                        *ids.toTypedArray(),
+                        IndexStage.EMBEDDING.name,
+                        StageStatus.COMPLETE.name,
+                        producerVersion,
+                    ),
+                )
+                repaired += db.update(
+                    "video_keyframe",
+                    ContentValues().apply {
+                        put("embedding_state", StageStatus.PENDING.name)
+                        putNull("embedding_version")
+                        put("embedding_attempt_count", 0)
+                        putNull("embedding_error")
+                        put("embedding_next_attempt_at", 0L)
+                    },
+                    "id IN ($placeholders) AND embedding_state=? AND embedding_version=?",
+                    arrayOf(*ids.toTypedArray(), StageStatus.COMPLETE.name, producerVersion),
+                )
+            }
+            repaired
+        }
+
     fun vectorIdsForMedia(mediaIds: Set<String>): Set<String> {
         if (mediaIds.isEmpty()) return emptySet()
         val placeholders = mediaIds.joinToString(",") { "?" }

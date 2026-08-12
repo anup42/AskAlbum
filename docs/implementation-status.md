@@ -1816,3 +1816,15 @@ People cluster summaries now expose both the user-selected representative face a
 - PASS: replacement-installed consumer UI returned `0 matches in the current retrieval pass` with `partial index` and an explicit access-off warning for a standalone 2024 count; `Show beach sunset photos` followed by `How many are there?` returned `2 matching items` as an exact deterministic count over the closed two-result scope.
 - PASS: replacement install preserved first-install time and database files; gallery app-ops remained denied, offlineDemo contains no INTERNET permission, and final exit history showed package-update stops rather than a target crash or ANR.
 - Remaining: consumer instrumentation, physical permission-restoration acceptance, and a full real-model real-gallery 5k/20k run remain NOT RUN.
+
+## 2026-08-12 - Durable vector repair and retained 5K fixture gate
+
+- Files changed: image-vector persistence recovery, gallery database/repository recovery APIs, fixture run cleanup provenance, focused JVM/device tests, and this status file. Migration added: none.
+- Defects fixed: completed embedding stages with missing persisted vectors now requeue only the missing current-producer media/keyframe records; cleanup can use cumulative exact-path orphan evidence when a seed result was never committed.
+- PASS: cleanup-evidence and image-vector-repair JVM tests; scoped database device test proving one missing vector is requeued without changing an unrelated completed embedding.
+- PASS: retained fixture run `scale5k_20260812` recovered from 5,000 `COMPLETE` embedding stages with zero vectors to 5,000/5,000 persisted vectors in 157 bounded cycles and 82,066 ms, with zero retryable or permanent failures and no repeated media-analysis work.
+- PASS: stored 5K retrieval acceptance against the recovered index; all 5,000 media and stage records had complete scoped coverage before retrieval.
+- FAIL: the separate forced-process-stop preparation was invoked after the run was complete and rejected the absence of any pending stage with `No running stage was persisted`; it did not exercise process-death recovery in this run.
+- PASS: exact run cleanup deleted 5,000/5,000 MediaStore rows and 5,000/5,000 fixture database rows; final database integrity was `ok`, with 14 demo media, 126 stage rows, and no imported or stress rows.
+- PASS: consumerDebug, fixtureCiDebug, fixtureCiDebugAndroidTest, offlineDemoDebug, and consumer lint. The offline APK contains no INTERNET permission; the consumer package was not installed, instrumented, or modified.
+- Remaining: a process-death gate must be scheduled while work is pending; full real-model 5K and 20K gallery acceptance remain NOT RUN.

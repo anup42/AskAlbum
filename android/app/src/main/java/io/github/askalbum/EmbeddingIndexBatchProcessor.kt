@@ -36,8 +36,17 @@ internal class EmbeddingIndexBatchProcessor(
             unavailable = true,
             errorCode = "NO_VERIFIED_RETRIEVAL_PACK",
         )
-        val candidates = pendingItems(producer, allowedMediaIds, batchSize)
-        val keyframeCandidates = pendingKeyframes(producer, allowedMediaIds, KEYFRAME_BATCH_SIZE)
+        var candidates = pendingItems(producer, allowedMediaIds, batchSize)
+        var keyframeCandidates = pendingKeyframes(producer, allowedMediaIds, KEYFRAME_BATCH_SIZE)
+        if (candidates.isEmpty() && keyframeCandidates.isEmpty()) {
+            val expectedCompleteIds = repository.completeAccessibleEmbeddingVectorIds(producer, allowedMediaIds)
+            val indexedIds = vectors.indexedIds()
+            val missingIds = ImageVectorRepairPolicy.missingVectorIds(expectedCompleteIds, indexedIds)
+            if (repository.requeueMissingEmbeddingVectors(missingIds, producer) > 0) {
+                candidates = pendingItems(producer, allowedMediaIds, batchSize)
+                keyframeCandidates = pendingKeyframes(producer, allowedMediaIds, KEYFRAME_BATCH_SIZE)
+            }
+        }
         if (candidates.isEmpty() && keyframeCandidates.isEmpty()) {
             if (allowedMediaIds == null) vectors.reconcile(repository.accessibleVectorIds())
             return IndexBatchResult(processed = 0, hasMore = false)

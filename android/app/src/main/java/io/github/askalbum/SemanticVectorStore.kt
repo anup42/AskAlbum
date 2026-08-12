@@ -92,6 +92,13 @@ class SemanticVectorStore(
     )
 }
 
+internal object ImageVectorRepairPolicy {
+    fun missingVectorIds(expectedCompleteIds: Set<String>, indexedIds: Set<String>): Set<String> =
+        expectedCompleteIds.asSequence()
+            .filterNot(indexedIds::contains)
+            .toCollection(linkedSetOf())
+}
+
 internal object SemanticBatchCoveragePolicy {
     fun noVectorIds(
         eligibleCount: Int,
