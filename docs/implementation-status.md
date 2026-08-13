@@ -1838,3 +1838,16 @@ People cluster summaries now expose both the user-selected representative face a
 - **PASS - thermal recovery:** foreground operation `9f53c3b2dbdb47378bf335edb683b273` checkpointed at thermal status moderate after 12,984 gallery items and 17,312 embeddings; operation `f230b8b5d9b7478f8380dd6c9a70f9d3` resumed after cooling and completed the run without duplicate or failed processing.
 - **PASS - corrected 20K retrieval:** stored-vector acceptance passed all Singapore, beach, dog, and football precision/top-hit gates plus warm-query latency for `scale20k_20260812b`.
 - **PASS - data preservation:** cleanup deleted exactly 20,000 items only from `Pictures/AskAlbumTest/scale20k_20260812b/`, left zero run-scoped media/vectors/stages, and restored fixture database integrity `ok` with 14 demo media and 126 stage rows. Consumer first-install and last-update timestamps remained unchanged.
+
+## 2026-08-14 - Connected custom-dataset evaluation interface and baseline
+
+- Added an isolated `evaluationDebug` application ID using production SigLIP2, OCR, Gemma planning, verification, and answer composition without opening the consumer database.
+- Added run-scoped image ingestion/indexing and JSON search interfaces with ranked dataset IDs, answer, validated plan, progressive module outputs, per-module latency, typed channel reports, evidence, and model provenance.
+- The source dataset, oracle, and generated results remain ignored under `artifacts/`; no source image or benchmark answer is compiled into the app or tracked by Git.
+- PASS: 116/116 unique images READY, 116/116 real SigLIP2 vectors complete, zero indexing failures; OCR 27 COMPLETE and 89 SKIPPED; People remained skipped because explicit consent was not enabled.
+- PASS: 107/107 real-device queries completed with no execution failure using verified Gemma E2B; four severe-thermal pauses resumed from per-query checkpoints.
+- Search top-10 macro precision/recall/F1: 0.153490 / 0.333956 / 0.192619. Micro precision/recall/F1: 0.221122 / 0.348958 / 0.270707.
+- Answer ROUGE-1/2/L F1 over 98 non-empty references: 0.020639 / 0.001626 / 0.018092; nine empty references are explicitly NOT_SCORED.
+- Average/p50/p95 end-to-end query latency: 43,820.52 / 35,441 / 110,960 ms.
+- Main limitations evidenced by traces: 25 People queries unavailable without reviewed identities, partial caption coverage on 75 queries, partial caption-embedding coverage on 73, and 36 zero-hit outcomes.
+- PASS: four host metric/security tests, evaluation APK and Android-test compilation, replacement installation, independent search-metric recomputation, unchanged dataset hashes, and unchanged consumer install timestamps.

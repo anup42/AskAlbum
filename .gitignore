@@ -3,6 +3,7 @@
 .model-download-venv/
 .run/
 artifacts/
+eval_dataset/
 /android-diagnostics/
 /build/
 models/

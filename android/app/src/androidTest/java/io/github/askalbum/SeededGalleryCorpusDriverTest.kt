@@ -46,6 +46,7 @@ class SeededGalleryCorpusDriverTest {
             ACTION_RESUME -> resume(context, safeRunId, arguments)
             ACTION_REPORT -> report(context, safeRunId)
             ACTION_DIAGNOSE -> diagnose(context, safeRunId)
+            ACTION_EVALUATE -> DatasetEvaluationRunner(context, safeRunId).run(arguments)
             else -> error("Unsupported galleryDriverAction")
         }
     }
@@ -273,6 +274,7 @@ class SeededGalleryCorpusDriverTest {
         const val ACTION_CLEANUP = "cleanup"
         const val ACTION_REPORT = "report"
         const val ACTION_DIAGNOSE = "diagnose"
+        const val ACTION_EVALUATE = "evaluate"
         const val TIMEOUT_MS = 30 * 60_000L
         const val INDEX_ITEMS_PER_MINUTE = 250
         const val INDEX_TIMEOUT_BUFFER_MINUTES = 15

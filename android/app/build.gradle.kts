@@ -132,6 +132,14 @@ android {
             buildConfigField("boolean", "MODEL_INDEPENDENT", "true")
             buildConfigField("String", "DISTRIBUTION", "\"fixtureCi\"")
         }
+        create("evaluation") {
+            dimension = "distribution"
+            applicationIdSuffix = ".evaluation"
+            versionNameSuffix = "-evaluation"
+            buildConfigField("boolean", "ALLOW_MODEL_DOWNLOAD", "true")
+            buildConfigField("boolean", "MODEL_INDEPENDENT", "false")
+            buildConfigField("String", "DISTRIBUTION", "\"evaluation\"")
+        }
     }
 
     compileOptions {
@@ -149,6 +157,8 @@ android {
     sourceSets["offlineDemo"].assets.srcDir(generatedEmbeddedSfaceAssets)
     sourceSets["consumer"].assets.srcDir(generatedEmbeddedSiglipAssets)
     sourceSets["consumer"].assets.srcDir(generatedEmbeddedSfaceAssets)
+    sourceSets["evaluation"].assets.srcDir(generatedEmbeddedSiglipAssets)
+    sourceSets["evaluation"].assets.srcDir(generatedEmbeddedSfaceAssets)
     androidResources.noCompress += listOf("agretrieval", "onnx")
 
     packaging {
